@@ -1,0 +1,609 @@
+/*
+ * rpc.c - method dispatch.
+ *
+ * Every method is a small function that either fills in `c->owned` with the
+ * result or calls fail().  Keeping them uniform is what makes the module
+ * table in `module.h` honest: a fork deletes a handler, deletes its line in
+ * `sde_methods[]`, and the protocol shrinks cleanly.
+ */
+#include "seide_cfg.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "app.h"
+#include "board.h"
+#include "exec.h"
+#include "json.h"
+#include "port.h"
+#include "rpc.h"
+#include "wksp.h"
+
+typedef struct sde_call {
+    sde_app        *app;
+    const sde_json *params;  /* may be NULL */
+    int             code;    /* 0 while the call is still succeeding */
+    const char     *ename;
+    char            message[256];
+    sde_json       *data;    /* owned; optional error detail */
+    sde_json       *owned;   /* owned; the result */
+} sde_call;
+
+typedef void (*sde_handler)(sde_call *c);
+
+typedef struct sde_method {
+    const char *name;
+    sde_handler fn;
+} sde_method;
+
+/* ---------------------------------------------------------------------- */
+/* result and error plumbing                                              */
+/* ---------------------------------------------------------------------- */
+
+static void fail(sde_call *c, int code, const char *name, const char *message)
+{
+    c->code = code;
+    c->ename = name;
+    snprintf(c->message, sizeof(c->message), "%s",
+             message == NULL ? "failed" : message);
+}
+
+static void need_string(sde_call *c, const char *key, const char **out)
+{
+    const char *v;
+
+    if (c->code != 0) {
+        return;
+    }
+    v = sde_json_gets(c->params, key, NULL);
+    if (v == NULL || v[0] == '\0') {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "missing non-empty string `%s`", key);
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS", msg);
+        return;
+    }
+    *out = v;
+}
+
+/* ---------------------------------------------------------------------- */
+/* handlers: the kernel itself                                            */
+/* ---------------------------------------------------------------------- */
+
+static void h_hello(sde_call *c)
+{
+    sde_json *r = sde_json_obj();
+
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    /*
+     * `protocol` is the integer a client can compare; `protocol_name` is the
+     * same version spelled out for a human reading a log line.
+     */
+    sde_json_set(r, "protocol", sde_json_int(SDE_PROTOCOL_VERSION));
+    sde_json_set(r, "protocol_name", sde_json_str(SDE_PROTOCOL));
+    sde_json_set(r, "kernel_version", sde_json_str(SDE_VERSION));
+    sde_json_set(r, "root", sde_json_str(c->app->root));
+    sde_json_set(r, "pid", sde_json_int(sde_port_pid()));
+    c->owned = r;
+}
+
+static void h_workspace_info(sde_call *c)
+{
+    char       err[256];
+    char       base[256];
+    const char *slash;
+    sde_json   *info;
+
+    err[0] = '\0';
+    info = sde_wksp_info(c->app, err, sizeof(err));
+    if (info == NULL) {
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot inspect workspace");
+        return;
+    }
+
+    slash = strrchr(c->app->root, '/');
+    snprintf(base, sizeof(base), "%s",
+             slash == NULL ? c->app->root : slash + 1);
+    sde_json_set(info, "name", sde_json_str(base));
+    sde_json_set(info, "board_path",
+                 sde_json_str(sde_board_path(c->app->board)));
+    sde_json_set(info, "board_revision",
+                 sde_json_int((long) sde_board_revision(c->app->board)));
+    c->owned = info;
+}
+
+static void h_workspace_list(sde_call *c)
+{
+    char        err[256];
+    char        pattern[600];
+    const char *path = sde_json_gets(c->params, "path", NULL);
+    const char *glob = sde_json_gets(c->params, "glob", NULL);
+    long        limit = sde_json_geti(c->params, "limit", 0);
+    sde_json   *res;
+
+    err[0] = '\0';
+    if (path != NULL && path[0] != '\0') {
+        const char *g = (glob == NULL || glob[0] == '\0') ? "**/*" : glob;
+        snprintf(pattern, sizeof(pattern), "%s/%s", path, g);
+    } else {
+        snprintf(pattern, sizeof(pattern), "%s",
+                 (glob == NULL || glob[0] == '\0') ? "**/*" : glob);
+    }
+
+    res = sde_wksp_list(c->app, pattern, limit, err, sizeof(err));
+    if (res == NULL) {
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot list workspace");
+        return;
+    }
+    c->owned = res;
+}
+
+/* Decides whether a failed path lookup was "absent" or "unreadable". */
+static void fail_path(sde_call *c, const char *rel, const char *err)
+{
+    char *abs = NULL;
+
+    if (sde_wksp_resolve(c->app, rel, &abs, NULL, 0) == 0) {
+        int exists = sde_port_file_exists(abs);
+        free(abs);
+        if (!exists) {
+            fail(c, SDE_RPC_NOT_FOUND, "NOT_FOUND", "no such file");
+            return;
+        }
+    }
+    fail(c, SDE_RPC_IO, "IO", err == NULL || err[0] == '\0'
+         ? "cannot read file" : err);
+}
+
+static void h_file_read(sde_call *c)
+{
+    char         err[256];
+    const char  *path = NULL;
+    sde_json    *res;
+
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
+    err[0] = '\0';
+    res = sde_wksp_read(c->app, path, err, sizeof(err));
+    if (res == NULL) {
+        fail_path(c, path, err);
+        return;
+    }
+    c->owned = res;
+}
+
+static void h_file_write(sde_call *c)
+{
+    char                err[256];
+    const char         *path = NULL;
+    const sde_json     *textv;
+    const sde_json     *basev;
+    const char         *text;
+    size_t              len;
+    int                 has_base;
+    unsigned long       base = 0;
+    unsigned long       cur = 0;
+    sde_json           *res = NULL;
+    int                 rc;
+    sde_json           *note;
+
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
+
+    textv = sde_json_get(c->params, "text");
+    if (textv != NULL && textv->type != SDE_JSON_STR) {
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`text` must be a string");
+        return;
+    }
+    text = (textv == NULL) ? "" : sde_json_as_str(textv);
+    if (text == NULL) {
+        text = "";
+    }
+    len = strlen(text);
+
+    basev = sde_json_get(c->params, "base_revision");
+    has_base = (basev != NULL && basev->type == SDE_JSON_NUM);
+    if (has_base) {
+        base = (unsigned long) sde_json_as_num(basev, 0.0);
+    }
+
+    err[0] = '\0';
+    rc = sde_wksp_write(c->app, path, text, len, has_base, base,
+                        &res, &cur, err, sizeof(err));
+    if (rc == SDE_WKSP_STALE) {
+        sde_json *d = sde_json_obj();
+        if (d != NULL) {
+            sde_json_set(d, "current_revision", sde_json_int((long) cur));
+        }
+        fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
+             "file changed on disk since it was read");
+        c->data = d;
+        return;
+    }
+    if (rc != SDE_WKSP_OK || res == NULL) {
+        sde_json_free(res);
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot write file");
+        return;
+    }
+
+    /* Other viewers of the same workspace need to know. */
+    note = sde_json_obj();
+    if (note != NULL) {
+        sde_json_set(note, "event", sde_json_str("file.changed"));
+        sde_json_set(note, "path", sde_json_str(path));
+        sde_json_set(note, "revision",
+                     sde_json_int((long) sde_json_as_num(
+                         sde_json_get(res, "revision"), 0.0)));
+        (void) sde_app_notify(c->app, note);
+    }
+
+    c->owned = res;
+}
+
+/* ---------------------------------------------------------------------- */
+/* handlers: the board                                                    */
+/* ---------------------------------------------------------------------- */
+
+#if SDE_WITH_BOARD
+
+static void h_board_load(sde_call *c)
+{
+    sde_json *r = sde_json_obj();
+    sde_json *doc;
+
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    doc = sde_json_clone(sde_board_document(c->app->board));
+    if (doc == NULL) {
+        sde_json_free(r);
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
+    sde_json_set(r, "revision",
+                 sde_json_int((long) sde_board_revision(c->app->board)));
+    sde_json_set(r, "document", doc);
+    c->owned = r;
+}
+
+static void h_board_save(sde_call *c)
+{
+    char                 err[256];
+    const sde_json      *doc;
+    const sde_json      *basev;
+    sde_json            *copy;
+    int                  has_base;
+    unsigned long        base = 0;
+    unsigned long        prev;
+    sde_json            *r;
+    sde_json            *note;
+
+    /*
+     * Both spellings are accepted: the protocol document calls the member
+     * `board`, while the kernel's own load result calls it `document`, and a
+     * client that round-trips one into the other should not have to rename it.
+     */
+    doc = sde_json_get(c->params, "document");
+    if (doc == NULL) {
+        doc = sde_json_get(c->params, "board");
+    }
+    if (doc == NULL || doc->type != SDE_JSON_OBJ) {
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`document` must be an object");
+        return;
+    }
+    copy = sde_json_clone(doc);
+    if (copy == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+
+    prev = sde_board_revision(c->app->board);
+    basev = sde_json_get(c->params, "base_revision");
+    has_base = (basev != NULL && basev->type == SDE_JSON_NUM);
+    if (has_base) {
+        base = (unsigned long) sde_json_as_num(basev, 0.0);
+        if (base != prev) {
+            sde_json *d = sde_json_obj();
+            if (d != NULL) {
+                sde_json_set(d, "current_revision",
+                             sde_json_int((long) prev));
+            }
+            sde_json_free(copy);
+            fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
+                 "board changed since it was loaded");
+            c->data = d;
+            return;
+        }
+    }
+
+    err[0] = '\0';
+    if (sde_board_adopt(c->app->board, copy, err, sizeof(err)) != 0) {
+        /* adopt() only takes ownership on success, so `copy` is still ours. */
+        sde_json_free(copy);
+        fail(c, SDE_RPC_INVALID_BOARD, "INVALID_BOARD",
+             err[0] ? err : "board rejected");
+        return;
+    }
+
+    if (sde_board_save(c->app->board, err, sizeof(err)) != 0) {
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot save board");
+        return;
+    }
+
+    note = sde_json_obj();
+    if (note != NULL) {
+        sde_json_set(note, "event", sde_json_str("board.changed"));
+        sde_json_set(note, "revision",
+                     sde_json_int((long) sde_board_revision(c->app->board)));
+        (void) sde_app_notify(c->app, note);
+    }
+
+    r = sde_json_obj();
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
+    sde_json_set(r, "revision",
+                 sde_json_int((long) sde_board_revision(c->app->board)));
+    sde_json_set(r, "saved", sde_json_bool(1));
+    c->owned = r;
+}
+
+static void h_board_new_id(sde_call *c)
+{
+    char     *id = sde_board_next_id(c->app->board);
+    sde_json *r;
+
+    if (id == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    r = sde_json_obj();
+    if (r == NULL) {
+        free(id);
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    sde_json_set(r, "id", sde_json_str(id));
+    free(id);
+    c->owned = r;
+}
+
+#endif /* SDE_WITH_BOARD */
+
+/* ---------------------------------------------------------------------- */
+/* handlers: running commands                                             */
+/* ---------------------------------------------------------------------- */
+
+#if SDE_WITH_EXEC
+
+static void h_exec_start(sde_call *c)
+{
+    char        err[256];
+    const char *card_id = sde_json_gets(c->params, "card_id", "");
+    const char *cmd = NULL;
+    const char *cwd = sde_json_gets(c->params, "cwd", NULL);
+    char       *abs_cwd = NULL;
+    long        run_id;
+    sde_json   *r;
+
+    need_string(c, "cmd", &cmd);
+    if (c->code != 0) {
+        return;
+    }
+
+    if (cwd != NULL && cwd[0] != '\0') {
+        err[0] = '\0';
+        if (sde_wksp_resolve(c->app, cwd, &abs_cwd, err, sizeof(err)) != 0) {
+            fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+                 err[0] ? err : "`cwd` is outside the workspace");
+            return;
+        }
+    } else {
+        abs_cwd = sde_port_strdup(c->app->root);
+    }
+
+    err[0] = '\0';
+    run_id = sde_exec_start(c->app->execs, card_id, cmd, abs_cwd,
+                            err, sizeof(err));
+    free(abs_cwd);
+    if (run_id < 0) {
+        fail(c, SDE_RPC_EXEC, "EXEC", err[0] ? err : "cannot start process");
+        return;
+    }
+
+    r = sde_json_obj();
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    sde_json_set(r, "run_id", sde_json_int(run_id));
+    c->owned = r;
+}
+
+static void h_exec_stop(sde_call *c)
+{
+    const sde_json *idv = sde_json_get(c->params, "run_id");
+    long            run_id;
+    sde_json       *r;
+
+    if (idv == NULL || idv->type != SDE_JSON_NUM) {
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`run_id` must be a number");
+        return;
+    }
+    run_id = sde_json_as_int(idv, -1);
+    if (sde_exec_stop(c->app->execs, run_id) != 0) {
+        fail(c, SDE_RPC_NOT_FOUND, "NOT_FOUND", "no such run");
+        return;
+    }
+    r = sde_json_obj();
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    sde_json_set(r, "stopped", sde_json_bool(1));
+    c->owned = r;
+}
+
+static void h_exec_list(sde_call *c)
+{
+    sde_json *r = sde_exec_list(c->app->execs);
+
+    if (r == NULL) {
+        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+        return;
+    }
+    c->owned = r;
+}
+
+#endif /* SDE_WITH_EXEC */
+
+/* ---------------------------------------------------------------------- */
+/* the table                                                              */
+/* ---------------------------------------------------------------------- */
+
+static const sde_method sde_methods[] = {
+    { "hello",          h_hello },
+    { "workspace.info", h_workspace_info },
+    { "workspace.list", h_workspace_list },
+    { "file.read",      h_file_read },
+    { "file.write",     h_file_write },
+#if SDE_WITH_BOARD
+    { "board.load",     h_board_load },
+    { "board.save",     h_board_save },
+    { "board.newId",    h_board_new_id },
+#endif
+#if SDE_WITH_EXEC
+    { "exec.start",     h_exec_start },
+    { "exec.stop",      h_exec_stop },
+    { "exec.list",      h_exec_list },
+#endif
+    { NULL, NULL }
+};
+
+/* ---------------------------------------------------------------------- */
+/* the frame                                                              */
+/* ---------------------------------------------------------------------- */
+
+sde_json *sde_rpc_error(const sde_json *id, int code, const char *name,
+                        const char *message)
+{
+    sde_json *resp = sde_json_obj();
+    sde_json *e;
+
+    if (resp == NULL) {
+        return NULL;
+    }
+    sde_json_set(resp, "jsonrpc", sde_json_str("2.0"));
+    sde_json_set(resp, "id", id == NULL ? sde_json_null()
+                                        : sde_json_clone(id));
+    e = sde_json_obj();
+    if (e == NULL) {
+        sde_json_free(resp);
+        return NULL;
+    }
+    sde_json_set(e, "code", sde_json_int((long) code));
+    sde_json_set(e, "name", sde_json_str(name == NULL ? "ERROR" : name));
+    sde_json_set(e, "message",
+                 sde_json_str(message == NULL ? "" : message));
+    sde_json_set(resp, "error", e);
+    return resp;
+}
+
+sde_json *sde_rpc_handle(sde_app *app, const sde_json *req)
+{
+    sde_call        c;
+    sde_json       *resp;
+    const sde_json *id;
+    const sde_json *params;
+    const char     *method;
+    size_t          i;
+    int             found = 0;
+
+    if (req == NULL || req->type != SDE_JSON_OBJ) {
+        return sde_rpc_error(NULL, SDE_RPC_INVALID_REQUEST, "INVALID_REQUEST",
+                             "request must be a JSON object");
+    }
+
+    id = sde_json_get(req, "id");
+    method = sde_json_as_str(sde_json_get(req, "method"));
+    params = sde_json_get(req, "params");
+
+    if (method == NULL) {
+        /* A malformed notification is simply dropped; a request is answered. */
+        if (id == NULL) {
+            return NULL;
+        }
+        return sde_rpc_error(id, SDE_RPC_INVALID_REQUEST, "INVALID_REQUEST",
+                             "missing string `method`");
+    }
+
+    memset(&c, 0, sizeof(c));
+    c.app = app;
+    c.params = params;
+
+    for (i = 0; sde_methods[i].name != NULL; i++) {
+        if (strcmp(sde_methods[i].name, method) == 0) {
+            found = 1;
+            sde_methods[i].fn(&c);
+            break;
+        }
+    }
+    if (!found) {
+        char msg[192];
+        snprintf(msg, sizeof(msg), "no such method `%s`", method);
+        fail(&c, SDE_RPC_METHOD_NOT_FOUND, "METHOD_NOT_FOUND", msg);
+    }
+
+    /* A notification gets no answer, even when it failed. */
+    if (id == NULL) {
+        sde_json_free(c.owned);
+        sde_json_free(c.data);
+        return NULL;
+    }
+
+    resp = sde_json_obj();
+    if (resp == NULL) {
+        sde_json_free(c.owned);
+        sde_json_free(c.data);
+        return NULL;
+    }
+    sde_json_set(resp, "jsonrpc", sde_json_str("2.0"));
+    sde_json_set(resp, "id", sde_json_clone(id));
+
+    if (c.code != 0) {
+        sde_json *e = sde_json_obj();
+        if (e != NULL) {
+            sde_json_set(e, "code", sde_json_int((long) c.code));
+            sde_json_set(e, "name",
+                         sde_json_str(c.ename == NULL ? "ERROR" : c.ename));
+            sde_json_set(e, "message", sde_json_str(c.message));
+            if (c.data != NULL) {
+                sde_json_set(e, "data", c.data);
+                c.data = NULL;
+            }
+            sde_json_set(resp, "error", e);
+        }
+    } else {
+        sde_json_set(resp, "result",
+                     c.owned == NULL ? sde_json_obj() : c.owned);
+        c.owned = NULL;
+    }
+
+    sde_json_free(c.owned);
+    sde_json_free(c.data);
+    return resp;
+}

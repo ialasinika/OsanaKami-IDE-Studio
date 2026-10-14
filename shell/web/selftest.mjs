@@ -1,0 +1,1102 @@
+/**
+ * selftest.mjs -- the shell's proof, runnable with no browser and no kernel.
+ *
+ *     node shell/web/selftest.mjs
+ *
+ * It imports the pure parts of the web shell and drives them with a fake
+ * `fetch` (an in-memory SSE stream) and no DOM at all, so the protocol
+ * plumbing, the board model and the token-span logic are checked exactly as
+ * the browser will use them.
+ *
+ * Exit code is 0 only when every check passes; the summary is `ok N/N`.
+ */
+
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+
+import {
+  createClient,
+  isStaleRevision,
+  SseParser,
+  RpcError,
+  staleCurrentRevision,
+} from "./rpc.mjs";
+
+import {
+  CARD_KINDS,
+  DEFAULT_SIZE,
+  MIN_SIZE,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  clampViewport,
+  createBoard,
+  normaliseDocument,
+} from "./board.mjs";
+
+import {
+  CARD_KIND_CONTRACT,
+  OutputBuffer,
+  SHEET_TYPES,
+  addSheetColumn,
+  addSheetRow,
+  applyTokenSpans,
+  cardKind,
+  coerceSheetValue,
+  describeCard,
+  emptySheet,
+  formatAge,
+  formatExit,
+  formatListing,
+  formatSize,
+  knownCardKinds,
+  lineColumn,
+  matchesFilter,
+  nextSheetSelection,
+  normaliseSheet,
+  normaliseTokenKind,
+  parseCommandLine,
+  parseZoomArgument,
+  registerCardKind,
+  removeSheetColumn,
+  removeSheetRow,
+  segmentsText,
+  setSheetCell,
+  sheetCell,
+  sheetSummary,
+  sheetToTSV,
+} from "./cards.mjs";
+
+/* ------------------------------------------------------------------ */
+/* the smallest useful test harness                                    */
+/* ------------------------------------------------------------------ */
+
+const failures = [];
+let checks = 0;
+
+function test(name, fn) {
+  checks += 1;
+  try {
+    fn();
+  } catch (err) {
+    failures.push({ name, err });
+  }
+}
+
+async function testAsync(name, fn) {
+  checks += 1;
+  try {
+    await fn();
+  } catch (err) {
+    failures.push({ name, err });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* a fake /rpc and a fake SSE stream                                   */
+/* ------------------------------------------------------------------ */
+
+/** An SSE body whose chunks can be cut anywhere we like. */
+function sseStream(chunks, { holdOpen = false } = {}) {
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (index < chunks.length) {
+        const chunk = chunks[index];
+        index += 1;
+        controller.enqueue(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+        return;
+      }
+      if (!holdOpen) {
+        controller.close();
+      }
+    },
+  });
+}
+
+/**
+ * @param {object} options
+ * @param {Array<object|Function>} options.replies  one per POST, in order
+ * @param {string[]} [options.chunks]  raw SSE chunks
+ */
+/**
+ * The mock host answers in JSON-RPC, because that is the only shape the real
+ * host uses: the request's id comes back with either a `result` or an `error`.
+ * Testing against any other shape would prove nothing about the real endpoint.
+ */
+function toJsonRpc(value, record) {
+  const id = record && record.body && record.body.id !== undefined ? record.body.id : null;
+  if (value === undefined) {
+    return { jsonrpc: "2.0", id, result: {} };
+  }
+  if (value.ok === true) {
+    return { jsonrpc: "2.0", id, result: value.result };
+  }
+  if (value.error !== undefined) {
+    return { jsonrpc: "2.0", id, error: value.error };
+  }
+  return { jsonrpc: "2.0", id, result: value.result === undefined ? value : value.result };
+}
+
+function fakeFetch({ replies = [], chunks = [], holdOpen = false, onCall = null }) {
+  const calls = [];
+  let replyIndex = 0;
+  const impl = async (url, init) => {
+    const record = { url, init, body: init && init.body ? JSON.parse(init.body) : null };
+    calls.push(record);
+    if (onCall !== null) {
+      onCall(record);
+    }
+    if (url.endsWith("/events")) {
+      return { ok: true, status: 200, body: sseStream(chunks, { holdOpen }) };
+    }
+    const reply = replies[replyIndex];
+    replyIndex += 1;
+    const value = typeof reply === "function" ? reply(record) : reply;
+    if (value instanceof Error) {
+      throw value;
+    }
+    if (value && value.httpError === true) {
+      return { ok: false, status: value.status || 500, text: async () => "" };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(toJsonRpc(value, record)),
+    };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+/** Let every already-resolved promise chain run to completion. */
+const tick = (n = 6) => new Promise((resolve) => {
+  let left = n;
+  const step = () => {
+    left -= 1;
+    if (left <= 0) {
+      resolve();
+    } else {
+      setTimeout(step, 0);
+    }
+  };
+  setTimeout(step, 0);
+});
+
+/* ------------------------------------------------------------------ */
+/* rpc.mjs                                                             */
+/* ------------------------------------------------------------------ */
+
+await testAsync("sse: a frame split across chunk boundaries is reassembled", async () => {
+  const fetchImpl = fakeFetch({
+    chunks: [
+      "data: {\"event\":\"log\",\"level\":\"inf",
+      "o\",\"message\":\"one\"}\n",
+      "\ndata: {\"event\":\"log\",\"level\":\"warn\",\"message\":\"two\"}\n\n",
+    ],
+  });
+  const client = createClient({ origin: "http://127.0.0.1:1", fetchImpl });
+  const seen = [];
+  client.on("log", (event) => seen.push(event.message));
+  client.connect();
+  await client.ready();
+  await tick();
+  assert.deepEqual(seen, ["one", "two"]);
+  assert.equal(client.connected, false, "a closed stream must report disconnected");
+});
+
+await testAsync("sse: three frames arriving in one chunk all dispatch, in order", async () => {
+  const fetchImpl = fakeFetch({
+    chunks: [
+      "data: {\"event\":\"log\",\"message\":\"a\"}\n\n"
+      + "data: {\"event\":\"log\",\"message\":\"b\"}\n\n"
+      + "data: {\"event\":\"log\",\"message\":\"c\"}\n\n",
+    ],
+  });
+  const client = createClient({ fetchImpl });
+  const seen = [];
+  client.on("log", (event) => seen.push(event.message));
+  client.connect();
+  await client.ready();
+  await tick();
+  assert.deepEqual(seen, ["a", "b", "c"]);
+});
+
+await testAsync("sse: UTF-8 split mid-codepoint does not corrupt a frame", async () => {
+  // "→" is E2 86 92; cut it after the first byte.
+  const bytes = new TextEncoder().encode("data: {\"event\":\"log\",\"message\":\"a→b\"}\n\n");
+  const fetchImpl = fakeFetch({
+    chunks: [bytes.slice(0, 30), bytes.slice(30)],
+  });
+  const client = createClient({ fetchImpl });
+  const seen = [];
+  client.on("log", (event) => seen.push(event.message));
+  client.connect();
+  await client.ready();
+  await tick();
+  assert.deepEqual(seen, ["a→b"]);
+});
+
+test("sse: SseParser keeps an incomplete frame buffered", () => {
+  const parser = new SseParser();
+  assert.deepEqual(parser.push("data: {\"event\":\"log\"}"), []);
+  assert.deepEqual(parser.push("\n\n"), ["{\"event\":\"log\"}"]);
+  assert.deepEqual(parser.push("data: {\"a\":1}\n\ndata: {\"b\":2}\n\n"), ["{\"a\":1}", "{\"b\":2}"]);
+  assert.deepEqual(parser.push(": keep-alive comment\n\n"), []);
+});
+
+await testAsync("rpc: an ok:false reply becomes an RpcError carrying code/name/message/data", async () => {
+  const fetchImpl = fakeFetch({
+    replies: [{
+      ok: false,
+      error: { code: 409, name: "STALE_REVISION", message: "file moved on", data: { current_revision: 42 } },
+    }],
+  });
+  const client = createClient({ fetchImpl });
+  let caught = null;
+  try {
+    await client.call("file.write", { path: "a.bf", text: "x", base_revision: 7 });
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof RpcError, "expected an RpcError");
+  assert.equal(caught.code, 409);
+  assert.equal(caught.errorName, "STALE_REVISION");
+  assert.equal(caught.message, "file.write: file moved on");
+  assert.equal(caught.message_, "file moved on");
+  assert.deepEqual(caught.data, { current_revision: 42 });
+  assert.equal(caught.method, "file.write");
+  assert.equal(client.state.pending, 0, "a settled call must leave nothing pending");
+});
+
+await testAsync("rpc: a success reply resolves to result and the request is well formed", async () => {
+  const fetchImpl = fakeFetch({ replies: [{ ok: true, result: { protocol: "seide/1" } }] });
+  const client = createClient({ origin: "http://127.0.0.1:3939", fetchImpl });
+  const result = await client.call("hello", {});
+  assert.deepEqual(result, { protocol: "seide/1" });
+  assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3939/rpc");
+  assert.equal(fetchImpl.calls[0].init.method, "POST");
+  // A request, not a notification: the id is what makes the host answer.
+  assert.equal(typeof fetchImpl.calls[0].body.id, "number");
+  assert.deepEqual(fetchImpl.calls[0].body, {
+    jsonrpc: "2.0", id: fetchImpl.calls[0].body.id, method: "hello", params: {},
+  });
+  assert.equal(fetchImpl.calls[0].init.headers["Content-Type"], "application/json");
+});
+
+await testAsync("rpc: STALE_REVISION surfaces data.current_revision to the caller", async () => {
+  const fetchImpl = fakeFetch({
+    replies: [{
+      ok: false,
+      error: { code: 409, name: "STALE_REVISION", message: "nope", data: { current_revision: 8 } },
+    }],
+  });
+  const client = createClient({ fetchImpl });
+  let caught = null;
+  try {
+    await client.call("file.write", { path: "a.bf", text: "x", base_revision: 3 });
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(client.isStaleRevision(caught), "the client must recognise a stale write");
+  assert.equal(staleCurrentRevision(caught), 8);
+  assert.equal(caught.data.current_revision, 8);
+  // The same rejection is recognised when the endpoint puts the name in `code`.
+  const alt = new RpcError({ code: "STALE_REVISION", message: "nope" }, "file.write");
+  assert.ok(isStaleRevision(alt));
+  assert.equal(staleCurrentRevision(alt), null);
+  assert.ok(!isStaleRevision(new RpcError({ code: 404, name: "NO_SUCH_FILE", message: "x" }, "file.read")));
+});
+
+await testAsync("rpc: an unreachable host rejects the call and flips the status", async () => {
+  const fetchImpl = async () => {
+    throw new TypeError("fetch failed");
+  };
+  const states = [];
+  const client = createClient({ fetchImpl, onStatus: (state) => states.push(state.connected) });
+  let caught = null;
+  try {
+    await client.call("hello", {});
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof RpcError);
+  assert.equal(caught.symbol, "TRANSPORT");
+  assert.ok(caught.message.includes("network error"), caught.message);
+  client.connect();
+  await tick();
+  assert.equal(client.connected, false);
+  assert.ok(states.includes(false));
+});
+
+await testAsync("rpc: a non-JSON body is a BAD_REPLY, not a crash", async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => "<html>nope" });
+  const client = createClient({ fetchImpl });
+  let caught = null;
+  try {
+    await client.call("hello", {});
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(caught.symbol, "BAD_REPLY");
+});
+
+await testAsync("rpc: a handler that throws does not stop the other handlers", async () => {
+  const fetchImpl = fakeFetch({
+    chunks: ["data: {\"event\":\"log\",\"message\":\"one\"}\n\n"],
+  });
+  const client = createClient({ fetchImpl });
+  const seen = [];
+  client.on("log", () => {
+    throw new Error("boom");
+  });
+  client.on("log", (event) => seen.push(event.message));
+  // The client is supposed to report the bad handler on the console; that is the
+  // behaviour under test, so silence it rather than let it look like a failure.
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    client.connect();
+    await client.ready();
+    await tick();
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(seen, ["one"]);
+});
+
+/* ------------------------------------------------------------------ */
+/* board.mjs                                                           */
+/* ------------------------------------------------------------------ */
+
+test("board: addCard/moveCard/linkCards/serialize round-trips", () => {
+  let next = 1;
+  const board = createBoard(undefined, { idFactory: () => `c${next++}` });
+  const a = board.addCard("editor", 40, 60, { file: "examples/hello.bf" });
+  const b = board.addCard("runner", 720, 300, { cmd: "python tools/bf.py examples/hello.bf", cwd: "." });
+  const link = board.linkCards(a.id, b.id, "runs");
+
+  assert.equal(a.id, "c1");
+  assert.equal(b.id, "c2");
+  assert.equal(link.id, "l1");
+  assert.equal(a.z < b.z, true, "a later card is raised above an earlier one");
+
+  board.moveCard(a.id, 100, 120);
+  assert.equal(a.x, 100);
+  assert.equal(a.y, 120);
+
+  const doc = board.serialize();
+  assert.equal(doc.version, 1);
+  assert.deepEqual(doc.viewport, { x: 0, y: 0, zoom: 1 });
+  assert.equal(doc.cards.length, 2);
+  assert.deepEqual(doc.links, [{ id: "l1", from: "c1", to: "c2", label: "runs" }]);
+  assert.deepEqual(doc.cards[0], {
+    id: "c1", kind: "editor", x: 100, y: 120, w: 640, h: 420, z: 1, file: "examples/hello.bf",
+  });
+  // A second card re-loads from exactly what serialize() produced.
+  const again = createBoard(doc);
+  assert.deepEqual(again.serialize(), doc);
+  assert.equal(CARD_KINDS.includes("files"), true);
+});
+
+test("board: serialize returns a copy, so mutating it cannot corrupt the model", () => {
+  const board = createBoard(undefined, { idFactory: () => "c9" });
+  board.addCard("note", 0, 0, { text: "scratch" });
+  const doc = board.serialize();
+  doc.cards[0].x = 9999;
+  doc.cards.push({ id: "ghost", kind: "note", x: 0, y: 0, w: 1, h: 1 });
+  doc.viewport.zoom = 99;
+  assert.equal(board.cards.length, 1);
+  assert.equal(board.cards[0].x, 0);
+  assert.equal(board.viewport.zoom, 1);
+});
+
+test("board: removeCard drops the links that pointed at it", () => {
+  const ids = ["c1", "c2", "c3"];
+  const board = createBoard(undefined, { idFactory: () => ids.shift() });
+  const a = board.addCard("editor", 0, 0);
+  const b = board.addCard("note", 10, 10);
+  const c = board.addCard("runner", 20, 20);
+  board.linkCards(a.id, b.id);
+  board.linkCards(b.id, c.id);
+  assert.equal(board.links.length, 2);
+  assert.equal(board.removeCard(b.id), true);
+  assert.equal(board.links.length, 0, "a link to a dead card would fail kernel validation");
+  assert.equal(board.removeCard("nope"), false);
+});
+
+test("board: a document the kernel would reject is repaired on load", () => {
+  const result = normaliseDocument({
+    version: 1,
+    viewport: { x: "nope", y: 5, zoom: 900 },
+    cards: [
+      { id: "c1", kind: "note", x: 0, y: 0, w: 0, h: -20 },
+      { id: "c1", kind: "note", x: 1, y: 1, w: 10, h: 10 },
+      { id: "", kind: "note", x: 1, y: 1, w: 10, h: 10 },
+      "not a card",
+      { id: "c2", kind: "runner", x: 2, y: 2, w: 10, h: 10 },
+    ],
+    links: [
+      { id: "l1", from: "c1", to: "c2" },
+      { id: "l2", from: "c1", to: "ghost" },
+      { id: "l3", from: "ghost", to: "c2" },
+    ],
+  });
+  assert.equal(result.document.cards.length, 2, "the duplicate and the malformed card are dropped");
+  assert.equal(result.droppedCards.length, 3);
+  assert.equal(result.droppedLinks, 2);
+  assert.equal(result.document.cards[0].w, MIN_SIZE.w, "a zero width is repaired, not fatal");
+  assert.equal(result.document.cards[0].h, MIN_SIZE.h);
+  assert.equal(result.document.cards[0].z, 0, "a missing z defaults to 0, as the kernel does");
+  assert.equal(result.document.viewport.x, 0);
+  assert.equal(result.document.viewport.y, 5);
+  assert.equal(result.document.viewport.zoom, ZOOM_MAX);
+});
+
+test("board: viewport zoom is clamped and non-finite input falls back", () => {
+  assert.deepEqual(clampViewport({ zoom: 100 }), { x: 0, y: 0, zoom: ZOOM_MAX });
+  assert.deepEqual(clampViewport({ zoom: 0 }), { x: 0, y: 0, zoom: ZOOM_MIN });
+  assert.deepEqual(clampViewport({ zoom: NaN, x: Infinity }), { x: 0, y: 0, zoom: 1 });
+  assert.deepEqual(clampViewport(undefined), { x: 0, y: 0, zoom: 1 });
+  assert.deepEqual(clampViewport({ x: 99, y: -99, zoom: 2.5 }), { x: 99, y: -99, zoom: 2.5 });
+
+  const board = createBoard();
+  assert.equal(board.setViewport({ zoom: 500 }).zoom, ZOOM_MAX);
+  assert.equal(board.setViewport({ zoom: 0.001 }).zoom, ZOOM_MIN);
+  assert.equal(board.setViewport({ x: 10 }).zoom, ZOOM_MIN, "an omitted zoom keeps its value");
+});
+
+test("board: resize clamps to the minimum, raise puts a card on top", () => {
+  const ids = ["c1", "c2"];
+  const board = createBoard(undefined, { idFactory: () => ids.shift() });
+  const a = board.addCard("note", 0, 0);
+  const b = board.addCard("note", 0, 0);
+  board.resizeCard(a.id, 1, 1);
+  assert.equal(a.w, MIN_SIZE.w);
+  assert.equal(a.h, MIN_SIZE.h);
+  board.raiseCard(a.id);
+  assert.ok(a.z > b.z);
+});
+
+test("board: unknown card kinds and extra fields survive a round trip", () => {
+  const board = createBoard({
+    version: 1,
+    cards: [{ id: "c1", kind: "timeline", x: 1, y: 2, w: 3, h: 4, marks: [1, 2, 3] }],
+    links: [],
+  });
+  const doc = board.serialize();
+  assert.equal(doc.cards[0].kind, "timeline");
+  assert.deepEqual(doc.cards[0].marks, [1, 2, 3]);
+});
+
+test("board: adding a card with an id that is already in use throws", () => {
+  const board = createBoard(undefined, { idFactory: () => "c1" });
+  board.addCard("note", 0, 0);
+  assert.throws(() => board.addCard("note", 0, 0), /already used/);
+});
+
+/* ------------------------------------------------------------------ */
+/* cards.mjs -- token spans and the pure helpers                        */
+/* ------------------------------------------------------------------ */
+
+test("tokens: spans are applied in order, with the gap rendered as plain", () => {
+  const text = "++ hello world";
+  const tokens = [[0, 2, "command"], [10, 14, "keyword"]];
+  const segments = applyTokenSpans(text, tokens);
+  assert.deepEqual(segments, [
+    { start: 0, end: 2, kind: "command" },
+    { start: 2, end: 10, kind: "plain" },
+    { start: 10, end: 14, kind: "keyword" },
+  ]);
+  assert.equal(segmentsText(text, tokens), text, "segments must reconstruct the text exactly");
+});
+
+test("tokens: a tiling tokenizer produces no plain filler", () => {
+  const text = "++ [>+<]\n";
+  const tokens = [[0, 2, "command"], [2, 3, "ws"], [3, 8, "command"], [8, 9, "ws"]];
+  const segments = applyTokenSpans(text, tokens);
+  assert.deepEqual(segments.map((seg) => seg.kind), ["command", "plain", "command", "plain"]);
+  assert.equal(segmentsText(text, tokens), text);
+});
+
+test("tokens: ws/ident become plain, unknown kinds do not vanish", () => {
+  assert.equal(normaliseTokenKind("ws"), "plain");
+  assert.equal(normaliseTokenKind("ident"), "plain");
+  assert.equal(normaliseTokenKind("keyword"), "keyword");
+  assert.equal(normaliseTokenKind("wat"), "plain");
+  assert.equal(normaliseTokenKind(undefined), "plain");
+  const segments = applyTokenSpans("abcdef", [[0, 3, "keyword"], [3, 6, "wat"]]);
+  assert.deepEqual(segments, [{ start: 0, end: 3, kind: "keyword" }, { start: 3, end: 6, kind: "plain" }]);
+});
+
+test("tokens: bad spans are dropped and overlaps are clipped", () => {
+  const text = "0123456789";
+  const tokens = [
+    [100, 200, "keyword"],   // past the end
+    [5, 5, "keyword"],       // empty
+    [8, 3, "keyword"],       // inverted
+    [0, 6, "comment"],
+    [2, 9, "string"],        // overlaps the comment
+    "nonsense",
+    { start: 9, end: 10, kind: "number" },
+  ];
+  const segments = applyTokenSpans(text, tokens);
+  assert.deepEqual(segments, [
+    { start: 0, end: 6, kind: "comment" },
+    { start: 6, end: 9, kind: "string" },
+    { start: 9, end: 10, kind: "number" },
+  ]);
+  assert.equal(segmentsText(text, tokens), text);
+  assert.deepEqual([...applyTokenSpans("", [])], []);
+  assert.deepEqual([...applyTokenSpans("abc", null)], [{ start: 0, end: 3, kind: "plain" }]);
+});
+
+test("tokens: line/column readout matches the caret", () => {
+  assert.deepEqual(lineColumn("ab\ncd", 0), { line: 1, column: 1 });
+  assert.deepEqual(lineColumn("ab\ncd", 2), { line: 1, column: 3 });
+  assert.deepEqual(lineColumn("ab\ncd", 3), { line: 2, column: 1 });
+  assert.deepEqual(lineColumn("ab\ncd", 99), { line: 2, column: 3 });
+});
+
+test("files: formatListing sorts directories first and formats sizes", () => {
+  const now = 1_000_000;
+  const listing = {
+    files: [
+      { path: "tools/bf.py", size: 2048, mtime: now - 3600, dir: false },
+      { path: "examples", size: 0, mtime: now - 10, dir: true },
+      { path: "core/src/board.c", size: 500, mtime: now - 90, dir: false },
+      { path: "big.bin", size: 5 * 1024 * 1024, mtime: now - 86400 * 3, dir: false },
+      { path: "", size: 1, mtime: 0, dir: false },
+      null,
+    ],
+    count: 5,
+    truncated: true,
+  };
+  const { rows, count, truncated } = formatListing(listing, { now });
+  assert.equal(count, 5);
+  assert.equal(truncated, true);
+  assert.deepEqual(rows.map((row) => row.path), [
+    "examples", "big.bin", "core/src/board.c", "tools/bf.py",
+  ]);
+  assert.equal(rows[0].dir, true);
+  assert.equal(rows[0].name, "examples");
+  assert.equal(rows[1].sizeText, "5.0M");
+  assert.equal(rows[1].ageText, "3d");
+  assert.equal(rows[2].sizeText, "500B");
+  assert.equal(rows[3].ageText, "1h");
+  assert.deepEqual(formatListing({}).rows, []);
+});
+
+test("files: size and age formatting stay readable", () => {
+  assert.equal(formatSize(0), "0B");
+  assert.equal(formatSize(1023), "1023B");
+  assert.equal(formatSize(1024), "1.0K");
+  assert.equal(formatSize(1536), "1.5K");
+  assert.equal(formatSize(10 * 1024), "10K");
+  assert.equal(formatSize(-1), "");
+  assert.equal(formatSize(NaN), "");
+  assert.equal(formatAge(1000, 1000), "0s");
+  assert.equal(formatAge(1000, 1060), "1m");
+  assert.equal(formatAge(1000, 1000 + 7200), "2h");
+  assert.equal(formatAge(NaN, 0), "");
+});
+
+test("files: the filter box understands globs and substrings", () => {
+  assert.equal(matchesFilter("examples/hello.bf", "**/*"), true);
+  assert.equal(matchesFilter("examples/hello.bf", "**/*.bf"), true);
+  assert.equal(matchesFilter("examples/sub/a.bf", "**/*.bf"), true);
+  assert.equal(matchesFilter("core/src/board.c", "**/*.bf"), false);
+  assert.equal(matchesFilter("core/src/board.c", "board"), true);
+  assert.equal(matchesFilter("core/src/board.c", "src/*.c"), false);
+  assert.equal(matchesFilter("core/src/board.c", "core/src/*.c"), true);
+  assert.equal(matchesFilter("anything", ""), true);
+});
+
+test("runner: the output buffer drops the head rather than growing forever", () => {
+  const buffer = new OutputBuffer({ maxChars: 100, maxLines: 5 });
+  buffer.append("a".repeat(80));
+  assert.equal(buffer.length, 80);
+  buffer.append("b".repeat(80));
+  assert.equal(buffer.length, 100, "the buffer is capped");
+  assert.equal(buffer.dropped, 60);
+  const lines = buffer.lines();
+  assert.match(lines[0], /earlier characters/);
+  assert.equal(lines.length, 2, "one marker line, then the surviving text");
+
+  const many = new OutputBuffer({ maxChars: 100000, maxLines: 3 });
+  many.append("1\n2\n3\n4\n5\n");
+  assert.deepEqual(many.lines(), [
+    "[... 0 earlier characters, 3 earlier lines dropped ...]",
+    "4",
+    "5",
+    "",
+  ]);
+  many.clear();
+  assert.deepEqual(many.lines(), [""]);
+});
+
+test("runner: exit codes read as words, not numbers", () => {
+  assert.equal(formatExit(0), "exit 0");
+  assert.equal(formatExit(2), "exit 2");
+  assert.equal(formatExit(-1), "killed (-1)");
+  assert.equal(formatExit(null), "running");
+  assert.equal(formatExit(undefined), "running");
+});
+
+test("command line: quoting, zoom words and card descriptions", () => {
+  assert.deepEqual(parseCommandLine("open examples/hello.bf"), ["open", "examples/hello.bf"]);
+  assert.deepEqual(parseCommandLine('  run  "python tools/bf.py" "a b.bf" '), ["run", "python tools/bf.py", "a b.bf"]);
+  assert.deepEqual(parseCommandLine('link c1 c2 "runs the file"'), ["link", "c1", "c2", "runs the file"]);
+  assert.deepEqual(parseCommandLine("note hello world"), ["note", "hello", "world"]);
+  assert.deepEqual(parseCommandLine("   "), []);
+  assert.deepEqual(parseCommandLine(""), []);
+
+  assert.equal(parseZoomArgument("in", 1), 1.25);
+  assert.equal(parseZoomArgument("out", 1), 0.8);
+  assert.equal(parseZoomArgument("reset", 3), 1);
+  assert.equal(parseZoomArgument("2"), 2);
+  assert.equal(parseZoomArgument("50%"), 0.5);
+  assert.equal(parseZoomArgument("banana"), null);
+  assert.equal(parseZoomArgument(""), null);
+
+  assert.equal(describeCard({ kind: "editor", file: "a.bf" }), "editor a.bf");
+  assert.equal(describeCard({ kind: "runner", cmd: "ls" }), "runner ls");
+  assert.equal(describeCard({ kind: "files" }), "files **/*");
+  assert.equal(describeCard(null), "no card selected");
+});
+
+/* ------------------------------------------------------------------ */
+/* end to end: a real HTTP server speaking the frozen contract          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The whole point of this section: the fake-fetch tests above prove the logic,
+ * this one proves the *wire*.  A real `node:http` server answers `/rpc` exactly
+ * as `node shell/main.mjs serve` promises to and streams `/events` as chunked
+ * `text/event-stream`, and the client is left to use real fetch, real sockets
+ * and real chunk boundaries.
+ */
+await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", async () => {
+  const board = { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, cards: [], links: [] };
+  let boardRevision = 3;
+  let fileRevision = 11;
+  const seenMethods = [];
+  const sockets = new Set();
+
+  const server = createServer((req, res) => {
+    if (req.url === "/events") {
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+      const send = (object) => res.write(`data: ${JSON.stringify(object)}\n\n`);
+      send({ event: "log", level: "info", message: "hello from the host" });
+      // Two events written into a single TCP segment, so the reader has to split
+      // a chunk that contains more than one frame.
+      res.write(`data: ${JSON.stringify({ event: "log", level: "warn", message: "one" })}\n\n`
+        + `data: ${JSON.stringify({ event: "log", level: "info", message: "two" })}\n\n`);
+      setTimeout(() => {
+        send({ event: "exec.output", run_id: 1, stream: "stdout", data: "out\n" });
+        send({ event: "exec.exit", run_id: 1, code: 0 });
+        res.end();
+      }, 20);
+      return;
+    }
+
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      let parsed = { method: "", params: {} };
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        parsed = { method: "", params: {} };
+      }
+      seenMethods.push(parsed.method);
+      const reply = (value) => {
+        // The real host speaks JSON-RPC, so the mock does too: the same id
+        // comes back with either a result or an error.  Replying in any other
+        // shape would be testing a host that does not exist.
+        const body = value.ok === true
+          ? { jsonrpc: "2.0", id: parsed.id, result: value.result }
+          : { jsonrpc: "2.0", id: parsed.id, error: value.error };
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+      switch (parsed.method) {
+        case "hello":
+          reply({ ok: true, result: { protocol: "seide/1", kernel_version: "0.1.0", root: "C:/codes/seIDE", pid: 4242 } });
+          return;
+        case "board.load":
+          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, document: board } });
+          return;
+        case "board.save":
+          if (parsed.params.base_revision !== boardRevision) {
+            reply({
+              ok: false,
+              error: {
+                code: 409, name: "STALE_REVISION", message: "board moved on",
+                data: { current_revision: boardRevision },
+              },
+            });
+            return;
+          }
+          boardRevision += 1;
+          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, saved: true } });
+          return;
+        case "file.read":
+          reply({ ok: true, result: { path: parsed.params.path, text: "++ [>+<]\n", revision: fileRevision, size: 9, eol: "lf" } });
+          return;
+        case "file.write":
+          if (parsed.params.base_revision !== fileRevision) {
+            reply({
+              ok: false,
+              error: {
+                code: 409, name: "STALE_REVISION", message: "file moved on",
+                data: { current_revision: fileRevision },
+              },
+            });
+            return;
+          }
+          fileRevision += 1;
+          reply({ ok: true, result: { path: parsed.params.path, revision: fileRevision, size: parsed.params.text.length, eol: "lf" } });
+          return;
+        case "lang.tokenize":
+          reply({ ok: true, result: { lang: { id: "bf", title: "Brainfuck" }, tokens: [[0, 2, "command"], [3, 8, "command"]] } });
+          return;
+        default:
+          reply({ ok: false, error: { code: 404, name: "NO_METHOD", message: `no method ${parsed.method}` } });
+      }
+    });
+  });
+
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+
+  try {
+    const client = createClient({ origin: `http://127.0.0.1:${port}` });
+    const events = [];
+    client.on("log", (event) => events.push(event.message));
+    client.on("exec.output", (event) => events.push(event.data));
+    client.on("exec.exit", (event) => events.push(`exit ${event.code}`));
+    client.connect();
+    await client.ready();
+    assert.equal(client.connected, true);
+
+    const hello = await client.call("hello", {});
+    assert.equal(hello.protocol, "seide/1");
+    assert.equal(hello.pid, 4242);
+
+    const loaded = await client.call("board.load", {});
+    assert.equal(loaded.revision, 3);
+    assert.deepEqual(loaded.document.cards, []);
+
+    const saved = await client.call("board.save", { document: board, base_revision: 3 });
+    assert.equal(saved.saved, true);
+    assert.equal(saved.revision, 4, "the host bumps the revision");
+
+    const stale = await client.call("board.save", { document: board, base_revision: 3 }).then(
+      () => null,
+      (err) => err,
+    );
+    assert.ok(stale instanceof RpcError, "a stale board save must reject");
+    assert.equal(stale.code, 409);
+    assert.equal(stale.errorName, "STALE_REVISION");
+    assert.equal(stale.data.current_revision, 4);
+    assert.equal(staleCurrentRevision(stale), 4);
+    assert.ok(client.isStaleRevision(stale));
+
+    const read = await client.call("file.read", { path: "examples/hello.bf" });
+    assert.equal(read.revision, 11);
+    const written = await client.call("file.write", {
+      path: read.path, text: read.text, base_revision: read.revision,
+    });
+    assert.equal(written.revision, 12);
+    const staleWrite = await client.call("file.write", {
+      path: read.path, text: "x", base_revision: 11,
+    }).then(() => null, (err) => err);
+    assert.equal(staleCurrentRevision(staleWrite), 12, "the second writer sees the live revision");
+
+    const tokenized = await client.call("lang.tokenize", { path: read.path, text: read.text });
+    assert.equal(tokenized.lang.id, "bf");
+    const segments = applyTokenSpans(read.text, tokenized.tokens);
+    assert.equal(segmentsText(read.text, tokenized.tokens), read.text);
+    assert.equal(segments[0].kind, "command");
+
+    const unknown = await client.call("nope", {}).then(() => null, (err) => err);
+    assert.equal(unknown.errorName, "NO_METHOD");
+    assert.equal(unknown.code, 404);
+
+    // The stream's frames were split by the real socket, not by the test.
+    for (let i = 0; i < 40 && !events.includes("exit 0"); i += 1) {
+      await tick(1);
+    }
+    assert.deepEqual(events, ["hello from the host", "one", "two", "out\n", "exit 0"]);
+    assert.equal(client.connected, false, "the host ended the stream, so we report disconnected");
+
+    assert.deepEqual(seenMethods, [
+      "hello", "board.load", "board.save", "board.save",
+      "file.read", "file.write", "file.write", "lang.tokenize", "nope",
+    ]);
+    client.close();
+  } finally {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* the card-kind hook                                                  */
+/* ------------------------------------------------------------------ */
+
+test("hook: the five built-in kinds register in a known order", () => {
+  assert.deepEqual(knownCardKinds(), ["editor", "runner", "note", "files", "sheet"]);
+  for (const kind of knownCardKinds()) {
+    const spec = cardKind(kind);
+    assert.equal(spec.kind, kind);
+    assert.equal(typeof spec.render, "function");
+    assert.equal(typeof spec.describe, "function");
+    assert.equal(typeof spec.create, "function");
+    assert.equal(typeof spec.title, "string");
+    assert.ok(Object.isFrozen(spec), `${kind} is frozen so a fork cannot half-edit it`);
+  }
+  assert.equal(cardKind("nosuchkind"), null);
+  assert.deepEqual(CARD_KIND_CONTRACT.required, ["kind", "render"]);
+});
+
+test("hook: a bad registration is refused", () => {
+  assert.throws(() => registerCardKind(null), /must be an object/);
+  assert.throws(() => registerCardKind({}), /kind must be a non-empty string/);
+  assert.throws(() => registerCardKind({ kind: "x" }), /render must be a function/);
+  assert.throws(
+    () => registerCardKind({ kind: "note", render: () => ({}) }),
+    /already registered/,
+    "overriding a built-in has to be explicit",
+  );
+  assert.equal(cardKind("x"), null, "a refused registration leaves nothing behind");
+});
+
+test("hook: registerCardKind is the whole extension mechanism", () => {
+  const before = knownCardKinds().length;
+  const spec = registerCardKind({
+    kind: "probe",
+    title: "Probe",
+    create: () => ({ n: 7 }),
+    describe: (card) => `probe n=${card.n}`,
+    render: () => ({ el: null, handle: {}, destroy() {} }),
+  });
+  assert.equal(spec.title, "Probe");
+  assert.equal(knownCardKinds().length, before + 1);
+  assert.deepEqual(spec.create(), { n: 7 });
+  assert.equal(describeCard({ id: "c9", kind: "probe", n: 3 }), "probe n=3");
+  /* The board stores any kind, so a new one needs no board change. */
+  const board = createBoard();
+  const card = board.addCard("probe", 0, 0, spec.create());
+  assert.equal(card.n, 7);
+  assert.equal(board.serialize().cards[0].kind, "probe");
+  /* Clean up so later checks see the shipped set. */
+  registerCardKind({ kind: "probe", render: () => ({ el: null, handle: {}, destroy() {} }), replace: true });
+});
+
+test("describe: an unregistered or hostile kind cannot break the header", () => {
+  assert.match(describeCard({ id: "c1", kind: "mystery" }), /^mystery c1$/);
+  assert.equal(describeCard(null), "no card selected");
+  assert.match(describeCard({ id: "c2" }), /^\? c2$/);
+  registerCardKind({
+    kind: "grumpy",
+    replace: true,
+    render: () => ({ el: null, handle: {}, destroy() {} }),
+    describe: () => {
+      throw new Error("nope");
+    },
+  });
+  assert.match(describeCard({ id: "c3", kind: "grumpy" }), /^grumpy c3/);
+});
+
+/* ------------------------------------------------------------------ */
+/* the sheet model -- structured, not textual state                    */
+/* ------------------------------------------------------------------ */
+
+test("sheet: emptySheet is a legal one-by-one grid", () => {
+  const sheet = emptySheet();
+  assert.equal(sheet.columns.length, 1);
+  assert.equal(sheet.rows.length, 1);
+  assert.equal(sheetSummary(sheet), "1 row x 1 column");
+  assert.deepEqual(SHEET_TYPES, ["text", "number", "bool", "choice"]);
+  assert.equal(sheetCell(sheet, "row1", "column1"), "");
+});
+
+test("sheet: normaliseSheet repairs anything into a usable grid", () => {
+  const empty = normaliseSheet(undefined);
+  assert.equal(empty.columns.length, 1, "a sheet always has at least one column");
+
+  const repaired = normaliseSheet({
+    columns: [
+      { id: "a", title: "", type: "number" },
+      { id: "a", type: "nosuchtype" },
+      "not a column",
+      { id: "c", type: "choice", options: ["x", 9, "y"] },
+    ],
+    rows: [
+      { id: "r", cells: { a: "12.5", c: "x" } },
+      { id: "r", cells: null },
+      "not a row",
+    ],
+  });
+  assert.equal(repaired.columns.length, 3, "the string is not a column");
+  assert.equal(repaired.columns[0].title, "a", "a missing title falls back to the id");
+  assert.deepEqual(repaired.columns[1].type, "text", "an unknown type becomes text");
+  assert.notEqual(repaired.columns[1].id, "a", "a duplicate id is renamed");
+  assert.deepEqual(repaired.columns[2].options, ["x", "y"], "non-string options are dropped");
+  assert.equal(repaired.rows.length, 2, "the string is not a row");
+  assert.equal(repaired.rows[0].cells.a, 12.5, "a number column coerces its cell");
+  assert.deepEqual(Object.keys(repaired.rows[1].cells), ["a", repaired.columns[1].id, "c"],
+    "a row with no cells still gets one slot per column");
+  assert.notEqual(repaired.rows[1].id, "r", "a duplicate row id is renamed");
+});
+
+test("sheet: coercion is by column type, and never throws", () => {
+  assert.equal(coerceSheetValue("number", "3.5"), 3.5);
+  assert.equal(coerceSheetValue("number", "  -2 "), -2);
+  assert.equal(coerceSheetValue("number", "banana"), 0);
+  assert.equal(coerceSheetValue("number", NaN), 0);
+  assert.equal(coerceSheetValue("bool", true), true);
+  assert.equal(coerceSheetValue("bool", "true"), true);
+  assert.equal(coerceSheetValue("bool", "false"), false);
+  assert.equal(coerceSheetValue("bool", 0), false);
+  assert.equal(coerceSheetValue("text", null), "");
+  assert.equal(coerceSheetValue("text", 42), "42");
+  assert.equal(coerceSheetValue("nosuchtype", 42), "42");
+});
+
+test("sheet: editing mutates the card's own object, not a copy", () => {
+  const doc = emptySheet();
+  const identity = doc;
+  assert.equal(setSheetCell(doc, "row1", "column1", "hello"), true);
+  assert.equal(doc, identity, "card.doc keeps its identity across an edit");
+  assert.equal(sheetCell(doc, "row1", "column1"), "hello");
+  assert.equal(setSheetCell(doc, "nosuchrow", "column1", "x"), false);
+  assert.equal(sheetCell(doc, "nosuchrow", "column1"), "");
+});
+
+test("sheet: rows and columns add and remove, with the edges guarded", () => {
+  const doc = emptySheet();
+  const column = addSheetColumn(doc, "number");
+  assert.equal(doc.columns.length, 2);
+  assert.equal(column.type, "number");
+
+  const row = addSheetRow(doc);
+  assert.equal(doc.rows.length, 2);
+  assert.deepEqual(Object.keys(row.cells), doc.columns.map((c) => c.id),
+    "a new row has a cell for every column, including ones added before it");
+  assert.equal(row.cells[column.id], 0, "a number cell starts at 0, not at ''");
+
+  assert.equal(removeSheetRow(doc, row.id), true);
+  assert.equal(removeSheetRow(doc, row.id), false);
+  assert.equal(doc.rows.length, 1);
+
+  assert.equal(removeSheetColumn(doc, column.id), true);
+  assert.equal(removeSheetColumn(doc, doc.columns[0].id), false, "the last column stays");
+  assert.equal(removeSheetColumn(doc, "nosuchcolumn"), false);
+  assert.equal(doc.columns.length, 1);
+
+  /* An empty sheet is legal; only the columns are load-bearing. */
+  assert.equal(removeSheetRow(doc, doc.rows[0].id), true);
+  assert.equal(doc.rows.length, 0);
+  assert.equal(sheetSummary(doc), "0 rows x 1 column");
+});
+
+test("sheet: TSV is how structured state leaves the card", () => {
+  const doc = normaliseSheet({
+    columns: [{ id: "name", title: "name" }, { id: "n", title: "n", type: "number" }],
+    rows: [{ id: "r1", cells: { name: "a\tb\nc", n: 5 } }, { id: "r2", cells: { name: "z", n: 0 } }],
+  });
+  assert.equal(sheetToTSV(doc), "name\tn\na b c\t5\nz\t0\n",
+    "tabs and newlines inside a cell become spaces so the grid stays rectangular");
+  assert.equal(sheetToTSV(emptySheet()), "column1\n\n");
+});
+
+test("sheet: keyboard navigation clamps instead of wrapping", () => {
+  const doc = normaliseSheet({
+    columns: [{ id: "a" }, { id: "b" }],
+    rows: [{ id: "r1" }, { id: "r2" }],
+  });
+  assert.deepEqual(nextSheetSelection(doc, { row: 0, column: 0 }, 1, 1), { row: 1, column: 1 });
+  assert.deepEqual(nextSheetSelection(doc, { row: 1, column: 1 }, 1, 1), { row: 1, column: 1 });
+  assert.deepEqual(nextSheetSelection(doc, { row: 0, column: 0 }, -1, -1), { row: 0, column: 0 });
+  assert.deepEqual(nextSheetSelection(doc, null, 0, 1), { row: 0, column: 1 });
+  assert.equal(nextSheetSelection({ columns: [{ id: "a" }], rows: [] }, null, 1, 0), null);
+});
+
+test("protocol: a non-text card payload survives the board verbatim", () => {
+  const doc = normaliseSheet({
+    columns: [{ id: "k", title: "key" }, { id: "n", title: "n", type: "number" }, { id: "f", type: "bool" }],
+    rows: [{ id: "r1", cells: { k: "unicode: \u00e9\u4e2d", n: 1.5, f: true } }],
+  });
+  const board = createBoard();
+  board.load({
+    version: 1,
+    cards: [{ id: "s1", kind: "sheet", x: 0, y: 0, w: 400, h: 300, z: 1, title: "t", doc }],
+    links: [],
+  });
+  const out = board.serialize();
+  assert.equal(out.cards.length, 1);
+  assert.equal(out.cards[0].kind, "sheet", "the board does not police card kinds");
+  assert.deepEqual(out.cards[0].doc, doc, "nested structured state round-trips unchanged");
+  assert.notEqual(out.cards[0].doc, doc, "and it is a copy, not an alias");
+  assert.equal(DEFAULT_SIZE.sheet.w, 460);
+  assert.ok(CARD_KINDS.includes("sheet"));
+});
+
+test("protocol: an unknown kind is preserved, never silently dropped", () => {
+  const board = createBoard();
+  board.load({
+    version: 1,
+    cards: [{ id: "u1", kind: "holodeck", x: 1, y: 2, w: 3, h: 4, payload: { deep: [1, 2, { three: true }] } }],
+    links: [],
+  });
+  const out = board.serialize();
+  assert.equal(out.cards.length, 1);
+  assert.equal(out.cards[0].kind, "holodeck");
+  assert.deepEqual(out.cards[0].payload, { deep: [1, 2, { three: true }] });
+});
+
+test("protocol: the kernel's card check is shape, not vocabulary", () => {
+  /* The kernel (core/src/board.c) requires id/kind/x/y/w/h and nothing else,
+     which is what lets a fork invent kinds without touching C. */
+  const shape = normaliseDocument({
+    cards: [
+      { id: "c1", kind: "sheet", x: 0, y: 0, w: 10, h: 10, doc: { anything: true } },
+      { kind: "sheet", x: 0, y: 0, w: 10, h: 10 },
+      { id: "c2", kind: "", x: 0, y: 0, w: 10, h: 10 },
+      { id: "c3", kind: "note", x: 0, y: 0 },
+    ],
+  });
+  assert.equal(shape.document.cards.length, 1);
+  assert.equal(shape.droppedCards.length, 3);
+  assert.deepEqual(shape.document.cards[0].doc, { anything: true });
+});
+
+/* ------------------------------------------------------------------ */
+
+const passed = checks - failures.length;
+if (failures.length > 0) {
+  for (const { name, err } of failures) {
+    console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);
+    if (err && err.stack && !/^AssertionError/.test(err.name || "")) {
+      console.error(String(err.stack).split("\n").slice(1, 4).map((line) => `     ${line.trim()}`).join("\n"));
+    }
+  }
+  console.error(`ok ${passed}/${checks}`);
+  process.exitCode = 1;
+} else {
+  console.log(`ok ${passed}/${checks}`);
+}

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>seIDE — board</title>
+<!--
+  The whole page.  There is no tab strip and no side panel here on purpose:
+  those would be the two things that turn a board back into a conventional IDE.
+
+  Everything the browser needs is in this directory.  No CDN, no framework, no
+  build step, no network access beyond the kernel's own loopback endpoints.
+-->
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- The board: one persistent 2-D surface. `#board` handles pan/zoom and all
+       pointer gestures; `#stage` carries the single translate+scale. -->
+  <main id="board" aria-label="board">
+    <div id="stage">
+      <!-- The link overlay lives *inside* #stage on purpose: #stage carries the
+           one translate+scale transform, and main.mjs writes every path in world
+           coordinates -- the same units as a card's x/y.  Nested here, the
+           overlay pans and zooms with the cards for free; as a sibling of
+           #stage it would stay put while the cards moved. -->
+      <svg id="links" aria-hidden="true">
+        <!-- connections are inserted here, in world coordinates -->
+      </svg>
+      <div id="cards">
+        <!-- cards are inserted here by main.mjs -->
+      </div>
+    </div>
+  </main>
+
+  <!-- Shown only while the board is empty, or when the kernel cannot be
+       reached.  It is the visible "kernel not reachable" state: never a blank
+       page and never a console-only error. -->
+  <section id="empty-state" hidden>
+    <h1 class="empty-title">the board is empty</h1>
+    <p class="empty-text"></p>
+    <button id="reload-board" class="empty-button" type="button">try to connect again</button>
+  </section>
+
+  <!-- A fixed heads-up strip: what is selected, at what zoom, saved or not. -->
+  <header id="hud">
+    <span class="hud-brand">seIDE</span>
+    <span class="hud-sep">/</span>
+    <span id="hud-selection" class="hud-item">no card</span>
+    <span class="hud-spacer"></span>
+    <span id="hud-revision" class="hud-item">unsaved</span>
+    <span id="hud-dirty" class="hud-item">saved</span>
+    <span id="hud-zoom" class="hud-item">100%</span>
+    <span id="kernel-status" class="hud-item is-connecting" data-state="connecting">connecting…</span>
+  </header>
+
+  <!-- The board's own log.  Every refusal, warning and unknown command lands
+       here as a line, which is why seIDE needs no dialogs. -->
+  <div id="log" role="log" aria-live="polite" aria-label="board log"></div>
+
+  <!-- The single command line, at the bottom, acting on the focused card. -->
+  <footer id="bar">
+    <span class="bar-prompt" aria-hidden="true">&gt;</span>
+    <input id="command" type="text" spellcheck="false" autocomplete="off"
+           placeholder="open &lt;path&gt; · note &lt;text&gt; · run &lt;cmd&gt; · sheet [title] · files · link &lt;from&gt; &lt;to&gt; · help"
+           aria-label="board command line">
+    <span id="command-hint" class="bar-hint" aria-hidden="true"></span>
+  </footer>
+
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

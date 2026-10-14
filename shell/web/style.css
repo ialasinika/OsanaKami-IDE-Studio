@@ -1,0 +1,793 @@
+/* style.css -- the entire look of seIDE.
+ *
+ * One dark surface, four accents, and a dot grid.  Nothing here is decorative
+ * for its own sake: the grid makes the board read as a continuous plane (so it
+ * never looks like a document list), the cards are the only raised things, and
+ * the bottom strip is where every message goes instead of a dialog.
+ *
+ * Layout metrics that *must* stay in sync with cards.mjs:
+ *   .ed-view (the coloured <pre>) and .ed-input (the transparent textarea) share
+ *   font-family/size/line-height/padding/tab-size exactly, or the caret and the
+ *   colouring shear apart.  Both are set here from --code-* variables.
+ *
+ * DELETE THIS FILE and the board still works, but it renders as unstyled white
+ * boxes stacked at the origin; the class names in cards.mjs and main.mjs are the
+ * contract this file satisfies.
+ */
+
+:root {
+  /* surfaces */
+  --bg: #14161a;
+  --bg-deep: #0e1013;
+  --card: #1b1e24;
+  --card-hi: #22262e;
+  --line: #2b3038;
+  --line-soft: #22262d;
+
+  /* text */
+  --fg: #d7dce3;
+  --fg-dim: #8b94a1;
+  --fg-faint: #5c6470;
+
+  /* accents */
+  --accent: #6fb3ff;
+  --accent-dim: #2c4a6b;
+  --ok: #74c991;
+  --warn: #e8b96b;
+  --error: #ef7373;
+
+  /* code metrics -- see the note above */
+  --code-font: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Courier New", monospace;
+  --code-size: 12.5px;
+  --code-line: 19px;
+  --code-pad: 10px;
+
+  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono-font: var(--code-font);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-deep);
+  color: var(--fg);
+  font: 13px/1.4 var(--ui-font);
+}
+
+body {
+  display: grid;
+  /* board (flexible) / log / command line */
+  grid-template-rows: 1fr auto auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* the board                                                           */
+/* ------------------------------------------------------------------ */
+
+#board {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  /* Two dot layers: a fine grid and a coarse one every 5th dot.  The size and
+     position are driven from JS by the viewport, which is what makes the
+     surface pan and zoom as one plane. */
+  background-image:
+    radial-gradient(circle, #2a2f38 1px, transparent 1px),
+    radial-gradient(circle, #3a414d 1.4px, transparent 1.4px);
+  background-size: 24px 24px, 120px 120px;
+  background-position: 0 0, 0 0;
+  cursor: grab;
+  touch-action: none;
+  contain: strict;
+}
+
+#board:active { cursor: grabbing; }
+
+#stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+#cards {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The link overlay is a drawing surface, not a layout box: it is a single
+   pixel square that lets everything paint outside it.  Sizing it as a
+   percentage of #stage would make it 0x0, because #stage is a transform
+   origin with no size of its own -- and an SVG with no viewport paints
+   nothing, however correct the geometry inside it is. */
+#links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* The group wrapping every link's paths and label.  It is a plain container:
+   the geometry lives on .link-path/.link-bg and the text on .link-label.  It
+   never takes the pointer, so a link can never eat a card drag. */
+.link { pointer-events: none; }
+
+.link-path {
+  fill: none;
+  stroke: #4b5566;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.link-bg {
+  fill: none;
+  stroke: var(--bg);
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.link-label {
+  fill: var(--fg-dim);
+  font: 10px/1 var(--mono-font);
+  text-anchor: middle;
+  paint-order: stroke;
+}
+
+.link-label.is-empty { display: none; }
+
+.link-label-bg {
+  fill: #1b1e24e6;
+  stroke: var(--line);
+  stroke-width: 1;
+  rx: 3;
+}
+
+/* ------------------------------------------------------------------ */
+/* hud                                                                 */
+/* ------------------------------------------------------------------ */
+
+#hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font: 11.5px/1 var(--mono-font);
+  color: var(--fg-dim);
+  background: linear-gradient(180deg, #0e1013e0, #0e101300);
+  pointer-events: none;
+  z-index: 10000;
+}
+
+.hud-brand { color: var(--fg); letter-spacing: 0.14em; text-transform: uppercase; font-size: 10.5px; }
+.hud-sep { color: var(--fg-faint); }
+.hud-spacer { flex: 1; }
+.hud-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+#hud-selection { color: var(--fg); }
+#hud-dirty.is-dirty { color: var(--warn); }
+
+#kernel-status::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  vertical-align: middle;
+}
+#kernel-status.is-connecting::before { background: var(--warn); }
+#kernel-status.is-ready::before { background: var(--ok); }
+#kernel-status.is-unreachable::before { background: var(--error); }
+#kernel-status.is-unreachable { color: var(--error); }
+
+/* ------------------------------------------------------------------ */
+/* empty / unreachable state                                           */
+/* ------------------------------------------------------------------ */
+
+#empty-state {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  max-width: 460px;
+  padding: 18px 20px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #14161ad0;
+  z-index: 5;
+}
+
+#empty-state[hidden] { display: none; }
+.empty-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--fg); }
+.empty-text { margin: 0 0 12px; color: var(--fg-dim); font-size: 12px; }
+
+.empty-button, .ask-button {
+  font: 11.5px/1 var(--mono-font);
+  color: var(--fg);
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.empty-button:hover, .ask-button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ------------------------------------------------------------------ */
+/* cards                                                               */
+/* ------------------------------------------------------------------ */
+
+.card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  min-height: 80px;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px #00000059;
+  color: var(--fg);
+}
+
+.card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 6px 22px #00000073, 0 0 0 1px var(--accent-dim);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px;
+  flex: 0 0 auto;
+  background: #22262e;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: grab;
+  user-select: none;
+  font: 11px/1 var(--mono-font);
+  color: var(--fg-dim);
+}
+.card-title:active { cursor: grabbing; }
+
+.card.is-selected .card-title { background: #262b34; }
+.card-kind {
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9.5px;
+}
+.card-label {
+  flex: 1;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Per-kind card hooks.  cards.mjs puts `card-<kind>` on every card shell, so a
+   fork can restyle one kind by touching one line here.  Each kind carries its
+   own accent, which the title's kind label picks up -- that is what keeps a
+   board readable at a glance once the cards are too small to read. */
+.card-editor { --kind-accent: var(--accent); }
+.card-runner { --kind-accent: var(--ok); }
+.card-note { --kind-accent: var(--warn); }
+.card-files { --kind-accent: #b79cf0; }
+.card .card-kind { color: var(--kind-accent, var(--fg-faint)); }
+
+/* `is-accent` marks the card the board wants you to look at.  It reads as a
+   stronger card without stealing .is-selected's border. */
+.card.is-accent { border-color: var(--accent-dim); }
+.card.is-accent .card-title { background: #262b34; }
+
+.card-tools { display: flex; align-items: center; gap: 6px; color: var(--fg-dim); }
+
+.card-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 55%, var(--fg-faint) 55% 62%, transparent 62% 74%, var(--fg-faint) 74% 81%, transparent 81%);
+}
+.card.is-selected .card-grip {
+  background:
+    linear-gradient(135deg, transparent 0 55%, var(--accent) 55% 62%, transparent 62% 74%, var(--accent) 74% 81%, transparent 81%);
+}
+
+.card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Per-kind body hooks.  The four known kinds each fill the card and manage
+   their own inner padding; the note body carries the same surface colour as
+   its textarea so the card shows no seam behind it. */
+.card-body-editor,
+.card-body-runner,
+.card-body-files { padding: 0; }
+.card-body-note { padding: 0; background: #1a1d22; }
+.card-body-sheet { padding: 0; background: #1a1d22; }
+.card-body-unknown { padding: 2px; }
+
+.card-status {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-top: 1px solid var(--line-soft);
+  font: 10.5px/1.5 var(--mono-font);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-button {
+  font: 10.5px/1 var(--mono-font);
+  color: var(--fg-dim);
+  background: #262b34;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.card-button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent-dim); }
+.card-button:disabled { opacity: 0.4; cursor: default; }
+
+.card-message { margin: 10px; color: var(--warn); font: 11.5px/1.5 var(--mono-font); }
+
+/* ------------------------------------------------------------------ */
+/* editor card: coloured <pre> under a transparent <textarea>          */
+/* ------------------------------------------------------------------ */
+
+.ed-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ed-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #16191e;
+}
+
+.ed-view,
+.ed-input {
+  margin: 0;
+  padding: var(--code-pad);
+  border: 0;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  line-height: var(--code-line);
+  letter-spacing: normal;
+  tab-size: 4;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.ed-view {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 100%;
+  min-height: 100%;
+  color: var(--fg);
+  pointer-events: none;
+}
+
+/* Transparent overlay: the text lives in the <pre>, the caret lives here, so
+   re-colouring never touches the element the user is typing into. */
+.ed-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--accent);
+  overflow: auto;
+}
+
+.ed-input::selection { background: #6fb3ff44; }
+.ed-input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+
+/* ------------------------------------------------------------------ */
+/* runner card                                                         */
+/* ------------------------------------------------------------------ */
+
+.run-controls {
+  display: flex;
+  gap: 5px;
+  padding: 6px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.run-cmd {
+  flex: 1;
+  min-width: 0;
+  font: 11.5px/1.5 var(--mono-font);
+  color: var(--fg);
+  background: #14171c;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+}
+.run-cmd:focus { border-color: var(--accent-dim); }
+.run-cmd:disabled { opacity: 0.6; }
+
+.run-out {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  background: #101317;
+  color: #c3cad4;
+  font: 11.5px/1.5 var(--mono-font);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.run-exit { font-size: 10.5px; color: var(--fg-faint); }
+
+/* ------------------------------------------------------------------ */
+/* note card                                                           */
+/* ------------------------------------------------------------------ */
+
+.note-input {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: 8px;
+  background: #1a1d22;
+  color: var(--fg);
+  font: 12px/1.55 var(--ui-font);
+}
+.note-input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+
+/* ------------------------------------------------------------------ */
+/* files card                                                          */
+/* ------------------------------------------------------------------ */
+
+.files-filter {
+  margin: 6px;
+  font: 11px/1.5 var(--mono-font);
+  color: var(--fg);
+  background: #14171c;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+}
+.files-filter:focus { border-color: var(--accent-dim); }
+
+.files-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 4px 4px;
+}
+
+.file-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg);
+  font: 11.5px/1.6 var(--mono-font);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.file-row:hover { background: var(--card-hi); }
+.file-row.is-dir .file-name { color: var(--accent); }
+.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-meta { color: var(--fg-faint); font-size: 10px; white-space: nowrap; }
+
+/* ------------------------------------------------------------------ */
+/* token colours (lang.tokenize kinds)                                 */
+/* ------------------------------------------------------------------ */
+
+.tok-comment  { color: #6b7482; font-style: italic; }
+.tok-string   { color: #b6d78a; }
+.tok-number   { color: #dcb67a; }
+.tok-keyword  { color: #c792ea; }
+.tok-type     { color: #7fd0e0; }
+.tok-constant { color: #f78c6c; }
+.tok-command  { color: #82aaff; font-weight: 600; }
+.tok-punct    { color: #98a2b3; }
+.tok-plain    { color: inherit; }
+/* The tokenizer also names `ident` and `ws`, but cards.mjs folds those -- and
+   `plain` -- into the uncoloured run *between* spans, so no span ever carries
+   these two classes today.  They are defined as the plain colour so the sheet
+   still covers every documented kind if a tokenizer starts labelling them. */
+.tok-ident    { color: inherit; }
+.tok-ws       { color: inherit; }
+
+/* ------------------------------------------------------------------ */
+/* log                                                                 */
+/* ------------------------------------------------------------------ */
+
+#log {
+  max-height: 132px;
+  overflow: auto;
+  padding: 4px 12px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--line-soft);
+  font: 11.5px/1.5 var(--mono-font);
+  position: relative;
+  z-index: 6;
+}
+
+.log-line { display: flex; gap: 8px; white-space: pre-wrap; }
+.log-time { color: var(--fg-faint); flex: 0 0 auto; }
+.log-text { color: var(--fg-dim); }
+.log-info .log-text { color: var(--fg-dim); }
+.log-warn .log-text { color: var(--warn); }
+.log-error .log-text { color: var(--error); }
+
+/* ------------------------------------------------------------------ */
+/* command line                                                        */
+/* ------------------------------------------------------------------ */
+
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #16191e;
+  border-top: 1px solid var(--line);
+}
+
+.bar-prompt { color: var(--accent); font: 13px/1 var(--mono-font); }
+
+#command {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--fg);
+  font: 12.5px/1.6 var(--mono-font);
+}
+#command::placeholder { color: var(--fg-faint); }
+.bar-hint { color: var(--fg-faint); font: 10.5px/1 var(--mono-font); white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+
+/* An inline choice strip -- seIDE's replacement for a dialog. */
+.ask {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #241f16;
+  border-top: 1px solid #4a3d24;
+  font: 11.5px/1.5 var(--mono-font);
+  color: var(--warn);
+}
+.ask-text { flex: 1; }
+.ask-button { background: #2b2620; }
+
+/* ------------------------------------------------------------------ */
+/* motion                                                              */
+/* ------------------------------------------------------------------ */
+
+body.reduce-motion * { transition: none !important; animation: none !important; }
+body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear; }
+
+/* ------------------------------------------------------------------ */
+/* sheet card -- the structured-data editor                            */
+/* ------------------------------------------------------------------ */
+
+/* The grid scrolls inside the card; the card itself stays a fixed rectangle
+   on the board, exactly like every other kind. */
+.sheet-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+.sheet-grid {
+  border-collapse: collapse;
+  font: var(--code-size) / var(--code-line) var(--mono-font);
+  color: var(--fg);
+  /* Fixed layout: columns share the card evenly and a long value never widens
+     the card.  The grid scrolls inside `.sheet-scroll` when it has to. */
+  table-layout: fixed;
+  width: 100%;
+}
+
+.sheet-grid th,
+.sheet-grid td {
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 0;
+  vertical-align: middle;
+}
+
+/* Row numbers and the corner stay put while the columns scroll. */
+.sheet-corner,
+.sheet-row-head {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 34px;
+  min-width: 34px;
+  text-align: right;
+  background: var(--card-hi);
+}
+
+.sheet-corner { top: 0; z-index: 3; height: 46px; }
+
+.sheet-head-row th { position: sticky; top: 0; z-index: 1; background: var(--card-hi); }
+
+.sheet-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 4px;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
+.sheet-col {
+  min-width: 0;
+  padding: 3px 4px 4px 6px !important;
+  text-align: left;
+  vertical-align: top;
+}
+
+/* Name and the remove button share the first line; the type selector is the
+   second line, so a column reads "what it is called" then "what it holds". */
+.sheet-col-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sheet-col-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--fg);
+  font: 600 11px/1.6 var(--ui-font);
+  padding: 1px 0;
+  outline: none;
+}
+.sheet-col-title:hover { border-bottom-color: var(--line); }
+.sheet-col-title:focus { border-bottom-color: var(--accent); }
+
+.sheet-col-type {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin-top: 2px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10px/1.4 var(--mono-font);
+  padding: 1px 2px;
+  outline: none;
+}
+.sheet-col-type:focus { border-color: var(--accent-dim); }
+
+.sheet-drop {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  color: var(--fg-faint);
+  font: 12px/1 var(--mono-font);
+  padding: 0 3px;
+  cursor: pointer;
+}
+.sheet-drop:hover { color: var(--error); }
+
+.sheet-cell { min-width: 0; }
+
+.sheet-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  color: var(--fg);
+  font: inherit;
+  padding: 3px 6px;
+}
+.sheet-input.is-number { text-align: right; font-variant-numeric: tabular-nums; }
+.sheet-input:focus { outline-color: var(--accent); background: var(--bg-deep); }
+
+.sheet-toggle {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--fg-faint);
+  font: inherit;
+  padding: 3px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.sheet-toggle.is-on { color: var(--ok); }
+.sheet-toggle:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.sheet-choice {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  padding: 3px 4px;
+  outline: none;
+}
+.sheet-choice:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.sheet-tools {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.sheet-tool {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.sheet-tool:hover { color: var(--fg); border-color: var(--accent-dim); }
+
+/* An empty sheet still has to look like a grid, not a broken card. */
+.sheet-row.is-empty,
+.sheet-grid .sheet-empty {
+  color: var(--fg-faint);
+  font-style: italic;
+}

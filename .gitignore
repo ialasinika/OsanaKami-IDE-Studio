@@ -1,0 +1,72 @@
+# seIDE -- build artefacts and workspace-local state.
+#
+# Deliberately NOT ignored: examples/ and every *.bf source.  The fixtures are
+# part of the project, and tools/e2e.py runs them.
+
+# ---------------------------------------------------------------------------
+# build output (Makefile: BIN = build/seide.exe, OBJDIR = build/obj)
+# ---------------------------------------------------------------------------
+build/
+
+# ---------------------------------------------------------------------------
+# workspace-local state (the board document lives at <root>/.seide/board.json)
+#
+# The board is where you put things, so it is project state.  Ignoring all of
+# .seide/ keeps each clone's layout private; a fork that wants layouts reviewed
+# in pull requests should drop the next line and keep board.json instead.
+# ---------------------------------------------------------------------------
+.seide/
+
+# ---------------------------------------------------------------------------
+# C objects and binaries
+# ---------------------------------------------------------------------------
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.lib
+*.a
+*.dSYM/
+
+# ---------------------------------------------------------------------------
+# Python (tools/ is standard-library-only, but Python still writes these)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------
+# Node (the shell has no package.json and no dependencies; these appear only
+# if a fork adds them)
+# ---------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------------------------------------------------------------------------
+# editors and IDEs
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# OS droppings
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini

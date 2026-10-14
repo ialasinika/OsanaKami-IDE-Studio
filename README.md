@@ -1,0 +1,307 @@
+# seIDE
+
+seIDE is an **IDE prototype whose purpose is to be forked** into something else —
+typically a proprietary IDE with a different product name and a different audience.
+
+It is deliberately unlike the IDEs you already know, and it is **not a complete
+product**. It is a small, finished, working, honest skeleton: the parts that are
+there work, the parts that are missing are missing on purpose, and every
+deliberate tradeoff is written down instead of discovered.
+
+If you want a mainstream IDE, this is not one, and it is not trying to become
+one. If you want a code base small enough to read in an afternoon and reshape
+without fighting a plugin API, keep reading.
+
+![The seIDE board: an editor card with Brainfuck colouring, a note card, a runner card and two labelled links between them, above a command line](docs/board.png)
+
+---
+
+## What seIDE is
+
+- A **board**: an infinite, pannable, zoomable 2-D canvas of cards. No tabs, no
+  file tree. Where you put things is part of the project state.
+- **Three layers**, each in a different language, each trimmable:
+  - `core/` — the kernel. **C89 only**, zero third-party dependencies.
+  - `shell/` — the front end and the HTTP/stdio endpoints. **JavaScript ESM**,
+    zero npm dependencies.
+  - `tools/` — build driver, protocol driver, a Brainfuck interpreter, a
+    language-descriptor generator. **Python 3.12 standard library only**.
+- A **window** made of the system's Edge/Chromium launched in
+  `--app=http://127.0.0.1:PORT` app mode.
+- One **language** that is actually supported: Brainfuck keyword colouring.
+- A **frozen JSON-RPC protocol** on stdio, newline-delimited, with a documented
+  method list and error-code table.
+
+## What seIDE is not
+
+- **Not a complete product.** There is no settings UI, no terminal emulator, no
+  debugger, no Git integration, no refactoring, no search across the workspace,
+  no undo.
+- **Not extensible.** There is no plugin system, by design. Extension means
+  forking this repository and editing the source.
+- **Not a native window.** The app mode of a browser is not a real application
+  window; see the WRY/Tauri note below.
+- **Not for every language.** IntelliSense, diagnostics, completion and
+  formatting do not exist. Language support is keyword colouring, and the only
+  language that must work is Brainfuck.
+- **Not portable yet.** The kernel's platform layer is Win32.
+
+---
+
+## The eight constraints
+
+These are hard constraints, not aspirations. They are what make the code base
+forkable, and they are what a fork will change first.
+
+### 1. The paradigm is the board, not tabs and a tree
+
+The main surface is one persistent 2-D canvas. Everything you work on is a
+**card** placed at a point on that canvas. A card has a `kind` (`editor`,
+`runner`, `note`, `files`), a position and size (`x`, `y`, `w`, `h`, `z`), may
+reference a file, and may be connected by links. The board persists to
+`<root>/.seide/board.json`, so **where you put things is part of the project
+state**. A non-modal command line at the bottom acts on the focused card.
+See `docs/PARADIGM.md`.
+
+### 2. No Electron
+
+The window is the system's Edge/Chromium launched in
+`--app=http://127.0.0.1:PORT` app mode, with a throwaway profile. There is no
+Electron, no bundled Chromium and nothing to download.
+**For a real product, the replacement path is WRY/Tauri** — currently nothing in
+this repository uses either; the WRY path is described in `docs/FORK.md` and is
+future work, not present work.
+
+### 3. No plugin system, by design
+
+Extension = fork and edit source. There is no plugin loading, no manifest, no
+discovery and no sandbox.
+
+What there *is* is one hook for new card kinds, because "a card is a file with a
+cursor" is the assumption most likely to make a fork expensive. The kernel
+stores any `kind` verbatim and validates only a card's shape; the shell
+registers a kind with a single call:
+
+```js
+registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
+```
+
+The five shipped kinds are `editor`, `runner`, `note`, `files` and `sheet` —
+`sheet` being a structured-data grid (typed cells, rows, columns, TSV export)
+that exists to prove nothing downstream assumes text. See
+[`docs/SURFACES.md`](docs/SURFACES.md).
+
+### 4. The build is fully offline
+
+No package manager, no network, no third-party dependencies, no configure step.
+The Makefile needs a C89 compiler and GNU make, and either finds them or does
+not. `core/` includes only C89 standard headers and `<windows.h>` behind the
+platform layer.
+
+### 5. Low coupling, trivially trimmable
+
+Each module under `core/src/` is a whole subsystem with a stated cost of
+removal. `seide modules` prints the trim manifest. See `docs/TRIM.md`.
+
+### 6. `core/` is C89 ONLY
+
+Enforced by the compiler, not by convention:
+
+```make
+CFLAGS = -std=c89 -pedantic -Wall -Wextra -Werror -O2 -Icore/include
+```
+
+C++ comments, mid-block declarations, `long long` and variadic macros are all
+rejected by `-std=c89 -pedantic -Werror`.
+
+### 7. The project is polyglot on purpose
+
+| layer | language | dependencies |
+| --- | --- | --- |
+| `core/` | C89 | none beyond libc and the OS |
+| `langs/`, `shell/` | JavaScript ESM | zero npm dependencies |
+| `tools/` | Python 3.12 | standard library only |
+
+### 8. Language intelligence is keyword colouring, and it lives in `langs/`
+
+The kernel knows about files, boards and processes — not about programming
+languages. Language support lives in `langs/`, is served by the shell, and is
+**deletable**: `rm -rf langs/` leaves a kernel that still builds and a shell that
+still runs, rendering plain text. Brainfuck is the only language that must be
+supported. See `docs/ARCHITECTURE.md` and `docs/PROTOCOL.md`.
+
+---
+
+## Quick start
+
+Everything below is exactly what was run to verify this document. The versions
+it was verified against:
+
+```text
+Python 3.12.9
+Node   v24.16.0
+GNU Make 4.4.1        (C:\mingw64\mingw64\bin\mingw32-make.exe)
+gcc.exe 14.2.0        (MinGW-W64 x86_64-msvcrt-posix-seh, built by Brecht Sanders, r3)
+```
+
+Build the kernel (produces `build/seide.exe`):
+
+```sh
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile
+```
+
+`tools/build.py` is a thin driver over the same Makefile, and it is what proves
+the toolchain is present:
+
+```sh
+python tools/build.py --check     # print resolved make + gcc and exit
+python tools/build.py             # build (pass --release / --clean / targets)
+```
+
+Run the checks:
+
+```sh
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 3 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 11 passed, 0 failed, 0 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, both JS self-tests
+```
+
+The individual pieces, if you want to run them directly:
+
+```sh
+python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 3 skipped
+python tools/e2e.py --seide build/seide.exe --keep-going
+build/obj/test_json.exe                        # the C JSON codec: "all good"
+node langs/selftest.mjs                        # 43/43 checks passed
+node shell/web/selftest.mjs                    # ok 30/30
+```
+
+`make test` runs `check`, then `fullcheck`, then the JSON test and both
+JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
+run before the self-tests are reached. As of this writing nothing fails.
+
+**The protocol suite used to write to your board, and no longer does.** The
+board round-trip check still drives `board.save` against the workspace it was
+given, but it snapshots the document that was already there and restores it
+before the check returns — including when the check fails. A run against `.`
+leaves `./.seide/board.json` semantically identical (the kernel does re-serialise
+it, so the bytes and key order will differ; the cards, links and viewport will
+not). If there was no board before a run, there is none after it either.
+
+**Current state of the protocol suite:** both modes are green. Kernel mode
+(`check`) reports 8 passed, 0 failed, 3 skipped — the skips are the three
+language checks, which the kernel does not serve. Full mode (`fullcheck`, the
+endpoint that adds `langs/`) reports 11 passed, 0 failed, 0 skipped. See
+[Known rough edges](#known-rough-edges) for what is still genuinely unfinished.
+
+Note `make test` uses `fullcheck`, which needs `node shell/main.mjs`; there is no
+make target that runs only the JavaScript self-tests.
+
+Start the app (builds the window from the system browser):
+
+```sh
+node shell/main.mjs serve --workspace .
+node shell/main.mjs serve --workspace . --no-open    # just serve, print the URL
+node shell/main.mjs rpc --workspace .                # stdio endpoint, no browser
+```
+
+The kernel is usable with no UI at all:
+
+```sh
+build/seide.exe help
+build/seide.exe version
+build/seide.exe modules
+build/seide.exe board show --root .
+build/seide.exe rpc --root . --verbose
+```
+
+---
+
+## Repository map
+
+```
+Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
+                        test, modules, run, clean, and the JSON test target
+README.md               this file
+.gitignore              build artefacts and workspace-local state
+
+core/                   the kernel -- C89, no dependencies
+  include/              public headers: buf, vec, json, port, wksp, board, exec,
+                        serve, rpc, app, module, seide_cfg
+  src/                  one file per module: buf, vec, json, wksp, board, exec,
+                        rpc, serve, app, main
+  port/                 the only OS-aware code: sys_win32.c, proc_win32.c
+  tests/                test_json.c (JSON round-trip harness for the kernel)
+
+langs/                  language support, deliberately OUTSIDE the kernel
+  brainfuck.lang        the only language descriptor that ships
+  lang.mjs              descriptor parsing, validation, registry
+  tokenize.mjs          the tokenizer and its tiling guarantee
+  selftest.mjs          node langs/selftest.mjs -- no kernel needed
+  README.md             the descriptor grammar and wire shapes
+
+shell/                  the front end and the endpoints
+  main.mjs              `seide rpc` (stdio) and `seide serve` (HTTP + SSE + browser)
+  web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
+                        rpc.mjs, main.mjs, selftest.mjs, README.md
+
+tools/                  Python 3.12, standard library only
+  build.py              drives the Makefile; --check / --release / --clean
+  e2e.py                drives the protocol end to end over stdio
+  bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
+  newlang.py            writes a conforming .lang descriptor
+  README.md             what each tool is for
+
+examples/               hello.bf (prints "Hello World!"), shadow.bf
+docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, TRIM.md, FORK.md
+```
+
+Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
+Git. `examples/` is **not** ignored: the `.bf` sources are part of the project.
+
+---
+
+## Known rough edges
+
+Stated plainly, because a fork needs to know what it is inheriting.
+
+- **`file.read` means different things at the two endpoints.** The shell adds a
+  `lang` member (the detected language id, or `null`); the kernel does not,
+  because it has no language layer. `docs/PROTOCOL.md` marks which members come
+  from which layer.
+- **Language colouring is ASCII-only.** `lang.tokenize` returns byte offsets and
+  the shell treats them as string indices; those are the same thing only for
+  ASCII. See `shell/web/main.mjs`'s exported `LIMITATIONS`.
+- **Links are straight lines.** No router, no obstacle avoidance, no automatic
+  layout, and no undo on the board.
+- **The shell is the only client.** There is no second front end, so the protocol
+  has exactly one consumer to keep honest.
+
+---
+
+## Fork it in 10 minutes
+
+Start with `docs/FORK.md` — it is the playbook, ordered by cost. The short
+version:
+
+1. Rename the product (`README.md`, `shell/main.mjs`'s `SHELL_VERSION` and
+   usage text, `core/include/seide_cfg.h`, `core/src/main.c`).
+2. Delete what you do not want: `seide modules` prints the cost of each module,
+   and `docs/TRIM.md` lists the four edits per removal.
+3. Change the window: replace `shell/main.mjs`'s browser launcher with WRY/Tauri
+   (`docs/FORK.md`).
+4. Add your card kind, or your language — `docs/FORK.md` has both recipes.
+
+The protocol is frozen (`docs/PROTOCOL.md`). Keep the JSON-RPC shape and you can
+replace every layer under it in any order.
+
+The docs, in reading order: [`docs/PARADIGM.md`](docs/PARADIGM.md) — why the
+board and not tabs; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
+layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
+[`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
+[`docs/TRIM.md`](docs/TRIM.md) — how to cut a module out;
+[`docs/FORK.md`](docs/FORK.md) — the fork playbook.
+
+> Rejected alternative: **a Rust kernel**. It was dropped because a dependency's
+> build script needed a C compiler, which broke constraint 4 (fully offline,
+> no configure step). C89 has no build script and no dependency graph.
