@@ -50,6 +50,13 @@ int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
 sde_json *sde_wksp_info(const sde_app *app, char *err, size_t errcap);
 
 /*
+ * The directory names `sde_wksp_list()` skips while it walks, in the order the
+ * table declares them.  `*count` receives how many.  Callers report these; they
+ * must not filter by them, because the listing never contains them.
+ */
+const char *const *sde_wksp_ignored_dirs(size_t *count);
+
+/*
  * Walks the tree and returns
  * {"files":[{"path","dir","size","mtime"}, ...],"truncated":bool}.
  * `glob` may be NULL (means "**|*"), and matches workspace-relative paths.

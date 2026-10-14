@@ -92,10 +92,14 @@ static void h_hello(sde_call *c)
 
 static void h_workspace_info(sde_call *c)
 {
-    char       err[256];
-    char       base[256];
+    char        err[256];
+    char        base[256];
     const char *slash;
+    const char *const *ignored;
+    size_t      ignored_count;
+    size_t      i;
     sde_json   *info;
+    sde_json   *names;
 
     err[0] = '\0';
     info = sde_wksp_info(c->app, err, sizeof(err));
@@ -112,6 +116,15 @@ static void h_workspace_info(sde_call *c)
                  sde_json_str(sde_board_path(c->app->board)));
     sde_json_set(info, "board_revision",
                  sde_json_rev(sde_board_revision(c->app->board)));
+
+    /* What `workspace.list` will never hand over, so a client can say why a
+       directory it expects is missing instead of guessing. */
+    ignored = sde_wksp_ignored_dirs(&ignored_count);
+    names = sde_json_arr();
+    for (i = 0; i < ignored_count; i++) {
+        sde_json_push(names, sde_json_str(ignored[i]));
+    }
+    sde_json_set(info, "ignored", names);
     c->owned = info;
 }
 

@@ -86,7 +86,7 @@ when `SDE_WITH_EXEC` is 0.
 | method | parameters | result |
 | --- | --- | --- |
 | `hello` | none | `{protocol, protocol_name, kernel_version, root, pid}` |
-| `workspace.info` | none | `{root, name, file_count, board_path, board_revision}` |
+| `workspace.info` | none | `{root, name, file_count, board_path, board_revision, ignored}` |
 | `workspace.list` | `path?`, `glob?`, `limit?` | `{files, truncated, count}` |
 | `file.read` | `path` | `{path, text, revision, eol, size, mtime}` (+ `lang` from the shell) |
 | `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
@@ -112,12 +112,15 @@ version spelled out for a human reading a log line.
 ### `workspace.info`
 
 ```json
-{"root":"C:/codes/seIDE","name":"seIDE","file_count":42,"board_path":"C:/codes/seIDE/.seide/board.json","board_revision":3901234567}
+{"root":"C:/codes/seIDE","name":"seIDE","file_count":42,"board_path":"C:/codes/seIDE/.seide/board.json","board_revision":3901234567,"ignored":[".git",".seide",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
 ```
 
 `name` is the last path segment of `root`. `board_path` is the absolute path of
 the board document (an empty string before the board has been loaded).
-`board_revision` is a number.
+`board_revision` is a number. `ignored` names the directories `workspace.list`
+skips (see that section): absent rows look exactly like an empty directory, so a
+client that wants to explain a missing `build/` has to be told, and telling it
+here means the list is never written down twice.
 
 **The shell adds one more member to this result:**
 

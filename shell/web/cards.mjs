@@ -5,13 +5,19 @@
  * seIDE has no plugin system: extending the visual vocabulary means forking this
  * file.  What it does have is a *hook* -- `registerCardKind()` -- so that
  * "adding a kind" is one self-contained object instead of an edit to a switch
- * in three places.  Five kinds are registered at the bottom of this file:
- * `editor`, `runner`, `note`, `files` and `sheet`.
+ * in three places.  Six kinds are registered at the bottom of this file:
+ * `editor`, `runner`, `note`, `files`, `project` and `sheet`.
  *
  * `sheet` is there to make the hook honest rather than theoretical.  It is a
  * structured-data editor -- typed cells in a grid, not a textarea -- and it
  * exists to prove that nothing in the board, the protocol or the kernel assumes
  * a card's state is text.  See `docs/SURFACES.md`.
+ *
+ * `files` answers "what is in this folder"; `project` answers "what is in this
+ * *project*, and what do I have open in it".  The second question is the one
+ * that makes many-file editing cheap, which is why the panel lists the whole
+ * workspace and merges it with the board's editor cards.  See
+ * `docs/PROJECT.md`.
  *
  * The file is split in two halves:
  *
@@ -292,6 +298,181 @@ export function matchesFilter(path, filter) {
 }
 
 /* ------------------------------------------------------------------ */
+/* the project view                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What the project view can and cannot show.
+ *
+ * `workspace.list` is the only source of file names here, and the kernel skips
+ * whole directories by name while it walks (`IGNORED_DIRS` in
+ * `core/src/wksp.c`: `.git`, `.seide`, `build`, `node_modules`, ...).  The call
+ * has no flag to ask for them, so this side cannot un-hide them -- a panel that
+ * filtered them itself would be counting rows that never arrive.
+ *
+ * So the project view does not filter: it reports what the kernel left out,
+ * read from `workspace.info.ignored` (the kernel's own table, so the two can
+ * never disagree), and says so when a filter matches nothing.  The `files` card
+ * shows the same set for the same reason.
+ */
+
+/** `a/b/c.txt` -> `a/b`; a file at the workspace root -> `""`. */
+export function dirNameOf(path) {
+  const rel = typeof path === "string" ? path.replace(/\\/g, "/") : "";
+  const at = rel.lastIndexOf("/");
+  return at <= 0 ? "" : rel.slice(0, at);
+}
+
+/**
+ * Fold `workspace.list` plus the files the board has open into the project
+ * view: one row per file, grouped by folder, each carrying its open/dirty
+ * state.  Pure -- no DOM, no filesystem -- so `selftest.mjs` can drive it.
+ *
+ * The project is "the files of this workspace", and the panel exists to make
+ * editing many of them convenient: a row that is open jumps to its card, a row
+ * that is not opens one, and an editor card whose file is gone from disk is
+ * reported as `missing` rather than silently kept.
+ *
+ * @param {object} listing  the `workspace.list` payload (may be absent)
+ * @param {{open?: Array<{id?:string,path?:string,dirty?:boolean}>,
+ *          filter?: string, now?: number}} [options]
+ * @returns {{groups: Array<{folder:string,label:string,rows:object[]}>,
+ *            openRows: object[], missingRows: object[], counts: object}}
+ */
+export function projectRows(listing, options = {}) {
+  const {
+    open = [],
+    filter = "**/*",
+    now = Math.floor(Date.now() / 1000),
+  } = options;
+
+  // The open set first: it marks rows and it is what "missing" is built from.
+  const openByPath = new Map();
+  const openList = [];
+  for (const item of Array.isArray(open) ? open : []) {
+    if (item === null || typeof item !== "object") {
+      continue;
+    }
+    const path = typeof item.path === "string" ? item.path.replace(/\\/g, "/") : "";
+    if (path === "") {
+      continue;
+    }
+    const record = {
+      id: typeof item.id === "string" ? item.id : "",
+      path,
+      name: path.split("/").pop() || path,
+      folder: dirNameOf(path),
+      dirty: item.dirty === true,
+    };
+    openList.push(record);
+    if (!openByPath.has(path)) {
+      openByPath.set(path, record);
+    }
+  }
+
+  const { rows } = formatListing(listing, { now });
+  const onDisk = new Set();
+  const byFolder = new Map();
+  let files = 0;
+  let dirs = 0;
+
+  for (const row of rows) {
+    if (row.dir) {
+      dirs += 1;
+      continue; // folders are the grouping, not a row of their own
+    }
+    files += 1;
+    onDisk.add(row.path);
+
+    const seen = openByPath.get(row.path);
+    const entry = {
+      path: row.path,
+      name: row.name,
+      folder: dirNameOf(row.path),
+      sizeText: row.sizeText,
+      ageText: row.ageText,
+      open: seen !== undefined,
+      dirty: seen !== undefined && seen.dirty,
+      cardId: seen === undefined ? null : seen.id,
+    };
+
+    if (!matchesFilter(entry.path, filter)) {
+      continue;
+    }
+    if (!byFolder.has(entry.folder)) {
+      byFolder.set(entry.folder, []);
+    }
+    byFolder.get(entry.folder).push(entry);
+  }
+
+  const groups = [];
+  for (const folder of [...byFolder.keys()].sort(comparePaths)) {
+    const groupRows = byFolder.get(folder);
+    groupRows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    groups.push({
+      folder,
+      label: folder === "" ? "(root)" : `${folder}/`,
+      rows: groupRows,
+    });
+  }
+
+  // An open editor whose path is not in the listing is a file that moved or
+  // was deleted while its card stayed on the board.  On a truncated listing
+  // that judgement is not safe, which the counts record as `complete`.
+  const openRows = [];
+  const missingRows = [];
+  for (const record of openList.slice().sort((a, b) => comparePaths(a.path, b.path))) {
+    const summary = { ...record, present: onDisk.has(record.path) };
+    openRows.push(summary);
+    if (!summary.present) {
+      missingRows.push(summary);
+    }
+  }
+
+  let shown = 0;
+  for (const group of groups) {
+    shown += group.rows.length;
+  }
+
+  return {
+    groups,
+    openRows,
+    missingRows,
+    counts: {
+      files,
+      dirs,
+      shown,
+      groups: groups.length,
+      open: openList.length,
+      dirty: openList.filter((row) => row.dirty).length,
+      missing: missingRows.length,
+      truncated: Boolean(listing && listing.truncated),
+      complete: !(listing && listing.truncated),
+    },
+  };
+}
+
+/** The one-line summary of a project view, e.g. `128 files · 6 open`. */
+export function projectSummary(counts) {
+  const c = counts && typeof counts === "object" ? counts : {};
+  const parts = [`${c.files || 0} files`];
+  if (c.dirs) {
+    parts.push(`${c.dirs} folders`);
+  }
+  parts.push(`${c.open || 0} open`);
+  if (c.dirty) {
+    parts.push(`${c.dirty} unsaved`);
+  }
+  if (c.missing) {
+    parts.push(`${c.missing} missing`);
+  }
+  if (c.truncated) {
+    parts.push("listing truncated");
+  }
+  return parts.join(" · ");
+}
+
+/* ------------------------------------------------------------------ */
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -538,6 +719,7 @@ export const COMMAND_HELP = [
   "sheet [title]            drop a structured-data card (typed cells, not text)",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
+  "project [glob]           open the project panel (the workspace as one project)",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "zoom <n> | in | out | reset",
@@ -1586,6 +1768,289 @@ function renderFiles(card, ctx) {
   };
 }
 
+/* -------------------- project -------------------- */
+
+/**
+ * The project panel: the one surface that treats the workspace as *one
+ * project*.
+ *
+ * A normal IDE keeps a project so that editing many files is cheap: you can
+ * see what the project contains and what you already have open, and you can
+ * get from one to the other without hunting for a rectangle on the plane.
+ * That is exactly what this card is -- `workspace.list` merged with the
+ * board's editor cards -- and it is why it is a card and not a side panel:
+ * where it sits is project state like everything else.
+ *
+ * It deliberately lists the *whole* workspace -- every file the kernel will
+ * hand over, not just the ones the filter matches -- because the useful
+ * sentence it can say is "this file is gone and a card still points at it",
+ * and that needs the whole project.  Its one piece of state is `filter`, which
+ * lives on the card and therefore in `.seide/board.json`.
+ */
+function renderProject(card, ctx) {
+  const { client, app } = ctx;
+
+  const rootLine = h("div", "project-root");
+  const filterInput = h("input", "project-filter", {
+    attrs: { type: "text", spellcheck: "false", placeholder: "**/*  (folder glob or a word)" },
+  });
+  filterInput.value = typeof card.filter === "string" && card.filter !== "" ? card.filter : "**/*";
+  const refreshButton = h("button", "project-button", {
+    attrs: { type: "button", title: "list the workspace again" },
+    text: "refresh",
+  });
+  const controls = h("div", "project-controls", {
+    children: [filterInput, refreshButton],
+  });
+  const openSection = h("div", "project-section project-open");
+  const treeSection = h("div", "project-section project-tree");
+  const status = makeStatus();
+  const body = h("div", "card-body card-body-project", {
+    children: [rootLine, controls, openSection, treeSection, status],
+  });
+  const shell = cardShell(card, body);
+
+  let timer = null;
+  let requestSeq = 0;
+  let lastOpenSignature = null;
+
+  /**
+   * The directories the kernel never lists, as names (`workspace.info.ignored`).
+   * Empty when an older or forked kernel does not report them, in which case the
+   * panel simply says less instead of guessing.
+   */
+  function hiddenDirs() {
+    const info = app.workspace();
+    const names = info && Array.isArray(info.ignored) ? info.ignored : [];
+    return names.filter((name) => typeof name === "string" && name !== "");
+  }
+
+  function updateLabel() {
+    const filter = filterInput.value.trim() || "**/*";
+    shell.label.textContent = filter === "**/*" ? "workspace" : filter;
+  }
+
+  /** What the board has open, as one string: the panel re-lists only on change. */
+  function openSignature() {
+    const parts = [];
+    for (const entry of app.openEditors()) {
+      parts.push(`${entry.id}:${entry.path}:${entry.dirty ? 1 : 0}`);
+    }
+    return parts.join("|");
+  }
+
+  function renderRoot() {
+    const info = app.workspace();
+    if (info === null || info === undefined) {
+      rootLine.textContent = "workspace: the path was not reported by the kernel";
+      return;
+    }
+    const name = typeof info.name === "string" && info.name !== "" ? info.name : info.root;
+    rootLine.textContent = `${name} — ${info.root}`;
+    // The tooltip is where "why is build/ missing?" gets answered: the kernel
+    // skips these directory names while it walks and says so in this list.
+    const hidden = hiddenDirs();
+    rootLine.title = hidden.length === 0
+      ? String(info.root)
+      : `${info.root}\nnot listed by the kernel: ${hidden.join(", ")}`;
+  }
+
+  /** Open a project file: an existing card is revealed, a new one is placed. */
+  function openProjectFile(path) {
+    const card_ = app.openFile(path, { at: { x: card.x + card.w + 400, y: card.y + 240 } });
+    if (card_ !== null && card_ !== undefined) {
+      app.revealCard(card_.id);
+    }
+  }
+
+  /** One row of the open list: click reveals the card, the x closes it. */
+  function openRow(entry) {
+    const classes = ["project-row", "is-open"];
+    if (entry.dirty) {
+      classes.push("is-dirty");
+    }
+    if (!entry.present) {
+      classes.push("is-missing");
+    }
+    const row = h("div", classes.join(" "));
+    const button = h("button", "project-file", { attrs: { type: "button", title: entry.path } });
+    button.append(h("span", "project-name", { text: entry.name }));
+    button.append(h("span", "project-meta", {
+      text: [
+        entry.folder === "" ? "" : `${entry.folder}/`,
+        entry.dirty ? "unsaved" : "",
+        entry.present ? "" : "file is gone",
+      ].filter(Boolean).join(" · "),
+    }));
+    button.addEventListener("click", () => openProjectFile(entry.path));
+    row.append(button);
+    if (entry.id !== "") {
+      const close = h("button", "project-close", {
+        attrs: { type: "button", title: `take the card for ${entry.path} off the board (the file is not touched)` },
+        text: "\u00d7",
+      });
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        app.closeCard(entry.id);
+      });
+      row.append(close);
+    }
+    return row;
+  }
+
+  /** One row of the tree: click opens the file, or reveals it if it is open. */
+  function treeRow(entry) {
+    const classes = ["project-row"];
+    if (entry.open) {
+      classes.push("is-open");
+    }
+    if (entry.dirty) {
+      classes.push("is-dirty");
+    }
+    const row = h("div", classes.join(" "));
+    const button = h("button", "project-file", { attrs: { type: "button", title: entry.path } });
+    button.append(h("span", "project-dot", { text: entry.open ? "\u25cf" : "" }));
+    button.append(h("span", "project-name", { text: entry.name }));
+    button.append(h("span", "project-meta", {
+      text: [entry.dirty ? "unsaved" : "", entry.sizeText, entry.ageText].filter(Boolean).join(" "),
+    }));
+    button.addEventListener("click", () => openProjectFile(entry.path));
+    row.append(button);
+    return row;
+  }
+
+  function renderOpen(result) {
+    openSection.textContent = "";
+    if (result.openRows.length === 0) {
+      openSection.append(h("div", "project-empty", { text: "nothing open yet — click a file below" }));
+      return;
+    }
+    openSection.append(h("div", "project-heading", { text: `open · ${result.openRows.length}` }));
+    for (const entry of result.openRows) {
+      openSection.append(openRow(entry));
+    }
+  }
+
+  function renderTree(result) {
+    treeSection.textContent = "";
+    if (result.groups.length === 0) {
+      // A filter that matches nothing is usually a filter aimed at a directory
+      // the kernel does not hand over, so name those directories here.
+      const hidden = hiddenDirs();
+      const why = result.counts.files === 0
+        ? "this workspace has no files"
+        : "no file matches the filter";
+      treeSection.append(h("div", "project-empty", {
+        text: hidden.length === 0 || result.counts.files === 0
+          ? why
+          : `${why} · the kernel does not list ${hidden.join(", ")}`,
+      }));
+      return;
+    }
+    for (const group of result.groups) {
+      treeSection.append(h("div", "project-heading", { text: group.label }));
+      for (const entry of group.rows) {
+        treeSection.append(treeRow(entry));
+      }
+    }
+  }
+
+  async function refresh() {
+    const seq = requestSeq + 1;
+    requestSeq = seq;
+    const filter = filterInput.value.trim() || "**/*";
+    status.textContent = "listing…";
+    let listing;
+    try {
+      listing = await client.call("workspace.list", { glob: "**/*", limit: 4000 });
+    } catch (err) {
+      status.textContent = `list failed: ${err.message}`;
+      return;
+    }
+    if (seq !== requestSeq) {
+      return; // a newer request overtook this one
+    }
+    const result = projectRows(listing, {
+      open: app.openEditors(),
+      filter,
+    });
+    lastOpenSignature = openSignature();
+    renderRoot();
+    renderOpen(result);
+    renderTree(result);
+    status.textContent = projectSummary(result.counts)
+      + (result.counts.complete ? "" : " · truncated, so “missing” may over-report");
+  }
+
+  function scheduleRefresh() {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      refresh();
+    }, 180);
+  }
+
+  // The board is the source of truth for what is open, so opening or closing
+  // an editor anywhere -- a command, the files card, this panel -- re-lists.
+  // The signature check keeps a pan (which re-renders every card) from
+  // re-listing, and a pan happens on every animation frame.
+  const off = app.onBoardChanged(() => {
+    if (openSignature() === lastOpenSignature) {
+      return;
+    }
+    refresh();
+  });
+
+  filterInput.addEventListener("input", () => {
+    card.filter = filterInput.value;
+    updateLabel();
+    app.boardTouched(true);
+    scheduleRefresh();
+  });
+  filterInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      filterInput.blur();
+    }
+    event.stopPropagation();
+  });
+  refreshButton.addEventListener("click", () => refresh());
+
+  updateLabel();
+  refresh();
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "project",
+      refresh,
+      /** Re-point the filter from outside (the `project <glob>` command). */
+      setFilter(value) {
+        const text = typeof value === "string" && value.trim() !== "" ? value.trim() : "**/*";
+        if (filterInput.value !== text) {
+          filterInput.value = text;
+          card.filter = text;
+          updateLabel();
+          app.boardTouched(true);
+        }
+        refresh();
+      },
+      focus() {
+        filterInput.focus();
+        filterInput.select();
+      },
+    },
+    destroy() {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+      requestSeq += 1;
+      off();
+    },
+  };
+}
+
 /* -------------------- sheet -------------------- */
 
 /** True when the caret sits at the very start of a text-like control. */
@@ -1987,6 +2452,14 @@ registerCardKind({
   describe: (card) => `files ${card.filter || "**/*"}`,
   create: () => ({ filter: "**/*" }),
   render: renderFiles,
+});
+
+registerCardKind({
+  kind: "project",
+  title: "Project",
+  describe: (card) => `project ${card.filter || "**/*"}`,
+  create: () => ({ filter: "**/*" }),
+  render: renderProject,
 });
 
 registerCardKind({

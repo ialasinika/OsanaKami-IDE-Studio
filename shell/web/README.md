@@ -41,6 +41,7 @@ line above it. **seIDE has no dialogs**, so nothing ever covers the board.
 | `runner` | one command and its output | `cmd`, `cwd`, `run_id` |
 | `note` | free text, part of the board | `text` |
 | `files` | a workspace listing, filtered | `filter` |
+| `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
 
 A kind exists because it was registered, and registering is one call at the end
@@ -94,6 +95,7 @@ note <text>              drop a note card
 sheet [title]            drop a structured-data card (typed cells, not text)
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
+project [glob]           open the project panel (the workspace as one project)
 link <from> <to> [label] connect two cards
 unlink <linkId>          remove a connection
 zoom <n> | in | out | reset

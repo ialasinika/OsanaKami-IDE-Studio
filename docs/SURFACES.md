@@ -145,6 +145,10 @@ The model is pure and unit-tested without a DOM:
 node shell/web/selftest.mjs      # includes 13 checks over the hook and the sheet model
 ```
 
+A second worked example is in [`PROJECT.md`](PROJECT.md): the `project` card
+merges the kernel's `workspace.list` with the board's own editor cards, so a
+kind can depend on *both* the filesystem and the board without changing either.
+
 ## 4. What the rest of seIDE guarantees a new surface
 
 | layer | guarantee | where |

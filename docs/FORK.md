@@ -68,7 +68,7 @@ The cuts a fork usually makes first, in ascending order of pain:
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
 | `exec` | 4 edits + `app.c` | `runner` cards and `exec.*` methods |
 | `board` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — the paradigm |
-| `wksp` | 4 edits + the `editor` and `files` card kinds | files; the canvas alone remains |
+| `wksp` | 4 edits + the `editor`, `files` and `project` card kinds | files; the canvas alone remains |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
 
 **Cost:** proportional to what you cut; the reverse — adding a module back — is

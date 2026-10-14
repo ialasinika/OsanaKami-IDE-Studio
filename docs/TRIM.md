@@ -241,8 +241,8 @@ plus their four table rows in `rpc.c`.
   depends on `wksp`; cutting `wksp` means changing `exec.start` too (either
   refusing a relative `cwd` or resolving it against the process's own directory).
 - **Survives:** the board, links, notes, and the whole layout mechanism.
-- **Shell must change too:** yes — the `editor` and `files` card kinds have
-  nothing to call, so both renderers must go.
+- **Shell must change too:** yes — the `editor`, `files` and `project` card kinds
+  have nothing to call, so all three renderers must go.
 
 ### Cutting `serve` — a library, not a program
 

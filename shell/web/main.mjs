@@ -232,7 +232,8 @@ const HINT_TEXT = [
   "",
   "Commands go on the line at the bottom:",
   "  open <path> · run <cmd> · files · note <text> · sheet [title]",
-  "  link <from> <to> · zoom in|out|reset · focus <id> · delete <id> · save",
+  "  project [glob] · link <from> <to> · zoom in|out|reset · focus <id>",
+  "  delete <id> · save",
   "",
   "This arrangement is saved in .seide/board.json, not a tab history.",
   "Delete this card once it has told you what you need (`delete` on it).",
@@ -293,6 +294,40 @@ function createApp() {
   // The model is the single source of truth: anything that changes it schedules
   // one frame of redraw, so a card never paints itself.
   board.subscribe(() => scheduleRender());
+
+  /**
+   * The set of *open editors* is a second, smaller source of truth: cards that
+   * need it (the project panel) hear about it here.  It is deliberately not
+   * "the board changed" -- the viewport changes on every pan frame, and a
+   * listener that re-listed the workspace would do so sixty times a second.
+   */
+  const boardListeners = new Set();
+  let boardSignature = null;
+
+  /** Where the kernel was pointed. Not on the board: it is context, not state. */
+  let workspace = null;
+
+  function onBoardChanged(listener) {
+    boardListeners.add(listener);
+    return () => boardListeners.delete(listener);
+  }
+
+  function notifyBoardChanged() {
+    const signature = openEditors()
+      .map((entry) => `${entry.id}:${entry.path}:${entry.dirty ? 1 : 0}`)
+      .join("|");
+    if (signature === boardSignature) {
+      return;
+    }
+    boardSignature = signature;
+    for (const listener of boardListeners) {
+      try {
+        listener();
+      } catch (err) {
+        log("warn", `a board listener failed: ${err.message}`);
+      }
+    }
+  }
 
   /* ------------------------------------------------------------------ */
   /* logging (never a modal: everything lands on the bottom line)        */
@@ -426,6 +461,7 @@ function createApp() {
     }
 
     renderEmptyState();
+    notifyBoardChanged();
   }
 
   /**
@@ -735,6 +771,45 @@ function createApp() {
   /* opening files                                                       */
   /* ------------------------------------------------------------------ */
 
+  /**
+   * The editor cards currently on the board, as plain data.
+   *
+   * This is what "open" means in seIDE: there is no tab strip and no document
+   * list outside the board -- a file is open exactly when a card holds it.
+   */
+  function openEditors() {
+    const out = [];
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind !== "editor") {
+        continue;
+      }
+      out.push({
+        id: entry.card.id,
+        path: String(entry.handle.path || "").replace(/\\/g, "/"),
+        dirty: entry.handle.dirty === true,
+      });
+    }
+    out.sort((a, b) => {
+      if (a.path !== b.path) {
+        return a.path < b.path ? -1 : 1;
+      }
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    return out;
+  }
+
+  /** Focus a card and pan to it if it is off-screen. */
+  function revealCard(id) {
+    if (!focusCard(id)) {
+      return false;
+    }
+    const entry = mounted.get(id);
+    if (entry !== undefined) {
+      centreOn(entry.card);
+    }
+    return true;
+  }
+
   function openFile(path, options = {}) {
     if (typeof path !== "string" || path.trim() === "") {
       log("warn", "open: give a workspace-relative path");
@@ -810,6 +885,15 @@ function createApp() {
     resolveStale,
     confirmDiscard,
     openFile,
+    openEditors,
+    revealCard,
+    // Same behaviour as `delete <id>`: the card leaves the board, the file on
+    // disk is not touched, and unsaved text is named rather than discarded.
+    closeCard: deleteCard,
+    onBoardChanged,
+    workspace() {
+      return workspace;
+    },
     get client() {
       return client;
     },
@@ -984,8 +1068,8 @@ function createApp() {
   /* ------------------------------------------------------------------ */
 
   const KNOWN_COMMANDS = [
-    "open", "note", "run", "files", "link", "unlink", "zoom", "focus",
-    "delete", "save", "help", "clear",
+    "open", "note", "run", "files", "project", "link", "unlink", "zoom",
+    "focus", "delete", "save", "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1038,6 +1122,29 @@ function createApp() {
         const centre = centreWorld();
         const size = { w: 360, h: 560 };
         addCard("files", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { filter }, size);
+        return;
+      }
+      case "project": {
+        // There is one project, so there is one project panel: a second
+        // `project` reveals the card you already have rather than stacking a
+        // duplicate, and an argument re-points its filter.
+        const filter = arg(0) === undefined ? null : tokens.slice(1).join(" ");
+        const existing = board.cards.find((card) => card.kind === "project");
+        if (existing !== undefined) {
+          const entry = mounted.get(existing.id);
+          if (filter !== null && entry !== undefined && typeof entry.handle.setFilter === "function") {
+            entry.handle.setFilter(filter);
+          }
+          revealCard(existing.id);
+          return;
+        }
+        const centre = centreWorld();
+        const size = DEFAULT_SIZE.project;
+        addCard("project",
+          Math.round(centre.x - size.w / 2),
+          Math.round(centre.y - size.h / 2),
+          { filter: filter === null ? "**/*" : filter },
+          size);
         return;
       }
       case "link": {
@@ -1350,6 +1457,30 @@ function createApp() {
     const stamp = await client.call("hello", {}).catch(() => null);
     if (stamp !== null && !quiet) {
       log("info", `seIDE ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
+    }
+
+    // Where the kernel was pointed. It is the one piece of project context that
+    // is not on the board, so the project panel cannot read it from anywhere
+    // else. A failure here is not fatal: the panel says so and everything else
+    // works, because paths are already workspace-relative.
+    workspace = await client.call("workspace.info", {}).catch(() => null);
+    if (workspace !== null && !quiet) {
+      log("info", `workspace ${workspace.root}`);
+    }
+
+    // The board is painted before this call answers -- cards render as soon as
+    // the document loads -- so a project panel that is already on screen has
+    // listed the workspace with no root to show and no ignore list to explain
+    // itself with. Tell the panels that are already mounted to re-read it;
+    // `renderAll()` below only paints cards that do not exist yet.
+    if (workspace !== null) {
+      for (const entry of mounted.values()) {
+        if (entry.handle !== null && entry.handle !== undefined
+            && entry.handle.kind === "project"
+            && typeof entry.handle.refresh === "function") {
+          entry.handle.refresh();
+        }
+      }
     }
 
     if (board.cards.length === 0) {

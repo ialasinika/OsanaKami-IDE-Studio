@@ -74,7 +74,7 @@ with:
 | `z` | numeric stacking order, defaults to 0 | kernel (`fill_defaults`) |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships five kinds:
+The shell ships six kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -82,11 +82,13 @@ The shell ships five kinds:
 | `runner` | a command with its streamed output | `cmd`, `cwd`, `run_id` |
 | `note` | a text area that lives in the board document | `text` |
 | `files` | a filterable workspace listing | `filter` |
+| `project` | the workspace as one project: what it contains, and what is open | `filter` |
 | `sheet` | structured data: typed cells in a grid, not text | `title`, `doc` |
 
 The kernel does **not** interpret `kind`. `core/include/board.h` says so
-explicitly: `editor`, `runner`, `note`, `files` and `sheet` are conventions the
-shell implements, and a fork that invents `timeline` or `waveform` changes the
+explicitly: `editor`, `runner`, `note`, `files`, `project` and `sheet` are
+conventions the shell implements, and a fork that invents `timeline` or
+`waveform` changes the
 shell and nothing else. A card with an unknown kind still loads, still saves, and
 still renders — `renderCard` in `shell/web/cards.mjs` falls through to a
 placeholder that says the card is preserved in `board.json` and lists the kinds
@@ -161,13 +163,15 @@ palette that steals focus and it is not a menu; it is a place to type a verb.
 - Press `:` anywhere outside a text field to focus it. `Escape` clears and
   blurs it. `Tab` completes a command name. `ArrowUp` shows the last non-error
   log line as a hint. Typing a known verb shows its usage.
-- Verbs are `open`, `note`, `run`, `files`, `link`, `unlink`, `zoom`, `focus`,
-  `delete`, `save`, `help`, `clear` (`KNOWN_COMMANDS` in `shell/web/main.mjs`).
+- Verbs are `open`, `note`, `run`, `files`, `project`, `link`, `unlink`, `zoom`,
+  `focus`, `delete`, `save`, `help`, `clear` (`KNOWN_COMMANDS` in
+  `shell/web/main.mjs`).
 - `delete` with no argument acts on the **focused card**. That is the only
   place the command line reaches for the selection, and it is the intended
   pattern: the command line acts on what you are looking at.
-- `note` and `files` create cards at the centre of the current viewport, so a
-  new card appears where you are looking rather than at the origin.
+- `note`, `files` and `project` create cards at the centre of the current
+  viewport, so a new card appears where you are looking rather than at the
+  origin.
 
 The authoritative help text lives in `COMMAND_HELP` in `shell/web/cards.mjs`,
 kept there (per its own comment) so the README and the UI agree.

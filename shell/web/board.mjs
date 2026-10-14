@@ -30,7 +30,7 @@
  * list at runtime is `knownCardKinds()` in cards.mjs, which is what the
  * built-in renderers register themselves into.
  */
-export const CARD_KINDS = ["editor", "runner", "note", "files", "sheet"];
+export const CARD_KINDS = ["editor", "runner", "note", "files", "project", "sheet"];
 
 export const BOARD_VERSION = 1;
 
@@ -41,6 +41,7 @@ export const DEFAULT_SIZE = {
   note: { w: 300, h: 180 },
   files: { w: 300, h: 520 },
   sheet: { w: 460, h: 320 },
+  project: { w: 340, h: 580 },
 };
 
 /** Cards never get smaller than this; a zero-size card is unclickable. */

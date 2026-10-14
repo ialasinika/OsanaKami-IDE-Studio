@@ -8,10 +8,10 @@
  *   - persist it to <root>/.seide/board.json, atomically
  *   - hand out card ids that cannot collide
  *
- * The kernel does **not** interpret card kinds.  `editor`, `runner`, `note`
- * and `files` are conventions the shell implements; a fork that invents
- * `timeline` or `terminal` changes the shell and nothing else.  Anything a
- * card carries beyond `id` and the geometry is stored verbatim.
+ * The kernel does **not** interpret card kinds.  `editor`, `runner`, `note`,
+ * `files`, `project` and `sheet` are conventions the shell implements; a fork
+ * that invents `timeline` or `terminal` changes the shell and nothing else.
+ * Anything a card carries beyond `id` and the geometry is stored verbatim.
  */
 #ifndef SEIDE_BOARD_H
 #define SEIDE_BOARD_H

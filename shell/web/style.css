@@ -294,6 +294,7 @@ body {
 .card-runner { --kind-accent: var(--ok); }
 .card-note { --kind-accent: var(--warn); }
 .card-files { --kind-accent: #b79cf0; }
+.card-project { --kind-accent: #6fd3c7; }
 .card .card-kind { color: var(--kind-accent, var(--fg-faint)); }
 
 /* `is-accent` marks the card the board wants you to look at.  It reads as a
@@ -332,6 +333,7 @@ body {
 .card-body-editor,
 .card-body-runner,
 .card-body-files { padding: 0; }
+.card-body-project { padding: 0; }
 .card-body-note { padding: 0; background: #1a1d22; }
 .card-body-sheet { padding: 0; background: #1a1d22; }
 .card-body-unknown { padding: 2px; }
@@ -521,6 +523,127 @@ body {
 .file-row.is-dir .file-name { color: var(--accent); }
 .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-meta { color: var(--fg-faint); font-size: 10px; white-space: nowrap; }
+
+/* ------------------------------------------------------------------ */
+/* project card                                                        */
+/* ------------------------------------------------------------------ */
+
+.project-root {
+  flex: 0 0 auto;
+  margin: 6px 6px 0;
+  font: 10.5px/1.5 var(--mono-font);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px;
+}
+
+.project-filter {
+  flex: 1;
+  min-width: 0;
+  font: 11px/1.5 var(--mono-font);
+  color: var(--fg);
+  background: #14171c;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+}
+.project-filter:focus { border-color: var(--accent-dim); }
+
+.project-button {
+  flex: 0 0 auto;
+  font: 10.5px/1.5 var(--mono-font);
+  color: var(--fg-dim);
+  background: #1c2027;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.project-button:hover { background: var(--card-hi); color: var(--fg); }
+
+.project-section {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 4px;
+}
+/* The tree takes the slack; the open list keeps its own height but is capped,
+   so ten open editors cannot push the project itself off the bottom of a small
+   panel.  It must not shrink: with a huge tree in the same column the flex
+   algorithm would squeeze the open list down to its heading and clip the rows. */
+.project-open {
+  flex: 0 0 auto;
+  max-height: 32%;
+  border-bottom: 1px solid var(--line-soft);
+}
+.project-tree { flex: 1 1 auto; padding-bottom: 4px; }
+
+.project-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 6px 2px;
+  background: var(--card);
+  font: 10px/1.5 var(--mono-font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.project-empty {
+  padding: 4px 6px;
+  font: 11px/1.5 var(--mono-font);
+  color: var(--fg-faint);
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 3px;
+}
+.project-row:hover { background: var(--card-hi); }
+
+.project-file {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: 11.5px/1.6 var(--mono-font);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.project-dot { flex: 0 0 auto; width: 8px; color: var(--kind-accent, var(--accent)); }
+.project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-meta { color: var(--fg-faint); font-size: 10px; white-space: nowrap; }
+.project-row.is-missing .project-name { color: var(--error); }
+.project-row.is-dirty .project-meta { color: var(--warn); }
+
+.project-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--fg-faint);
+  font: 12px/1 var(--mono-font);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.project-close:hover { color: var(--error); }
 
 /* ------------------------------------------------------------------ */
 /* token colours (lang.tokenize kinds)                                 */

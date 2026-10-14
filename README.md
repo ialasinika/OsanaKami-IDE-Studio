@@ -57,7 +57,8 @@ forkable, and they are what a fork will change first.
 
 The main surface is one persistent 2-D canvas. Everything you work on is a
 **card** placed at a point on that canvas. A card has a `kind` (`editor`,
-`runner`, `note`, `files`), a position and size (`x`, `y`, `w`, `h`, `z`), may
+`runner`, `note`, `files`, `project`), a position and size (`x`, `y`, `w`, `h`,
+`z`), may
 reference a file, and may be connected by links. The board persists to
 `<root>/.seide/board.json`, so **where you put things is part of the project
 state**. A non-modal command line at the bottom acts on the focused card.
@@ -86,10 +87,12 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The five shipped kinds are `editor`, `runner`, `note`, `files` and `sheet` —
-`sheet` being a structured-data grid (typed cells, rows, columns, TSV export)
-that exists to prove nothing downstream assumes text. See
-[`docs/SURFACES.md`](docs/SURFACES.md).
+The six shipped kinds are `editor`, `runner`, `note`, `files`, `project` and
+`sheet` — `sheet` being a structured-data grid (typed cells, rows, columns, TSV
+export) that exists to prove nothing downstream assumes text, and `project`
+being the workspace as one project: what the project contains, merged with what
+the board has open. See [`docs/SURFACES.md`](docs/SURFACES.md) and
+[`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
 
@@ -173,7 +176,7 @@ python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 3 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 43/43 checks passed
-node shell/web/selftest.mjs                    # ok 30/30
+node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then the JSON test and both
@@ -253,7 +256,8 @@ tools/                  Python 3.12, standard library only
   README.md             what each tool is for
 
 examples/               hello.bf (prints "Hello World!"), shadow.bf
-docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, TRIM.md, FORK.md, BUGS.md
+docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
+                        PROJECT.md, TRIM.md, FORK.md, BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
@@ -299,6 +303,7 @@ The docs, in reading order: [`docs/PARADIGM.md`](docs/PARADIGM.md) — why the
 board and not tabs; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
 layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
 [`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
+[`docs/PROJECT.md`](docs/PROJECT.md) — the workspace as one project;
 [`docs/TRIM.md`](docs/TRIM.md) — how to cut a module out;
 [`docs/FORK.md`](docs/FORK.md) — the fork playbook;
 [`docs/BUGS.md`](docs/BUGS.md) — every defect probing found, with its root cause

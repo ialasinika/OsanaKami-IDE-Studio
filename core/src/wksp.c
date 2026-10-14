@@ -216,6 +216,21 @@ static int is_ignored_dir(const char *name)
     return 0;
 }
 
+/*
+ * The same table, for callers that have to *tell* someone what the listing left
+ * out.  A client cannot work the names out from a listing -- absent rows look
+ * like an empty directory -- so `workspace.info` reports them and a panel can
+ * say "the kernel does not list build" without keeping its own copy of a rule
+ * that lives here.
+ */
+const char *const *sde_wksp_ignored_dirs(size_t *count)
+{
+    if (count != NULL) {
+        *count = sizeof(IGNORED_DIRS) / sizeof(IGNORED_DIRS[0]);
+    }
+    return IGNORED_DIRS;
+}
+
 /* ====================================================================== */
 /* listing                                                                */
 /* ====================================================================== */
