@@ -14,7 +14,9 @@
  *
  *   - a card is an object with a non-empty unique string `id`, a non-empty
  *     string `kind`, and numeric `x`/`y`/`w`/`h`;
- *   - a link's `from`/`to` must name a card that exists.
+ *   - a link's `from`/`to` must name a card that exists, and its `id` (when it
+ *     has one) must not repeat another link's -- `serialize` refuses to build a
+ *     document the kernel would answer with `1004 INVALID_BOARD`.
  *
  * Anything else a card carries (`file`, `cmd`, `text`, and any extra field a
  * fork invents) is stored verbatim, because the kernel stores it verbatim.
@@ -147,7 +149,13 @@ function normaliseCard(card) {
  * endpoint go with them.  This mirrors `workspace.info` failing loudly: a
  * silently discarded *card* is worse than a visible message.
  *
- * @returns {{document: object, droppedCards: string[], droppedLinks: number}}
+ * Links are repaired the same way: a link that names a card which did not
+ * survive is dropped, and a link whose id is missing or duplicated is given a
+ * fresh id (the edge is never lost to a naming collision).  The ids that had to
+ * be renamed are reported, not just counted, so the caller can name them.
+ *
+ * @returns {{document: object, droppedCards: string[], droppedLinks: number,
+ *   repairedLinkIds: string[]}}
  */
 export function normaliseDocument(input) {
   const doc = isPlainObject(input) ? input : {};
@@ -179,7 +187,25 @@ export function normaliseDocument(input) {
   }
 
   let droppedLinks = 0;
+  const repairedLinkIds = [];
   const links = Array.isArray(doc.links) ? doc.links : [];
+  /*
+   * Link ids are unique board-wide.  A file can still carry the same id twice,
+   * and the kernel then refuses to save it back (`1004 INVALID_BOARD`,
+   * `links[N]: duplicate \`id\``), so a board that loaded fine would become
+   * unsaveable.  The edge is kept and given a fresh id instead: losing a
+   * connection the user can see is the worse repair.
+   *
+   * `reserved` holds every id the file already uses, so a replacement id never
+   * steals one that a later link is entitled to keep.
+   */
+  const reserved = new Set();
+  for (const link of links) {
+    if (isPlainObject(link) && typeof link.id === "string" && link.id !== "" && !reserved.has(link.id)) {
+      reserved.add(link.id);
+    }
+  }
+  const claimed = new Set();
   for (const link of links) {
     if (!isPlainObject(link)) {
       droppedLinks += 1;
@@ -193,13 +219,23 @@ export function normaliseDocument(input) {
       continue;
     }
     const clean = cloneDocument(link);
-    if (typeof clean.id !== "string" || clean.id === "") {
-      clean.id = `l${out.links.length + 1}`;
+    let id = typeof clean.id === "string" ? clean.id : "";
+    if (id === "" || claimed.has(id)) {
+      if (clean.id !== undefined && clean.id !== null && clean.id !== "") {
+        repairedLinkIds.push(String(clean.id));
+      }
+      let n = out.links.length + 1;
+      do {
+        id = `l${n}`;
+        n += 1;
+      } while (reserved.has(id) || claimed.has(id));
     }
+    clean.id = id;
+    claimed.add(id);
     out.links.push(clean);
   }
 
-  return { document: out, droppedCards, droppedLinks };
+  return { document: out, droppedCards, droppedLinks, repairedLinkIds };
 }
 
 /**
@@ -374,6 +410,58 @@ export function createBoard(initial, options = {}) {
     return card;
   }
 
+  /** Every link id currently in use, so a new one can be proven unique. */
+  function usedLinkIds() {
+    return new Set(document.links.map((link) => link.id));
+  }
+
+  /** The first free `lN`. Ids are local until a save hands them to the kernel. */
+  function freeLinkId() {
+    const used = usedLinkIds();
+    let n = document.links.length + 1;
+    while (used.has(`l${n}`)) {
+      n += 1;
+    }
+    return `l${n}`;
+  }
+
+  /**
+   * Add one link under a caller-chosen id.
+   *
+   * Link ids are unique across the whole board, because the kernel refuses a
+   * document that repeats one (`1004 INVALID_BOARD`, `links[N]: duplicate
+   * \`id\``) -- and because `unlink <id>` names exactly one edge.  Accepting a
+   * collision here would let the UI build a document its own backend will not
+   * save, so it is an error and not a second link.
+   *
+   * @param {string} from  id of the source card
+   * @param {string} to    id of the target card
+   * @param {string} [label]
+   * @param {string|null} [id]  an explicit id; `null` allocates a free one
+   * @throws {Error} when the id is empty or already used
+   */
+  function addLink(from, to, label = "", id = null) {
+    requireCard(from);
+    requireCard(to);
+    const link = {
+      id: id === null || id === undefined ? freeLinkId() : String(id),
+      from,
+      to,
+    };
+    if (link.id === "") {
+      throw new Error("addLink: link id must not be empty");
+    }
+    if (usedLinkIds().has(link.id)) {
+      throw new Error(`addLink: link id ${JSON.stringify(link.id)} is already used`);
+    }
+    if (label !== "") {
+      link.label = label;
+    }
+    document.links.push(link);
+    changed();
+    return link;
+  }
+
   function linkCards(from, to, label = "") {
     requireCard(from);
     requireCard(to);
@@ -385,26 +473,22 @@ export function createBoard(initial, options = {}) {
       }
       return existing;
     }
-    const used = new Set(document.links.map((link) => link.id));
-    let n = document.links.length + 1;
-    while (used.has(`l${n}`)) {
-      n += 1;
-    }
-    const link = { id: `l${n}`, from, to };
-    if (label !== "") {
-      link.label = label;
-    }
-    document.links.push(link);
-    changed();
-    return link;
+    return addLink(from, to, label);
   }
 
+  /**
+   * Remove exactly one link.
+   *
+   * Ids are unique, so removing by index is the honest operation: the `filter`
+   * this replaces removed *every* link that shared the id, which turned one
+   * `unlink` into several the moment a duplicate existed.
+   */
   function unlink(linkId) {
-    const before = document.links.length;
-    document.links = document.links.filter((link) => link.id !== linkId);
-    if (document.links.length === before) {
+    const at = document.links.findIndex((link) => link.id === linkId);
+    if (at < 0) {
       return false;
     }
+    document.links.splice(at, 1);
     changed();
     return true;
   }
@@ -441,22 +525,61 @@ export function createBoard(initial, options = {}) {
     return true;
   }
 
-  /** Plain JSON, ready for `board.save`. Always a copy: no aliasing into the model. */
+  /**
+   * Plain JSON, ready for `board.save`. Always a copy: no aliasing into the model.
+   *
+   * Nothing is dropped silently.  A document the kernel would refuse is
+   * reported as an error that names the offending entry, instead of being
+   * quietly trimmed: a trimmed save reports success while work is missing from
+   * disk, which is the one outcome a board-first editor must never produce.
+   * Callers that hold a document straight off disk have already had it repaired
+   * by `normaliseDocument`, so anything refused here is a bug in the model.
+   *
+   * @throws {Error} on an invalid or duplicated card, on a link that names a
+   *   card which is not in the document, or on a duplicated link id
+   */
   function serialize() {
     const out = cloneDocument(document);
     out.version = isFiniteNumber(out.version) ? out.version : BOARD_VERSION;
     out.viewport = clampViewport(out.viewport);
-    out.cards = out.cards
-      .filter(isValidCard)
-      .map((card) => {
-        const clean = cloneDocument(card);
-        clean.z = isFiniteNumber(clean.z) ? clean.z : 0;
-        return clean;
-      });
-    const ids = new Set(out.cards.map((card) => card.id));
-    out.links = out.links.filter(
-      (link) => isPlainObject(link) && ids.has(link.from) && ids.has(link.to),
-    );
+
+    const ids = new Set();
+    out.cards = out.cards.map((card, at) => {
+      if (!isValidCard(card)) {
+        throw new Error(`serialize: cards[${at}] is not a valid card`
+          + " -- the kernel needs a non-empty string id, a string kind and numeric x/y/w/h;"
+          + " it was kept in the model rather than dropped from the document");
+      }
+      if (ids.has(card.id)) {
+        throw new Error(`serialize: cards[${at}] repeats card id ${JSON.stringify(card.id)}`
+          + " -- the kernel refuses a document with duplicate card ids");
+      }
+      ids.add(card.id);
+      const clean = cloneDocument(card);
+      clean.z = isFiniteNumber(clean.z) ? clean.z : 0;
+      return clean;
+    });
+
+    const linkIds = new Set();
+    out.links = out.links.map((link, at) => {
+      if (!isPlainObject(link)) {
+        throw new Error(`serialize: links[${at}] is not an object`);
+      }
+      if (typeof link.from !== "string" || typeof link.to !== "string"
+        || !ids.has(link.from) || !ids.has(link.to)) {
+        throw new Error(`serialize: links[${at}] (${JSON.stringify(link.from)} →`
+          + ` ${JSON.stringify(link.to)}) names a card that is not in the document`);
+      }
+      const clean = cloneDocument(link);
+      if (typeof clean.id === "string" && clean.id !== "") {
+        if (linkIds.has(clean.id)) {
+          throw new Error(`serialize: links[${at}] repeats link id ${JSON.stringify(clean.id)}`
+            + " -- the kernel refuses a document with duplicate link ids");
+        }
+        linkIds.add(clean.id);
+      }
+      return clean;
+    });
     return out;
   }
 
@@ -494,6 +617,7 @@ export function createBoard(initial, options = {}) {
     resizeCard,
     raiseCard,
     linkCards,
+    addLink,
     unlink,
     setViewport,
     setCardFields,

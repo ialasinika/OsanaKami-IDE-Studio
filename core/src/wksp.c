@@ -492,7 +492,7 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t e
     }
     sde_json_set(out, "path", sde_json_str(rel));
     sde_json_set(out, "text", sde_json_str(text));
-    sde_json_set(out, "revision", sde_json_int((long) rev));
+    sde_json_set(out, "revision", sde_json_rev(rev));
     sde_json_set(out, "eol", sde_json_str(detect_eol(text, len)));
     sde_json_set(out, "size", sde_json_int((long) len));
     sde_json_set(out, "mtime", sde_json_int(sde_port_file_mtime(abs)));
@@ -585,7 +585,7 @@ int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
         return SDE_WKSP_FAIL;
     }
     sde_json_set(result, "path", sde_json_str(rel));
-    sde_json_set(result, "revision", sde_json_int((long) sde_rev_of(text, len)));
+    sde_json_set(result, "revision", sde_json_rev(sde_rev_of(text, len)));
     sde_json_set(result, "eol", sde_json_str(detect_eol(text, len)));
     sde_json_set(result, "size", sde_json_int((long) len));
     if (out != NULL) {

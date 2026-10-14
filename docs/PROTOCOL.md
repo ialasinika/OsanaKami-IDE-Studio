@@ -89,7 +89,7 @@ when `SDE_WITH_EXEC` is 0.
 | `workspace.info` | none | `{root, name, file_count, board_path, board_revision}` |
 | `workspace.list` | `path?`, `glob?`, `limit?` | `{files, truncated, count}` |
 | `file.read` | `path` | `{path, text, revision, eol, size, mtime}` (+ `lang` from the shell) |
-| `file.write` | `path`, `text?`, `base_revision?` | `{path, revision, eol, size}` |
+| `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
 | `board.load` | none | `{path, revision, document}` |
 | `board.save` | `document` or `board`, `base_revision?` | `{path, revision, saved}` |
 | `board.newId` | none | `{id}` |
@@ -177,6 +177,14 @@ Required parameter: `path` (non-empty string, relative to the workspace root).
 it is the token `file.write` checks. `eol` is `"crlf"` or `"lf"` (`"lf"` when
 the text contains no newline). A file that does not exist reports revision 0.
 
+A board's revision is a hash of the same kind, but taken over a **canonical**
+rendering of the document: object members are sorted by name before hashing
+(`sde_json_write_canonical()` in `core/src/json.c`). Two boards with the same
+content therefore have the same revision no matter how the client spelled them,
+which is what makes `base_revision` safe to compare across clients. The canonical
+form exists only for hashing; the `document` the kernel hands back is the
+client's own arrangement, minus the defaults the validator filled in.
+
 **The shell adds one more member to this result:**
 
 ```json
@@ -206,7 +214,7 @@ rejects `absolute paths are not allowed: <path>` and
 | parameter | type | meaning |
 | --- | --- | --- |
 | `path` | string, required | relative path; parent directories are created |
-| `text` | string, optional | defaults to `""`; a non-string is `INVALID_PARAMS` with `` `text` must be a string `` |
+| `text` | string, required | the whole new contents; send `""` to empty the file. A non-string is `INVALID_PARAMS` with `` `text` must be a string ``, and omitting it is `INVALID_PARAMS` too |
 | `base_revision` | number, optional | the revision the client read; omit for last-writer-wins |
 
 Result: `{"path":"examples/hello.bf","revision":987654321,"eol":"lf","size":1240}`.
@@ -327,7 +335,7 @@ is on disk.
 
 | code | name | when |
 | --- | --- | --- |
-| -32700 | `PARSE_ERROR` | the frame was not valid JSON; built by the reader loop, sent with a **null** id |
+| -32700 | `PARSE_ERROR` | the frame was not valid JSON, or carried a string this transport cannot represent (a U+0000 code point); built by the reader loop, sent with a **null** id |
 | -32600 | `INVALID_REQUEST` | the frame was not an object, or had no string `method` on a request |
 | -32601 | `METHOD_NOT_FOUND` | no such method; message is `` no such method `NAME` `` |
 | -32602 | `INVALID_PARAMS` | a required parameter was absent, empty or the wrong type |
@@ -374,9 +382,12 @@ is answered with `204 No Content`, since HTTP always needs a status but there is
 no response frame to give. The SSE subscriber set also receives a `: keep-alive`
 comment every 15 seconds.
 
-The `id` on an HTTP request is what makes it a request: the comment in
-`shell/web/rpc.mjs` states it plainly — without an `id` the host correctly
-replies `204`, leaving the client's promise pending forever.
+The `id` on an HTTP request is what makes it a request. A frame with no `id` is
+a notification: the host answers `204`, there is no reply frame, and the browser
+client has nothing to resolve its promise with. `shell/web/rpc.mjs` guards that
+two ways — it always mints an `id`, and every call is bounded by its own
+timeout, so a missing reply settles as a `TIMEOUT` rejection rather than a
+promise that never settles.
 
 Requests to `/rpc` with a body that is not JSON get `400` and a
 `PARSE_ERROR` frame with a null id. Non-GET/HEAD/POST methods get `405`.
@@ -510,9 +521,15 @@ messages, from `core/src/board.c`:
 
 Messages are prefixed with `cards[N]: ` or `links[N]: ` where applicable.
 
-**Missing defaults are filled before validation**, so a hand-written board file
-only has to be correct about the meaningful parts: `version`, `viewport` and
-`links` are filled in, and a card's missing numeric `z` becomes `0`.
+**Missing defaults are filled before validation, but only on the load path.** A
+hand-written `board.json` therefore only has to be correct about the meaningful
+parts: absent `version`, `viewport`, `cards` and `links` are filled in, and a
+card's missing numeric `z` becomes `0`. A document arriving over the wire is
+held to a higher standard — it must carry `cards` and `links` itself, and a
+present member of the wrong type is never repaired. That asymmetry is
+deliberate: repairing a *missing* member helps a human editing a file by hand,
+while repairing a *mis-typed* one lets a client's bug silently replace the whole
+board (`docs/BUGS.md`, entry A).
 
 Anything a card carries beyond `id`, `kind` and the geometry is stored
 **verbatim** — the kernel never interprets it.

@@ -70,6 +70,100 @@ def escape_token(token: str) -> str:
     return f'"{text}"'
 
 
+#: Every key the descriptor grammar accepts; anything else is a hard error.
+KNOWN_KEYS = (
+    "id",
+    "title",
+    "ext",
+    "line_comment",
+    "block_comment_open",
+    "block_comment_close",
+    "string",
+    "kind",
+)
+
+
+def scan_quoted(text: str) -> list:
+    """Split ``"a" "b"`` into ``['a', 'b']``, raising ``ValueError`` otherwise.
+
+    Mirrors the token scanner in ``langs/lang.mjs``: only double-quoted tokens
+    with the four documented escapes are accepted, and an unterminated quote is
+    an error rather than a token that runs to end of line.
+    """
+    tokens = []
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index] == " ":
+            index += 1
+            continue
+        if text[index] != '"':
+            raise ValueError(f"unquoted token {text[index:]!r}")
+        index += 1
+        buffer = []
+        closed = False
+        while index < length:
+            char = text[index]
+            if char == "\\":
+                index += 1
+                if index >= length:
+                    break
+                escaped = text[index]
+                buffer.append(
+                    {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\"}.get(
+                        escaped, escaped
+                    )
+                )
+                index += 1
+                continue
+            if char == '"':
+                closed = True
+                index += 1
+                break
+            buffer.append(char)
+            index += 1
+        if not closed:
+            raise ValueError("unterminated quoted token")
+        tokens.append("".join(buffer))
+    return tokens
+
+
+def verify_descriptor(text: str):
+    """Re-read the text we are about to write, the way the runtime will.
+
+    A scaffolding tool that reports success while producing a descriptor the
+    runtime silently skips is worse than one that refuses: the newcomer's first
+    language disappears behind an "OK".  Returns a problem description, or
+    ``None`` when the text satisfies the descriptor grammar.
+    """
+    counts = {}
+    for number, raw in enumerate(text.split("\n"), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, rest = line.partition(" ")
+        rest = rest.strip()
+        if key not in KNOWN_KEYS:
+            return f"line {number}: unknown key {key!r}"
+        if key == "kind":
+            name, _, tokens = rest.partition(" ")
+            if not name:
+                return f"line {number}: kind needs a name"
+            try:
+                values = scan_quoted(tokens.strip())
+            except ValueError as exc:
+                return f"line {number}: {exc}"
+            if not values:
+                return f"line {number}: kind {name!r} has no tokens"
+        elif not rest:
+            return f"line {number}: {key} must not be empty"
+        counts[key] = counts.get(key, 0) + 1
+    for required in ("id", "title"):
+        if counts.get(required, 0) != 1:
+            return f"expected exactly one {required} line"
+    return None
+
+
 def title_for(language_id: str) -> str:
     """Derive a human title from a language id (``my-lang`` -> ``My Lang``)."""
     return language_id.replace("-", " ").replace("_", " ").title()
@@ -128,7 +222,7 @@ def render(language_id: str, title: str, extensions, comment: str, keywords) -> 
     """Render the descriptor text (always LF-terminated, exactly one final LF)."""
     lines = ["# seIDE language descriptor", f"id {language_id}", f"title {title}"]
     lines.extend(f"ext {extension}" for extension in extensions)
-    lines.append(f"line_comment {comment}")
+    lines.append(f"line_comment {escape_token(comment)}")
     if keywords:
         kind = "command" if all(COMMAND_RE.match(token) for token in keywords) else "keyword"
         lines.append("kind " + kind + " " + " ".join(escape_token(t) for t in keywords))
@@ -191,6 +285,9 @@ def main(argv=None) -> int:
 
     title = args.title if args.title else title_for(args.id)
     text = render(args.id, title, extensions, comment, keywords)
+    problem = verify_descriptor(text)
+    if problem is not None:
+        return _fail(f"refusing to write a descriptor the runtime would reject: {problem}", code=2)
 
     out_dir = Path(args.out)
     target = out_dir / f"{args.id}.lang"

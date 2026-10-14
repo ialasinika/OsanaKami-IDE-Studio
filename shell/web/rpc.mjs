@@ -415,6 +415,24 @@ export function createClient(options = {}) {
             return;
           }
           /*
+           * The id is not bookkeeping: with several calls in flight it is the
+           * only thing that says *which* request this reply answers.  Accepting
+           * a mismatched id would hand one caller another caller's result, so it
+           * is rejected before the result or the error is even looked at.
+           */
+          if (reply.id !== id) {
+            reject(new RpcError(
+              {
+                code: null,
+                name: "BAD_REPLY",
+                message: `reply id ${JSON.stringify(reply.id)} does not match request id ${id}`,
+              },
+              method,
+              `the host answered a different request (id ${JSON.stringify(reply.id)}, expected ${id})`,
+            ));
+            return;
+          }
+          /*
            * The host speaks JSON-RPC: it echoes the id and carries either a
            * `result` or an `error`.  Both the kernel and the shell answer in
            * exactly this shape, so there is no second reply format to guess.

@@ -8,6 +8,14 @@
  * plumbing, the board model and the token-span logic are checked exactly as
  * the browser will use them.
  *
+ * What that means: there is no browser here. Canvas layout, pointer gestures
+ * (drag, resize, drawing a link), focus, keyboard handling and every CSS rule
+ * are never exercised. One check calls `renderCard` against a stub element that
+ * records structure and nothing else, purely to prove that a malformed board
+ * entry produces a placeholder instead of an exception. The `note:` line at the
+ * end of every run says the same thing, so a green run is never read as "the
+ * browser was tested".
+ *
  * Exit code is 0 only when every check passes; the summary is `ok N/N`.
  */
 
@@ -59,12 +67,22 @@ import {
   registerCardKind,
   removeSheetColumn,
   removeSheetRow,
+  renderCard,
   segmentsText,
   setSheetCell,
   sheetCell,
   sheetSummary,
   sheetToTSV,
+  unknownCardPlaceholder,
 } from "./cards.mjs";
+
+/*
+ * `main.mjs` is importable under Node on purpose (it only builds the app when
+ * there is a `document`), which is what lets the two DOM-free helpers behind
+ * the listener-leak and save-reporting fixes be checked here for real instead
+ * of through a browser.
+ */
+import { saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
 
 /* ------------------------------------------------------------------ */
 /* the smallest useful test harness                                    */
@@ -181,6 +199,107 @@ const tick = (n = 6) => new Promise((resolve) => {
   };
   setTimeout(step, 0);
 });
+
+/* ------------------------------------------------------------------ */
+/* stub elements, for the checks that have to touch the DOM layer       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record structure, and nothing else.
+ *
+ * The suite has no browser, and the interesting half of `renderCard` is not
+ * layout: it is the decision to fall back to a placeholder instead of throwing
+ * on an entry that is not a card. That decision builds real elements through
+ * `document.createElement`, so the smallest possible element stub is installed
+ * for the duration of one check. It has no layout, no focus and no real events
+ * -- which is exactly what the closing `note:` line says is not covered.
+ */
+function stubDom() {
+  class StubElement {
+    constructor(tag) {
+      this.tagName = tag;
+      this.children = [];
+      this.attrs = {};
+      this.className = "";
+      this.textContent = "";
+      this.classList = {
+        add: (name) => {
+          this.className = `${this.className} ${name}`.trim();
+        },
+      };
+    }
+
+    setAttribute(key, value) {
+      this.attrs[key] = String(value);
+    }
+
+    append(child) {
+      this.children.push(child);
+      return child;
+    }
+
+    remove() {
+      this.removed = true;
+    }
+
+    addEventListener() {}
+  }
+
+  const previous = Object.prototype.hasOwnProperty.call(globalThis, "document")
+    ? globalThis.document
+    : undefined;
+  globalThis.document = {
+    createElement: (tag) => new StubElement(tag),
+    createTextNode: (text) => ({ textContent: String(text), children: [] }),
+    createDocumentFragment: () => new StubElement("#fragment"),
+  };
+
+  return {
+    /** Flatten every text node under a stub element. */
+    text(el) {
+      if (el === null || el === undefined) {
+        return "";
+      }
+      const own = typeof el.textContent === "string" ? el.textContent : "";
+      const kids = Array.isArray(el.children) ? el.children.map((child) => this.text(child)).join("") : "";
+      return own + kids;
+    },
+    restore() {
+      if (previous === undefined) {
+        delete globalThis.document;
+      } else {
+        globalThis.document = previous;
+      }
+    },
+  };
+}
+
+/** A listener-recording stand-in for a DOM element. */
+function stubEventTarget() {
+  const listeners = new Map();
+  return {
+    list(type) {
+      return listeners.get(type) || [];
+    },
+    count(type) {
+      return this.list(type).length;
+    },
+    addEventListener(type, fn) {
+      const list = listeners.get(type) || [];
+      list.push(fn);
+      listeners.set(type, list);
+    },
+    removeEventListener(type, fn) {
+      const list = listeners.get(type) || [];
+      listeners.set(type, list.filter((entry) => entry !== fn));
+    },
+    fire(type) {
+      for (const fn of [...this.list(type)]) {
+        fn({ type });
+      }
+    },
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* rpc.mjs                                                             */
@@ -340,6 +459,71 @@ await testAsync("rpc: a non-JSON body is a BAD_REPLY, not a crash", async () => 
   assert.equal(caught.symbol, "BAD_REPLY");
 });
 
+await testAsync("rpc: a reply carrying a different id is a BAD_REPLY, not an answer", async () => {
+  // The host echoes the id; that echo is the only thing tying a reply to the
+  // request it answers, so a reply for some other id must never resolve a call.
+  const fetchImpl = async (url, init) => {
+    const sent = JSON.parse(init.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        jsonrpc: "2.0",
+        id: sent.id + 1,
+        result: { an_answer: "for somebody else" },
+      }),
+    };
+  };
+  const client = createClient({ fetchImpl });
+  let caught = null;
+  try {
+    await client.call("hello", {});
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof RpcError, "a mismatched id must not resolve the call");
+  assert.equal(caught.symbol, "BAD_REPLY");
+  assert.match(caught.message, /hello: the host answered a different request \(id 2, expected 1\)/);
+  assert.equal(client.state.pending, 0, "the rejected call leaves nothing pending");
+});
+
+await testAsync("rpc: with two calls in flight a swapped reply rejects instead of misdelivering", async () => {
+  // Answer each request with the *other* request's id and hold the replies back
+  // until both are in flight. Before the id check this resolved both calls with
+  // the wrong result, which is the bug: one caller got another's answer.
+  const sent = [];
+  const fetchImpl = (url, init) => {
+    const body = JSON.parse(init.body);
+    sent.push(body);
+    return new Promise((resolve) => {
+      const answer = () => {
+        if (sent.length < 2) {
+          setTimeout(answer, 0);
+          return;
+        }
+        const other = sent.find((entry) => entry.id !== body.id);
+        resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            jsonrpc: "2.0",
+            id: other.id,
+            result: { answered: other.method },
+          }),
+        });
+      };
+      answer();
+    });
+  };
+  const client = createClient({ fetchImpl });
+  const settled = await Promise.allSettled([client.call("first", {}), client.call("second", {})]);
+  assert.equal(settled[0].status, "rejected");
+  assert.equal(settled[1].status, "rejected");
+  assert.equal(settled[0].reason.symbol, "BAD_REPLY", "the first call takes no answer but its own");
+  assert.equal(settled[1].reason.symbol, "BAD_REPLY", "the second call takes no answer but its own");
+  assert.equal(client.state.pending, 0, "both rejected calls are cleaned up");
+});
+
 await testAsync("rpc: a handler that throws does not stop the other handlers", async () => {
   const fetchImpl = fakeFetch({
     chunks: ["data: {\"event\":\"log\",\"message\":\"one\"}\n\n"],
@@ -492,6 +676,73 @@ test("board: adding a card with an id that is already in use throws", () => {
   const board = createBoard(undefined, { idFactory: () => "c1" });
   board.addCard("note", 0, 0);
   assert.throws(() => board.addCard("note", 0, 0), /already used/);
+});
+
+test("board: link ids are unique board-wide, and unlink removes exactly one", () => {
+  const board = createBoard();
+  const a = board.addCard("editor", 0, 0);
+  const b = board.addCard("runner", 400, 0);
+
+  const first = board.addLink(a.id, b.id, "runs", "L1");
+  assert.equal(first.id, "L1");
+  // Accepting the collision would let the UI build a document its own backend
+  // refuses with 1004 INVALID_BOARD, so it is an error, not a second link.
+  assert.throws(() => board.addLink(a.id, b.id, "second", "L1"), /already used/,
+    "an id that is already in use must be refused");
+  assert.throws(() => board.addLink(a.id, b.id, "empty", ""), /must not be empty/);
+  assert.equal(board.links.length, 1, "a refused link is not in the document");
+  assert.deepEqual(board.links.map((link) => link.id), ["L1"]);
+
+  /*
+   * A file can still carry the collision even though the API now refuses it.
+   * The loader keeps both edges and renames the second: losing a connection the
+   * user can see is the worse repair, and a document with two links named `L1`
+   * is one the kernel will not save back.
+   */
+  const doc = board.serialize();
+  doc.links = [{ ...doc.links[0] }, { ...doc.links[0] }];
+  const repaired = normaliseDocument(doc);
+  assert.deepEqual(repaired.repairedLinkIds, ["L1"], "the renamed id is reported, not just counted");
+  assert.equal(repaired.document.links.length, 2, "the duplicate edge is kept, not dropped");
+  assert.equal(new Set(repaired.document.links.map((link) => link.id)).size, 2);
+  board.load(repaired.document);
+  assert.doesNotThrow(() => board.serialize(), "the repaired board is a document the kernel accepts");
+
+  /*
+   * The API cannot build a collision any more, so make one behind its back.
+   * `unlink <id>` has to remove one edge: `findIndex`/`splice` where a `filter`
+   * used to remove every link that shared the id.
+   */
+  board.document.links.push({ id: "L1", from: a.id, to: b.id });
+  assert.equal(board.links.length, 3);
+  assert.throws(() => board.serialize(), /repeats link id "L1"/,
+    "serialize refuses what the kernel would refuse");
+  assert.equal(board.unlink("L1"), true);
+  assert.equal(board.links.length, 2, "exactly one link was removed");
+  assert.equal(board.links.filter((link) => link.id === "L1").length, 1, "the other link keeps its id");
+  assert.equal(board.unlink("L1"), true, "the second link with that id is still there to remove");
+  assert.equal(board.unlink("L1"), false, "removing a missing link reports false");
+});
+
+test("board: serialize refuses an invalid card instead of dropping it quietly", () => {
+  const board = createBoard();
+  board.addCard("note", 0, 0, { text: "keep me" });
+  assert.equal(board.serialize().cards.length, 1);
+
+  /*
+   * A save that trims the card out reports success while the card is missing
+   * from disk -- the one outcome a board-first editor must never produce. The
+   * bad entry is kept in the model and named in the error instead.
+   */
+  board.document.cards.push({ id: "", kind: "note", x: 0, y: 0, w: 10, h: 10, z: 1 });
+  assert.throws(() => board.serialize(), /cards\[1\] is not a valid card/);
+  assert.equal(board.document.cards.length, 2, "the invalid card is kept, not silently dropped");
+
+  // A repeated card id is refused for the same reason (the kernel rejects it).
+  board.document.cards.pop();
+  board.document.cards.push({ ...board.document.cards[0] });
+  assert.throws(() => board.serialize(), /repeats card id "c1"/);
+  assert.equal(board.document.cards.length, 2);
 });
 
 /* ------------------------------------------------------------------ */
@@ -987,6 +1238,78 @@ test("sheet: editing mutates the card's own object, not a copy", () => {
   assert.equal(sheetCell(doc, "nosuchrow", "column1"), "");
 });
 
+/* Loaded apart from the static imports above so that a build without the
+   header's write path fails THIS check (and says which one) instead of failing
+   the whole file at import time -- which is how it reads when the fix is
+   reverted to look at the failure. */
+const { updateSheetColumn } = await import("./cards.mjs");
+
+await testAsync("sheet: a column edit lands on the live doc, never on a captured column object", async () => {
+  assert.equal(typeof updateSheetColumn, "function",
+    "the renderer needs a pure write path that resolves a column by id");
+
+  const doc = emptySheet();
+  const identity = doc;
+  const painted = doc.columns[0];
+
+  /* A header listener holds the column object its paint was handed.  One cell
+     edit is all it takes to make that object stale: every write lands fresh
+     columns and rows in `doc` through replaceSheet (which is what keeps
+     card.doc's identity stable). */
+  assert.equal(setSheetCell(doc, "row1", "column1", "typed"), true);
+  assert.notEqual(doc.columns[0], painted, "a cell edit replaces the column objects");
+
+  painted.title = "written through the captured object";
+  assert.equal(doc.columns[0].title, "column1",
+    "a write through the captured object is invisible to the document");
+  assert.equal(sheetToTSV(doc).split("\n")[0], "column1",
+    "... so the rename is gone at the next repaint");
+
+  /* Resolving by id at event time is what makes the header edits stick. */
+  const renamed = updateSheetColumn(doc, "column1", { title: "renamed" });
+  assert.notEqual(renamed, null);
+  assert.equal(doc, identity, "the write keeps card.doc's identity");
+  assert.equal(doc.columns[0].title, "renamed");
+  assert.equal(normaliseSheet(doc).columns[0].title, "renamed", "and it survives a re-normalise");
+  assert.equal(renamed.rows[0].cells.column1, "typed", "the cell edit is still there");
+
+  /* The same write path serves the type select, which re-normalises the column
+     so every cell under it takes the new type. */
+  const retyped = updateSheetColumn(doc, "column1", { type: "number" });
+  assert.equal(doc.columns[0].type, "number");
+  assert.equal(doc.columns[0].title, "renamed", "a type change does not drop the name");
+  assert.equal(doc.rows[0].cells.column1, 0, "\"typed\" is not a number, so the cell is 0");
+  assert.equal(retyped.columns[0].type, "number", "the write returns the sheet it stored");
+
+  const chosen = updateSheetColumn(doc, "column1", { type: "choice" });
+  assert.deepEqual(chosen.columns[0].options, ["one", "two", "three"],
+    "a column that becomes a choice gets options to choose from");
+  assert.equal(doc.rows[0].cells.column1, "0", "and its cells become option strings");
+
+  assert.equal(updateSheetColumn(doc, "nosuchcolumn", { title: "x" }), null,
+    "a column that is not there is not invented");
+  assert.equal(doc.columns.length, 1, "... and nothing is added to the sheet");
+});
+
+test("sheet: sheetCell still repairs a document it was handed unnormalised", () => {
+  /* The paint loop no longer calls this once per cell, but the exported lookup
+     keeps its guarantee for external callers: hand it anything, and it
+     normalises the document itself first. */
+  const hostile = {
+    columns: [{ id: "n", type: "number" }, { id: "n", type: "bool" }],
+    rows: [{ id: "r", cells: { n: "  -2 " } }, { id: "r", cells: null }, "not a row"],
+  };
+  const repaired = normaliseSheet(hostile);
+  assert.equal(sheetCell(hostile, "r", "n"), -2, "coerced by the column's type");
+  assert.equal(sheetCell(hostile, "r", repaired.columns[1].id), false,
+    "a row with no cells is still filled in, one slot per column");
+  assert.equal(sheetCell(hostile, repaired.rows[1].id, "n"), 0,
+    "and every cell in it is coerced for its column");
+  assert.equal(sheetCell(hostile, "r", "nosuchcolumn"), "");
+  assert.equal(sheetCell(hostile, "nosuchrow", "n"), "");
+  assert.equal(sheetCell(undefined, "row1", "column1"), "");
+});
+
 test("sheet: rows and columns add and remove, with the edges guarded", () => {
   const doc = emptySheet();
   const column = addSheetColumn(doc, "number");
@@ -1086,8 +1409,171 @@ test("protocol: the kernel's card check is shape, not vocabulary", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* main.mjs -- the two DOM-free helpers behind the browser fixes        */
+/* ------------------------------------------------------------------ */
+
+test("cards: renderCard renders a placeholder for null, undefined and unknown kinds", () => {
+  const dom = stubDom();
+  try {
+    // board.json is user-editable, so one malformed entry must not take the
+    // whole canvas down: every one of these used to throw, and a throw inside
+    // the render loop left the rest of the board unpainted.
+    for (const entry of [null, undefined, 42, ["not", "a", "card"], { kind: "nope", id: "c1" }, { id: "c2" }]) {
+      let card = null;
+      assert.doesNotThrow(() => {
+        card = renderCard(entry, {});
+      }, `renderCard(${JSON.stringify(entry)}) must not throw`);
+      assert.ok(card !== null && card.el, "a placeholder element is produced");
+      assert.equal(typeof card.destroy, "function", "a placeholder is still destroyable");
+      assert.ok(card.handle && typeof card.handle.focus === "function", "a placeholder is still focusable");
+    }
+
+    const missing = renderCard(null, {});
+    assert.equal(missing.el.attrs["data-card-id"], "");
+    assert.match(dom.text(missing.el), /empty \(null\)/);
+    assert.match(dom.text(missing.el), /Known kinds: editor/);
+    assert.equal(missing.handle.kind, "(none)");
+
+    const unknown = renderCard({ kind: "nope", id: "c1" }, {});
+    assert.equal(unknown.el.attrs["data-card-id"], "c1", "the entry keeps its own id");
+    assert.match(dom.text(unknown.el), /No renderer for card kind "nope"/);
+    assert.equal(unknown.handle.kind, "nope");
+
+    // The pure decision behind it is checked directly as well, so a stub that
+    // silently swallowed a throw could not make the check above pass.
+    assert.equal(unknownCardPlaceholder(null).label, "(missing)");
+    assert.equal(unknownCardPlaceholder(undefined).kind, "(none)");
+    assert.equal(unknownCardPlaceholder(42).kind, "(not a card)");
+    assert.equal(unknownCardPlaceholder({ kind: "nope" }).label, "(unknown)");
+  } finally {
+    dom.restore();
+  }
+});
+
+await testAsync("main: ask's inline choice strip removes its command-line listener on every exit", async () => {
+  /*
+   * `ask()` itself is four lines: build a strip, build buttons, hand them to
+   * `wireChoiceStrip`.  All listener bookkeeping lives in the helper, so this is
+   * the check that the leak the browser had cannot come back: the listener must
+   * be gone whether the question was answered, abandoned, or died part-way.
+   */
+  const strip = () => ({ removed: 0, remove() { this.removed += 1; } });
+
+  // Answered by clicking.
+  let command = stubEventTarget();
+  let panel = strip();
+  let button = stubEventTarget();
+  let answer = wireChoiceStrip({ strip: panel, buttons: [{ el: button, value: "yes" }], abandonSource: command });
+  assert.equal(command.count("input"), 1, "the question listens while it is open");
+  button.fire("click");
+  assert.equal(await answer, "yes");
+  assert.equal(command.count("input"), 0, "the listener is gone once the question is answered");
+  assert.equal(panel.removed, 1, "the strip is detached once");
+
+  // Abandoned by typing.
+  command = stubEventTarget();
+  panel = strip();
+  button = stubEventTarget();
+  answer = wireChoiceStrip({ strip: panel, buttons: [{ el: button, value: "yes" }], abandonSource: command });
+  command.fire("input");
+  assert.equal(await answer, null, "typing means the question is abandoned");
+  assert.equal(command.count("input"), 0, "the listener is gone once the question is abandoned");
+  assert.equal(panel.removed, 1);
+
+  // A strip that cannot detach must not keep the listener or hang the answer.
+  command = stubEventTarget();
+  panel = { remove() { throw new Error("already detached"); } };
+  button = stubEventTarget();
+  answer = wireChoiceStrip({ strip: panel, buttons: [{ el: button, value: "yes" }], abandonSource: command });
+  button.fire("click");
+  assert.equal(await answer, "yes", "a failing detach still resolves the answer");
+  assert.equal(command.count("input"), 0, "the listener is gone even when detaching fails");
+
+  // Several buttons cannot double-settle: the first answer wins and one
+  // listener is removed, not two.
+  command = stubEventTarget();
+  panel = strip();
+  const a = stubEventTarget();
+  const b = stubEventTarget();
+  answer = wireChoiceStrip({
+    strip: panel,
+    buttons: [{ el: a, value: "first" }, { el: b, value: "second" }],
+    abandonSource: command,
+  });
+  b.fire("click");
+  a.fire("click");
+  assert.equal(await answer, "second");
+  assert.equal(command.count("input"), 0);
+  assert.equal(panel.removed, 1);
+});
+
+test("main: every save outcome is reported, and a failure never reads as a success", () => {
+  const saved = saveOutcomeMessage({ status: "saved", revision: 7 });
+  assert.equal(saved.level, "info");
+  assert.match(saved.text, /rev 7/);
+  // An autosave that worked is the one outcome allowed to stay quiet: a timer
+  // is not the user, so a line per tick would be noise.
+  assert.equal(saveOutcomeMessage({ status: "saved", revision: 7, auto: true }), null);
+
+  // A write that succeeded without the host reporting a revision is still a
+  // success, but the status line has to admit the next save is unguarded.
+  const unguarded = saveOutcomeMessage({
+    status: "saved",
+    revision: null,
+    detail: "the host reported no revision, so the next save cannot be guarded against a newer file",
+  });
+  assert.match(unguarded.text, /rev unknown/);
+  assert.match(unguarded.text, /cannot be guarded/);
+
+  // `save` with nothing to write used to say nothing at all, which is
+  // indistinguishable from a save that quietly did nothing.
+  const unchanged = saveOutcomeMessage({ status: "unchanged" });
+  assert.equal(unchanged.level, "info");
+  assert.match(unchanged.text, /nothing to write/);
+
+  // A save folded into one already in flight, and a forced one stays forced.
+  const deferred = saveOutcomeMessage({ status: "deferred", force: true });
+  assert.match(deferred.text, /forced save/);
+
+  // A forced overwrite the kernel refused -- the case that used to look like a
+  // success because `force` was asked for and no error was raised.
+  const refused = saveOutcomeMessage({
+    status: "refused",
+    force: true,
+    detail: "the board changed on disk (rev 9)",
+  });
+  assert.equal(refused.level, "warn");
+  assert.match(refused.text, /forced overwrite/);
+  assert.match(refused.text, /rev 9/);
+
+  // A save that threw, and a save that could not start.
+  const failed = saveOutcomeMessage({ status: "failed", detail: "boom" });
+  assert.equal(failed.level, "error");
+  assert.match(failed.text, /boom/);
+  assert.equal(saveOutcomeMessage({ status: "offline" }).level, "error");
+
+  // An autosave failure is still news: nobody is watching the timer.
+  assert.equal(saveOutcomeMessage({ status: "failed", auto: true, detail: "boom" }).level, "error");
+  assert.equal(saveOutcomeMessage({ status: "refused", auto: true, detail: "x" }).level, "warn");
+
+  // Nothing below "saved" may be reported as an error-free success, and none of
+  // them may claim the board was saved.
+  for (const status of ["refused", "failed", "offline"]) {
+    const line = saveOutcomeMessage({ status });
+    assert.notEqual(line.level, "info", `${status} must not look like a success`);
+    assert.doesNotMatch(line.text, /board saved/, `${status} must not claim a save`);
+  }
+  assert.equal(saveOutcomeMessage({ status: "saved-ish" }), null, "an unknown status claims nothing");
+});
+
+/* ------------------------------------------------------------------ */
 
 const passed = checks - failures.length;
+/*
+ * Said on every run, pass or fail, because a green `ok N/N` is easy to read as
+ * "the UI works". It does not: this suite has no browser in it.
+ */
+const note = `note: ${checks} checks, no DOM -- canvas layout, focus and pointer behaviour are not covered`;
 if (failures.length > 0) {
   for (const { name, err } of failures) {
     console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);
@@ -1096,7 +1582,9 @@ if (failures.length > 0) {
     }
   }
   console.error(`ok ${passed}/${checks}`);
+  console.error(note);
   process.exitCode = 1;
 } else {
   console.log(`ok ${passed}/${checks}`);
+  console.log(note);
 }

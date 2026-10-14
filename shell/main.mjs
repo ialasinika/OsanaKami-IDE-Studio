@@ -44,6 +44,15 @@ const DEFAULT_KERNEL = process.platform === "win32"
   ? path.join(ROOT, "build", "seide.exe")
   : path.join(ROOT, "build", "seide");
 
+/*
+ * How long a single kernel call may take before this side gives up waiting.
+ * It is a patience limit, not a deadline: nothing is cancelled at the other
+ * end.  Boards are content-validated on every save, and a fork that raises
+ * the ceiling (many thousands of cards, a slow disk) should be able to say so
+ * with --timeout-ms rather than by editing this file.
+ */
+const DEFAULT_TIMEOUT_MS = 30000;
+
 /* ------------------------------------------------------------------ */
 /* errors                                                              */
 /* ------------------------------------------------------------------ */
@@ -86,10 +95,16 @@ export class Kernel {
   #exit = null;
   #stderr = null;
 
-  constructor({ exe = DEFAULT_KERNEL, workspace = process.cwd(), verbose = false } = {}) {
+  constructor({
+    exe = DEFAULT_KERNEL,
+    workspace = process.cwd(),
+    verbose = false,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = {}) {
     this.exe = exe;
     this.workspace = workspace;
     this.verbose = verbose;
+    this.timeoutMs = timeoutMs;
   }
 
   get running() {
@@ -196,8 +211,19 @@ export class Kernel {
       return;
     }
 
-    // A parse error the kernel raised on a frame it could not read at all.
+    // A parse error the kernel raised on a frame it could not read at all, so
+    // it could not carry an id back.  The kernel reads frames one at a time, so
+    // this belongs to the oldest call still waiting: settling it here turns a
+    // silent 30-second hang into the error that actually happened.
     if (frame.error) {
+      const oldest = this.#pending.keys().next();
+      if (!oldest.done) {
+        const waiter = this.#pending.get(oldest.value);
+        this.#pending.delete(oldest.value);
+        clearTimeout(waiter.timer);
+        waiter.reject(new RpcError(frame.error, waiter.method));
+        return;
+      }
       this.#log(frame.error.message ? String(frame.error.message) : "kernel reported an error with no request id");
       return;
     }
@@ -212,7 +238,7 @@ export class Kernel {
     this.#pending.clear();
   }
 
-  call(method, params, { timeoutMs = 30000 } = {}) {
+  call(method, params, { timeoutMs = this.timeoutMs } = {}) {
     if (!this.running) {
       return Promise.reject(new RpcError(
         { code: -32000, name: "KERNEL_GONE", message: "the kernel is not running" },
@@ -228,8 +254,21 @@ export class Kernel {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
+        /*
+         * A timeout here is a statement about this side's patience, not about
+         * the kernel's state: the request is not cancelled and the kernel may
+         * still be working on it.  Saying only "did not answer" invites the
+         * caller to treat the operation as failed and retry it into a kernel
+         * that is still busy with the first attempt.
+         */
         reject(new RpcError(
-          { code: -32001, name: "TIMEOUT", message: `${method} did not answer within ${timeoutMs} ms` },
+          {
+            code: -32001,
+            name: "TIMEOUT",
+            message: `${method} did not answer within ${timeoutMs} ms. `
+              + "The request was not cancelled and the kernel may still be "
+              + "working on it; raise the limit with --timeout-ms.",
+          },
           method,
           "timeout",
         ));
@@ -330,15 +369,33 @@ class FileLanguages {
   }
 }
 
-async function loadLanguages(dir) {
+async function loadLanguages(dir, log = () => {}) {
   try {
     const [langMod, tokMod] = await Promise.all([
       import(pathToFileURL(path.join(dir, "lang.mjs")).href),
       import(pathToFileURL(path.join(dir, "tokenize.mjs")).href),
     ]);
-    const registry = langMod.LangRegistry.fromDir(dir);
+    // A descriptor that cannot be read is skipped rather than fatal -- one bad
+    // file must not cost every other language -- but skipping it silently
+    // makes a typo indistinguishable from having no languages at all, so each
+    // one is reported.
+    const problems = [];
+    const registry = langMod.LangRegistry.fromDir(dir, {
+      onError: (file, err) => problems.push(`${path.basename(file)}: ${err && err.message}`),
+    });
+    for (const problem of problems) {
+      log(`langs: skipping descriptor -- ${problem}`);
+    }
+    if (registry.list().length === 0) {
+      log(`langs: no descriptors in ${dir}; every file opens as plain text`);
+    }
     return new FileLanguages(registry, tokMod.tokenize, tokMod.tokenizePlain);
-  } catch {
+  } catch (err) {
+    // Deliberately not fatal: `langs/` is optional by design, and the editor
+    // degrades to plain text.  Saying so is what keeps the degradation from
+    // looking like "this project has no languages".
+    log(`langs: the language layer did not load (${err && err.message});`
+      + " every file opens as plain text");
     return new PlainLanguages();
   }
 }
@@ -382,24 +439,24 @@ export async function dispatch(frame, kernel, languages) {
 
   const answer = (build) => (notification ? null : build());
 
-  if (method === "lang.list") {
-    return answer(() => response(id, languages.list()));
-  }
-
-  if (method === "lang.tokenize") {
-    if (typeof params.text !== "string") {
-      return answer(() => failure(id, -32602, "INVALID_PARAMS", "lang.tokenize needs a string `text`"));
-    }
-    if (!languages.available) {
-      return answer(() => response(id, { tokens: [[0, params.text.length, "plain"]], lang: null }));
-    }
-    return answer(() => response(id, languages.tokenize(params.text, {
-      path: typeof params.path === "string" ? params.path : null,
-      lang: typeof params.lang === "string" ? params.lang : null,
-    })));
-  }
-
   try {
+    if (method === "lang.list") {
+      return answer(() => response(id, languages.list()));
+    }
+
+    if (method === "lang.tokenize") {
+      if (typeof params.text !== "string") {
+        return answer(() => failure(id, -32602, "INVALID_PARAMS", "lang.tokenize needs a string `text`"));
+      }
+      if (!languages.available) {
+        return answer(() => response(id, { tokens: [[0, params.text.length, "plain"]], lang: null }));
+      }
+      return answer(() => response(id, languages.tokenize(params.text, {
+        path: typeof params.path === "string" ? params.path : null,
+        lang: typeof params.lang === "string" ? params.lang : null,
+      })));
+    }
+
     const result = await kernel.call(method, frame.params);
 
     // The kernel is language-agnostic, so the language inventory is added by
@@ -446,7 +503,11 @@ function writeStdout(obj) {
 
 async function runRpc(options) {
   const kernel = new Kernel(options);
-  const languages = await loadLanguages(LANGS_DIR);
+  // Diagnostics belong on stderr: stdout carries protocol frames and nothing
+  // else, so a client can parse it without filtering.
+  const languages = await loadLanguages(LANGS_DIR, (message) => {
+    process.stderr.write(`[shell] ${message}\n`);
+  });
 
   await kernel.start();
   if (options.verbose) {
@@ -457,23 +518,28 @@ async function runRpc(options) {
   kernel.onNotification((event) => writeStdout(event));
 
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of rl) {
-    const text = line.trim();
-    if (text === "") continue;   // keep-alive
+  try {
+    for await (const line of rl) {
+      const text = line.trim();
+      if (text === "") continue;   // keep-alive
 
-    const { frame, error } = parseFrame(text);
-    if (error) {
-      writeStdout(error);
-      continue;
+      const { frame, error } = parseFrame(text);
+      if (error) {
+        writeStdout(error);
+        continue;
+      }
+
+      // Sequential on purpose: the kernel answers one frame at a time, and a
+      // client that pipelines still gets its replies in order.
+      const reply = await dispatch(frame, kernel, languages);
+      if (reply !== null) writeStdout(reply);
     }
-
-    // Sequential on purpose: the kernel answers one frame at a time, and a
-    // client that pipelines still gets its replies in order.
-    const reply = await dispatch(frame, kernel, languages);
-    if (reply !== null) writeStdout(reply);
+  } finally {
+    // Whatever ends the loop -- EOF, an error, a signal -- the kernel child
+    // goes with it.
+    kernel.close();
   }
 
-  kernel.close();
   return 0;
 }
 
@@ -496,7 +562,15 @@ const MIME = {
 };
 
 function staticPath(urlPath) {
-  const clean = decodeURIComponent(urlPath.split("?")[0]);
+  const raw = urlPath.split("?")[0];
+  let clean;
+  try {
+    clean = decodeURIComponent(raw);
+  } catch {
+    // Malformed percent-encoding is a bad request, not a server fault: the
+    // caller turns null into a refusal instead of a 500.
+    return null;
+  }
   const rel = clean === "/" ? "index.html" : clean.replace(/^\/+/, "");
   const full = path.resolve(WEB_DIR, rel);
   const base = path.resolve(WEB_DIR);
@@ -510,17 +584,27 @@ function readBody(req, limit = 64 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let settled = false;
     req.on("data", (chunk) => {
+      if (settled) return;
       size += chunk.length;
       if (size > limit) {
-        reject(new Error("request body too large"));
-        req.destroy();
+        settled = true;
+        // Answer instead of destroying the socket.  The rest of the body is
+        // left unread, which closes the connection once the reply is out --
+        // but the client gets told why, which a reset never does.
+        req.pause();
+        reject(Object.assign(new Error("request body is too large"), { status: 413 }));
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!settled) resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (err) => {
+      if (!settled) reject(err);
+    });
   });
 }
 
@@ -566,7 +650,9 @@ function openWindow(url, { verbose = false } = {}) {
 
 async function runServe(options) {
   const kernel = new Kernel(options);
-  const languages = await loadLanguages(LANGS_DIR);
+  const languages = await loadLanguages(LANGS_DIR, (message) => {
+    process.stderr.write(`[shell] ${message}\n`);
+  });
   await kernel.start();
 
   const subscribers = new Set();
@@ -594,6 +680,19 @@ async function runServe(options) {
 
   async function handleRequest(req, res) {
     const url = req.url ?? "/";
+
+    // Loopback is not a security boundary.  Any page the user happens to have
+    // open can POST to this port -- a CORS "simple" request needs no
+    // preflight -- and this endpoint writes files and starts processes.  A
+    // browser does send `Origin` on cross-origin POSTs, so a request that
+    // names a different origin is refused.  A request with no `Origin` is a
+    // local tool (curl, the test suite), which is exactly who should be here.
+    const origin = req.headers.origin;
+    if (typeof origin === "string" && origin !== "" && origin !== `http://${req.headers.host}`) {
+      res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      res.end("cross-origin requests are refused\n");
+      return;
+    }
 
     if (req.method === "GET" && url.split("?")[0] === "/events") {
       res.writeHead(200, {
@@ -626,8 +725,14 @@ async function runServe(options) {
       try {
         frame = JSON.parse(await readBody(req));
       } catch (err) {
-        res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(failure(null, -32700, "PARSE_ERROR", `offset 0: ${err && err.message}`)));
+        // An oversized body gets an answer, not a destroyed socket: a reset
+        // tells the client nothing at all, and the connection is still able
+        // to carry a status line.
+        const tooLarge = err && err.status === 413;
+        res.writeHead(tooLarge ? 413 : 400, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(tooLarge
+          ? failure(null, -32600, "REQUEST_TOO_LARGE", "request body is too large")
+          : failure(null, -32700, "PARSE_ERROR", `offset 0: ${err && err.message}`)));
         return;
       }
 
@@ -685,25 +790,7 @@ async function runServe(options) {
     res.end(await readFile(full));
   }
 
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port, "127.0.0.1", resolve);
-  });
-
-  const address = server.address();
-  const url = `http://127.0.0.1:${address.port}/`;
-
-  process.stdout.write(`seIDE ${SHELL_VERSION}\n`);
-  process.stdout.write(`  board   ${url}\n`);
-  process.stdout.write(`  kernel  ${kernel.exe}\n`);
-  process.stdout.write(`  root    ${kernel.workspace}\n`);
-  process.stdout.write(`  langs   ${languages.available ? LANGS_DIR : "(none -- plain text)"}\n`);
-
   let browser = null;
-  if (!options.noOpen) {
-    browser = openWindow(url, options);
-  }
-
   const shutdown = () => {
     if (browser && browser.exitCode === null) {
       try {
@@ -732,6 +819,33 @@ async function runServe(options) {
     shutdown();
     process.exit(0);
   });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(options.port, "127.0.0.1", resolve);
+    });
+  } catch (err) {
+    // A port that is already taken must not leave a kernel child behind: its
+    // pipes keep this process alive, so the failure would hang instead of
+    // exiting with the error that explains it.
+    kernel.close();
+    throw err;
+  }
+
+  const address = server.address();
+  const url = `http://127.0.0.1:${address.port}/`;
+
+  process.stdout.write(`seIDE ${SHELL_VERSION}\n`);
+  process.stdout.write(`  board   ${url}\n`);
+  process.stdout.write(`  kernel  ${kernel.exe}\n`);
+  process.stdout.write(`  root    ${kernel.workspace}\n`);
+  process.stdout.write(`  langs   ${languages.available ? LANGS_DIR : "(none -- plain text)"}\n`);
+
+  if (!options.noOpen) {
+    browser = openWindow(url, options);
+  }
+
   // Closing the window ends the session: no orphaned kernel, no orphaned port.
   if (browser) {
     browser.once("exit", () => {
@@ -752,17 +866,21 @@ const USAGE = `seIDE shell ${SHELL_VERSION}
 
 usage: node shell/main.mjs <command> [options]
 
-  rpc     [--workspace DIR] [--kernel PATH] [--verbose]
+  rpc     [--workspace DIR] [--kernel PATH] [--timeout-ms N] [--verbose]
           Speak newline-delimited JSON-RPC on stdin/stdout.  Forwards to the
           kernel; answers lang.list and lang.tokenize from langs/; adds the
           \`langs\` member to workspace.info.
 
-  serve   [--workspace DIR] [--kernel PATH] [--port N] [--no-open] [--verbose]
+  serve   [--workspace DIR] [--kernel PATH] [--port N] [--no-open]
+          [--timeout-ms N] [--verbose]
           Serve shell/web/ over HTTP with POST /rpc and GET /events, then
           launch the system browser in --app= mode.  --port 0 (default) picks
           a free port; --no-open skips the browser.
 
   help    This text.
+
+--timeout-ms N is how long this side waits for one kernel call before giving
+up (default ${DEFAULT_TIMEOUT_MS}).  Giving up does not cancel the call.
 
 The window is the system's Edge/Chromium in app mode.  There is no Electron
 and no bundled browser: a fork that wants a real native shell replaces this
@@ -777,10 +895,11 @@ function parseArgs(argv) {
     port: 0,
     noOpen: false,
     verbose: false,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
   };
 
-  const takesValue = new Set(["--workspace", "--kernel", "--port"]);
+  const takesValue = new Set(["--workspace", "--kernel", "--port", "--timeout-ms"]);
   const rest = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -796,8 +915,13 @@ function parseArgs(argv) {
       if (!takesValue.has(name)) throw new Error(`unknown option: ${name}`);
       applyOption(options, name, value);
     } else if (takesValue.has(arg)) {
+      // A flag is not a value: `--workspace --no-open` used to make the
+      // workspace literally "--no-open" and then fail later with something
+      // unrecognisable.
       const value = argv[++i];
-      if (value === undefined) throw new Error(`${arg} needs a value`);
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error(`${arg} needs a value`);
+      }
       applyOption(options, arg, value);
     } else if (arg.startsWith("--")) {
       throw new Error(`unknown option: ${arg}`);
@@ -816,6 +940,10 @@ function parseArgs(argv) {
 }
 
 function applyOption(options, name, value) {
+  // `--workspace=` and `--workspace ""` both mean "I forgot the value"; taking
+  // them literally would resolve to the current directory and look like it
+  // worked.
+  if (value === "") throw new Error(`${name} needs a value`);
   if (name === "--workspace") options.workspace = value;
   else if (name === "--kernel") options.kernel = value;
   else if (name === "--port") {
@@ -824,6 +952,12 @@ function applyOption(options, name, value) {
       throw new Error(`--port needs a number between 0 and 65535, got ${value}`);
     }
     options.port = port;
+  } else if (name === "--timeout-ms") {
+    const timeoutMs = Number(value);
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 100) {
+      throw new Error(`--timeout-ms needs a whole number of milliseconds >= 100, got ${value}`);
+    }
+    options.timeoutMs = timeoutMs;
   }
 }
 

@@ -6,6 +6,7 @@
  */
 #include "seide_cfg.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -132,6 +133,16 @@ sde_json *sde_json_str_n(const char *s, size_t len)
 sde_json *sde_json_arr(void)
 {
     return jw_new(SDE_JSON_ARR);
+}
+
+/*
+ * The explicit double cast matters: `unsigned long` is 32 bits here, all of
+ * them meaningful, and 2^32-1 is exactly representable as a double, so this
+ * prints every revision as a plain positive integer.
+ */
+sde_json *sde_json_rev(unsigned long rev)
+{
+    return sde_json_num((double) rev);
 }
 
 sde_json *sde_json_clone(const sde_json *v)
@@ -573,6 +584,19 @@ static int jp_string(jp_state *j, sde_buf *out)
                 jp_err(j, "lone low surrogate");
                 return -1;
             }
+            if (cp == 0UL) {
+                /*
+                 * Every string in this kernel is a NUL-terminated C string,
+                 * so U+0000 is the one code point it cannot carry.  Accepting
+                 * it would store a truncated value and report success -- a
+                 * `file.write` of "a\u0000b" would quietly write one byte --
+                 * so the transport refuses it instead.  The document is
+                 * well-formed JSON, but it is not representable here, and
+                 * that has to be an error rather than silent data loss.
+                 */
+                jp_err(j, "string contains U+0000, which cannot be carried");
+                return -1;
+            }
             if (jp_utf8(out, cp) != 0) {
                 goto oom;
             }
@@ -840,7 +864,25 @@ static sde_json *jp_number(jp_state *j)
     }
 
     if (is_int) {
-        return sde_json_int(strtol(tok, NULL, 10));
+        char *end = NULL;
+        long  v;
+
+        errno = 0;
+        v = strtol(tok, &end, 10);
+        /*
+         * `long` is 32 bits on Windows, but JSON integers are unbounded and
+         * the kernel hands out 32-bit content revisions as plain numbers.
+         * Without this check a revision like 3123124719 would come back as
+         * LONG_MAX, so a client echoing it into `base_revision` would be told
+         * its own file had changed.  Anything that does not fit becomes a
+         * double, which is exact up to 2^53 and is what sde_json_as_num
+         * already knows how to read.
+         */
+        if (errno != ERANGE && end != NULL && *end == '\0') {
+            return sde_json_int(v);
+        }
+        errno = 0;
+        return sde_json_num(strtod(tok, NULL));
     }
     return sde_json_num(strtod(tok, NULL));
 }
@@ -1068,6 +1110,117 @@ static int jw_value(sde_buf *out, const sde_json *v, int indent, int level)
 int sde_json_write(sde_buf *out, const sde_json *v)
 {
     return jw_value(out, v, 0, 0);
+}
+
+/*
+ * Canonical form: equal values always serialise to equal bytes.  Object members
+ * are written sorted by key; arrays keep their order, because an array is a
+ * sequence and its order is part of the value.
+ *
+ * Revisions are content hashes, so they have to be taken over this form rather
+ * than over whatever member order arrived on the wire.  Otherwise two clients
+ * holding the same board, one of which wrote `version` first and the other
+ * `links`, compute different revisions for it and hand each other a spurious
+ * STALE_REVISION.
+ */
+static int jw_canonical(sde_buf *out, const sde_json *v)
+{
+    size_t i;
+    size_t j;
+
+    if (v == NULL) {
+        return sde_buf_adds(out, "null");
+    }
+
+    switch (v->type) {
+    case SDE_JSON_NULL:
+        return sde_buf_adds(out, "null");
+
+    case SDE_JSON_BOOL:
+        return sde_buf_adds(out, v->bval ? "true" : "false");
+
+    case SDE_JSON_NUM:
+        if (v->inum) {
+            return sde_buf_addi(out, v->ival);
+        }
+        return sde_buf_addf(out, "%.17g", v->nval);
+
+    case SDE_JSON_STR:
+        return sde_json_escape(out, v->sval);
+
+    case SDE_JSON_ARR:
+        if (sde_buf_addc(out, '[') != 0) {
+            return -1;
+        }
+        for (i = 0; i < v->nelems; i++) {
+            if (i > 0 && sde_buf_addc(out, ',') != 0) {
+                return -1;
+            }
+            if (jw_canonical(out, v->elems[i]) != 0) {
+                return -1;
+            }
+        }
+        return sde_buf_addc(out, ']');
+
+    case SDE_JSON_OBJ:
+        {
+            size_t *order;
+            int     rc;
+
+            if (v->nvals == 0) {
+                return sde_buf_adds(out, "{}");
+            }
+            order = (size_t *) malloc(v->nvals * sizeof(size_t));
+            if (order == NULL) {
+                return -1;
+            }
+            for (i = 0; i < v->nvals; i++) {
+                order[i] = i;
+            }
+            /* Insertion sort: boards have a handful of members, not thousands. */
+            for (i = 1; i < v->nvals; i++) {
+                size_t here = order[i];
+
+                j = i;
+                while (j > 0
+                       && strcmp(v->keys[order[j - 1]], v->keys[here]) > 0) {
+                    order[j] = order[j - 1];
+                    j--;
+                }
+                order[j] = here;
+            }
+
+            rc = sde_buf_addc(out, '{');
+            for (i = 0; rc == 0 && i < v->nvals; i++) {
+                size_t at = order[i];
+
+                if (i > 0) {
+                    rc = sde_buf_addc(out, ',');
+                }
+                if (rc == 0) {
+                    rc = sde_json_escape(out, v->keys[at]);
+                }
+                if (rc == 0) {
+                    rc = sde_buf_addc(out, ':');
+                }
+                if (rc == 0) {
+                    rc = jw_canonical(out, v->vals[at]);
+                }
+            }
+            free(order);
+            if (rc != 0) {
+                return -1;
+            }
+            return sde_buf_addc(out, '}');
+        }
+    }
+
+    return -1;
+}
+
+int sde_json_write_canonical(sde_buf *out, const sde_json *v)
+{
+    return jw_canonical(out, v);
 }
 
 int sde_json_write_pretty(sde_buf *out, const sde_json *v, int indent)

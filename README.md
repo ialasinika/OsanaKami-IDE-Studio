@@ -253,7 +253,7 @@ tools/                  Python 3.12, standard library only
   README.md             what each tool is for
 
 examples/               hello.bf (prints "Hello World!"), shadow.bf
-docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, TRIM.md, FORK.md
+docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, TRIM.md, FORK.md, BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
@@ -300,7 +300,9 @@ board and not tabs; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
 layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
 [`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
 [`docs/TRIM.md`](docs/TRIM.md) — how to cut a module out;
-[`docs/FORK.md`](docs/FORK.md) — the fork playbook.
+[`docs/FORK.md`](docs/FORK.md) — the fork playbook;
+[`docs/BUGS.md`](docs/BUGS.md) — every defect probing found, with its root cause
+and fix, so a fork knows what was already tried.
 
 > Rejected alternative: **a Rust kernel**. It was dropped because a dependency's
 > build script needed a C compiler, which broke constraint 4 (fully offline,

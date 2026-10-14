@@ -11,10 +11,14 @@ and exits.
 
 Exit codes
     0   the build (or ``--check``) succeeded
-    1   ``--check`` could not find make or gcc
+    1   ``--check`` found tools, but not all of them (make or gcc missing)
     2   the repository has no Makefile, or make could not be started
     N   whatever make returned
     3   the command line was malformed
+
+GNU make itself exits 2 when a recipe fails, so 2 is ambiguous by construction.
+The driver always names its own reason on stderr (``build.py: ...``) before make
+runs; a bare make failure carries only make's own diagnostics.
 """
 
 from __future__ import annotations
@@ -88,6 +92,15 @@ def do_check(make, gcc) -> int:
     print(f"gcc       : {gcc if gcc else 'NOT FOUND'}")
     if gcc:
         print(f"            {version_line(gcc)}")
+    if not MAKEFILE.is_file():
+        # A perfect toolchain and no Makefile still cannot build this tree, so
+        # this is the 2 the exit-code table promises -- not a cheerful 0 that
+        # only checked the two paths above it.
+        print(
+            f"build.py: no Makefile at {MAKEFILE}; this tree cannot be built",
+            file=sys.stderr,
+        )
+        return 2
     return 0 if (make and gcc) else 1
 
 

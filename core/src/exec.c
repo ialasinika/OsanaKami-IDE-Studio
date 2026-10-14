@@ -241,6 +241,7 @@ int sde_exec_stop(sde_execset *s, long run_id)
 {
     size_t i;
     int    found = 0;
+    int    stopped = 0;
 
     if (s == NULL) {
         return -1;
@@ -253,11 +254,29 @@ int sde_exec_stop(sde_execset *s, long run_id)
                 sde_proc_kill(s->runs[i].proc);
                 s->runs[i].running = 0;
                 s->runs[i].code = -1;
+                stopped = 1;
             }
             break;
         }
     }
     sde_mutex_unlock(s->lock);
+
+    if (stopped) {
+        /*
+         * `exec.exit` is the only event that retires a run, and the pump skips
+         * runs that are no longer running, so a stopped run would otherwise
+         * stay on screen forever.  The code matches what `exec.list` reports
+         * for the same run (-1, "stopped rather than exited").  Whatever the
+         * child had left in its pipe is discarded: the user asked for it to
+         * die, not to finish.
+         */
+        sde_json *notif = notification("exec.exit", run_id);
+
+        if (notif != NULL) {
+            sde_json_set(notif, "code", sde_json_int(-1));
+            (void) sde_app_notify(s->app, notif);
+        }
+    }
     return found ? 0 : -1;
 }
 
@@ -316,6 +335,87 @@ sde_json *sde_exec_list(const sde_execset *s)
 /* the pump                                                               */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * A child process may print anything at all -- a NUL byte, a stray 0x80 from a
+ * binary blob, half a UTF-8 sequence cut in two by the read -- but a JSON
+ * string must be valid UTF-8 and cannot contain U+0000.  Rather than drop
+ * everything from the first byte JSON cannot carry (which silently truncated
+ * the output and still reported the read as successful), every byte that cannot
+ * be carried becomes U+FFFD.  The shell used to do this rewrite itself; doing
+ * it here means both endpoints agree on what a run produced.
+ */
+static void append_safe(sde_buf *out, const char *data, size_t len)
+{
+    const unsigned char *p = (const unsigned char *) data;
+    size_t               i = 0;
+
+    if (data == NULL) {
+        return;
+    }
+    while (i < len) {
+        unsigned char c = p[i];
+        size_t        need;
+        unsigned long cp;
+        size_t        k;
+        int           ok;
+
+        if (c < 0x80u) {
+            if (c != 0u) {
+                (void) sde_buf_addc(out, (char) c);
+            } else {
+                (void) sde_buf_adds(out, "\xEF\xBF\xBD");
+            }
+            i++;
+            continue;
+        }
+
+        if ((c & 0xE0u) == 0xC0u) {
+            need = 2;
+            cp = (unsigned long) (c & 0x1Fu);
+        } else if ((c & 0xF0u) == 0xE0u) {
+            need = 3;
+            cp = (unsigned long) (c & 0x0Fu);
+        } else if ((c & 0xF8u) == 0xF0u) {
+            need = 4;
+            cp = (unsigned long) (c & 0x07u);
+        } else {
+            (void) sde_buf_adds(out, "\xEF\xBF\xBD");
+            i++;
+            continue;
+        }
+
+        ok = (i + need <= len);
+        for (k = 1; ok && k < need; k++) {
+            if ((p[i + k] & 0xC0u) != 0x80u) {
+                ok = 0;
+                break;
+            }
+            cp = (cp << 6) | (unsigned long) (p[i + k] & 0x3Fu);
+        }
+
+        /* Reject overlong forms, surrogates and out-of-range code points. */
+        if (ok) {
+            if (cp > 0x10FFFFul) {
+                ok = 0;
+            } else if (cp >= 0xD800ul && cp <= 0xDFFFul) {
+                ok = 0;
+            } else if ((need == 2 && cp < 0x80ul)
+                       || (need == 3 && cp < 0x800ul)
+                       || (need == 4 && cp < 0x10000ul)) {
+                ok = 0;
+            }
+        }
+
+        if (ok) {
+            (void) sde_buf_add(out, (const char *) (p + i), need);
+            i += need;
+        } else {
+            (void) sde_buf_adds(out, "\xEF\xBF\xBD");
+            i++;
+        }
+    }
+}
+
 static int pump_one(sde_execset *s, size_t i)
 {
     sde_buf   out;
@@ -345,16 +445,20 @@ static int pump_one(sde_execset *s, size_t i)
     if (n > 0) {
         notif = notification("exec.output", run_id);
         if (notif != NULL) {
+            sde_buf safe;
+
             sde_json_set(notif, "stream",
                          sde_json_str(stream == 'e' ? "stderr" : "stdout"));
+            sde_buf_init(&safe);
+            append_safe(&safe, out.data, out.len);
             sde_json_set(notif, "data",
-                         sde_json_str_n(out.data == NULL ? "" : out.data,
-                                        out.len));
+                         sde_json_str_n(safe.data == NULL ? "" : safe.data,
+                                        safe.len));
+            sde_buf_free(&safe);
             (void) sde_app_notify(s->app, notif);
         }
     }
     sde_buf_free(&out);
-
     if (exited) {
         notif = notification("exec.exit", run_id);
         if (notif != NULL) {

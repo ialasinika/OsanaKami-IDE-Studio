@@ -89,8 +89,22 @@ static sde_json *default_document(void)
  * Fills in the fields a document is allowed to omit.  Runs before
  * validation so that a hand-written board.json only has to be correct about
  * the parts that genuinely carry meaning.
+ *
+ * Two rules, and the second one is the important one:
+ *
+ *  1. A field that is *absent* may be defaulted.  A field that is *present
+ *     but the wrong type* is never touched here, so that validate() can
+ *     reject it.  Repairing it would hide the caller's bug.
+ *
+ *  2. `cards` and `links` are only ever synthesized when `make_arrays` is
+ *     set, which happens for a file read off disk (a hand-written board may
+ *     legitimately leave them out).  A document that arrives over the wire
+ *     must carry both: defaulting them to empty turns "your client sent
+ *     nonsense" into "your board is now empty", and the caller is told the
+ *     save succeeded.  That is the one failure mode a board-first IDE must
+ *     never have.
  */
-static void fill_defaults(sde_json *doc)
+static void fill_defaults(sde_json *doc, int make_arrays)
 {
     sde_json *vp;
     sde_json *cards;
@@ -100,12 +114,12 @@ static void fill_defaults(sde_json *doc)
         return;
     }
 
-    if (!is_num(sde_json_get(doc, "version"))) {
+    if (sde_json_get(doc, "version") == NULL) {
         sde_json_set(doc, "version", sde_json_int(SDE_BOARD_VERSION));
     }
 
     vp = sde_json_get(doc, "viewport");
-    if (!is_obj(vp)) {
+    if (vp == NULL) {
         vp = sde_json_obj();
         if (vp != NULL) {
             sde_json_set(vp, "x", sde_json_num(0.0));
@@ -113,7 +127,7 @@ static void fill_defaults(sde_json *doc)
             sde_json_set(vp, "zoom", sde_json_num(1.0));
             sde_json_set(doc, "viewport", vp);
         }
-    } else {
+    } else if (is_obj(vp)) {
         if (!is_num(sde_json_get(vp, "x"))) {
             sde_json_set(vp, "x", sde_json_num(0.0));
         }
@@ -126,9 +140,9 @@ static void fill_defaults(sde_json *doc)
     }
 
     cards = sde_json_get(doc, "cards");
-    if (!is_arr(cards)) {
+    if (cards == NULL && make_arrays) {
         sde_json_set(doc, "cards", sde_json_arr());
-    } else {
+    } else if (is_arr(cards)) {
         for (i = 0; i < sde_json_count(cards); i++) {
             sde_json *c = sde_json_at(cards, i);
             if (is_obj(c) && !is_num(sde_json_get(c, "z"))) {
@@ -137,29 +151,108 @@ static void fill_defaults(sde_json *doc)
         }
     }
 
-    if (!is_arr(sde_json_get(doc, "links"))) {
+    if (sde_json_get(doc, "links") == NULL && make_arrays) {
         sde_json_set(doc, "links", sde_json_arr());
     }
 }
 
-/* Returns the card at `index` whose id equals `id`, or NULL. */
-static const sde_json *find_card(const sde_json *cards, const char *id)
+/*
+ * Identity lookups used to be a linear scan per card and per link, which made
+ * validating an N-card board O(N^2): a 20 000-card save took 72 seconds and
+ * outlived every client's patience.  Collecting the ids once and sorting them
+ * makes the same checks O(N log N).
+ */
+typedef struct board_id {
+    const char *id;
+    size_t      index;
+} board_id;
+
+static int cmp_board_id(const void *a, const void *b)
 {
-    size_t i;
+    const board_id *x = (const board_id *) a;
+    const board_id *y = (const board_id *) b;
 
-    for (i = 0; i < sde_json_count(cards); i++) {
-        const sde_json *c = sde_json_at(cards, i);
-        const char     *cid;
+    return strcmp(x->id, y->id);
+}
 
-        if (!is_obj(c)) {
-            continue;
+/*
+ * Fill *out with the ids of `items` sorted by id.  Items that are not objects,
+ * or that carry no string id, are skipped: their shape is check_card's or
+ * check_links' business, not this function's.
+ */
+static int build_ids(const sde_json *items, board_id **out, size_t *out_count,
+                     char *err, size_t errcap)
+{
+    size_t    n = sde_json_count(items);
+    board_id *ids;
+    size_t    count = 0;
+    size_t    i;
+
+    *out = NULL;
+    *out_count = 0;
+    if (n == 0) {
+        return 0;
+    }
+    ids = (board_id *) malloc(n * sizeof(board_id));
+    if (ids == NULL) {
+        set_err(err, errcap, "out of memory");
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        const char *id =
+            sde_json_as_str(sde_json_get(sde_json_at(items, i), "id"));
+
+        if (id != NULL) {
+            ids[count].id = id;
+            ids[count].index = i;
+            count++;
         }
-        cid = sde_json_as_str(sde_json_get(c, "id"));
-        if (cid != NULL && strcmp(cid, id) == 0) {
-            return c;
+    }
+    qsort(ids, count, sizeof(board_id), cmp_board_id);
+    *out = ids;
+    *out_count = count;
+    return 0;
+}
+
+static const board_id *lookup_id(const board_id *ids, size_t count,
+                                 const char *id)
+{
+    size_t lo = 0;
+    size_t hi = count;
+
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        int    cmp = strcmp(ids[mid].id, id);
+
+        if (cmp == 0) {
+            return &ids[mid];
+        }
+        if (cmp < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
         }
     }
     return NULL;
+}
+
+/* Report the first duplicate in an already-sorted id array, if any. */
+static int first_duplicate(const board_id *ids, size_t count, const char *label,
+                           char *err, size_t errcap)
+{
+    size_t i;
+
+    for (i = 1; i < count; i++) {
+        if (strcmp(ids[i - 1].id, ids[i].id) == 0) {
+            char where[48];
+
+            snprintf(where, sizeof(where), "%s[%lu]", label,
+                     (unsigned long) ids[i].index);
+            set_err_at(err, errcap, where, "duplicate `id`");
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static int check_card(const sde_json *card, size_t index,
@@ -203,10 +296,12 @@ static int check_card(const sde_json *card, size_t index,
     return 0;
 }
 
-static int check_links(const sde_json *links, const sde_json *cards,
-                       char *err, size_t errcap)
+static int check_links(const sde_json *links, const board_id *card_ids,
+                       size_t card_count, char *err, size_t errcap)
 {
-    size_t i;
+    board_id *link_ids;
+    size_t    link_count;
+    size_t    i;
 
     for (i = 0; i < sde_json_count(links); i++) {
         const sde_json *l = sde_json_at(links, i);
@@ -227,24 +322,38 @@ static int check_links(const sde_json *links, const sde_json *cards,
                        "missing string `from` and `to`");
             return -1;
         }
-        if (find_card(cards, from) == NULL) {
+        if (lookup_id(card_ids, card_count, from) == NULL) {
             set_err_at(err, errcap, where, "`from` names no card");
             return -1;
         }
-        if (find_card(cards, to) == NULL) {
+        if (lookup_id(card_ids, card_count, to) == NULL) {
             set_err_at(err, errcap, where, "`to` names no card");
             return -1;
         }
     }
-    return 0;
+
+    /*
+     * A link id is how a client names one edge -- `unlink`, a selection, a
+     * highlight.  Two edges sharing one identity makes that ambiguous, in
+     * exactly the way two cards sharing an id would.  A link with no id at all
+     * is left alone: it has no identity to collide with.
+     */
+    if (build_ids(links, &link_ids, &link_count, err, errcap) != 0) {
+        return -1;
+    }
+    i = (size_t) first_duplicate(link_ids, link_count, "links", err, errcap);
+    free(link_ids);
+    return (int) i;
 }
 
 static int validate(const sde_json *doc, char *err, size_t errcap)
 {
     const sde_json *cards;
     const sde_json *links;
+    board_id       *card_ids;
+    size_t          card_count;
     size_t          i;
-    size_t          j;
+    int             rc;
 
     if (!is_obj(doc)) {
         set_err(err, errcap, "board document must be a JSON object");
@@ -268,27 +377,24 @@ static int validate(const sde_json *doc, char *err, size_t errcap)
         if (check_card(sde_json_at(cards, i), i, err, errcap) != 0) {
             return -1;
         }
-        for (j = 0; j < i; j++) {
-            const char *a = sde_json_as_str(
-                sde_json_get(sde_json_at(cards, i), "id"));
-            const char *b = sde_json_as_str(
-                sde_json_get(sde_json_at(cards, j), "id"));
-            if (a != NULL && b != NULL && strcmp(a, b) == 0) {
-                char where[48];
-                snprintf(where, sizeof(where), "cards[%lu]",
-                         (unsigned long) i);
-                set_err_at(err, errcap, where, "duplicate `id`");
-                return -1;
-            }
-        }
+    }
+    if (build_ids(cards, &card_ids, &card_count, err, errcap) != 0) {
+        return -1;
+    }
+    if (first_duplicate(card_ids, card_count, "cards", err, errcap) != 0) {
+        free(card_ids);
+        return -1;
     }
 
     links = sde_json_get(doc, "links");
     if (!is_arr(links)) {
+        free(card_ids);
         set_err(err, errcap, "board `links` must be an array");
         return -1;
     }
-    return check_links(links, cards, err, errcap);
+    rc = check_links(links, card_ids, card_count, err, errcap);
+    free(card_ids);
+    return rc;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -357,14 +463,30 @@ int sde_board_load(sde_board *b, const char *root)
         return -1;
     }
 
-    doc = sde_json_parse(buf.data == NULL ? "" : buf.data, buf.len,
-                         err, sizeof(err));
+    {
+        /*
+         * A board.json that has been through Notepad, or through PowerShell's
+         * `Set-Content -Encoding utf8`, starts with a UTF-8 BOM.  JSON does not
+         * allow one, so refusing the file would brick the editor over three
+         * invisible bytes that the writer added on its own.
+         */
+        const char *text = (buf.data == NULL) ? "" : buf.data;
+        size_t      len = buf.len;
+
+        if (len >= 3 && (unsigned char) text[0] == 0xEF
+            && (unsigned char) text[1] == 0xBB
+            && (unsigned char) text[2] == 0xBF) {
+            text += 3;
+            len -= 3;
+        }
+        doc = sde_json_parse(text, len, err, sizeof(err));
+    }
     sde_buf_free(&buf);
     if (doc == NULL) {
         return -1;
     }
 
-    fill_defaults(doc);
+    fill_defaults(doc, 1);
     if (validate(doc, err, sizeof(err)) != 0) {
         sde_json_free(doc);
         return -1;
@@ -394,7 +516,7 @@ int sde_board_adopt(sde_board *b, sde_json *doc, char *err, size_t errcap)
         set_err(err, errcap, "no document");
         return -1;
     }
-    fill_defaults(doc);
+    fill_defaults(doc, 0);
     if (validate(doc, err, errcap) != 0) {
         return -1;
     }
@@ -412,7 +534,12 @@ unsigned long sde_board_revision(const sde_board *b)
         return 0;
     }
     sde_buf_init(&out);
-    if (sde_json_write(&out, b->doc) != 0) {
+    /*
+     * The canonical form, not the wire order: two clients holding the same
+     * board must agree on its revision even if they listed its members
+     * differently, or every hand-off between them looks like a lost update.
+     */
+    if (sde_json_write_canonical(&out, b->doc) != 0) {
         sde_buf_free(&out);
         return 0;
     }

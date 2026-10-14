@@ -70,6 +70,16 @@ sde_json    *sde_json_obj(void);
 void         sde_json_free(sde_json *v);
 
 /*
+ * A content revision, as produced by sde_rev_of().  Emitted as a plain
+ * non-negative number: a revision is a 32-bit hash, and printing it through
+ * a signed long makes half of them negative, which reads as nonsense in the
+ * UI and forces every client to hand back a negative number that the kernel
+ * then converts to unsigned.  That conversion is undefined behaviour in C,
+ * however reliably x86 wraps it, so the sign is dropped at the source.
+ */
+sde_json    *sde_json_rev(unsigned long rev);
+
+/*
  * Deep copy.  Needed wherever a module hands out a tree it still owns -- the
  * board document is the case that forced it.
  */
@@ -111,6 +121,7 @@ int          sde_json_getb(const sde_json *o, const char *key, int dflt);
 /* --- writing ------------------------------------------------------------ */
 
 int          sde_json_write(sde_buf *out, const sde_json *v);
+int          sde_json_write_canonical(sde_buf *out, const sde_json *v);
 int          sde_json_write_pretty(sde_buf *out, const sde_json *v, int indent);
 
 /* Escaping helpers, also used to build raw protocol frames by hand. */

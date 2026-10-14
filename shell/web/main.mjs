@@ -106,6 +106,115 @@ export function zoomAbout(viewport, factor, px, py) {
   };
 }
 
+/**
+ * Drive one inline choice strip: the command line keeps the keyboard, a click
+ * answers the question, and typing anything means the user moved on.
+ *
+ * Exported, and kept out of `ask()`, because what it really is is bookkeeping:
+ * it installs an `input` listener on the command line and has to remove it on
+ * *every* exit path.  A leaked listener has no visible symptom -- it just fires
+ * a dead closure on every later keystroke, forever -- so the guarantee is worth
+ * a check against a stub element under Node, where there is no DOM.
+ *
+ * @param {object} options
+ * @param {object} options.strip  the element to insert; needs `remove()`
+ * @param {Array<{el: object, value: any}>} options.buttons  already-created buttons
+ * @param {object} options.abandonSource  element whose `input` means "cancel"
+ * @returns {Promise<any>} the chosen value, or `null` when abandoned
+ */
+export function wireChoiceStrip({ strip, buttons, abandonSource }) {
+  let settle = null;
+  const promise = new Promise((resolve) => {
+    settle = resolve;
+  });
+  let settled = false;
+  let unbind = null;
+
+  const finish = (value) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    try {
+      if (unbind !== null) {
+        unbind();
+      }
+    } finally {
+      unbind = null;
+      try {
+        strip.remove();
+      } catch {
+        /* a strip that cannot detach must still not hang the answer */
+      }
+      settle(value);
+    }
+  };
+
+  const abandon = () => finish(null);
+  abandonSource.addEventListener("input", abandon);
+  unbind = () => abandonSource.removeEventListener("input", abandon);
+
+  for (const { el: button, value } of buttons) {
+    button.addEventListener("click", () => finish(value));
+  }
+  return promise;
+}
+
+/**
+ * The one status line a save outcome gets, or `null` for "say nothing".
+ *
+ * Pure and exported because the interesting cases are exactly the ones that
+ * used to report nothing at all -- a `save` with nothing to write, a forced
+ * overwrite that was refused, a save that could not start because the kernel is
+ * not connected -- and a save that failed must never look like one that
+ * succeeded.  `auto` is the one exception: a timer is not the user, so a quiet
+ * autosave success stays quiet, while an autosave failure still speaks.
+ *
+ * @param {object} outcome
+ * @param {"saved"|"unchanged"|"deferred"|"refused"|"failed"|"offline"} outcome.status
+ * @param {boolean} [outcome.force]
+ * @param {boolean} [outcome.auto]
+ * @param {number|string|null} [outcome.revision]
+ * @param {string} [outcome.detail]
+ * @returns {{level: string, text: string}|null}
+ */
+export function saveOutcomeMessage(outcome) {
+  const status = outcome === null || outcome === undefined ? "" : outcome.status;
+  const force = Boolean(outcome && outcome.force);
+  const auto = Boolean(outcome && outcome.auto);
+  const detail = outcome && outcome.detail ? String(outcome.detail) : "";
+  const tail = detail === "" ? "" : ` -- ${detail}`;
+
+  switch (status) {
+    case "saved": {
+      if (auto) {
+        return null;
+      }
+      const revision = outcome.revision === undefined || outcome.revision === null
+        ? "unknown"
+        : outcome.revision;
+      return { level: "info", text: `board saved (rev ${revision}) → .seide/board.json${tail}` };
+    }
+    case "unchanged":
+      // Typing `save` and seeing nothing is indistinguishable from a save that
+      // did nothing at all, so this outcome is reported too.
+      return auto ? null : { level: "info", text: "board already saved; nothing to write (use `save force` to overwrite)" };
+    case "deferred":
+      return auto ? null : { level: "info", text: `a save is already in flight; this ${force ? "forced " : ""}save follows it` };
+    case "refused":
+      return {
+        level: "warn",
+        text: `board.save refused the ${force ? "forced overwrite" : "write"}${detail === "" ? "" : `: ${detail}`}`,
+      };
+    case "failed":
+      return { level: "error", text: `board.save failed${detail === "" ? "" : `: ${detail}`}` };
+    case "offline":
+      return { level: "error", text: "board.save skipped: no kernel connection" };
+    default:
+      return null;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* the app                                                             */
 /* ------------------------------------------------------------------ */
@@ -153,6 +262,19 @@ function createApp() {
   let boardRevision = null;
   let dirty = false;
   let saving = false;
+  /* Every change to the in-memory board bumps this.  A save records it just
+     before it serializes and only clears `dirty` when the board has not moved
+     on since -- otherwise the reply to an older document marks a newer edit as
+     saved and that edit is never written anywhere. */
+  let boardGeneration = 0;
+  /* A save requested while one is in flight is folded into exactly one more
+     run instead of being dropped, so two `save`s in a row cannot lose the
+     second one. */
+  let saveAgain = false;
+  /* Whether the save that was folded into the run in flight was a `save force`.
+     Without this the follow-up run would downgrade an explicit overwrite into a
+     plain save, which the newer file on disk then refuses. */
+  let saveAgainForce = false;
   let initializing = true;
   let connected = false;
   let autosave = true;
@@ -203,31 +325,19 @@ function createApp() {
    * modal: seIDE has no dialogs, so a decision is a row of buttons on the board.
    */
   function ask(message, choices) {
-    return new Promise((resolve) => {
-      const strip = el("div", "ask");
-      strip.append(el("span", "ask-text", message));
-      let settled = false;
-      const finish = (value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        strip.remove();
-        resolve(value);
-      };
-      for (const choice of choices) {
-        const button = el("button", "ask-button", choice.label);
-        button.type = "button";
-        button.addEventListener("click", () => finish(choice.value));
-        strip.append(button);
-      }
-      barEl.before(strip);
-      // Any command-line use means the user moved on; do not leave it hanging.
-      const abandon = () => finish(null);
-      commandEl.addEventListener("input", abandon);
-      const cleanup = () => commandEl.removeEventListener("input", abandon);
-      strip.addEventListener("click", cleanup, { once: true });
-    });
+    const strip = el("div", "ask");
+    strip.append(el("span", "ask-text", message));
+    const buttons = [];
+    for (const choice of choices) {
+      const button = el("button", "ask-button", choice.label);
+      button.type = "button";
+      strip.append(button);
+      buttons.push({ el: button, value: choice.value });
+    }
+    barEl.before(strip);
+    // The strip owns the answer and the listener; `wireChoiceStrip` guarantees
+    // the listener is gone however the question ends.
+    return wireChoiceStrip({ strip, buttons, abandonSource: commandEl });
   }
 
   /* ------------------------------------------------------------------ */
@@ -408,9 +518,25 @@ function createApp() {
   function boardTouched(isDirty = true) {
     if (isDirty) {
       dirty = true;
+      boardGeneration += 1;
     }
     renderHud();
     if (isDirty && autosave && !initializing) {
+      scheduleAutosave();
+    }
+  }
+
+  /*
+   * The viewport lives inside the board document, so panning and zooming are
+   * board edits: without this the layout the user just arranged is reported as
+   * "saved" and is gone on the next reload.  This runs many times a second
+   * while a gesture is live, so it deliberately skips renderHud() -- the HUD is
+   * repainted once the gesture ends.
+   */
+  function viewportTouched() {
+    dirty = true;
+    boardGeneration += 1;
+    if (autosave && !initializing) {
       scheduleAutosave();
     }
   }
@@ -425,52 +551,125 @@ function createApp() {
     }, 1500);
   }
 
+  /**
+   * Put one save outcome on the status line.  Every exit path of `saveBoard`
+   * goes through here, so no outcome -- including "nothing to write" and
+   * "refused" -- can stay invisible.
+   */
+  function reportSave(outcome) {
+    const line = saveOutcomeMessage(outcome);
+    if (line !== null) {
+      log(line.level, line.text);
+    }
+    return line;
+  }
+
   async function saveBoard({ force = false, auto = false } = {}) {
-    if (client === null || saving) {
+    if (client === null) {
+      // The kernel is the only writer; saying so beats a silent `false` that
+      // the user only notices when the board is gone after a reload.
+      reportSave({ status: "offline", force, auto });
+      return false;
+    }
+    if (saving) {
+      // Fold this request into the run that is already in flight rather than
+      // dropping it on the floor: the `finally` below re-runs once if the
+      // board moved on, which covers both "the user kept editing" and
+      // "the user asked again".  `force` travels with it -- dropping the flag
+      // would quietly turn "overwrite the newer file" into a stale refusal.
+      saveAgain = true;
+      saveAgainForce = saveAgainForce || force;
+      reportSave({ status: "deferred", force, auto });
       return false;
     }
     if (!force && boardRevision !== null && !dirty) {
+      reportSave({ status: "unchanged", force, auto });
       return true;
     }
     saving = true;
+    const generation = boardGeneration;
+    // Every caveat that applied to this write, so the outcome line can carry all
+    // of them instead of the last one winning.
+    const notes = [];
     if (!auto) {
       log("info", "saving board…");
     }
     try {
-      const params = { document: board.serialize() };
+      let document_ = null;
+      try {
+        document_ = board.serialize();
+      } catch (err) {
+        // A model the kernel would reject cannot be written, and trimming it
+        // silently would lose work: name what is wrong and write nothing.
+        reportSave({ status: "refused", force, auto, detail: err.message });
+        return false;
+      }
+      const params = { document: document_ };
       if (force) {
         // Re-read the current revision so the kernel accepts the overwrite.
         try {
           const fresh = await client.call("board.load", {});
           params.base_revision = fresh.revision;
           boardRevision = fresh.revision;
-        } catch {
-          /* fall through: saves without a base_revision are allowed */
+        } catch (err) {
+          // Falling through writes without a guard, which is a blind
+          // overwrite. Say so rather than letting `force` look like it worked.
+          const caveat = `could not re-read the board before forcing: ${err.message}`
+            + " -- this save has no staleness guard";
+          notes.push(caveat);
+          log("warn", caveat);
         }
       } else if (boardRevision !== null) {
         params.base_revision = boardRevision;
       }
       const result = await client.call("board.save", params);
       boardRevision = result.revision;
-      dirty = false;
-      renderHud();
-      if (!auto) {
-        log("info", `board saved (rev ${result.revision}) → .seide/board.json`);
+      // A host that answers without a revision leaves the next save unguarded.
+      // That is worth saying out loud, because the write itself succeeded and
+      // the status line is the only place it would ever show.
+      if (result.revision === undefined || result.revision === null) {
+        notes.push("the host reported no revision, so the next save cannot be guarded against a newer file");
       }
+      // What is on disk now is the document serialized above, and nothing
+      // newer. If the user edited while this was in flight, `dirty` has to
+      // stay true or that edit is marked saved and never written.
+      if (boardGeneration === generation) {
+        dirty = false;
+      }
+      renderHud();
+      reportSave({ status: "saved", force, auto, revision: result.revision, detail: notes.join("; ") });
       return true;
     } catch (err) {
       if (isStaleRevision(err)) {
         const current = staleCurrentRevision(err);
         dirty = true;
         renderHud();
-        log("warn", `the board changed on disk (rev ${current}). Your layout is kept in memory;`
-          + " type `save force` to overwrite it.");
+        // The refused overwrite is the case that used to look like a success:
+        // `force` was asked for and nothing was written.
+        reportSave({
+          status: "refused",
+          force,
+          auto,
+          detail: `the board changed on disk (rev ${current}); your layout is kept in memory`
+            + " -- type `save force` to overwrite it",
+        });
       } else {
-        log("error", `board.save failed: ${err.message}`);
+        reportSave({ status: "failed", force, auto, detail: err.message });
       }
       return false;
     } finally {
       saving = false;
+      if (saveAgain) {
+        saveAgain = false;
+        const againForce = saveAgainForce;
+        saveAgainForce = false;
+        // One more run covers everything that arrived during this one. A forced
+        // request is repeated even when nothing is dirty: `save force` means
+        // "write it", not "write it if it changed".
+        if (dirty || againForce) {
+          void saveBoard({ force: againForce, auto });
+        }
+      }
     }
   }
 
@@ -701,10 +900,23 @@ function createApp() {
           x: gesture.startX + (event.clientX - gesture.px),
           y: gesture.startY + (event.clientY - gesture.py),
         });
+        viewportTouched();
       } else if (gesture.kind === "move") {
+        // The card can vanish under the pointer -- another writer's
+        // board.changed, or a `delete`.  board.moveCard throws for an unknown
+        // id, and an exception here would skip scheduleRender() and leave the
+        // stage stale, so a dead gesture just ends.
+        if (board.findCard(gesture.card.id) === null) {
+          gesture = null;
+          return;
+        }
         const world = screenToWorld(event.clientX, event.clientY);
         board.moveCard(gesture.card.id, Math.round(world.x - gesture.dx), Math.round(world.y - gesture.dy));
       } else if (gesture.kind === "resize") {
+        if (board.findCard(gesture.card.id) === null) {
+          gesture = null;
+          return;
+        }
         const world = screenToWorld(event.clientX, event.clientY);
         board.resizeCard(
           gesture.card.id,
@@ -720,8 +932,10 @@ function createApp() {
       if (gesture === null) {
         return;
       }
-      if (gesture.kind === "move" || gesture.kind === "resize") {
-        boardTouched();
+      if (gesture.kind === "move" || gesture.kind === "resize" || gesture.kind === "pan") {
+        // For a pan this is also where the HUD catches up, since the movement
+        // path deliberately skips it.
+        boardTouched(gesture.kind !== "pan");
       }
       if (boardEl.hasPointerCapture && boardEl.hasPointerCapture(event.pointerId)) {
         boardEl.releasePointerCapture(event.pointerId);
@@ -748,6 +962,8 @@ function createApp() {
           y: board.viewport.y - event.deltaY,
         });
       }
+      viewportTouched();
+      renderHud();
       renderStage();
     }, { passive: false });
 
@@ -861,6 +1077,8 @@ function createApp() {
         const rect = boardEl.getBoundingClientRect();
         const factor = target / board.viewport.zoom;
         board.setViewport(zoomAbout(board.viewport, factor, rect.width / 2, rect.height / 2));
+        viewportTouched();
+        renderHud();
         renderStage();
         return;
       }
@@ -1029,12 +1247,17 @@ function createApp() {
   }
 
   function loadDocument(document_) {
-    const { droppedCards, droppedLinks } = board.load(document_);
+    const { droppedCards, droppedLinks, repairedLinkIds = [] } = board.load(document_);
     if (droppedCards.length > 0) {
       log("warn", `dropped ${droppedCards.length} unreadable card(s) while loading the board`);
     }
     if (droppedLinks.length > 0) {
       log("warn", `dropped ${droppedLinks.length} link(s) that named missing cards`);
+    }
+    if (repairedLinkIds.length > 0) {
+      const ids = repairedLinkIds.map((id) => `\`${id}\``).join(", ");
+      log("warn", `renamed duplicate link id${repairedLinkIds.length === 1 ? "" : "s"} ${ids}`
+        + " on load -- link ids must be unique across the board");
     }
     // Mounts are rebuilt from scratch: the document may be a different board.
     for (const [, entry] of mounted) {
@@ -1103,8 +1326,27 @@ function createApp() {
       setStatus("unreachable");
       throw err;
     }
+    // A boot is also a reload: the button and the reconnect path both land
+    // here. Replacing the board the user is looking at with the older copy on
+    // disk would silently discard whatever they have not saved yet, so any
+    // unsaved work is flushed first. If that cannot be done, the in-memory
+    // board is kept and the disk copy is left alone -- the log says which.
+    let takeDiskCopy = true;
+    if (dirty) {
+      if (boardRevision === null) {
+        takeDiskCopy = false;
+        log("warn", "this board exists only in memory -- the kernel was unreachable when it"
+          + " was made -- so the copy on disk was not loaded. `save force` overwrites that copy.");
+      } else if (!(await saveBoard({}))) {
+        takeDiskCopy = false;
+        log("warn", "your unsaved board could not be written, so the copy on disk was not"
+          + " loaded. The board you have is intact.");
+      }
+    }
     boardRevision = loaded.revision;
-    loadDocument(loaded.document);
+    if (takeDiskCopy) {
+      loadDocument(loaded.document);
+    }
     const stamp = await client.call("hello", {}).catch(() => null);
     if (stamp !== null && !quiet) {
       log("info", `seIDE ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
@@ -1168,7 +1410,8 @@ function createApp() {
     boot().catch((err) => {
       setStatus("unreachable");
       log("error", `kernel not reachable: ${err.message}`);
-      log("warn", "the UI is up and the board stays editable; nothing is lost. It retries on its own.");
+      log("warn", "the UI is up and the board stays editable. Retrying on its own; anything you"
+        + " put on the board is kept in memory until the kernel comes back.");
       scheduleReconnect();
     });
     matchMedia("(prefers-reduced-motion: reduce)").matches

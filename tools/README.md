@@ -58,6 +58,12 @@ python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ." --fixtur
 * The revision checks have to *change* the file to move its revision, because a
   file revision is a content hash: they append a comment, then write the original
   bytes back, so a finished run leaves the fixture byte-identical (`sha256`
-  checked). A run killed mid-check can leave that appended comment behind; it is a
-  Brainfuck comment, so the file still runs to the same output.
+  checked). The restore runs from a `finally` block, so a failing check -- a
+  concurrent edit moving the file under it, a killed endpoint between the two
+  writes -- still puts the original bytes back instead of leaving the probe
+  comment behind.
+* The board check is a snapshot-and-restore too, of the whole document: it must
+  not silently drop where the developer put the camera or which cards are open.
+  Restoring re-serialises, so the bytes and the member order can change while the
+  cards, links and viewport do not.
 * Colour is disabled when stdout is not a TTY or when `NO_COLOR` is set.

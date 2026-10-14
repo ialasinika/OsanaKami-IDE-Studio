@@ -734,23 +734,51 @@ def define_checks(h: Harness) -> list:
         require(_is_id(revision), "file.write.revision is not an int or string")
         return revision
 
+    def _restore_fixture(text):
+        """Put the fixture's original bytes back, whatever revision it is at now.
+
+        Called from ``finally`` blocks, where the file may have been moved on by
+        a concurrent editor or by the check's own first write, so the base
+        revision is re-read instead of remembered.  A restore that cannot run
+        must never mask the failure it was cleaning up after, but it must not be
+        silent either.
+        """
+        try:
+            current = client.call("file.read", {"path": ctx["fixture_path"]})["revision"]
+            client.call(
+                "file.write",
+                {"path": ctx["fixture_path"], "text": text, "base_revision": current},
+            )
+        except Exception as exc:  # noqa: BLE001 -- a restore may never raise
+            sys.stderr.write(
+                f"seIDE e2e: could not restore {ctx['fixture_path']}: {exc}\n"
+            )
+
     def file_write():
         require(ctx.get("file_text") is not None, "file.read provided no text to write back")
         original, base = ctx["file_text"], ctx["revision"]
         # The revision is a content hash, so rewriting the same bytes would hand
         # back the base revision and prove nothing: make a real edit instead.
         edited = _write_fixture(original + REVISION_PROBE, base)
-        require(
-            edited != base,
-            f"file.write of changed text returned the base revision {base}",
-        )
-        # Leave the workspace byte-identical to how it was found; identical bytes
-        # hash back to the original revision, which is what proves the restore.
-        restored = _write_fixture(original, edited)
-        require(
-            restored == base,
-            f"restoring the original bytes gave revision {restored}, expected {base}",
-        )
+        try:
+            require(
+                edited != base,
+                f"file.write of changed text returned the base revision {base}",
+            )
+            # Leave the workspace byte-identical to how it was found; identical bytes
+            # hash back to the original revision, which is what proves the restore.
+            restored = _write_fixture(original, edited)
+            require(
+                restored == base,
+                f"restoring the original bytes gave revision {restored}, expected {base}",
+            )
+        finally:
+            # The probe text is ours, not the developer's: if anything above
+            # raised -- a stale revision because an editor, a formatter or a
+            # `git checkout` touched the file mid-check -- the fixture must not
+            # be left carrying it.  This is the same contract the sibling
+            # checks already keep.
+            _restore_fixture(original)
         return f"revision {base} -> {edited} -> {restored} (edited then restored)"
 
     def file_write_stale():
@@ -827,12 +855,20 @@ def define_checks(h: Harness) -> list:
                 snapshot_path = loaded.get("path")
             if isinstance(snapshot_path, str) and snapshot_path:
                 existed_before = os.path.exists(snapshot_path)
-            cards, links = board_arrays(loaded)
-            snapshot = {
-                "version": 1,
-                "cards": cards if isinstance(cards, list) else [],
-                "links": links if isinstance(links, list) else [],
-            }
+            document = loaded.get("document") if isinstance(loaded, dict) else None
+            if isinstance(document, dict):
+                # Keep the whole document, not just the two arrays this suite
+                # happens to know about.  Rebuilding it by hand is exactly how
+                # the viewport -- where the developer put the camera -- got
+                # reset on every run, silently and with exit 0.
+                snapshot = json.loads(json.dumps(document))
+            else:
+                cards, links = board_arrays(loaded)
+                snapshot = {
+                    "version": 1,
+                    "cards": cards if isinstance(cards, list) else [],
+                    "links": links if isinstance(links, list) else [],
+                }
         except Exception:
             snapshot = None
 

@@ -111,8 +111,32 @@ static void h_workspace_info(sde_call *c)
     sde_json_set(info, "board_path",
                  sde_json_str(sde_board_path(c->app->board)));
     sde_json_set(info, "board_revision",
-                 sde_json_int((long) sde_board_revision(c->app->board)));
+                 sde_json_rev(sde_board_revision(c->app->board)));
     c->owned = info;
+}
+
+/*
+ * Reads an optional numeric parameter.  Returns 1 when the caller supplied a
+ * number, 0 when the member is absent (or explicitly null), and -1 when it is
+ * present with some other type.
+ *
+ * A wrong-typed member is a caller bug, not a reason to fall back to the
+ * default.  For `base_revision` the fallback silently throws away an
+ * optimistic-locking check, turning a detected conflict into a lost update;
+ * for `limit` it silently ignores the caller's bound.  Both must be reported.
+ */
+static int opt_number(const sde_json *params, const char *key, double *out)
+{
+    const sde_json *v = sde_json_get(params, key);
+
+    if (v == NULL || v->type == SDE_JSON_NULL) {
+        return 0;
+    }
+    if (v->type != SDE_JSON_NUM) {
+        return -1;
+    }
+    *out = sde_json_as_num(v, 0.0);
+    return 1;
 }
 
 static void h_workspace_list(sde_call *c)
@@ -121,8 +145,21 @@ static void h_workspace_list(sde_call *c)
     char        pattern[600];
     const char *path = sde_json_gets(c->params, "path", NULL);
     const char *glob = sde_json_gets(c->params, "glob", NULL);
-    long        limit = sde_json_geti(c->params, "limit", 0);
+    double      limit_num = 0.0;
+    long        limit = 0;
     sde_json   *res;
+
+    switch (opt_number(c->params, "limit", &limit_num)) {
+    case -1:
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`limit` must be a number");
+        return;
+    case 1:
+        limit = (long) limit_num;
+        break;
+    default:
+        break;
+    }
 
     err[0] = '\0';
     if (path != NULL && path[0] != '\0') {
@@ -182,10 +219,10 @@ static void h_file_write(sde_call *c)
     char                err[256];
     const char         *path = NULL;
     const sde_json     *textv;
-    const sde_json     *basev;
     const char         *text;
     size_t              len;
     int                 has_base;
+    double              base_num = 0.0;
     unsigned long       base = 0;
     unsigned long       cur = 0;
     sde_json           *res = NULL;
@@ -198,21 +235,38 @@ static void h_file_write(sde_call *c)
     }
 
     textv = sde_json_get(c->params, "text");
-    if (textv != NULL && textv->type != SDE_JSON_STR) {
+    if (textv == NULL) {
+        /*
+         * "I forgot the member" and "write an empty file" must not be the same
+         * request: treating an absent `text` as "" silently truncated the file.
+         */
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`text` is required; send \"\" to write an empty file");
+        return;
+    }
+    if (textv->type != SDE_JSON_STR) {
         fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
              "`text` must be a string");
         return;
     }
-    text = (textv == NULL) ? "" : sde_json_as_str(textv);
+    text = sde_json_as_str(textv);
     if (text == NULL) {
         text = "";
     }
     len = strlen(text);
 
-    basev = sde_json_get(c->params, "base_revision");
-    has_base = (basev != NULL && basev->type == SDE_JSON_NUM);
-    if (has_base) {
-        base = (unsigned long) sde_json_as_num(basev, 0.0);
+    switch (opt_number(c->params, "base_revision", &base_num)) {
+    case -1:
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`base_revision` must be a number when it is present");
+        return;
+    case 1:
+        has_base = 1;
+        base = (unsigned long) base_num;
+        break;
+    default:
+        has_base = 0;
+        break;
     }
 
     err[0] = '\0';
@@ -221,7 +275,7 @@ static void h_file_write(sde_call *c)
     if (rc == SDE_WKSP_STALE) {
         sde_json *d = sde_json_obj();
         if (d != NULL) {
-            sde_json_set(d, "current_revision", sde_json_int((long) cur));
+            sde_json_set(d, "current_revision", sde_json_rev(cur));
         }
         fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
              "file changed on disk since it was read");
@@ -240,7 +294,7 @@ static void h_file_write(sde_call *c)
         sde_json_set(note, "event", sde_json_str("file.changed"));
         sde_json_set(note, "path", sde_json_str(path));
         sde_json_set(note, "revision",
-                     sde_json_int((long) sde_json_as_num(
+                     sde_json_rev((unsigned long) sde_json_as_num(
                          sde_json_get(res, "revision"), 0.0)));
         (void) sde_app_notify(c->app, note);
     }
@@ -271,7 +325,7 @@ static void h_board_load(sde_call *c)
     }
     sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
     sde_json_set(r, "revision",
-                 sde_json_int((long) sde_board_revision(c->app->board)));
+                 sde_json_rev(sde_board_revision(c->app->board)));
     sde_json_set(r, "document", doc);
     c->owned = r;
 }
@@ -280,9 +334,9 @@ static void h_board_save(sde_call *c)
 {
     char                 err[256];
     const sde_json      *doc;
-    const sde_json      *basev;
     sde_json            *copy;
     int                  has_base;
+    double               base_num = 0.0;
     unsigned long        base = 0;
     unsigned long        prev;
     sde_json            *r;
@@ -309,15 +363,25 @@ static void h_board_save(sde_call *c)
     }
 
     prev = sde_board_revision(c->app->board);
-    basev = sde_json_get(c->params, "base_revision");
-    has_base = (basev != NULL && basev->type == SDE_JSON_NUM);
+    switch (opt_number(c->params, "base_revision", &base_num)) {
+    case -1:
+        sde_json_free(copy);
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`base_revision` must be a number when it is present");
+        return;
+    case 1:
+        has_base = 1;
+        base = (unsigned long) base_num;
+        break;
+    default:
+        has_base = 0;
+        break;
+    }
     if (has_base) {
-        base = (unsigned long) sde_json_as_num(basev, 0.0);
         if (base != prev) {
             sde_json *d = sde_json_obj();
             if (d != NULL) {
-                sde_json_set(d, "current_revision",
-                             sde_json_int((long) prev));
+                sde_json_set(d, "current_revision", sde_json_rev(prev));
             }
             sde_json_free(copy);
             fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
@@ -345,7 +409,7 @@ static void h_board_save(sde_call *c)
     if (note != NULL) {
         sde_json_set(note, "event", sde_json_str("board.changed"));
         sde_json_set(note, "revision",
-                     sde_json_int((long) sde_board_revision(c->app->board)));
+                     sde_json_rev(sde_board_revision(c->app->board)));
         (void) sde_app_notify(c->app, note);
     }
 
@@ -356,7 +420,7 @@ static void h_board_save(sde_call *c)
     }
     sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
     sde_json_set(r, "revision",
-                 sde_json_int((long) sde_board_revision(c->app->board)));
+                 sde_json_rev(sde_board_revision(c->app->board)));
     sde_json_set(r, "saved", sde_json_bool(1));
     c->owned = r;
 }

@@ -669,15 +669,51 @@ function replaceSheet(doc, sheet) {
   return doc;
 }
 
+/**
+ * One cell's value out of a sheet that is already normalised, or "" when either
+ * end of the lookup is missing.
+ *
+ * The paint loop holds one normalised sheet for the whole grid and must not
+ * normalise once per cell, so the lookup is split out of `sheetCell` here.
+ */
+function sheetCellOf(sheet, rowId, columnId) {
+  const row = sheet.rows.find((r) => r.id === rowId);
+  if (row === undefined) {
+    return "";
+  }
+  const column = sheet.columns.find((c) => c.id === columnId);
+  if (column === undefined) {
+    return "";
+  }
+  return coerceSheetValue(column.type, row.cells[columnId]);
+}
+
 /** One cell's value, or "" when either end of the lookup is missing. */
 export function sheetCell(doc, rowId, columnId) {
+  return sheetCellOf(normaliseSheet(doc), rowId, columnId);
+}
+
+/**
+ * The one write path for a cell: normalise the document once, hand the cell's
+ * current value to `compute`, coerce what comes back by the column's type, and
+ * land the copy in `doc` through `replaceSheet`.  Returns the value that was
+ * stored, or undefined when the cell is gone.
+ *
+ * It returns the stored value rather than a flag because a handler that has to
+ * show the coerced value ("  2  " -> "2") would otherwise read the cell back
+ * through `sheetCell`, normalising the whole document a second time.
+ */
+function applySheetCell(doc, rowId, columnId, compute) {
   const sheet = normaliseSheet(doc);
   const row = sheet.rows.find((r) => r.id === rowId);
   const column = sheet.columns.find((c) => c.id === columnId);
   if (row === undefined || column === undefined) {
-    return "";
+    return undefined;
   }
-  return coerceSheetValue(column.type, row.cells[columnId]);
+  const stored = coerceSheetValue(column.type, compute(coerceSheetValue(column.type, row.cells[columnId])));
+  row.cells[columnId] = stored;
+  replaceSheet(doc, sheet);
+  return stored;
 }
 
 /**
@@ -685,15 +721,7 @@ export function sheetCell(doc, rowId, columnId) {
  * on the wire.  Mutates `doc` in place and returns true when the cell existed.
  */
 export function setSheetCell(doc, rowId, columnId, value) {
-  const sheet = normaliseSheet(doc);
-  const row = sheet.rows.find((r) => r.id === rowId);
-  const column = sheet.columns.find((c) => c.id === columnId);
-  if (row === undefined || column === undefined) {
-    return false;
-  }
-  row.cells[columnId] = coerceSheetValue(column.type, value);
-  replaceSheet(doc, sheet);
-  return true;
+  return applySheetCell(doc, rowId, columnId, () => value) !== undefined;
 }
 
 /** Append a row (or insert at `index`), filling every column with its zero value. */
@@ -762,12 +790,59 @@ export function removeSheetColumn(doc, columnId) {
   return true;
 }
 
-/** "3 rows x 4 columns", singularised. */
-export function sheetSummary(doc) {
-  const sheet = normaliseSheet(doc);
+/**
+ * Write a column's header fields, resolving the column in the LIVE document by
+ * id.
+ *
+ * `columnId` is the only column handle a caller may keep across a write: every
+ * write lands a fresh set of column objects in `doc` (`replaceSheet`), so a DOM
+ * listener that closed over the column object its paint was handed writes the
+ * rename into a sheet the card no longer holds, and the next repaint shows the
+ * old title again.
+ *
+ * `patch.title` and `patch.type` are what the header edits.  A type change
+ * re-normalises, because every cell under the column takes the new type and
+ * `normaliseSheet` is where that coercion lives.
+ *
+ * Returns the normalised sheet it wrote back, so a caller can refresh whatever
+ * it derives from the sheet without normalising a second time, or null when no
+ * column has that id.
+ */
+export function updateSheetColumn(doc, columnId, patch) {
+  let sheet = normaliseSheet(doc);
+  const column = sheet.columns.find((c) => c.id === columnId);
+  if (column === undefined) {
+    return null;
+  }
+  const input = patch !== null && typeof patch === "object" ? patch : {};
+  if (typeof input.title === "string") {
+    column.title = input.title;
+  }
+  if (SHEET_TYPES.includes(input.type) && input.type !== column.type) {
+    column.type = input.type;
+    if (column.type === "choice") {
+      if (!Array.isArray(column.options)) {
+        column.options = ["one", "two", "three"];
+      }
+    } else {
+      delete column.options;
+    }
+    sheet = normaliseSheet(sheet);
+  }
+  replaceSheet(doc, sheet);
+  return sheet;
+}
+
+/** "3 rows x 4 columns" out of an already-normalised sheet, singularised. */
+function sheetSummaryOf(sheet) {
   const r = sheet.rows.length;
   const c = sheet.columns.length;
   return `${r} row${r === 1 ? "" : "s"} x ${c} column${c === 1 ? "" : "s"}`;
+}
+
+/** "3 rows x 4 columns", singularised. */
+export function sheetSummary(doc) {
+  return sheetSummaryOf(normaliseSheet(doc));
 }
 
 /**
@@ -882,26 +957,68 @@ function makeStatus() {
  * @returns {{el: HTMLElement, handle: object, destroy: Function}}
  */
 export function renderCard(card, ctx) {
-  const spec = card !== null && typeof card === "object"
+  const spec = card !== null && typeof card === "object" && !Array.isArray(card)
     ? KIND_REGISTRY.get(card.kind)
     : undefined;
   return spec === undefined ? renderUnknown(card) : spec.render(card, ctx);
 }
 
+/**
+ * What to show for a board entry that has no renderer: a kind this build does
+ * not know, or -- because board.json is user-editable -- an entry that is not a
+ * card at all.
+ *
+ * Pure and exported on purpose.  This is the one render path that must never
+ * throw: one malformed entry in the file must not take the whole canvas down,
+ * and its message is therefore worth checking without a browser.
+ *
+ * @param {object|null|undefined} card
+ * @returns {{id: string, kind: string, label: string, message: string}}
+ */
+export function unknownCardPlaceholder(card) {
+  const known = `Known kinds: ${knownCardKinds().join(", ")}.`;
+  if (card === null || card === undefined) {
+    return {
+      id: "",
+      kind: "(none)",
+      label: "(missing)",
+      message: "This board entry is empty (null), so there is nothing to render. "
+        + `The entry is preserved in board.json until it is fixed there.  ${known}`,
+    };
+  }
+  if (typeof card !== "object" || Array.isArray(card)) {
+    return {
+      id: "",
+      kind: "(not a card)",
+      label: "(malformed)",
+      message: `This board entry is ${JSON.stringify(card)}, not a card object. `
+        + `The entry is preserved in board.json until it is fixed there.  ${known}`,
+    };
+  }
+  const kind = typeof card.kind === "string" && card.kind !== "" ? card.kind : "(no kind)";
+  return {
+    id: typeof card.id === "string" ? card.id : "",
+    kind,
+    label: "(unknown)",
+    message: `No renderer for card kind ${JSON.stringify(card.kind)}. `
+      + "The card is preserved in board.json; register a kind in cards.mjs."
+      + `  ${known}`,
+  };
+}
+
 /** Unknown kinds are preserved and shown, never silently deleted. */
 function renderUnknown(card) {
+  const notice = unknownCardPlaceholder(card);
   const body = h("div", "card-body card-body-unknown", {
-    children: [h("p", "card-message", {
-      text: `No renderer for card kind ${JSON.stringify(card.kind)}. `
-        + "The card is preserved in board.json; register a kind in cards.mjs."
-        + `  Known kinds: ${knownCardKinds().join(", ")}.`,
-    })],
+    children: [h("p", "card-message", { text: notice.message })],
   });
-  const shell = cardShell(card, body);
-  shell.label.textContent = "(unknown)";
+  // `cardShell` reads `id`/`kind` off its argument, so it gets the repaired
+  // values rather than the malformed entry: a null still has to produce a card.
+  const shell = cardShell({ id: notice.id, kind: notice.kind }, body);
+  shell.label.textContent = notice.label;
   return {
     el: shell.el,
-    handle: { kind: card.kind, focus() {} },
+    handle: { kind: notice.kind, focus() {} },
     destroy() {},
   };
 }
@@ -1529,10 +1646,14 @@ function renderSheet(card, ctx) {
     updateStatus();
   }
 
+  /** Status line for a sheet the caller already normalised. */
+  function updateStatusFrom(sheet) {
+    status.textContent = `${sheetSummaryOf(sheet)} · structured state, no text`;
+    shell.label.textContent = card.title !== "" ? card.title : sheetSummaryOf(sheet);
+  }
+
   function updateStatus() {
-    const sheet = normaliseSheet(card.doc);
-    status.textContent = `${sheetSummary(sheet)} · structured state, no text`;
-    shell.label.textContent = card.title !== "" ? card.title : sheetSummary(sheet);
+    updateStatusFrom(normaliseSheet(card.doc));
   }
 
   function cellNode(rowIndex, columnIndex) {
@@ -1581,7 +1702,15 @@ function renderSheet(card, ctx) {
   }
 
   function makeCellControl(row, column, rowIndex, columnIndex) {
-    const value = sheetCell(card.doc, row.id, column.id);
+    /* `row` and `column` belong to the paint's own normalised snapshot, so the
+       value below is what `sheetCell(card.doc, ...)` would return, without
+       normalising the document once per cell.  The handlers capture ids, never
+       these objects: a write hands the document a fresh set of rows and
+       columns, so an object captured at paint time is a sheet the card no
+       longer holds and a write through it disappears at the next repaint. */
+    const rowId = row.id;
+    const columnId = column.id;
+    const value = coerceSheetValue(column.type, row.cells[columnId]);
     let control;
 
     if (column.type === "bool") {
@@ -1595,8 +1724,10 @@ function renderSheet(card, ctx) {
       };
       show(value);
       control.addEventListener("click", () => {
-        setSheetCell(card.doc, row.id, column.id, !sheetCell(card.doc, row.id, column.id));
-        show(sheetCell(card.doc, row.id, column.id));
+        /* Read and write the toggle in one normalise: the stored value comes
+           back from the write, so nothing has to look the cell up again. */
+        const stored = applySheetCell(card.doc, rowId, columnId, (on) => !on);
+        show(stored === undefined ? false : stored);
         commit();
       });
       bindCellKeys(control, rowIndex, columnIndex);
@@ -1619,7 +1750,7 @@ function renderSheet(card, ctx) {
       }
       control.value = value;
       control.addEventListener("change", () => {
-        setSheetCell(card.doc, row.id, column.id, control.value);
+        applySheetCell(card.doc, rowId, columnId, () => control.value);
         commit();
       });
       bindCellKeys(control, rowIndex, columnIndex);
@@ -1639,8 +1770,9 @@ function renderSheet(card, ctx) {
     }
     control.value = value === "" ? "" : String(value);
     control.addEventListener("change", () => {
-      setSheetCell(card.doc, row.id, column.id, control.value);
-      control.value = String(sheetCell(card.doc, row.id, column.id));
+      const stored = applySheetCell(card.doc, rowId, columnId, () => control.value);
+      /* Show what the column's type actually stored ("  2  " -> "2"). */
+      control.value = stored === undefined ? "" : String(stored);
       commit();
     });
     bindCellKeys(control, rowIndex, columnIndex);
@@ -1648,6 +1780,11 @@ function renderSheet(card, ctx) {
   }
 
   function makeColumnHeader(column, columnIndex) {
+    /* `column` is the paint's snapshot; only its id is kept.  Anything the
+       handlers below need to change they change in the live document through
+       `updateSheetColumn`, which resolves the column by id -- a title typed
+       after any cell edit used to land on an object the card had replaced. */
+    const columnId = column.id;
     const cell = h("th", "sheet-col", { attrs: { "data-role": "sheet-col" } });
 
     const titleInput = h("input", "sheet-col-title", {
@@ -1655,8 +1792,12 @@ function renderSheet(card, ctx) {
     });
     titleInput.value = column.title;
     titleInput.addEventListener("input", () => {
-      column.title = titleInput.value;
-      updateStatus();
+      /* Per keystroke: one normalise, and the status line is refreshed from the
+         sheet the write returned instead of normalising a second time. */
+      const sheet = updateSheetColumn(card.doc, columnId, { title: titleInput.value });
+      if (sheet !== null) {
+        updateStatusFrom(sheet);
+      }
       app.boardTouched(true);
     });
     titleInput.addEventListener("keydown", (event) => {
@@ -1674,16 +1815,8 @@ function renderSheet(card, ctx) {
     }
     typeSelect.value = column.type;
     typeSelect.addEventListener("change", () => {
-      column.type = typeSelect.value;
-      if (column.type === "choice") {
-        if (!Array.isArray(column.options)) {
-          column.options = ["one", "two", "three"];
-        }
-      } else {
-        delete column.options;
-      }
-      /* Re-normalise so every cell in the column takes the new type. */
-      card.doc = normaliseSheet(card.doc);
+      /* A type change re-normalises every cell under the column. */
+      updateSheetColumn(card.doc, columnId, { type: typeSelect.value });
       paint();
       commit();
     });
@@ -1692,7 +1825,7 @@ function renderSheet(card, ctx) {
       attrs: { type: "button", title: "remove column" }, text: "\u00d7",
     });
     drop.addEventListener("click", () => {
-      if (removeSheetColumn(card.doc, column.id)) {
+      if (removeSheetColumn(card.doc, columnId)) {
         paint();
         commit();
       } else {
@@ -1709,13 +1842,14 @@ function renderSheet(card, ctx) {
   }
 
   function makeRowHeader(row, rowIndex) {
+    const rowId = row.id;
     const cell = h("th", "sheet-row-head", { attrs: { "data-role": "sheet-row" } });
     cell.append(h("span", "sheet-row-index", { text: String(rowIndex + 1) }));
     const drop = h("button", "sheet-drop", {
       attrs: { type: "button", title: "remove row" }, text: "\u00d7",
     });
     drop.addEventListener("click", () => {
-      removeSheetRow(card.doc, row.id);
+      removeSheetRow(card.doc, rowId);
       paint();
       commit();
     });
@@ -1724,21 +1858,28 @@ function renderSheet(card, ctx) {
   }
 
   function paint() {
+    /* Normalise ONCE for the whole grid and paint from that snapshot.
+       `sheetCell(doc, ...)` normalises the document it is handed, so calling it
+       per cell made a paint cost O(cells x document) -- 2400 cells took ~2 s,
+       and a large sheet could freeze the board inside a single paint.  The
+       controls read their values out of this snapshot; every write resolves the
+       live document by id (see `makeCellControl`). */
     const doc = card.doc;
+    const sheet = normaliseSheet(doc);
     thead.textContent = "";
     tbody.textContent = "";
 
     const headRow = h("tr", "sheet-head-row");
     headRow.append(h("th", "sheet-corner", { attrs: { "data-role": "sheet-corner" } }));
-    doc.columns.forEach((column, columnIndex) => {
+    sheet.columns.forEach((column, columnIndex) => {
       headRow.append(makeColumnHeader(column, columnIndex));
     });
     thead.append(headRow);
 
-    doc.rows.forEach((row, rowIndex) => {
+    sheet.rows.forEach((row, rowIndex) => {
       const tr = h("tr", "sheet-row", { attrs: { "data-row-id": row.id } });
       tr.append(makeRowHeader(row, rowIndex));
-      doc.columns.forEach((column, columnIndex) => {
+      sheet.columns.forEach((column, columnIndex) => {
         const td = h("td", `sheet-cell is-${column.type}`);
         td.append(makeCellControl(row, column, rowIndex, columnIndex));
         tr.append(td);
