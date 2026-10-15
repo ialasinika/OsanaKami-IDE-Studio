@@ -568,16 +568,16 @@ def release_notes(context: dict) -> str:
     if channel in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR:
         if context["no_msi"]:
             lines.append(
-                "No MSI installer (`--no-msi`, so this release is not what 1.x GA claims to be), "
-                "and for every fork named on it, the fork's own bundle and its delta."
+                "No MSI installer: `--no-msi` was given, so this release is not what a 1.x GA "
+                "promises.  Everything else a GA release has is here."
             )
         else:
-            lines.append(
-                "The MSI installer and, for every fork named on this release, the fork's own "
-                "bundle and its delta."
-            )
-    elif fork:
-        lines.append("The fork's own bundle and the delta that builds it.")
+            lines.append("The MSI installer.")
+    if fork:
+        lines.append(
+            f"The bundle of the fork named on this release (`{fork}`) and the delta that "
+            "builds it."
+        )
     lines.append("")
     lines.append("| artifact | bytes | sha256 |")
     lines.append("| --- | ---: | --- |")
