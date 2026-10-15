@@ -1954,8 +1954,8 @@ if (app !== null) {
 export const LIMITATIONS = [
   "Token colours are painted on a <pre> under a transparent <textarea>; the two share",
   "fixed metrics, so a font with different line heights would shear them apart.",
-  "Tokens span JS string indices, not bytes -- verified for Chinese prose, which is",
-  "the common case; an astral character (emoji, rare CJK ext-B) counts as two.",
+  "Token offsets from lang.tokenize are JS string indices (UTF-16 code units), not",
+  "bytes -- verified for Chinese prose; an astral character counts as two units.",
   "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and links are straight",
   "lines -- there is no router and no automatic layout.",
   "Undo is board-level and in memory: Ctrl+Z takes back board edits in this window,",

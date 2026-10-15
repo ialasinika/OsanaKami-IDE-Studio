@@ -262,10 +262,10 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `fullcheck` | `python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md` still refuses to come back, on a scratch workspace |
 | `version-check` | `python tools/version.py check` | the four copies of the version number still agree with `VERSION` |
-| `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM, then real double-clicks, keys and wheels, then a file rewritten by a real child process while a card holds it |
+| `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table and token spans (86 checks), no DOM |
+| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (92), no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, token spans and the editor's indent/find/replace arithmetic (96 checks), no DOM |
 
 ---
 

@@ -79,6 +79,45 @@ tree.
   over text, empty, directory, binary, missing, escape, notification-free and
   agree-with-`file.read`.
 
+### The editor card behaves like an editor
+
+- The editor card gained the keys a person reaches for before trusting a text
+  box: `Tab` and `Shift+Tab` indent and outdent the lines the selection touches
+  (with no selection they insert or remove one unit at the caret, so `Tab` is
+  still a tab), `Enter` keeps the current line's indentation and steps in one more
+  after `{`, `(`, or `[`, and `Ctrl+F` opens an in-card find bar — query, a live
+  `3 / 7` count, previous and next, a replacement box, Replace, Replace All, and
+  `Esc` to close.  `Enter` splits by the line **up to the caret** rather than the
+  whole line, so pressing it in the middle of a deeply indented line no longer
+  leaves the tail indented.
+- Matches are painted as well as selected.  The textarea's text is transparent
+  and the colours live in the `<pre>` behind it, so a hit is drawn as a `<mark>`
+  in that layer: the colours survive inside the hit and the hit stays visible
+  while the caret sits in the find bar.  The token spans are **split** at the hit
+  boundaries (`markHits`) instead of being replaced.
+- Every edit the card makes on the user's behalf — the indent, the auto-indent,
+  replacing one hit, replacing all of them — goes in through
+  `document.execCommand("insertText")` over the selected range rather than by
+  assigning to `value`.  Assigning to `value` throws away the browser's undo
+  stack, so `Ctrl+Z` after a `Tab` or a Replace All would have cleared the whole
+  file; the command is the one way to have both a programmatic edit and a real
+  undo step.
+- Nothing about it is taken on faith.  The arithmetic is pure and exported
+  (`indentSelection`, `indentAfterEnter`, `findMatches`, `replaceMatchAt`,
+  `replaceAllMatches`, `markHits`) and `shell/web/selftest.mjs` checks it with no
+  DOM at all (86 → **96** checks), and `tools/input_smoke.py` presses those keys
+  in a real window — including the check only a browser can make, that a `Ctrl+Z`
+  after the card's own `Tab` still restores the buffer because the edit really did
+  go through the insert command (13 → **19** checks).  Each new check was
+  sabotaged one at a time — `markHits` dropping the hit, `indentSelection` doing
+  nothing, `findMatches` stopping after the first hit, the editor assigning to
+  `value` instead of using the command — and each turns its suite red, after which
+  the file was restored byte-identically.
+- The card's limits are unchanged and now written where its keys are
+  (`shell/web/README.md`): one undo step per programmatic edit, no per-key
+  bindings, no code folding, and the find bar is literal text only — no regular
+  expressions, no match-case and no whole-word toggles.
+
 ### One version, checked
 
 - The version has exactly one definition: the `VERSION` file at the root, edited

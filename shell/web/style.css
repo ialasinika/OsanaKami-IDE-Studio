@@ -424,6 +424,51 @@ body {
 .ed-input::selection { background: #6fb3ff44; }
 .ed-input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
 
+/* Find and replace inside the card: a bar, not a browser dialog, because a
+   dialog would swallow the caret and the board would lose its focus. */
+.ed-find {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 6px;
+  background: #1a1d22;
+  border-bottom: 1px solid var(--line-soft);
+  font: 10.5px/1.4 var(--mono-font);
+}
+.ed-find[hidden] { display: none; }
+.ed-find-row { display: flex; align-items: center; gap: 4px; }
+.ed-find-input {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #14171b;
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.ed-find-input:focus { border-color: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent-dim); }
+.ed-find-count { flex: 0 0 auto; min-width: 52px; text-align: right; color: var(--fg-faint); }
+.ed-find-btn {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #262b34;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.ed-find-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+.ed-find-wide { min-width: 46px; }
+
+/* A hit is painted in the <pre> under the transparent textarea, so a match
+   stays visible while the caret is in the find bar. */
+.ed-hit { background: #6fb3ff33; color: inherit; border-radius: 2px; }
+.ed-hit.is-current { background: #ffb86b55; box-shadow: 0 0 0 1px #ffb86b66; }
+
 /* ------------------------------------------------------------------ */
 /* runner card                                                         */
 /* ------------------------------------------------------------------ */

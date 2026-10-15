@@ -191,6 +191,38 @@ has been **trimmed** and has no `file.stat` at all is answered politely rather
 than fatally — `watchTrimmed` recognises `-32601` and the shell stops asking and
 logs one line, because a smaller kernel is not a broken one.
 
+### The editor card's own keys
+
+The editor card answers the keys a person reaches for before trusting a text box:
+
+| key | what it does |
+| --- | --- |
+| `Tab` | indents the lines the selection touches, or inserts one unit at the caret when there is no selection |
+| `Shift+Tab` | outdents those lines, or removes one unit before the caret |
+| `Enter` | keeps the current line's indentation, and steps in one more level after `{`, `(` or `[` |
+| `Ctrl+F` | opens the in-card find bar: query, live `3 / 7` count, previous, next, a replacement box, Replace, Replace All |
+| `Esc` | closes the find bar |
+
+`Enter` splits by the line **up to the caret**, not the whole line, so pressing it
+in the middle of a deeply indented line does not leave the tail indented.
+
+Matches are painted as well as selected. Colours live in the `<pre>` behind the
+transparent textarea, so a hit is drawn there as a `<mark>` — the token spans are
+**split** at the hit boundaries (`markHits`) rather than replaced, which keeps the
+colours inside the hit and the hit visible while the caret sits in the find bar.
+
+Every edit the card makes on your behalf — the indent, the auto-indent, Replace,
+Replace All — goes in through `document.execCommand("insertText")` over the
+selected range rather than by assigning to `.value`. Assigning to `.value` throws
+away the browser's undo stack, so `Ctrl+Z` after a `Tab` or a Replace All would
+have cleared the whole file; the insert command is the one way to have both a
+programmatic edit and a real undo step. `tools/input_smoke.py` presses those keys
+in a real window and checks the undo stack afterwards.
+
+The arithmetic is pure and exported — `indentSelection`, `indentAfterEnter`,
+`findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits` — and
+`shell/web/selftest.mjs` checks it with no DOM at all.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
 * `lang.tokenize` returns **JS string indices** (UTF-16 code units of the string
@@ -214,6 +246,10 @@ logs one line, because a smaller kernel is not a broken one.
   takes back the last card or link change; a textarea keeps its own undo stack,
   so typing in a note or an editor is the browser's business. The steps live in
   memory (`history.mjs`) and a reload forgets them.
+* The editor card's keys stop where a text box stops: **one** undo step per
+  programmatic edit (a `Tab` or a Replace All is one step, not a character at a
+  time), no per-key bindings, no code folding, and the find bar is **literal
+  text only** — no regular expressions, no match-case and no whole-word toggles.
 
 ---
 

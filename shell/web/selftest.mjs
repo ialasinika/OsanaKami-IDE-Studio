@@ -43,6 +43,7 @@ import {
 
 import {
   CARD_KIND_CONTRACT,
+  INDENT_UNIT,
   OutputBuffer,
   SHEET_TYPES,
   addSheetColumn,
@@ -56,13 +57,17 @@ import {
   diagWhere,
   dirNameOf,
   emptySheet,
+  findMatches,
   formatAge,
   formatExit,
   formatListing,
   formatSize,
   groupDefines,
+  indentAfterEnter,
+  indentSelection,
   knownCardKinds,
   lineColumn,
+  markHits,
   matchesFilter,
   modHeadline,
   modPath,
@@ -77,6 +82,8 @@ import {
   removeSheetColumn,
   removeSheetRow,
   renderCard,
+  replaceAllMatches,
+  replaceMatchAt,
   segmentsText,
   setSheetCell,
   sheetCell,
@@ -798,6 +805,107 @@ test("tokens: ws/ident become plain, unknown kinds do not vanish", () => {
   assert.equal(normaliseTokenKind(undefined), "plain");
   const segments = applyTokenSpans("abcdef", [[0, 3, "keyword"], [3, 6, "wat"]]);
   assert.deepEqual(segments, [{ start: 0, end: 3, kind: "keyword" }, { start: 3, end: 6, kind: "plain" }]);
+});
+
+test("tokens: non-ASCII offsets are string indices, so colours do not drift", () => {
+  // `langs/tokenize.mjs` scans a JavaScript string, so its offsets count UTF-16
+  // code units -- the unit `.length` and `.slice` use. Byte offsets would put
+  // every colour after a CJK character one glyph too early, which is what the
+  // docs used to warn about; the implementation was measured and it does not.
+  // `langs/selftest.mjs` measures the same thing one layer down, at the
+  // tokeniser; this is the shell's segment layer, which must not re-derive.
+  const text = "+++ \u4E2D\u6587 \u{1F600}";
+  assert.equal(text.length, 9, "the fixture's unit length must differ from its byte length");
+  assert.equal(Buffer.byteLength(text, "utf8"), 15);
+  // Exactly what the tokenizer emits for this text: a command run, whitespace,
+  // then one ident run over two CJK characters and a two-code-unit astral one.
+  const tokens = [[0, 3, "command"], [3, 4, "ws"], [4, 9, "ident"]];
+  assert.equal(segmentsText(text, tokens), text, "the offsets must reconstruct the text exactly");
+  assert.deepEqual(
+    applyTokenSpans(text, tokens).map((seg) => seg.kind),
+    ["command", "plain", "plain"],
+  );
+  assert.deepEqual(applyTokenSpans(text, tokens).slice(-1)[0], { start: 4, end: 9, kind: "plain" });
+});
+
+test("indent: a bare caret gets one step, not a whole line", () => {
+  const out = indentSelection("abc\n", 1, 1);
+  assert.equal(out.text, `a${INDENT_UNIT}bc\n`);
+  assert.deepEqual(
+    [out.selectionStart, out.selectionEnd],
+    [1 + INDENT_UNIT.length, 1 + INDENT_UNIT.length],
+  );
+});
+
+test("indent: a selection indents every line it touches, not the rest", () => {
+  const out = indentSelection("one\ntwo\nthree\n", 1, 5);
+  assert.equal(out.text, `${INDENT_UNIT}one\n${INDENT_UNIT}two\nthree\n`);
+  assert.equal(
+    out.text.slice(out.selectionStart, out.selectionEnd),
+    `${INDENT_UNIT}one\n${INDENT_UNIT}two`,
+  );
+});
+
+test("indent: a selection ending on a newline does not drag the next line in", () => {
+  const out = indentSelection("one\ntwo\n", 0, 4);
+  assert.equal(out.text, `${INDENT_UNIT}one\ntwo\n`);
+  assert.equal(out.selectionEnd, INDENT_UNIT.length + 3);
+});
+
+test("indent: shift+tab takes one step back and never eats real text", () => {
+  const text = "\tone\n  two\nthree\n";
+  const out = indentSelection(text, 0, text.length, { outdent: true });
+  assert.equal(out.text, "one\ntwo\nthree\n");
+  // One leading space is indentation too, and only that one character goes.
+  assert.equal(indentSelection(" one\n", 0, 5, { outdent: true }).text, "one\n");
+  assert.equal(indentSelection("one\n", 0, 4, { outdent: true }).text, "one\n");
+});
+
+test("indent: enter keeps the line's indentation and steps in after an opener", () => {
+  assert.equal(indentAfterEnter("    foo"), "    ");
+  assert.equal(indentAfterEnter("if (x) {"), INDENT_UNIT);
+  assert.equal(indentAfterEnter(`    if (x) {`), INDENT_UNIT + INDENT_UNIT);
+  assert.equal(indentAfterEnter(""), "");
+  assert.equal(indentAfterEnter("    "), "    ");
+});
+
+test("find: matches are literal, left to right, and do not overlap", () => {
+  assert.deepEqual(findMatches("aAaA", "aa"), [{ start: 0, end: 2 }, { start: 2, end: 4 }]);
+  assert.deepEqual(findMatches("aaa", "aa"), [{ start: 0, end: 2 }]);
+  assert.deepEqual(findMatches("HeLLo", "hello"), [{ start: 0, end: 5 }]);
+  assert.deepEqual(findMatches("abc", ""), []);
+  assert.deepEqual(findMatches("abc", "zz"), []);
+});
+
+test("find: a query whose case fold changes length stays case-sensitive", () => {
+  // 'İ'.toLowerCase() is two code units, so a folded search could not report
+  // offsets into the original text; that search falls back to exact matching.
+  assert.equal("\u0130".toLowerCase().length, 2);
+  assert.deepEqual(findMatches("\u0130x", "i\u0307"), []);
+  assert.deepEqual(findMatches("\u0130x", "\u0130"), [{ start: 0, end: 1 }]);
+});
+
+test("replace: one match, or every match, and the rest of the text survives", () => {
+  const text = "aa bb aa";
+  const hits = findMatches(text, "aa");
+  assert.equal(replaceMatchAt(text, hits[1], "Z"), "aa bb Z");
+  assert.deepEqual(replaceAllMatches(text, "AA", "zZ"), { text: "zZ bb zZ", count: 2 });
+  assert.deepEqual(replaceAllMatches(text, "nope", "zZ"), { text, count: 0 });
+});
+
+test("find: hits split coloured segments without moving a single character", () => {
+  const text = "if (x) x";
+  const segments = applyTokenSpans(text, [[0, 2, "keyword"]]);
+  const marked = markHits(segments, findMatches(text, "x"), 1);
+  assert.equal(marked.map((seg) => text.slice(seg.start, seg.end)).join(""), text);
+  assert.deepEqual(marked.filter((seg) => seg.hit).map((seg) => seg.start), [4, 7]);
+  assert.deepEqual(marked.filter((seg) => seg.current).map((seg) => seg.start), [7]);
+  // A hit inside a coloured run keeps the run's kind on both sides of it.
+  const split = markHits(applyTokenSpans("abc", [[0, 3, "keyword"]]), findMatches("abc", "b"));
+  assert.deepEqual(
+    split.map((seg) => [seg.start, seg.end, seg.kind, seg.hit]),
+    [[0, 1, "keyword", false], [1, 2, "keyword", true], [2, 3, "keyword", false]],
+  );
 });
 
 test("tokens: bad spans are dropped and overlaps are clipped", () => {

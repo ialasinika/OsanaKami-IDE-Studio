@@ -206,8 +206,9 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 3 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 checks, 0 failed
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, the JSON test, the three JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 19 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
 ```
 
 On a machine with no Chromium-family browser, `make smoke` prints a skip, not a
@@ -221,11 +222,11 @@ python tools/e2e.py --kernel build/infantgod.exe     # 9 passed, 0 failed, 3 ski
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys and wheels; 13 checks, 3 of them a file rewritten under a card
+python tools/input_smoke.py                          # real clicks, keys, wheels and editor keys; 19 checks
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 86/86 (pure JS: no DOM)
+node langs/selftest.mjs                        # 92/92 checks passed
+node shell/web/selftest.mjs                    # ok 96/96 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
