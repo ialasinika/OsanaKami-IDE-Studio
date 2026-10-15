@@ -149,10 +149,29 @@ def git_text(*args) -> str:
     return output
 
 
-def head_of(output: str) -> str:
-    """The last non-empty line of a captured command's output."""
+#: A line that reports a result, rather than a step of one.  `make test` ends
+#: with a coverage note, which says what was *not* covered, not what passed.
+RESULT_LINE = re.compile(
+    r"(\d+\s+(passed|failed|skipped)\b"
+    r"|\b\d+/\d+\s+checks?\b"
+    r"|\bok\s+\d+/\d+\b"
+    r"|\ball ok\b|\ball good\b|\bsummary:)"
+)
+
+
+def result_summary(output: str, limit: int = 6) -> str:
+    """The lines of a captured command that report a result, joined.
+
+    One line would misdescribe `make test`, which runs six suites and then
+    prints a note; six result lines are what a release note should carry.
+    """
     lines = [line.strip() for line in output.splitlines() if line.strip()]
-    return lines[-1] if lines else "(no output)"
+    if not lines:
+        return "(no output)"
+    results = [line for line in lines if RESULT_LINE.search(line)]
+    if not results:
+        return lines[-1]
+    return "; ".join(results[-limit:])
 
 
 def tool_versions() -> dict:
@@ -164,10 +183,12 @@ def tool_versions() -> dict:
         "python": sys.version.split()[0],
         "node": shutil.which("node") or "",
     }
-    for name in ("make", "gcc", "node"):
+    for name in ("git", "make", "gcc", "node"):
         tool = found.get(name)
         if tool:
-            found[name + "_version"] = build_tool.version_line(Path(tool)) if isinstance(tool, Path) else ""
+            # `which()` hands back a str and `find_tool()` a Path; a manifest
+            # that reports a toolchain must not have blank rows because of that.
+            found[name + "_version"] = build_tool.version_line(Path(str(tool)))
     return {key: (str(value) if value else "") for key, value in found.items()}
 
 
@@ -578,8 +599,9 @@ def release_notes(context: dict) -> str:
     lines.append("## What this release does not claim")
     lines.append("")
     if info["channel"]:
+        article = "an" if info["channel"][0].lower() in "aeiou" else "a"
         lines.append(
-            f"- {version} is a {info['channel']} build: the interface may still change, and "
+            f"- {version} is {article} {info['channel']} build: the interface may still change, and "
             "the 0.x line has no GA and no LTS (docs/RELEASING.md)."
         )
     if channel == "alpha":
@@ -802,7 +824,7 @@ def verify(context: dict) -> None:
             command.append("CC=" + str(gcc).replace("\\", "/"))
         command.append(target)
         code, output = run(command, timeout=args.test_timeout)
-        summary = head_of(output)
+        summary = result_summary(output)
         context["tests"].append(
             {"name": target, "command": " ".join(str(part) for part in command), "exit": code, "summary": summary}
         )
