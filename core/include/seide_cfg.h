@@ -40,7 +40,7 @@
 #endif
 
 /* The kernel's own version, reported by `hello` and `seide version`. */
-#define SDE_VERSION "0.2.1-alpha.1"
+#define SDE_VERSION "0.2.1-alpha.2"
 #define SDE_PROTOCOL "seide/1"
 /* The same version as a number, which is what machines compare. */
 #define SDE_PROTOCOL_VERSION 1
