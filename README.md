@@ -10,8 +10,9 @@ this repository is one such reshaping. `docs/FORK.md` records exactly what was
 renamed, what was kept byte-identical, and what was added.
 
 What it is *not*: a complete product. There is no settings UI, no debugger, no
-Git integration and no undo. Every deliberate tradeoff is written down instead
-of discovered.
+Git integration, and no undo of the typing inside a card (Ctrl+Z takes back
+board edits; a textarea keeps its own undo). Every deliberate tradeoff is
+written down instead of discovered.
 
 ![The InfantGod Studio board: an editor card with Yarn colouring, a mod card listing a package's defines, a problems card, a docs card and labelled links between them](docs/board.png)
 
@@ -54,7 +55,7 @@ the containment rules.
 ## What InfantGod Studio is not
 
 - **Not a complete product.** There is no settings UI, no terminal emulator, no
-  debugger, no Git integration, no refactoring, no undo.
+  debugger, no Git integration, no refactoring, and no undo of text inside a card.
 - **Not extensible.** There is no plugin system, by design. Extension means
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
@@ -197,42 +198,61 @@ python tools/build.py             # build (pass --release / --clean / targets)
 Run the checks:
 
 ```sh
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 3 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 11 passed, 0 failed, 0 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, the three JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 3 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, the JSON test, the three JS self-tests
 ```
+
+On a machine with no Chromium-family browser, `make smoke` prints a skip, not a
+failure: "no browser" is not a defect in the board, and exit `0` means either
+outcome.
 
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --kernel build/infantgod.exe    # 8 passed, 0 failed, 3 skipped
+python tools/e2e.py --kernel build/infantgod.exe     # 9 passed, 0 failed, 3 skipped
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
+python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
+python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
+python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 74/74 checks (approx: the count is printed by the footer)
-node shell/web/selftest.mjs                    # ok 65/65 (approx; pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 81/81 checks (approx)
+node langs/selftest.mjs                        # 82/82 checks passed
+node shell/web/selftest.mjs                    # ok 74/74 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
 skips them (rather than failing) when it is not there; point it at your own copy
 with `node shell/mods/selftest.mjs --mods <dir>`.
 
-`make test` runs `check`, then `fullcheck`, then the JSON test and the three
-JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
-run before the self-tests are reached. As of this writing nothing fails.
+`make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
+the three JavaScript self-tests **in that order**, so a `fullcheck` failure would
+stop the run before the self-tests are reached. `smoke` is separate because it
+needs a browser; on a clone that has no board yet it installs
+`examples/board.json` for the run and removes it again afterwards. As of this
+writing nothing fails.
 
-**The protocol suite used to write to your board, and no longer does.** The
-board round-trip check still drives `board.save` against the workspace it was
-given, but it snapshots the document that was already there and restores it
-before the check returns — including when the check fails. A run against `.`
-leaves `./.infantgod/board.json` semantically identical (the kernel does re-serialise
-it, so the bytes and key order will differ; the cards, links and viewport will
-not). If there was no board before a run, there is none after it either.
+**The protocol suite used to write to your board, and no longer does.** The board
+checks drive `board.save` against the workspace they were given, but they
+snapshot the whole document that was already there and restore it before the
+check returns — including when the check fails. A run against `.` leaves
+`./.infantgod/board.json` semantically identical; with the shipped starter board
+it comes back byte-identical too (3211 bytes, byte-for-byte, because the kernel
+writes every board and re-serialises the same way). If there was no board before
+a run, there is none after it either — and no empty `.infantgod/` directory left
+behind where the board used to be.
+
+**The board shipped for a fresh clone is verified, not assumed.** The `starter
+board` check saves `examples/board.json` through the real validator and requires
+cards, links and viewport to come back exactly, so a hand-edit the kernel would
+reject fails here rather than on a new user's first launch.
 
 **Current state of the protocol suite:** both modes are green. Kernel mode
-(`check`) reports 8 passed, 0 failed, 3 skipped — the skips are the three
+(`check`) reports 9 passed, 0 failed, 3 skipped — the skips are the three
 language checks, which the kernel does not serve. Full mode (`fullcheck`, the
-endpoint that adds `langs/`) reports 11 passed, 0 failed, 0 skipped. See
+endpoint that adds `langs/`) reports 12 passed, 0 failed, 0 skipped. See
 [Known rough edges](#known-rough-edges) for what is still genuinely unfinished.
 
 Note `make test` uses `fullcheck`, which needs `node shell/main.mjs`; there is no
@@ -241,10 +261,19 @@ make target that runs only the JavaScript self-tests.
 Start the app (builds the window from the system browser):
 
 ```sh
+python tools/demo.py                                 # install the starter board first
 node shell/main.mjs serve --workspace .
 node shell/main.mjs serve --workspace . --no-open    # just serve, print the URL
 node shell/main.mjs rpc --workspace .                # stdio endpoint, no browser
 ```
+
+`.infantgod/` is gitignored, so a fresh clone opens an **empty canvas** — the
+layout is per-checkout project state, deliberately not committed. `tools/demo.py`
+copies `examples/board.json`, the five-card board in every screenshot here, into
+`.infantgod/board.json`. It refuses to overwrite a board you already have unless
+you pass `--force`, and `--print` shows it without touching anything. Opening an
+empty board is fine too: the canvas tells you the commands, and `project` on the
+command line gives you the workspace.
 
 Point it at the game's mods so the 幼神 cards have something to open:
 
@@ -273,9 +302,15 @@ build/infantgod.exe rpc --root . --verbose
 
 ```
 Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
-                        test, modules, run, clean, and the JSON test target
+                        probe, smoke, test, modules, run, clean, and the JSON
+                        test target
 README.md               this file
+LICENSE                 MIT -- the code.  Except the docs: see below
+LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
+CHANGELOG.md            what is in this version, and what is not
+.github/workflows/      CI: the same make targets, on a Windows runner
 .gitignore              build artefacts and workspace-local state
+.gitattributes          the checkout is the repository's bytes: LF everywhere
 
 core/                   the kernel -- C89, no dependencies
   include/              public headers: buf, vec, json, port, wksp, board, exec,
@@ -312,17 +347,24 @@ shell/                  the front end and the endpoints
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
   e2e.py                drives the protocol end to end over stdio
+  kernel_probe.py       re-checks every bug in docs/BUGS.md, on a scratch workspace
+  kernel_drive.py       the stdio JSON-RPC harness kernel_probe.py runs on
+  browser_smoke.py      renders the board in a real browser and asserts the DOM
+  demo.py               installs examples/board.json as this workspace's board
   newlang.py            writes a conforming .lang descriptor
   README.md             what each tool is for
 
-examples/               hello.yarn, sample.json (the shipped fixtures)
+examples/               hello.yarn, sample.json (the shipped fixtures), and
+                        board.json -- the starter board `tools/demo.py` installs
 docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
                         MODS.md, PROJECT.md, TRIM.md, FORK.md, BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.infantgod/`) are ignored by
 Git. `examples/` is **not** ignored: the `.yarn` and `.json` fixtures are part of
-the project.
+the project. `.gitattributes` pins `* text=auto eol=lf`, so the bytes in the
+repository are the bytes a clone gets — the fixtures are compared byte for byte,
+and a CRLF checkout would fail the suite on a file nobody edited.
 
 ---
 
@@ -350,7 +392,8 @@ Stated plainly, because a fork needs to know what it is inheriting.
   check in `tools/e2e.py` see an offset past `len(text)`, because Python counts
   code points — latent, and not triggered by any current fixture.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
-  layout, and no undo on the board.
+  layout. Undo has the same limit: it takes back board edits, and does not
+  reverse a pan, a zoom, or a "raise to front".
 - **The shell is the only client.** There is no second front end, so the protocol
   has exactly one consumer to keep honest.
 
@@ -385,3 +428,27 @@ and fix, so a fork knows what was already tried.
 > Rejected alternative: **a Rust kernel**. It was dropped because a dependency's
 > build script needed a C compiler, which broke constraint 4 (fully offline,
 > no configure step). C89 has no build script and no dependency graph.
+
+---
+
+## Version, licence, CI
+
+The version is one line — `#define SDE_VERSION` in
+[`core/include/infantgod_cfg.h`](core/include/infantgod_cfg.h) — mirrored by
+`SHELL_VERSION` in `shell/main.mjs`, because C89 and JavaScript cannot read a
+file at build time. `build/infantgod.exe version` prints it, and it is the same
+number in both; no build step generates it.
+
+The code is [MIT](LICENSE) — take it, fork it, rename it. The documentation
+(the Markdown files, this one included) is [CC BY 4.0](LICENSE-DOCS): quote it,
+translate it, rewrite it for your fork, keep the attribution. Two licences, two
+scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). InfantGod Studio is a
+derivative of the MIT-licensed seIDE, and a rename does not change what a
+licence allows: the kernel, the shell, the tools and the fixtures are MIT, and
+only the prose is CC BY 4.0.
+
+CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
+the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
+board headless. Neither job has run on a GitHub runner — the file was authored on
+a machine with none — so treat them as unproven until the first green run; the
+commands inside them are exactly the ones in **Quick start** above.

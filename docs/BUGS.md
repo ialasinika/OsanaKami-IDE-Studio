@@ -4,10 +4,23 @@ This file records defects found by probing the finished prototype rather than
 by reading it, in the order they were confirmed.  Each entry states what a user
 would have seen, the root cause with a line reference, and what changed.
 
-The probe scripts live in `build/probes/` (git-ignored, like the rest of
-`build/`).  `python build/probes/kernel/probe_fixes.py` is the regression probe:
-every fix below has a check there, and it re-runs against a freshly built
-`build/infantgod.exe`.
+The probe scripts used during the hunt live in `build/probes/` (git-ignored,
+like the rest of `build/`), so they are **not** part of a clone.  What is
+shipped is the proof, and it is runnable:
+
+```console
+python tools/kernel_probe.py     # or: make probe -- every entry below, on a
+                                 # scratch workspace under build/ (37 checks)
+python tools/e2e.py --kernel build/infantgod.exe    # the protocol, both modes
+node langs/selftest.mjs && node shell/web/selftest.mjs
+node shell/mods/selftest.mjs
+```
+
+`tools/kernel_probe.py` is the direct descendant of the ad-hoc
+`build/probes/kernel/probe_fixes.py`: same checks, but it sets up its own
+throwaway workspace instead of assuming yours, so it can be run by anyone who
+clones this repository.  The rest of the ledger is pinned by the self-tests
+listed above, which is why those suites grew as the bugs were fixed.
 
 Severity is what the bug costs a *fork*, which is the point of this codebase.
 
@@ -19,6 +32,7 @@ Severity is what the bug costs a *fork*, which is the point of this codebase.
 | D | Wrong-typed `limit` was ignored instead of reported | medium |
 | E | Wrong-typed `base_revision` was ignored instead of reported | medium |
 | F | Revisions above 2^31 saturated and broke optimistic locking | critical |
+| G | A header-only change shipped a binary that reported two versions | high |
 
 ---
 
@@ -313,6 +327,40 @@ their severity suggests.
   a final `note:` line printed on both pass and fail:
   `note: 53 checks, no DOM -- canvas layout, focus and pointer behaviour are not
   covered`.
+
+## G. A header-only change shipped a binary that reported two versions
+
+**Symptom.** Bump the version in `core/include/infantgod_cfg.h` — the one file
+that holds it — and `make` rebuilds nothing at all: the per-object rules named
+only the `.c` file, and make cannot see an `#include`.  Then edit a `.c` file for
+an unrelated reason and rebuild, and the *same binary* answers two different
+versions: `infantgod version` prints the new number, `hello` still reports the
+old one in its `kernel_version` field.  The cause of the disagreement is a
+second definition: `core/src/main.c` carried its own
+`#define SDE_VERSION "0.1.0"`, so `version` read `main.c` and `hello` read
+`rpc.o`, compiled from the header, and the two only agreed by luck.
+
+For a fork this is the worst shape a version bug can take, because the number is
+what a release is tagged with and what a bug report is filed against: a stale
+one is silently indistinguishable from a correct one.
+
+**Fix.** Two changes, in the Makefile and in the kernel:
+
+- every object now depends on every header, and on the `VERSION` file that
+  produces them — coarse on purpose, because recompiling eleven sources costs
+  nothing and a wildcard rule has no first-build gap the way `-include *.d` has:
+  `HEADERS = $(wildcard core/include/*.h)` and `$(OBJ): $(HEADERS) VERSION`;
+- the duplicate define is gone from `core/src/main.c` (`main.c:13-15` now says
+  so in a comment).  The version has exactly one definition in the tree:
+  `VERSION`, edited only through `tools/version.py`, which writes
+  `core/include/infantgod_cfg.h` and keeps `shell/main.mjs`'s `SHELL_VERSION` and
+  `package.json` in step — the last one because electron-builder stamps *that*
+  number into the installer, so a drift there ships a product whose About box and
+  file name disagree with its own `hello`.
+
+**Checks.** `make version-check` (part of `make test`) compares all four copies
+and fails if any of them disagrees with `VERSION`; `tools/kernel_probe.py`
+re-reads the binary's own `hello` against the same string.
 
 ## Recorded, not fixed
 

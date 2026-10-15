@@ -9,6 +9,7 @@ index.html    the single page; no inline logic
 style.css     the whole look
 rpc.mjs       POST /rpc + GET /events client (SSE framing, RpcError)
 board.mjs     the board document, viewport, selection and mutations
+history.mjs   the undo ring: document snapshots, coalescing, redo branch
 cards.mjs     one renderer per card kind + the pure helpers
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
@@ -83,6 +84,8 @@ document, so a board can record *why* things are next to each other.
 | double-click empty space | drop a new note there |
 | `:` | focus the command line |
 | ctrl/⌘ + S | save the board |
+| ctrl/⌘ + Z | take back the last board edit |
+| ctrl/⌘ + shift + Z, or ctrl/⌘ + Y | put it back |
 
 Zoom is clamped to 20 %–400 %, and a card is clamped to 120×80 px so a card can
 never be resized into something you cannot grab again.
@@ -102,6 +105,8 @@ zoom <n> | in | out | reset
 focus <id>               select and centre a card
 delete <id>              remove a card
 save [force]             write .infantgod/board.json
+undo                     take back the last board edit (Ctrl+Z)
+redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)
 help                     list the commands
 clear                    empty the log
 ```
@@ -157,12 +162,14 @@ memory and asks you to type `save force`.
 
 ### Known limitations (deliberate, documented rather than hidden)
 
-* `lang.tokenize` returns **byte offsets**, which are treated as string indices.
-  Those are the same thing only for ASCII. A file with non-ASCII characters can
-  have its colours drift by one glyph per multi-byte character. Fixing it
-  properly means mapping byte offsets to UTF-16 indices; for a C89 kernel and a
-  JavaScript shell — the two languages this prototype actually edits — the drift
-  never appears, so it was not worth the complexity here.
+* `lang.tokenize` returns **JS string indices** (UTF-16 code units of the string
+  that was sent), not UTF-8 byte offsets. This is what makes Yarn colouring land
+  on Chinese prose instead of drifting by one glyph per multi-byte character;
+  the upstream README's "byte offsets" claim was wrong, and `langs/selftest.mjs`
+  pins the Chinese case. The residue is one unit mismatch on the Python side:
+  an astral character (emoji, rare CJK ext-B) counts as two units in JS and one
+  in `len()`, so `tools/e2e.py`'s tiling check can see an offset past the end.
+  Latent, and not triggered by any current fixture.
 * The colour layer and the text layer must share identical metrics. That is
   enforced from `style.css` (`--code-*`), so a card zoomed far out will scale
   them together, but a browser that substitutes a different font for one layer
@@ -171,8 +178,10 @@ memory and asks you to type `save force`.
   automatic layout: where you put a card is where it stays.
 * Output from a long-running command is capped (200 000 characters / 2 000
   lines); the head is dropped and the card says how much went.
-* The board has no undo. Moving a card is cheap; if you dislike the result you
-  move it back.
+* Undo covers the **board**, not the text inside a card. `Ctrl+Z` (or `undo`)
+  takes back the last card or link change; a textarea keeps its own undo stack,
+  so typing in a note or an editor is the browser's business. The steps live in
+  memory (`history.mjs`) and a reload forgets them.
 
 ---
 

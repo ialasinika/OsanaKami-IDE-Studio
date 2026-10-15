@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "幼神工坊 — a board-shaped mod IDE for 《幼神》",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "InfantGod Studio",
   "main": "electron/main.js",
   "scripts": {

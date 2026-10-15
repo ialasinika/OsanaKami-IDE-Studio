@@ -41,6 +41,14 @@ SRC += core/port/sys_win32.c core/port/proc_win32.c
 
 OBJ = $(addprefix $(OBJDIR)/,$(notdir $(SRC:.c=.o)))
 
+# Every object depends on every header, because make cannot see an #include.
+# Without this line a header-only change -- a version bump is exactly that --
+# rebuilt nothing, and the binary ended up reporting two versions at once:
+# `infantgod version` from the .c that happened to be edited, `hello` from a
+# stale rpc.o.  Coarse on purpose: eleven sources cost nothing to recompile, and
+# a wildcard rule has no first-build gap the way `-include *.d` has.
+HEADERS = $(wildcard core/include/*.h)
+
 # Release is the default; the flag is honoured because tools/build.py passes it.
 ifdef RELEASE
 CFLAGS += -O2
@@ -50,7 +58,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck test run clean modules icon window package
+.PHONY: all check fullcheck probe smoke test run clean modules version-check icon window package
 
 all: $(BIN)
 
@@ -73,6 +81,10 @@ $(OBJDIR):
 
 $(OBJ): | $(OBJDIR)
 
+# The file that says which version this is, and every header it reaches: see
+# HEADERS above for why the headers are named at all.
+$(OBJ): $(HEADERS) VERSION
+
 $(OBJDIR)/%.o: core/src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -92,14 +104,36 @@ check: $(BIN)
 fullcheck: $(BIN)
 	$(PYTHON) tools/e2e.py --kernel-cmd "$(NODE) shell/main.mjs rpc --workspace ."
 
+# The kernel regression probe: every bug in docs/BUGS.md, checked after the fix.
+# It drives the kernel against a scratch workspace under build/, so it cannot
+# touch your board or your files.
+probe: $(BIN)
+	$(PYTHON) tools/kernel_probe.py
+
+# The version is decided in VERSION; every copy of it -- the config header, the
+# shell banner, core/src/main.c, package.json -- is checked here so the binary
+# cannot drift from the number a release will be tagged with, or from the one
+# electron-builder stamps into the installer.
+version-check:
+	$(PYTHON) tools/version.py check
+
+# The window, without a human: starts the host, drives the system browser
+# headless, and asserts on the rendered DOM.  Then the same window with a
+# keyboard: --dump-dom drives no pointer and no keys, so undo_smoke.py serves a
+# wrapper page and dispatches Ctrl+Z from inside it.  Both need a browser; both
+# say so and skip (exit 0) when there is none.
+smoke: $(BIN)
+	$(PYTHON) tools/browser_smoke.py --timeout 90
+	$(PYTHON) tools/undo_smoke.py --timeout 90
+
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, the mod layer, and both
-# protocol modes.
+# codec, the language layer, the browser modules, the mod layer, the fixed bugs,
+# the version copies, and both protocol modes.
 #
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck $(JSONTEST)
+test: check fullcheck probe version-check $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs

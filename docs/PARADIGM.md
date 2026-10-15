@@ -203,7 +203,9 @@ never becomes unusable because the thing you need is buried.
   There is no minimap and no "projekt overview" panel to save you.
 - **No automatic layout.** Nothing tiles, snaps, aligns or prevents overlap.
   With twenty cards, a board becomes a mess that only its author can read.
-- **No undo.** (See `docs/FORK.md`: this is one of the cheapest things to add.)
+- **Undo stops at the board.** `Ctrl+Z` takes back card and link edits, not the
+  typing inside a card (the textarea keeps its own stack), and not a pan, a zoom
+  or a "raise to front". The ring is in memory, so a reload forgets it.
 - **Keyboard-only navigation is weak.** The command line is a single line with
   a single focus model; there is no chord language, no keyboard card
   switching, and no search across the board.
@@ -246,9 +248,13 @@ prototype:
   no manifest, no sandbox (constraint 3). Registering happens while the shell's
   module graph is evaluated, so it is a fork-time hook, not a runtime one.
 - The `sheet` kind is one structured surface, not a general structured-editing
-  framework: no formulas, no sorting, no selection ranges, no undo, and its
-  column types are fixed at four.
-- The editor is ASCII-clean only for colouring purposes: `lang.tokenize`
-  returns **byte** offsets and the shell treats them as string indices, which is
-  the same thing only for ASCII. The shell exports this as `LIMITATIONS` in
-  `shell/web/main.mjs` rather than hiding it.
+  framework: no formulas, no sorting, no selection ranges, and its column types
+  are fixed at four. A committed cell edit is a board edit, so `Ctrl+Z` reaches
+  it; the keystrokes that compose it are the textarea's own undo.
+- The editor colours text in the encoding the browser uses, which is not the
+  encoding Python and C use. `lang.tokenize` returns JS string indices (UTF-16
+  code units), which is what makes Chinese prose highlight correctly — the
+  upstream README's "byte offsets" claim was simply wrong. The residue is that
+  an astral character (emoji, rare CJK ext-B) makes `tools/e2e.py`'s tiling
+  check see an offset past `len(text)`, because Python counts code points;
+  latent, and not triggered by any current fixture.

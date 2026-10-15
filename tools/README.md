@@ -8,6 +8,11 @@ build, scaffolding, verification and reference tools.
 | --- | --- |
 | [`newlang.py`](newlang.py) | Writes a `.lang` descriptor in the exact grammar `langs/lang.mjs` parses (see `langs/README.md` for the grammar itself). |
 | [`e2e.py`](e2e.py) | End-to-end protocol driver: spawns an endpoint, speaks newline-delimited JSON-RPC on its stdin/stdout, and asserts the frozen scenario. |
+| [`kernel_probe.py`](kernel_probe.py) | The regression probe for every bug in [`docs/BUGS.md`](../docs/BUGS.md): spawns the kernel against a scratch workspace under `build/` and asserts the safe outcome of each fix. `make probe`. |
+| [`kernel_drive.py`](kernel_drive.py) | The stdio JSON-RPC harness `kernel_probe.py` runs on: starts the kernel, pumps both pipes on reader threads, and turns a method that never answers into a visible failure instead of a hang. |
+| [`browser_smoke.py`](browser_smoke.py) | The window, without a human: starts the host, drives the system browser headless (`--dump-dom`) and asserts on the rendered DOM -- HUD, workspace root, painted board. Restores the board byte-identically and kills the host by pid; with no board at all (a fresh clone) it installs `examples/board.json` for the run and removes it again. `make smoke`. Carries the shared driver -- host, browser lookup, board backup -- that `undo_smoke.py` imports. |
+| [`undo_smoke.py`](undo_smoke.py) | The other half of the window: `browser_smoke.py` drives no pointer and no keyboard, so this one serves a small same-origin wrapper page, frames the app in it, double-clicks empty space, then dispatches `Ctrl+Z` and `Ctrl+Shift+Z` and counts cards in the iframe's DOM. Also proves that `Ctrl+Z` with a text field focused does *not* move the board. Runs second in `make smoke`. |
+| [`demo.py`](demo.py) | Installs `examples/board.json` -- the five-card board in the README's screenshots -- as this workspace's `.infantgod/board.json`. `.infantgod/` is gitignored, so a fresh clone opens an **empty canvas** and every screenshot in these docs would be unreproducible. Refuses to overwrite an existing board without `--force`; `--print` shows the board and changes nothing. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
 
 ## Examples
@@ -18,7 +23,33 @@ build, scaffolding, verification and reference tools.
 python tools/newlang.py --id mylang --ext .ml --title MyLang --comment "//" --out langs
 ```
 
-**2. Verify a build end to end** (`--kernel-cmd` takes the whole command line, so
+**2. Give a clone the board in the screenshots** -- the layout is per-checkout
+state and is not committed, so a new clone starts empty
+
+```console
+python tools/demo.py                 # install into ./.infantgod/board.json
+python tools/demo.py --root DIR      # ... into another workspace
+python tools/demo.py --force         # replace a board you already have
+python tools/demo.py --print         # print it, change nothing
+```
+
+**3. Prove the fixed bugs are still fixed** -- against its own scratch workspace,
+so it cannot touch your board or your files
+
+```console
+python tools/kernel_probe.py
+```
+
+**4. Check that the window still paints** -- needs a Chromium-family browser;
+with none installed it says so and exits `0` with a skip, because "no browser" is
+not a failure of the board
+
+```console
+python tools/browser_smoke.py
+python tools/browser_smoke.py --edge "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --keep
+```
+
+**5. Verify a build end to end** (`--kernel-cmd` takes the whole command line, so
 the shell multiplexer can be driven too; the default `--kernel` is the
 kernel-only path and skips the `lang.*` checks)
 
@@ -39,14 +70,16 @@ python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."
   **full mode** with `--kernel-cmd` (the command line is spawned verbatim, e.g.
   `node shell/main.mjs rpc --workspace .`; `lang.list`, `lang.tokenize` and the
   span-tiling assertion all run).
-* `e2e.py` asserts eleven things: the `hello` handshake, `workspace.info`, the
+* `e2e.py` asserts twelve things: the `hello` handshake, `workspace.info`, the
   language layer (`lang.list`, `lang.tokenize`, and that its spans tile the file
   with no gaps or overlaps), `file.read`, `file.write` plus a stale
   `base_revision`, path containment (absolute and relative escapes refused with
-  `1003`), the `board.save`/`board.load` round-trip, and `exec.start` streamed to
-  `exec.exit`. Kernel mode skips the three language checks, so a green kernel run
-  reads `8 passed, 0 failed, 3 skipped`; a green full run reads
-  `11 passed, 0 failed, 0 skipped`. Both exit `0`.
+  `1003`), the `board.save`/`board.load` round-trip, the **starter board**
+  (`examples/board.json` pushed through the real `board.save` validator and
+  compared back card for card), and `exec.start` streamed to `exec.exit`. Kernel
+  mode skips the three language checks, so a green kernel run reads
+  `9 passed, 0 failed, 3 skipped`; a green full run reads
+  `12 passed, 0 failed, 0 skipped`. Both exit `0`.
 * The `exec.start` check runs a **real child process** and asserts its streamed
   `exec.output` and its `exec.exit` code — the kernel spawning itself is the
   simplest command that exists on every checkout, and it needs no interpreter on
@@ -59,8 +92,15 @@ python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."
   the two writes -- still puts the original bytes back instead of leaving the
   probe comment behind. The probe text is a Yarn comment, so the fixture stays a
   valid `.yarn` file while it is edited.
-* The board check is a snapshot-and-restore too, of the whole document: it must
-  not silently drop where the developer put the camera or which cards are open.
-  Restoring re-serialises, so the bytes and the member order can change while the
-  cards, links and viewport do not.
+* The board checks share a `board_state`/`board_restore` pair, and the state is
+  the **whole** document: rebuilding it out of the cards alone is how the
+  viewport got reset silently while the run still exited `0`. Restoring
+  re-serialises, so the bytes and the member order can change while the cards,
+  links and viewport do not. If the workspace had no board at all, the run
+  removes the file it created **and** the now-empty `.infantgod/` directory, so a
+  finished test run leaves the tree exactly as it started.
+* `browser_smoke.py` snapshots `.infantgod/board.json` byte for byte before it
+  starts the host and puts it back afterwards; on a clone that has no board it
+  installs `examples/board.json` for the run (a fresh clone has no board — the
+  layout is gitignored) and removes it again when it is done.
 * Colour is disabled when stdout is not a TTY or when `NO_COLOR` is set.

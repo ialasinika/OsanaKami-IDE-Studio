@@ -1,0 +1,80 @@
+# What a clone is checked with.  Every step below is a command that runs on the
+# maintainer's machine too (see "Run the checks" in README.md); nothing here is
+# CI-only magic.
+#
+# Honest status: this file was authored on a Windows machine with no GitHub
+# runner, so it has never actually executed on GitHub.  The toolchain steps are
+# the ones that make `make CC=gcc` work here: a C89 compiler (`gcc`, because the
+# Makefile's default CC path assumes the maintainer's MinGW install), Node 24 and
+# Python 3.12.  `SHELL=cmd.exe` is what the maintainer's own invocation passes:
+# the recipes are written for the Windows command interpreter.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # A real C89 compiler and GNU make.  MSYS2 is the dependable source on a
+      # Windows runner; CC=gcc overrides the maintainer's hard-coded MinGW path.
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-gcc make
+          path-type: inherit
+
+      - name: toolchain
+        shell: msys2 {0}
+        run: |
+          gcc --version | head -1
+          make --version | head -1
+          node --version
+          python --version
+
+      - name: build, protocol, fixed bugs, self-tests
+        shell: msys2 {0}
+        run: |
+          make -f Makefile SHELL=cmd.exe CC=gcc
+          make -f Makefile SHELL=cmd.exe CC=gcc test
+
+  # The window itself.  Separated because a browser can be missing or unhappy on
+  # a runner, and a red build for that reason says nothing about the code.
+  smoke:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-gcc make
+          path-type: inherit
+
+      - name: build and render the board headless
+        shell: msys2 {0}
+        run: |
+          make -f Makefile SHELL=cmd.exe CC=gcc
+          python tools/demo.py
+          make -f Makefile SHELL=cmd.exe CC=gcc smoke

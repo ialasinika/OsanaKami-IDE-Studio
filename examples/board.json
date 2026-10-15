@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  },
+  "cards": [
+    {
+      "id": "c1",
+      "kind": "editor",
+      "x": 40,
+      "y": 60,
+      "w": 640,
+      "h": 420,
+      "z": 1,
+      "title": "examples/hello.yarn",
+      "file": "examples/hello.yarn"
+    },
+    {
+      "id": "c2",
+      "kind": "note",
+      "x": 720,
+      "y": 80,
+      "w": 300,
+      "h": 220,
+      "z": 2,
+      "title": "The board is the project state.",
+      "text": "The board is the project state. Cards remember where you put them, not what you opened last. Pan by dragging empty space, zoom with the wheel; the layout is saved to .infantgod/board.json."
+    },
+    {
+      "id": "c3",
+      "kind": "runner",
+      "x": 720,
+      "y": 340,
+      "w": 420,
+      "h": 200,
+      "z": 3,
+      "title": "runner",
+      "cmd": "python tools/e2e.py --kernel build/infantgod.exe",
+      "cwd": "."
+    },
+    {
+      "id": "c4",
+      "kind": "files",
+      "x": -320,
+      "y": 40,
+      "w": 320,
+      "h": 520,
+      "z": 0,
+      "title": "files",
+      "filter": "**/*"
+    },
+    {
+      "id": "c5",
+      "kind": "sheet",
+      "x": 40,
+      "y": 540,
+      "w": 640,
+      "h": 300,
+      "z": 5,
+      "title": "line kinds in hello.yarn",
+      "doc": {
+        "columns": [
+          {
+            "id": "kind",
+            "title": "kind",
+            "type": "text"
+          },
+          {
+            "id": "example",
+            "title": "example",
+            "type": "text"
+          },
+          {
+            "id": "lines",
+            "title": "lines",
+            "type": "number"
+          },
+          {
+            "id": "command",
+            "title": "command",
+            "type": "bool"
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "cells": {
+              "kind": "header",
+              "example": "title: Live_Node",
+              "lines": 5,
+              "command": false
+            }
+          },
+          {
+            "id": "r2",
+            "cells": {
+              "kind": "command",
+              "example": "<<wait 2>>",
+              "lines": 10,
+              "command": true
+            }
+          },
+          {
+            "id": "r3",
+            "cells": {
+              "kind": "speaker",
+              "example": "Aistalt: …",
+              "lines": 11,
+              "command": false
+            }
+          },
+          {
+            "id": "r4",
+            "cells": {
+              "kind": "choice",
+              "example": "-> 继续观看",
+              "lines": 2,
+              "command": false
+            }
+          },
+          {
+            "id": "r5",
+            "cells": {
+              "kind": "comment",
+              "example": "// 给弹幕一点时间滚过屏幕",
+              "lines": 2,
+              "command": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "l1",
+      "from": "c1",
+      "to": "c3",
+      "label": "runs"
+    },
+    {
+      "id": "l2",
+      "from": "c1",
+      "to": "c2",
+      "label": "notes"
+    },
+    {
+      "id": "l3",
+      "from": "c1",
+      "to": "c5",
+      "label": "analysis"
+    }
+  ]
+}
