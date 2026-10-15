@@ -53,8 +53,8 @@ python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ." --fixtur
   `base_revision`, path containment (absolute and relative escapes refused with
   `1003`), the `board.save`/`board.load` round-trip, and `exec.start` streamed to
   `exec.exit`. Kernel mode skips the three language checks, so a green kernel run
-  reads `8 passed, 0 failed, 3 skipped`; a green full run reads
-  `11 passed, 0 failed, 0 skipped`. Both exit `0`.
+  reads `8 passed, 0 failed, 4 skipped`; a green full run reads
+  `12 passed, 0 failed, 0 skipped`. Both exit `0`.
 * The revision checks have to *change* the file to move its revision, because a
   file revision is a content hash: they append a comment, then write the original
   bytes back, so a finished run leaves the fixture byte-identical (`sha256`

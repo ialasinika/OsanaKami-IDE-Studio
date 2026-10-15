@@ -170,15 +170,15 @@ python tools/build.py             # build (pass --release / --clean / targets)
 Run the checks:
 
 ```sh
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 3 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 11 passed, 0 failed, 0 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 4 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, both JS self-tests
 ```
 
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 3 skipped
+python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 87/87 checks passed
@@ -198,9 +198,9 @@ it, so the bytes and key order will differ; the cards, links and viewport will
 not). If there was no board before a run, there is none after it either.
 
 **Current state of the protocol suite:** both modes are green. Kernel mode
-(`check`) reports 8 passed, 0 failed, 3 skipped — the skips are the three
+(`check`) reports 8 passed, 0 failed, 4 skipped — the skips are the four
 language checks, which the kernel does not serve. Full mode (`fullcheck`, the
-endpoint that adds `langs/`) reports 11 passed, 0 failed, 0 skipped. See
+endpoint that adds `langs/`) reports 12 passed, 0 failed, 0 skipped. See
 [Known rough edges](#known-rough-edges) for what is still genuinely unfinished.
 
 Note `make test` uses `fullcheck`, which needs `node shell/main.mjs`; there is no
