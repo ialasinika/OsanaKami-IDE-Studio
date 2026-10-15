@@ -227,7 +227,9 @@ entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
 - **What is lost is the paradigm itself:** the layout stops existing between
   runs. Everything else still works; the reason to use seIDE does not.
 - **Shell must change too:** yes and heavily — `board.mjs` and `main.mjs` both
-  assume `board.load` / `board.save` exist.
+  assume `board.load` / `board.save` exist. The classic view goes with the board
+  for free: `classicLayout` is a projection of `board.cards`, so with no document
+  there is nothing to project.
 
 ### Cutting `wksp` — only the canvas
 

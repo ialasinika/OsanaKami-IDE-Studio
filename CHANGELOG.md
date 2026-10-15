@@ -22,6 +22,26 @@ version number says how usable it is, not how finished.
 
 ### Shell
 
+- The same board can be drawn as a **conventional IDE**: the command
+  `mode classic` (or the HUD button, labelled with the view it will give you)
+  tiles the focused `editor` card into a code area, every open editor into a tab
+  strip above it and the first `project`/`files` card into a sidebar column,
+  hiding the rest.  It is a **view, not a document**: switching creates no card,
+  moves none, writes nothing to `board.json`, and `mode board` restores every
+  card to the pixels — pan and zoom included — the document gives it; a card with
+  no role is hidden rather than unmounted, so its text, scroll position and
+  listeners survive a walk through the view and back; and a click in the view
+  selects but never raises, so a first visit cannot dirty the board.  The role
+  rules and the tile arithmetic are pure (`classicRoles`, `classicLayout`,
+  `classicViewName`, `classicTabLabel`, `classicHud` in
+  `shell/web/classic.mjs`) and are measured in the board's own pixels, which is
+  why `shell/web/selftest.mjs` pins them with no DOM (12 new checks, 115 in all)
+  and `tools/input_smoke.py` measures the tile in a real window (4 new checks:
+  the tiling and its parts, a tab click moving the code area to that file, the
+  wheel leaving the viewport alone, and `mode board` restoring the board exactly,
+  34 in all).  The wheel stays the board's gesture, so the classic view has no
+  pan and no zoom, and the HUD says `no zoom` rather than quoting a number that
+  no longer describes the screen.
 - A file changed by **another program** is noticed, on a timer.  The kernel emits
   `file.changed` only for writes it made itself, so the shell polls `file.stat`
   every 1.5 s for each open `editor` card and compares the revision it reports
@@ -32,7 +52,7 @@ version number says how usable it is, not how finished.
   warning and never a reload, because "cannot compare" is not "unchanged".  The
   decision table is pure (`watchDecision`, `watchReport`, `watchTrimmed`,
   `WATCH_POLL_MS` in `shell/web/watch.mjs`; the polling is in `main.mjs`), so
-  `shell/web/selftest.mjs` pins it with no DOM (12 new checks, 103 in all) and
+  `shell/web/selftest.mjs` pins it with no DOM (12 new checks, 115 in all) and
   `tools/input_smoke.py` drives the real thing with out-of-band writes (4 new
   checks: the revision a
   freshly opened card holds, a clean reload, a dirty warning, and a delete).  If
@@ -51,8 +71,8 @@ version number says how usable it is, not how finished.
   the board.  A group move or delete is one change, one undo step and one save,
   and an edge whose endpoint is deleted goes with it (`1004 INVALID_BOARD`
   otherwise).  The command line gained `select <id...> | all | none`, and `delete`
-  with no argument acts on the selection.  `shell/web/selftest.mjs` is 103 checks
-  and `tools/input_smoke.py` drives the gestures in a real window (30 checks).
+  with no argument acts on the selection.  `shell/web/selftest.mjs` is 115 checks
+  and `tools/input_smoke.py` drives the gestures in a real window (34 checks).
 - The workspace can be searched from the board.  `find <text>` opens a `search`
   card (or re-points the one already there) at the centre of the view; it lists
   the workspace once, then reads the files that may hold the text and shows one
@@ -87,9 +107,9 @@ version number says how usable it is, not how finished.
   never be dragged apart from what it holds.  A frame renders below the cards it
   contains however often it is clicked, so it can never hide the work it groups.
   `cardsInsideRect` and `frameRect` are pure and exported; `shell/web/selftest.mjs`
-  pins the membership and margin arithmetic (103 checks) and `tools/input_smoke.py`
+  pins the membership and margin arithmetic (115 checks) and `tools/input_smoke.py`
   groups the whole board in a real window, drags the frame, checks every card
-  inside moved by one delta and ungroups (30 checks).
+  inside moved by one delta and ungroups (34 checks).
 
 ### Docs
 
@@ -120,6 +140,17 @@ version number says how usable it is, not how finished.
   watcher cannot do (it polls, it only covers files open cards hold, and the
   kernel watches nothing), and the check counts in `README.md`,
   `tools/README.md` and `docs/ARCHITECTURE.md` follow the suites.
+- The classic view is documented where it can be argued with: constraint 1 in
+  `README.md` now says the board is still the only document and the new paragraph
+  describes the projection, `shell/web/README.md` gained `### The same cards as a
+  code area: mode classic` (the role table, the tile's arithmetic, and what the
+  mode deliberately does not do — write, raise, take a shortcut or move the
+  wheel), `docs/PARADIGM.md` answers "No tabs" honestly (a strip drawn from the
+  cards is not the tab strip the paradigm rejects), `docs/PROJECT.md` keeps the
+  project card *a card* even when the view draws it in a column, `docs/FORK.md`
+  gives the mechanical cut, `docs/TRIM.md` notes that cutting `board` takes the
+  view with it, and the check counts in `README.md`, `tools/README.md` and
+  `docs/ARCHITECTURE.md` follow the suites.
 
 ### Tools
 

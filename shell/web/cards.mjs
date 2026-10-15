@@ -875,6 +875,7 @@ export const COMMAND_HELP = [
   "save                     write the board to .seide/board.json",
   "undo                     take back the last board edit (Ctrl+Z)",
   "redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)",
+  "mode board | classic     the board, or the same cards as sidebar + tabs + code area",
 ];
 
 /* ------------------------------------------------------------------ */

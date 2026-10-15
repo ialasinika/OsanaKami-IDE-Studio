@@ -157,6 +157,84 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* the classic view                                                    */
+/* ------------------------------------------------------------------ */
+
+/* One class on <body> is the whole switch.  Nothing is unmounted: the cards
+   stay in the DOM and are merely not drawn, which is why an editor's unsaved
+   text survives a walk through the classic view and back -- the value lives in
+   the textarea, not in the layout. */
+body.is-classic #board {
+  background-image: none;
+  cursor: default;
+}
+
+body.is-classic #board:active { cursor: default; }
+
+/* A card the classic view has no place for.  Hidden, not removed. */
+.card.is-hidden { display: none; }
+
+/* The strip is positioned and sized by classic.mjs (the same arithmetic that
+   places the cards); everything here is what it looks like. */
+#tabs {
+  position: absolute;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--line);
+  /* Above the cards, below the HUD.  #stage is a stacking context of its own
+     (it carries a transform), so a z-index here is enough. */
+  z-index: 20;
+}
+
+#tabs[hidden] { display: none; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 10px;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  font: 11.5px/1 var(--mono-font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tab:hover { color: var(--fg); background: #1b1e24; }
+
+.tab.is-active {
+  color: var(--fg);
+  background: #1b1e24;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab-dirty { color: var(--warn); }
+.tab-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* What stands in the sidebar column when the board has no project card. */
+#side-hint {
+  position: absolute;
+  left: 0;
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--fg-faint);
+  background: var(--card);
+  border-right: 1px solid var(--line);
+  font: 11.5px/1.6 var(--ui-font);
+  z-index: 20;
+}
+
+#side-hint[hidden] { display: none; }
+
+/* ------------------------------------------------------------------ */
 /* hud                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -182,6 +260,22 @@ body {
 .hud-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 #hud-selection { color: var(--fg); }
 #hud-dirty.is-dirty { color: var(--warn); }
+
+/* The HUD is a label strip -- `pointer-events: none` -- with one control in it,
+   which is why the button has to ask for its clicks back. */
+.hud-button {
+  pointer-events: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #1b1e24cc;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hud-button:hover { color: var(--accent); border-color: var(--accent-dim); }
+.hud-button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dim); }
 
 #kernel-status::before {
   content: "";

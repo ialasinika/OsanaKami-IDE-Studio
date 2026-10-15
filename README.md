@@ -68,6 +68,14 @@ reference a file, and may be connected by links. The board persists to
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
+The board is also the only document. The shell can draw those same cards a second
+way — `mode classic` puts the focused editor into a code area, the open files
+into a tab strip above it and the project card into a sidebar — but that view is
+a *projection*: switching to it creates no card and moves none, nothing about it
+is written to `board.json`, and `mode board` puts every card back on the pixels
+it had. A fork that deletes the view loses a way of looking, not a piece of
+project state; the board is still where the project is.
+
 ### 2. No Electron
 
 The window is the system's Edge/Chromium launched in
@@ -183,7 +191,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 30 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 34 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, cli-check, version-check, the JSON test, both JS self-tests
 ```
@@ -196,11 +204,11 @@ python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck            # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search, a frame and a watched file: 30 passed, 0 failed
+python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search, a frame, a watched file and the classic view: 34 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 92/92 checks passed
-node shell/web/selftest.mjs                    # ok 103/103 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 115/115 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
@@ -224,12 +232,18 @@ the search card to list what it found across the workspace, clicks the first hit
 and checks the editor that opened has its caret on that hit's line, then selects
 the whole board again, frames it with `group` on the command line, drags the
 frame and checks every card inside it moved by the same delta, and runs
-`ungroup` to check the frame goes and the cards stay put. Last it opens a file
+`ungroup` to check the frame goes and the cards stay put. Next it opens a file
 from outside the app — the test writes it with a plain file write, then again
 with different bytes — and checks the card notices on its own and reloads, that
 a card with unsaved edits is warned instead of overwritten, and that deleting
-the file under a card is reported with the text still in the card
-(`input_smoke.py`, 30 checks). On a clone that has no
+the file under a card is reported with the text still in the card. Last it types
+`mode classic` and measures the view in the board's own pixels — the tab strip
+under the HUD, the code area filling the right column and the sidebar the left,
+both ending on the board's bottom edge while every other card is hidden — clicks
+a tab and checks the code area moved to that file, wheels the code area and the
+strip to check the viewport did not move, and runs `mode board` to check every
+card, every size and the pan and zoom came back exactly
+(`input_smoke.py`, 34 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 
@@ -245,6 +259,20 @@ and lives in `shell/web/watch.mjs`, so `node shell/web/selftest.mjs` covers it
 with no DOM. A fork that trims `file.stat` out of its kernel does not break the
 app: the watcher turns itself off with one log line
 ([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
+
+**The same cards, drawn a second way.** `mode classic` — or the HUD button, which
+reads `classic view` / `board view` — arranges the focused editor as a code area,
+the other open files as tabs above it and the project card as a sidebar. The
+arithmetic is pure, lives in `shell/web/classic.mjs` and is measured in the
+board's own pixels, which is why `node shell/web/selftest.mjs` can pin the tile
+with no DOM and `input_smoke.py` can measure it in a real window. The board
+underneath is untouched: the view computes boxes for the *same* cards from the
+*same* document, a card with no place in the tile is hidden rather than
+unmounted (its text, its scroll position and its listeners survive a round trip),
+and the wheel is the board's gesture — so in classic mode there is no pan and no
+zoom to speak of, and the HUD says so. Nothing about the view is saved, no
+protocol method changed, and `mode board` restores every card to the pixels the
+document gives it; [`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
 
 **The protocol suite used to write to your board, and no longer does.** The
 board checks drive `board.save` against the workspace they were given, but they
@@ -334,8 +362,8 @@ langs/                  language support, deliberately OUTSIDE the kernel
 shell/                  the front end and the endpoints
   main.mjs              `seide rpc` (stdio) and `seide serve` (HTTP + SSE + browser)
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
-                        history.mjs, rpc.mjs, watch.mjs, main.mjs, selftest.mjs,
-                        README.md
+                        history.mjs, rpc.mjs, watch.mjs, classic.mjs, main.mjs,
+                        selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

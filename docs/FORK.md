@@ -82,6 +82,16 @@ shipped tests still measure the kernel this repository ships, so `make probe`
 (and the watch checks in `make smoke`) will say so — which is the point of
 having them.
 
+The **classic view** is a shell-level cut of the same kind, and it is mechanical
+for the reason it exists: it never wrote to the document. `shell/web/classic.mjs`
+is one pure module imported only by `main.mjs`; the rest of the cut is the
+`mode` row and its `COMMAND_HELP` line in `shell/web/cards.mjs`, the classic
+branches in `renderStage`/`renderCards`/`renderHud` plus `renderTabs`/
+`renderSideHint`/`installView`, the `#tabs` and `#mode-toggle` elements in
+`index.html` and their rules in `style.css`. No `board.json` changes and no card
+loses a field, because the view was drawn from the board and saved nowhere —
+which is the whole reason a fork can throw it away.
+
 ---
 
 ## 3. Replace the platform layer to leave Win32
@@ -392,6 +402,14 @@ Not implemented, not promised, and each cheap enough to be tempting.  (Undo used
 to head this list; it is built now — `shell/web/history.mjs`, `Ctrl+Z` — so what
 follows is what is genuinely still missing:)
 
+- **A conventional IDE layout on top of the board.** Built now, as a projection:
+  `mode classic` (one pure module, `shell/web/classic.mjs`) draws the same cards
+  as a code area, a tab strip and a sidebar without creating, moving or saving
+  anything. Still on the table, and each of these would need something the
+  projection deliberately refuses: split panes, a sidebar you drag to resize, a
+  per-tab close (a card has no close), tab reordering, remembering the mode in
+  `board.json`, and a `files`/`project` sidebar that behaves like a tree rather
+  than like the card it is.
 - **A minimap or "fit board to window".** The viewport is three numbers; the
   cards are a flat list with geometry. This is a shell-only feature.
 - **More than one kind of multi-select.** Multi-select itself is built — Ctrl+A,

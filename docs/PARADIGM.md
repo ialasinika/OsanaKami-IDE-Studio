@@ -23,6 +23,15 @@ In seIDE, opening a file creates a **card at a point on the canvas**. Nothing
 closes when you open something else. The card you opened yesterday is still
 where you left it, next to the note where you wrote down why you opened it.
 
+The shell *can* draw a tab strip. `mode classic` puts the open editor cards in a
+row above a code area and the project card in a sidebar column. That exists
+because the request for it was explicit and because an arrangement of a document
+is not a second document — but it is a **projection**, not the paradigm. The tabs
+*are* the editor cards, in board order: there is no tab that is not a card,
+nothing is evicted when the sixth file opens, the strip is rebuilt from the board
+on every render, and switching views writes nothing. If the tabs ever start
+deciding what is open, this project has become the thing it was written not to be.
+
 ### No file tree
 
 A file tree answers "where does this file live in the repository?" It does not
@@ -261,6 +270,14 @@ prototype:
   text and is warned, because silently overwriting typing would be worse than
   being stale. The kernel watches nothing — it speaks when asked — so the
   protocol promises nothing about a change it did not make.
+- The classic view (`mode classic`) is a second *arrangement* of the same cards,
+  not a second document: the focused editor becomes a code area, the open files a
+  tab strip above it and the project card a sidebar, and every other card is
+  hidden (never unmounted, so its text survives the trip). It has no split panes,
+  no drag-to-resize, no per-tab close — a card has no close, and the strip is
+  rebuilt from the board rather than kept beside it — and no layout of its own to
+  save. `mode board` restores the cards, the pan and the zoom to the pixels they
+  had; if the view and the board ever disagree, the board is right.
 - A `frame` is a labelled region that moves the cards standing inside it
   (`group`/`ungroup` on the command line). Membership is *spatial*: the centre
   of a card is the test, so a card dragged in or out joins or leaves with

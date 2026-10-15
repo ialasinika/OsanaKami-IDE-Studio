@@ -11,6 +11,7 @@ rpc.mjs       POST /rpc + GET /events client (SSE framing, RpcError)
 board.mjs     the board document, viewport, selection and mutations
 history.mjs   the undo ring: document snapshots, coalescing, redo branch
 cards.mjs     one renderer per card kind + the pure helpers
+classic.mjs   the same cards as a code area, tabs and a sidebar (pure)
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
 ```
@@ -23,6 +24,12 @@ There are **no tabs and no file tree**. The main surface is one persistent,
 pannable, zoomable 2-D space, and everything you work on is a **card** placed at
 a point in it. Opening a file does not add a tab; it puts a card somewhere on
 the plane. Closing a card does not lose the file; it removes a rectangle.
+
+There is one second arrangement, and it is a *view*: `mode classic` lays the same
+cards out as a code area, a tab strip and a sidebar (see
+[the classic view](#the-same-cards-as-a-code-area-mode-classic)). It creates no
+card, moves no card, and saves nothing — the tabs are the editor cards, in board
+order. The board is the document; the view is what you can do with it.
 
 The layout *is* project data. It lives in `.seide/board.json` next to your
 sources, so the IDE remembers a spatial arrangement — what you had open, where
@@ -152,6 +159,7 @@ the trade-off is explicit rather than discovered.
 | `board.mjs` | there is no document model: cards cannot be added, moved, linked or serialised. `import` fails, so the UI does not boot. |
 | `cards.mjs` | the board still pans and zooms, but it has no cards to put on it. |
 | `watch.mjs` | the board works, but a file changed behind your back is not noticed: no reload of a clean card, no warning on a dirty one, no `gone from disk`. |
+| `classic.mjs` | the board works as always, but there is no second arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode. |
 | `style.css` | the board still works, but it renders as unstyled white boxes stacked at the origin. The editor's colour layer and text layer stop lining up. |
 | `main.mjs` | `index.html` has nothing to boot: a blank dark page. |
 | `index.html` | nothing is served at `/`; `main.mjs` is still a valid module. |
@@ -291,6 +299,34 @@ A frame is pinned below the cards it holds (`z-index: 0`), however often it is
 clicked, because a frame that covered its own contents would hide the work it is
 grouping.
 
+### The same cards as a code area: `mode classic`
+
+`mode classic` — or the HUD button, which is labelled with the view it will give
+you, `classic view` / `board view` — draws the board a second way:
+
+| part | which card | where |
+| --- | --- | --- |
+| sidebar | the first `project` card, else the first `files` card, else nothing | the left column, `CLASSIC_SIDEBAR_W` (280 px) wide, `CLASSIC_SIDEBAR_MIN` (160 px) at the least, and never more than 40% of the board |
+| tab strip | every `editor` card, in board order | `CLASSIC_TAB_H` (34 px) under the HUD, right of the sidebar |
+| code area | the focused `editor` card, else the first editor | all that is left below the strip |
+
+Every other card is **hidden, not unmounted** (`.card.is-hidden`), so a card's
+text, its scroll position and its listeners survive a walk through the view and
+back. The rules are pure and exported from `classic.mjs` —
+`classicViewName`, `classicTabLabel`, `classicHud`, `classicRoles`,
+`classicLayout` — so `selftest.mjs` pins them with no DOM and `input_smoke.py`
+measures the same rectangles in a real window.
+
+What the mode deliberately does **not** do: it writes nothing (the document keeps
+its `x`/`y`/`w`/`h`, so `mode board` restores the pan, the zoom and every
+overlap); clicking in it selects but never raises or moves a card, so a first
+visit cannot dirty the board; it has no keyboard shortcut, because a hidden
+keystroke is not discoverable; and the wheel stays the board's gesture, so the
+classic view has no pan and no zoom and the HUD says `no zoom` rather than
+quoting a number that no longer describes the screen. A window `resize` while
+the mode is on re-measures the tile. A card with no role is a card with no box:
+the caller hides it rather than drawing it at 0,0.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
 * Token offsets are **string indices**, not byte offsets. `lang.tokenize` scans
@@ -304,7 +340,9 @@ grouping.
   them together, but a browser that substitutes a different font for one layer
   only would shear the two apart.
 * Links are straight lines. There is no router, no obstacle avoidance and no
-  automatic layout: where you put a card is where it stays.
+  automatic layout: where you put a card is where it stays. The one arrangement
+  seIDE computes is the classic view's tile — and it is a view, not a layout: it
+  is drawn from the document and never saved into it.
 * Output from a long-running command is capped (200 000 characters / 2 000
   lines); the head is dropped and the card says how much went.
 * Undo covers the **board**, not the text inside a card. `Ctrl+Z` (or `undo`)
@@ -333,6 +371,11 @@ grouping.
   hold. `inotify` or `ReadDirectoryChangesW` would let the kernel announce an
   outside write, but that is a promise this protocol does not make: the kernel
   speaks when it is asked, and says nothing about the filesystem underneath it.
+* The classic view is a **view**: no split panes, no drag-to-resize on the
+  sidebar, no per-tab close (a card has no close, and the strip is rebuilt from
+  the board on every render), no tab reordering that survives anything, no second
+  layout to save, and no effect on the protocol or on `board.json`. Hide a card
+  and it is still open; the board is what is real.
 
 ---
 
@@ -376,7 +419,10 @@ round-trips, document repair, viewport clamping, the selection set and
 `cardsWithin` (the rubber band's arithmetic), a group move/delete being one
 change, the search arithmetic (line/column, excerpts, the file order and the
 budgets), the frame arithmetic (the centre-inside membership test and the
-rectangle drawn round a selection), the watcher's decision table (a clean card
+rectangle drawn round a selection), the classic view (which card plays which
+part, the label a tab gets, the HUD's two readings, and a tile that leaves no gap
+or overlap and stays inside the viewport at several sizes), the watcher's
+decision table (a clean card
 adopts new bytes, a dirty one is only warned, a revision that cannot be compared
 is never a reload, and one piece of news is reported once), and token-span
 application to a string. It prints `ok N/N` and exits
