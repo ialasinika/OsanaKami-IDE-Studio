@@ -97,6 +97,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SHELL_MAIN = REPO_ROOT / "shell" / "main.mjs"
 BOARD_PATH = REPO_ROOT / ".seide" / "board.json"
+STARTER_BOARD = REPO_ROOT / "examples" / "board.json"
 
 #: Where the system browser normally lives on Windows.  ``--edge`` overrides it.
 EDGE_CANDIDATES = (
@@ -690,7 +691,29 @@ class BoardBackup:
         self.existed = path.is_file()
         self.bytes = path.read_bytes() if self.existed else None
         self.backup = None
+        self.installed = False
         self.restored_identical = False
+
+    def install_if_absent(self) -> None:
+        """Give a fresh clone something to paint.
+
+        ``.seide/board.json`` is gitignored, so a clone has no board at all and
+        the host would paint an empty canvas with nothing to assert on -- which
+        is how ``make smoke`` failed on the first fresh clone.  The starter
+        board in ``examples/`` is the same document, so install it for the run.
+
+        This is safe because :meth:`restore` already remembers the file was not
+        there and takes it away again; the run leaves the tree as it found it.
+        """
+        if self.existed:
+            return
+        if not STARTER_BOARD.is_file():
+            raise DriverError(
+                f"no board at {self.path} and no starter board at {STARTER_BOARD}"
+            )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_bytes(STARTER_BOARD.read_bytes())
+        self.installed = True
 
     def snapshot(self) -> None:
         """Copy the original bytes aside, so even a hard kill is recoverable."""
@@ -705,6 +728,15 @@ class BoardBackup:
         """Write the original bytes back; return True when byte-identical."""
         try:
             if not self.existed:
+                # Nothing was here before: the run's own board has to go, and a
+                # ``.seide/`` this test created must not be left behind either.
+                if self.installed and self.path.is_file():
+                    self.path.unlink()
+                try:
+                    if self.path.parent.is_dir() and not any(self.path.parent.iterdir()):
+                        self.path.parent.rmdir()
+                except OSError:
+                    pass
                 self.restored_identical = not self.path.exists()
                 return self.restored_identical
             if not (self.path.is_file() and self.path.read_bytes() == self.bytes):
@@ -828,8 +860,13 @@ def _run(host: Host, backup: BoardBackup, edge, args, style: Style) -> int:
 
     restored = backup.restore()
     print(style.dim("-" * 68))
-    exact = "byte-identical" if restored else "NOT byte-identical"
-    show("restore", f"{BOARD_PATH} restored ({exact})")
+    if backup.existed:
+        exact = "byte-identical" if restored else "NOT byte-identical"
+        show("restore", f"{BOARD_PATH} restored ({exact})")
+    elif restored:
+        show("restore", f"{BOARD_PATH} removed again (the clone had none)")
+    else:
+        show("restore", f"FAIL {BOARD_PATH} is still there -- remove it by hand")
     if args.keep and backup.backup is not None:
         show("board backup kept", str(backup.backup))
     elif not restored and backup.backup is not None:
@@ -887,13 +924,25 @@ def main(argv=None) -> int:
     show("seIDE browser smoke", str(REPO_ROOT))
     show("browser", str(edge))
     show("kernel", f"{SHELL_MAIN.relative_to(REPO_ROOT)} (node)")
-    show("board", str(BOARD_PATH))
-    print(style.dim("-" * 68))
 
     # Back the board up BEFORE the host can touch it, and choose the port:
     # both can fail, and neither may leave a process or a modified file behind.
     backup = BoardBackup(BOARD_PATH)
     backup.snapshot()
+    try:
+        backup.install_if_absent()
+    except (DriverError, OSError) as exc:
+        show("FAIL setup", f"{exc}")
+        backup.discard()
+        return 2
+    show(
+        "board",
+        str(BOARD_PATH)
+        if backup.existed
+        else f"{BOARD_PATH} (absent -- installed {STARTER_BOARD.name} for this run)",
+    )
+    print(style.dim("-" * 68))
+
     try:
         port = parsed.port or free_port()
     except OSError as exc:
