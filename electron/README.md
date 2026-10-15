@@ -194,6 +194,23 @@ The label is per-file and survives copying, so it needs doing once per checkout.
 create `.infantgod/board.json`, and the board reports
 `board.save failed: cannot create directory`.
 
+## If Electron runs but no window appears
+
+When the shell that launches the app is itself Electron-as-Node — an editor
+extension host, an agent harness, a CI step reusing `electron.exe` — it may have
+exported `ELECTRON_RUN_AS_NODE=1`. Every Electron process it starts then runs as
+plain Node: it exits immediately, stdout and stderr are empty, and no `boot.log`
+is written. Nothing is wrong with the app; the variable is inherited.
+
+```sh
+Remove-Item Env:ELECTRON_RUN_AS_NODE    # PowerShell
+set ELECTRON_RUN_AS_NODE=               # cmd.exe
+unset ELECTRON_RUN_AS_NODE              # sh
+```
+
+This only affects processes started from such a shell. Launching from Explorer or
+an ordinary terminal is unaffected.
+
 ## Constraints, stated plainly
 
 - **Windows only.** `core/port/` has a Win32 implementation and nothing else, so
@@ -257,6 +274,8 @@ sibling step — or skip all of this and set the environment directly:
 CSC_LINK=C:\path\to\real.pfx CSC_KEY_PASSWORD=... npm run dist
 ```
 
-`win.publisherName` in `package.json` is `InfantGod Studio` and must match the
-certificate's subject, or the NSIS installer will refuse to build.
+`win.signtoolOptions.publisherName` in `package.json` is `InfantGod Studio` and
+must match the certificate's subject, or the NSIS installer will refuse to build.
+(An older electron-builder wanted this key at `win.publisherName` and warns when
+it finds it there.)
 

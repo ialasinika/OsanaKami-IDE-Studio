@@ -51,7 +51,9 @@
         }
       ],
       "icon": "electron/icon.ico",
-      "publisherName": "InfantGod Studio"
+      "signtoolOptions": {
+        "publisherName": "InfantGod Studio"
+      }
     },
     "nsis": {
       "oneClick": false,
