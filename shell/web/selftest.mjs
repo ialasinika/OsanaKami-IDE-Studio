@@ -79,6 +79,11 @@ import {
   renderCard,
   replaceAllMatches,
   replaceMatchAt,
+  SEARCH_MAX_HITS,
+  SEARCH_MAX_PER_FILE,
+  searchExcerpt,
+  searchFiles,
+  searchInText,
   segmentsText,
   setSheetCell,
   sheetCell,
@@ -1506,8 +1511,9 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 /* the card-kind hook                                                  */
 /* ------------------------------------------------------------------ */
 
-test("hook: the six built-in kinds register in a known order", () => {
-  assert.deepEqual(knownCardKinds(), ["editor", "runner", "note", "files", "project", "sheet"]);
+test("hook: the built-in kinds register in a known order", () => {
+  assert.deepEqual(knownCardKinds(),
+    ["editor", "runner", "note", "files", "search", "project", "sheet"]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
     assert.equal(spec.kind, kind);
@@ -2193,6 +2199,83 @@ test("wheel: a scroll region has room only where it can still move", () => {
   assert.equal(scrollRoom(0, 400, 400, 120), 0, "content that already fits does not scroll");
   assert.equal(scrollRoom(10, 100, 400, 0), 0, "a wheel that moves nothing owns nothing");
   assert.equal(scrollRoom(NaN, 100, 400, 120), 0, "a broken metric never claims room");
+});
+
+/* ------------------------------------------------------------------ */
+/* searching the workspace                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A board of cards has no tree to grep from, so the search card is where a
+ * word is found across the workspace.  Everything it decides with numbers --
+ * which line, which column, how much of a long line to show, when to stop --
+ * is pure, and is checked here; only the reading and the rows need a browser.
+ */
+
+test("search: a hit knows its line, its column, and the line it is on", () => {
+  const text = "alpha beta\nbeta gamma\nplain\n";
+  const hits = searchInText(text, "beta");
+  assert.equal(hits.length, 2);
+  assert.deepEqual(hits[0], { line: 1, column: 7, start: 6, end: 10, text: "alpha beta" });
+  assert.deepEqual(hits[1], { line: 2, column: 1, start: 11, end: 15, text: "beta gamma" });
+  /* The offsets are string indices into the whole file, like every other
+   * offset in the shell, and they tile the text exactly. */
+  assert.equal(hits[0].end, hits[1].start - 1, "the two hits are one newline apart");
+  assert.deepEqual(searchInText(text, ""), [], "an empty query is not a match-everything");
+  assert.deepEqual(searchInText(text, "nope"), []);
+  assert.deepEqual(searchInText(null, "beta"), []);
+});
+
+test("search: a CRLF file reports the column a person sees", () => {
+  const hits = searchInText("one\r\ntwo beta\r\nthree", "beta");
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].line, 2);
+  assert.equal(hits[0].column, 5, "the \\r belongs to the line before, not to this line's numbering");
+  assert.equal(hits[0].text, "two beta", "the excerpt never shows a stray carriage return");
+});
+
+test("search: a long line is excerpted around the hit, not from its start", () => {
+  const line = `${"x".repeat(60)}needle${"y".repeat(60)}`;
+  const excerpt = searchExcerpt(line, 60, 66, { context: 40 });
+  assert.equal(excerpt.hit, "needle");
+  assert.equal(excerpt.leading, `…${"x".repeat(40)}`);
+  assert.equal(excerpt.trailing, `${"y".repeat(40)}…`);
+  const short = searchExcerpt("a needle b", 2, 8, { context: 40 });
+  assert.deepEqual(short, { leading: "a ", hit: "needle", trailing: " b" },
+    "a line that fits is shown whole, with no ellipsis");
+});
+
+test("search: files come back by path and then down the file", () => {
+  const outcome = searchFiles([
+    { path: "b/x.txt", text: "hit\nhit\n" },
+    { path: "a/y.txt", text: "\nhit\n" },
+    { path: "a/z.txt", text: "nothing here" },
+  ], "hit");
+  assert.deepEqual(outcome.hits.map((hit) => `${hit.path}:${hit.line}:${hit.column}`),
+    ["a/y.txt:2:1", "b/x.txt:1:1", "b/x.txt:2:1"]);
+  assert.equal(outcome.matchedFiles, 2, "a file with no hit is not a matched file");
+  assert.equal(outcome.searched, 3, "but it was still read");
+  assert.equal(outcome.truncated, false);
+  assert.equal(outcome.perFileCapped, false);
+  assert.deepEqual(searchFiles([{ path: "a", text: "x" }, null, { path: 3 }], "x").hits.length, 1,
+    "a malformed entry is skipped, not fatal");
+});
+
+test("search: the hit budget stops the list and says so", () => {
+  const outcome = searchFiles([{ path: "a.txt", text: "x\n".repeat(10) }], "x", { maxHits: 3 });
+  assert.equal(outcome.hits.length, 3);
+  assert.equal(outcome.truncated, true, "a cut list must be distinguishable from a complete one");
+});
+
+test("search: one huge file cannot crowd out the rest, and says it was capped", () => {
+  const outcome = searchFiles([
+    { path: "a.txt", text: "x\n".repeat(10) },
+    { path: "b.txt", text: "x\n" },
+  ], "x", { maxPerFile: 4, maxHits: 100 });
+  assert.deepEqual(outcome.hits.map((hit) => hit.path),
+    ["a.txt", "a.txt", "a.txt", "a.txt", "b.txt"]);
+  assert.equal(outcome.truncated, false, "the search budget was not reached");
+  assert.equal(outcome.perFileCapped, true, "but a file did hit its own cap");
 });
 
 /* ------------------------------------------------------------------ */

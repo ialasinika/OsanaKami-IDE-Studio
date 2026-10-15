@@ -74,7 +74,7 @@ with:
 | `z` | numeric stacking order, defaults to 0 | kernel (`fill_defaults`) |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships six kinds:
+The shell ships seven kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -83,11 +83,12 @@ The shell ships six kinds:
 | `note` | a text area that lives in the board document | `text` |
 | `files` | a filterable workspace listing | `filter` |
 | `project` | the workspace as one project: what it contains, and what is open | `filter` |
+| `search` | the workspace-wide find, whose rows open their file at their line | `query`, `glob`, `caseSensitive` |
 | `sheet` | structured data: typed cells in a grid, not text | `title`, `doc` |
 
 The kernel does **not** interpret `kind`. `core/include/board.h` says so
-explicitly: `editor`, `runner`, `note`, `files`, `project` and `sheet` are
-conventions the shell implements, and a fork that invents `timeline` or
+explicitly: `editor`, `runner`, `note`, `files`, `project`, `search` and `sheet`
+are conventions the shell implements, and a fork that invents `timeline` or
 `waveform` changes the
 shell and nothing else. A card with an unknown kind still loads, still saves, and
 still renders — `renderCard` in `shell/web/cards.mjs` falls through to a
@@ -163,15 +164,15 @@ palette that steals focus and it is not a menu; it is a place to type a verb.
 - Press `:` anywhere outside a text field to focus it. `Escape` clears and
   blurs it. `Tab` completes a command name. `ArrowUp` shows the last non-error
   log line as a hint. Typing a known verb shows its usage.
-- Verbs are `open`, `note`, `run`, `files`, `project`, `link`, `unlink`, `zoom`,
-  `focus`, `delete`, `save`, `help`, `clear` (`KNOWN_COMMANDS` in
+- Verbs are `open`, `note`, `run`, `files`, `project`, `find`, `link`, `unlink`,
+  `zoom`, `focus`, `delete`, `save`, `help`, `clear` (`KNOWN_COMMANDS` in
   `shell/web/main.mjs`).
-- `delete` with no argument acts on the **focused card**. That is the only
-  place the command line reaches for the selection, and it is the intended
-  pattern: the command line acts on what you are looking at.
-- `note`, `files` and `project` create cards at the centre of the current
-  viewport, so a new card appears where you are looking rather than at the
-  origin.
+- `delete` with no argument acts on the **focused card** when one is focused and
+  on the **whole selection** when several cards are selected; `select
+  <id...> | all | none` names a set.
+- `note`, `files`, `project` and `find` create cards at the centre of the
+  current viewport, so a new card appears where you are looking rather than at
+  the origin.
 
 The authoritative help text lives in `COMMAND_HELP` in `shell/web/cards.mjs`,
 kept there (per its own comment) so the README and the UI agree.
@@ -247,6 +248,12 @@ prototype:
   primary member, because a board needs a way to act on several cards without
   giving up the single-card gestures. There are still no multi-card field edits
   (no "set every selected card's title"), and no lasso over a *link*.
+- The `search` card finds a literal string across the workspace on demand, not
+  on every keystroke: it reads at most 200 files, skips files over 512 KiB and
+  anything that looks binary, lists at most 200 hits (50 per file) and says so
+  in its status line when it stops. A hit opens its file at its line; there is
+  no regex mode, no search-restricted-to-a-selection, and no replace across
+  files.
 - Links carry a label but nothing consumes them.
 - Card kinds are registered with one call (`registerCardKind`) rather than edited
   into a switch, but there is still no plugin system: no loading, no discovery,

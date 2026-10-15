@@ -1,14 +1,15 @@
-"""input_smoke.py -- drive the real window: the undo keys, the editor keys, and
-who owns a wheel.
+"""input_smoke.py -- drive the real window: the undo keys, the editor keys, who
+owns a wheel, selecting more than one card, and searching the workspace.
 
 ``browser_smoke.py`` fetches the page with ``--dump-dom``, which drives no
 pointer, no keyboard and no wheel, so the *input paths* were the part of the
 board no shipped suite could reach: ``selftest.mjs`` proves the undo ring
-(documents, coalescing, the redo branch) and the editor's text operations with
-no DOM at all, and this proves the wiring on top of them -- including that a
-wheel over a card's own scroll region belongs to the card, and that the keys a
-person actually presses reach the editor card, which are rules only a real
-event can test.
+(documents, coalescing, the redo branch), the editor's text operations and the
+search arithmetic with no DOM at all, and this proves the wiring on top of them
+-- including that a wheel over a card's own scroll region belongs to the card,
+that the keys a person actually presses reach the editor card, that a drag can
+carry a set of cards and that a hit in a search card opens its file at its line,
+which are rules only a real event can test.
 
 How, without a web driver or CDP: the shell serves every file under
 ``shell/web/``, so this test writes one small wrapper page there for the length
@@ -28,7 +29,12 @@ reach into the iframe and do what a person does:
    and ctrl+wheel over the card must still zoom;
 7. drive the editor card's own keys -- Tab and shift+Tab on the file, Enter
    after an opener, Ctrl+F and the find bar, replace-all and Escape -- and read
-   the buffer and the painted hits back out of the DOM.
+   the buffer and the painted hits back out of the DOM;
+8. select more than one card -- Ctrl+A, ctrl+click, a shift+drag band, a group
+   drag and a group Delete with one Ctrl+Z -- and read the counts and the
+   positions back out;
+9. type ``find <text>`` on the command line, wait for the search card to list
+   hits, click the first one and read the caret of the editor that opened.
 
 The board is backed up and restored byte-for-byte, and the host is killed by pid.
 
@@ -143,6 +149,16 @@ async function ready() {
     await sleep(100);
   }
   return false;
+}
+
+/* Wait for something the app does in its own time -- a workspace read is as slow
+   as the workspace is big, and a fixed sleep would be a race with the disk. */
+async function waitUntil(predicate, tries = 150, step = 200) {
+  for (let i = 0; i < tries; i++) {
+    if (predicate()) return true;
+    await sleep(step);
+  }
+  return predicate();
 }
 
 async function main() {
@@ -432,9 +448,57 @@ async function main() {
     say("select-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && editorOk && selectOk
-    ? "undo, redo, wheel ownership, the editor keys and multi-select work in a real browser"
-    : "FAILED -- see the counts, wheel, editor and select lines above"));
+  /* --- search: a word found across the workspace, opened at its line --- */
+  let searchOk = true;
+  try {
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
+    const commandBox = doc.getElementById("command");
+    commandBox.value = "find registerCardKind";
+    commandBox.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    const searchCard = () => doc.querySelector("#cards [data-card-id].card-search");
+    const rowsOf = () => {
+      const node = searchCard();
+      return node === null ? [] : [...node.querySelectorAll('[data-role="search-hit"]')];
+    };
+    // Reading a workspace takes as long as the workspace is big, so wait for the
+    // rows instead of betting on a sleep.
+    await waitUntil(() => rowsOf().length > 0);
+    const card = searchCard();
+    const rows = rowsOf();
+    const status = card === null
+      ? "" : (card.querySelector('[data-role="card-status"]').textContent || "").trim();
+    say("search-card: open=" + (card !== null) + " rows=" + rows.length + " status=\\"" + status + "\\"");
+
+    const first = rows.length > 0 ? rows[0] : null;
+    const wantPath = first === null ? "" : first.dataset.path;
+    const wantLine = first === null ? 0 : Number(first.dataset.line);
+    if (first !== null) first.click();
+    await sleep(900);
+    let hitEditor = null;
+    for (const node of doc.querySelectorAll("#cards [data-card-id]")) {
+      const area = node.querySelector("textarea.ed-input");
+      const label = node.querySelector(".card-label");
+      if (area !== null && label !== null && label.textContent === wantPath) hitEditor = node;
+    }
+    const area = hitEditor === null ? null : hitEditor.querySelector("textarea.ed-input");
+    const text = area === null ? "" : area.value;
+    /* Where that line starts, counted the way a person counts lines: the first
+       line starts at 0 and every newline moves it one character on. */
+    const expected = text.split("\\n").slice(0, Math.max(0, wantLine - 1)).join("\\n").length
+      + (wantLine > 1 ? 1 : 0);
+    const caret = area === null ? -1 : area.selectionStart;
+    say("search-open: path=" + wantPath + " line=" + wantLine
+      + " caret=" + caret + " expected=" + expected);
+    searchOk = card !== null && rows.length > 0 && status.indexOf("hit") !== -1
+      && area !== null && caret === expected;
+  } catch (error) {
+    searchOk = false;
+    say("search-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && editorOk && selectOk && searchOk
+    ? "undo, redo, wheel ownership, the editor keys, multi-select and a workspace search work in a real browser"
+    : "FAILED -- see the counts, wheel, editor, select and search lines above"));
   document.title = "input smoke done";
 }
 
@@ -453,7 +517,8 @@ def build_parser() -> argparse.ArgumentParser:
             "region and over the board, and drive the editor card's indent, "
             "auto-indent, find and replace keys, then select with Ctrl+A, "
             "ctrl+click and a shift+drag rubber band, drag the group and delete "
-            "it. Exit codes: 0 pass or skipped, "
+            "it, and finally search the workspace with `find` and open a hit at "
+            "its line. Exit codes: 0 pass or skipped, "
             "1 a check failed, 2 could not run, 3 usage."
         ),
     )
@@ -551,6 +616,23 @@ def parse_select(body: str) -> dict:
     return found
 
 
+def parse_search(body: str) -> dict:
+    """The workspace-search lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    patterns = (
+        ("card", r'search-card: open=(\w+) rows=(\d+) status="([^"]*)"'),
+        ("open", r"search-open: path=(\S+) line=(\d+) caret=(-?\d+) expected=(-?\d+)"),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"search-error: (.+)", body)
+    if none is not None:
+        found["error"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -566,7 +648,7 @@ def main(argv=None) -> int:
         edge = bs.find_edge(args.edge)
     except bs.DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 21 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 23 skipped (no browser)")
         return 0
 
     backup = bs.BoardBackup(bs.BOARD_PATH)
@@ -729,6 +811,26 @@ def main(argv=None) -> int:
     results.check("Delete removes the whole set in one step and one Ctrl+Z brings it back",
                   bool(gone) and gone[1] == "0" and gone[2] == gone[0],
                   f"{gone[0]} -> {gone[1]} undo -> {gone[2]}" if gone else select_detail("delete"))
+
+    search = parse_search(body)
+
+    def search_detail(key: str) -> str:
+        got = search.get(key)
+        if got is not None:
+            return " ".join(got)
+        if search.get("error") is not None:
+            return f"search-error: {search['error'][0]}"
+        return f"no search-{key} line"
+
+    card = search.get("card")
+    results.check("`find <text>` opens a search card that finds a word across the workspace",
+                  bool(card) and card[0] == "true" and int(card[1]) > 0 and "hit" in card[2],
+                  f"rows={card[1]} status={card[2]!r}" if card else search_detail("card"))
+    opened = search.get("open")
+    results.check("clicking a hit opens that file with the caret on its line",
+                  bool(opened) and int(opened[3]) >= 0 and opened[2] == opened[3],
+                  f"{opened[0]}:{opened[1]} caret={opened[2]} expected={opened[3]}" if opened
+                  else search_detail("open"))
 
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")

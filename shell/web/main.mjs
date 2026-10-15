@@ -945,18 +945,37 @@ function createApp() {
       return null;
     }
     const wanted = path.trim().replace(/\\/g, "/");
+    const line = Number.isFinite(options.line) ? Math.floor(options.line) : 0;
     for (const entry of mounted.values()) {
       if (entry.handle.kind === "editor" && entry.handle.hasPath && entry.handle.hasPath(wanted)) {
         focusCard(entry.card.id);
         centreOn(entry.card);
+        revealLine(entry, line);
         return entry.card;
       }
     }
     const centre = options.at || centreWorld();
     const size = { w: 680, h: 460 };
-    return addCard("editor", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
+    const card = addCard("editor", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
       file: wanted,
     }, size);
+    revealLine(mounted.get(card.id), line);
+    return card;
+  }
+
+  /**
+   * Put an editor's caret on a line, without waiting for it.
+   *
+   * The card may still be reading its file, so `goToLine` waits for the load
+   * itself; a failed jump is a message in the log, never a broken click.
+   */
+  function revealLine(entry, line) {
+    if (line < 1 || entry === undefined || typeof entry.handle.goToLine !== "function") {
+      return;
+    }
+    Promise.resolve(entry.handle.goToLine(line)).catch((err) => {
+      log("warn", `could not jump to line ${line}: ${err.message}`);
+    });
   }
 
   function openRunner(cmd, options = {}) {
@@ -1350,7 +1369,7 @@ function createApp() {
   /* ------------------------------------------------------------------ */
 
   const KNOWN_COMMANDS = [
-    "open", "note", "run", "files", "project", "link", "unlink", "zoom",
+    "open", "note", "run", "files", "find", "project", "link", "unlink", "zoom",
     "focus", "select", "delete", "save", "undo", "redo", "help", "clear",
   ];
 
@@ -1404,6 +1423,32 @@ function createApp() {
         const centre = centreWorld();
         const size = { w: 360, h: 560 };
         addCard("files", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { filter }, size);
+        return;
+      }
+      case "find": {
+        // One search card, like the project panel: `find` re-points the card you
+        // already have instead of stacking a second one next to it.
+        const query = tokens.slice(1).join(" ").trim();
+        if (query === "") {
+          log("warn", "usage: find <text>");
+          return;
+        }
+        const existing = board.cards.find((card) => card.kind === "search");
+        if (existing !== undefined) {
+          const entry = mounted.get(existing.id);
+          revealCard(existing.id);
+          if (entry !== undefined && typeof entry.handle.setQuery === "function") {
+            await entry.handle.setQuery(query);
+          }
+          return;
+        }
+        const centre = centreWorld();
+        const size = DEFAULT_SIZE.search;
+        addCard("search",
+          Math.round(centre.x - size.w / 2),
+          Math.round(centre.y - size.h / 2),
+          { query, glob: "**/*", caseSensitive: false },
+          size);
         return;
       }
       case "project": {

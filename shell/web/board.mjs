@@ -40,6 +40,7 @@ export const DEFAULT_SIZE = {
   runner: { w: 520, h: 260 },
   note: { w: 300, h: 180 },
   files: { w: 300, h: 520 },
+  search: { w: 560, h: 460 },
   sheet: { w: 460, h: 320 },
   project: { w: 340, h: 580 },
 };

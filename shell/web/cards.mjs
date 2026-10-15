@@ -298,6 +298,148 @@ export function matchesFilter(path, filter) {
 }
 
 /* ------------------------------------------------------------------ */
+/* searching the workspace                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Finding text is the one thing a board of cards cannot do by looking: an
+ * editor card shows one file, and there is no tree to grep from.  The three
+ * helpers below are pure, so the arithmetic -- which line, which column, how
+ * much of a long line to show, when to stop -- is checked without a browser or
+ * a workspace.  The card does the reading and the DOM, and nothing else.
+ */
+
+/** How many files one search reads before it stops and says so. */
+export const SEARCH_MAX_FILES = 200;
+
+/** How many hits one search reports. */
+export const SEARCH_MAX_HITS = 200;
+
+/** How many hits one file may contribute. */
+export const SEARCH_MAX_PER_FILE = 50;
+
+/** Bigger files are skipped: reading a 40 MB log to find a word is not a feature. */
+export const SEARCH_MAX_BYTES = 512 * 1024;
+
+/**
+ * Every literal hit of `query` in one text, each with the line and column it
+ * sits on.
+ *
+ * Literal, and case-insensitive unless asked otherwise: the same matching the
+ * editor's find bar does, so one query behaves the same in both places.
+ * `start`/`end` are string indices, like every other offset in this shell.
+ *
+ * @returns {Array<{line: number, column: number, start: number, end: number, text: string}>}
+ */
+export function searchInText(text, query, options = {}) {
+  const { caseSensitive = false, maxPerFile = SEARCH_MAX_PER_FILE } = options;
+  if (typeof text !== "string" || typeof query !== "string" || query === "") {
+    return [];
+  }
+  const out = [];
+  let line = 1;
+  let lineStart = 0;
+  let scanned = 0;
+  for (const hit of findMatches(text, query, { caseSensitive })) {
+    while (scanned < hit.start) {
+      if (text[scanned] === "\n") {
+        line += 1;
+        lineStart = scanned + 1;
+      }
+      scanned += 1;
+    }
+    out.push({
+      line,
+      column: hit.start - lineStart + 1,
+      start: hit.start,
+      end: hit.end,
+      text: lineText(text, hit.start),
+    });
+    if (out.length >= maxPerFile) {
+      break;
+    }
+  }
+  return out;
+}
+
+/** The line `index` sits on, without its line ending. */
+function lineText(text, index) {
+  const from = text.lastIndexOf("\n", Math.max(0, index) - 1) + 1;
+  const to = text.indexOf("\n", Math.max(0, index));
+  return text.slice(from, to === -1 ? text.length : to).replace(/\r$/, "");
+}
+
+/**
+ * A window of one line around a hit, in three pieces so the caller can wrap the
+ * middle one without searching for it again.  A cut edge is marked with `…`: a
+ * line that looks complete but starts mid-token is worse than a trimmed one.
+ *
+ * @returns {{leading: string, hit: string, trailing: string}}
+ */
+export function searchExcerpt(line, hitStart, hitEnd, options = {}) {
+  const { context = 40 } = options;
+  const text = typeof line === "string" ? line : "";
+  const from = Math.max(0, hitStart - context);
+  const to = Math.min(text.length, hitEnd + context);
+  return {
+    leading: `${from > 0 ? "…" : ""}${text.slice(from, hitStart)}`,
+    hit: text.slice(hitStart, hitEnd),
+    trailing: `${text.slice(hitEnd, to)}${to < text.length ? "…" : ""}`,
+  };
+}
+
+/**
+ * Search many files and put the rows in the order a person reads them: by path,
+ * then down the file.
+ *
+ * `files` is `[{path, text}]` -- whatever the caller managed to read.  The
+ * budget lives here rather than in the caller, so "truncated" means the same
+ * thing in the card, in the tests and in the status line.
+ *
+ * @returns {{hits: Array<object>, searched: number, matchedFiles: number, truncated: boolean}}
+ */
+export function searchFiles(files, query, options = {}) {
+  const {
+    caseSensitive = false,
+    maxHits = SEARCH_MAX_HITS,
+    maxPerFile = SEARCH_MAX_PER_FILE,
+  } = options;
+  const hits = [];
+  const matched = new Set();
+  let searched = 0;
+  let truncated = false;
+  let perFileCapped = false;
+  for (const file of Array.isArray(files) ? files : []) {
+    if (file === null || typeof file !== "object"
+      || typeof file.path !== "string" || typeof file.text !== "string") {
+      continue;
+    }
+    searched += 1;
+    const found = searchInText(file.text, query, { caseSensitive, maxPerFile });
+    if (found.length === 0) {
+      continue;
+    }
+    if (found.length >= maxPerFile) {
+      // The file may have more: a full page is the only hint a cap gives.
+      perFileCapped = true;
+    }
+    matched.add(file.path);
+    for (const item of found) {
+      if (hits.length >= maxHits) {
+        truncated = true;
+        break;
+      }
+      hits.push({ path: file.path, ...item });
+    }
+    if (truncated) {
+      break;
+    }
+  }
+  hits.sort((a, b) => comparePaths(a.path, b.path) || a.start - b.start);
+  return { hits, searched, matchedFiles: matched.size, truncated, perFileCapped };
+}
+
+/* ------------------------------------------------------------------ */
 /* the project view                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -719,6 +861,7 @@ export const COMMAND_HELP = [
   "sheet [title]            drop a structured-data card (typed cells, not text)",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
+  "find <text>              search the workspace (or re-point the search card)",
   "project [glob]           open the project panel (the workspace as one project)",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
@@ -1828,8 +1971,19 @@ function renderEditor(card, ctx) {
     }, 120);
   }
 
+  /**
+   * The load currently in flight (or the last one), so `goToLine` can wait for
+   * the file a card is opening instead of jumping into an empty textarea.
+   */
+  let loading = Promise.resolve(false);
+
   /** Load (or reload) the file. Local edits are only discarded after a prompt. */
-  async function load(path, options = {}) {
+  function load(path, options = {}) {
+    loading = loadNow(path, options);
+    return loading;
+  }
+
+  async function loadNow(path, options = {}) {
     const { confirmDiscard = true } = options;
     if (state.dirty && confirmDiscard && !app.confirmDiscard(state.path)) {
       return false;
@@ -1856,6 +2010,39 @@ function renderEditor(card, ctx) {
       app.log("error", `file.read ${path}: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * Put the caret at the start of a 1-based line and bring it into view.
+   *
+   * Waits for a load in flight: a search hit can open a card whose file has not
+   * arrived yet, and jumping into an empty textarea would look like a failure.
+   * The line is clamped, so a hit from a file edited since the search lands on
+   * the nearest real line instead of throwing.
+   */
+  async function goToLine(line) {
+    await loading;
+    const wanted = Math.floor(Number(line));
+    if (!Number.isFinite(wanted) || wanted < 1) {
+      return false;
+    }
+    const text = area.value;
+    let start = 0;
+    let current = 1;
+    while (current < wanted) {
+      const next = text.indexOf("\n", start);
+      if (next === -1) {
+        break;
+      }
+      start = next + 1;
+      current += 1;
+    }
+    area.focus();
+    area.setSelectionRange(start, start);
+    // A focused textarea scrolls its own caret into view; the coloured <pre>
+    // underneath is a separate element, so it is moved by hand.
+    syncScroll();
+    return true;
   }
 
   /**
@@ -1984,6 +2171,7 @@ function renderEditor(card, ctx) {
       kind: "editor",
       save,
       load,
+      goToLine,
       focus() {
         area.focus();
       },
@@ -2329,6 +2517,264 @@ function renderFiles(card, ctx) {
         clearTimeout(timer);
       }
       requestSeq += 1;
+    },
+  };
+}
+
+/* -------------------- search -------------------- */
+
+/**
+ * The search card: one query, the whole workspace, and a click that opens the
+ * file at the line.
+ *
+ * The board has no tree and no grep, so finding a word in the workspace was the
+ * one thing a person had to leave seIDE for.  This card is all of it: a
+ * `workspace.list`, a `file.read` per candidate, and rows that call
+ * `app.openFile(path, {line})`.
+ *
+ * It is deliberately not incremental -- the search runs when the query is
+ * submitted, not on every keystroke, because reading a workspace per keypress
+ * is a way to make a quiet editor feel slow.  What it read, what it skipped and
+ * what it stopped at live in the status line rather than in a promise.
+ */
+function renderSearch(card, ctx) {
+  const { client, app } = ctx;
+  const queryInput = h("input", "search-query", {
+    attrs: {
+      type: "text", spellcheck: "false", placeholder: "text to find",
+      "data-role": "search-query", "aria-label": "text to find",
+    },
+  });
+  queryInput.value = typeof card.query === "string" ? card.query : "";
+  const globInput = h("input", "search-glob", {
+    attrs: {
+      type: "text", spellcheck: "false", placeholder: "**/*",
+      "data-role": "search-glob", "aria-label": "files to search",
+    },
+  });
+  globInput.value = typeof card.glob === "string" && card.glob !== "" ? card.glob : "**/*";
+  const caseButton = h("button", "search-case", {
+    text: "Aa",
+    attrs: {
+      type: "button", title: "match case", "data-role": "search-case", "aria-pressed": "false",
+    },
+  });
+  const runButton = h("button", "search-run", {
+    text: "find",
+    attrs: { type: "button", title: "search the workspace", "data-role": "search-run" },
+  });
+  const head = h("div", "search-head", {
+    children: [queryInput, globInput, caseButton, runButton],
+  });
+  const list = h("div", "search-list", { attrs: { "data-role": "search-list" } });
+  const status = makeStatus();
+  const body = h("div", "card-body card-body-search", { children: [head, list, status] });
+  const shell = cardShell(card, body);
+
+  let seq = 0;
+  let caseSensitive = card.caseSensitive === true;
+
+  function label() {
+    const query = queryInput.value.trim();
+    shell.label.textContent = query === "" ? "the workspace" : `“${query}”`;
+  }
+
+  function setCase(on) {
+    caseSensitive = on === true;
+    card.caseSensitive = caseSensitive;
+    caseButton.classList.toggle("is-on", caseSensitive);
+    caseButton.setAttribute("aria-pressed", caseSensitive ? "true" : "false");
+  }
+
+  function renderRows(outcome) {
+    const frag = document.createDocumentFragment();
+    let lastPath = null;
+    for (const hit of outcome.hits) {
+      if (hit.path !== lastPath) {
+        lastPath = hit.path;
+        frag.append(h("div", "search-file", {
+          text: hit.path,
+          attrs: { "data-role": "search-file", title: hit.path },
+        }));
+      }
+      // `column` is 1-based within the line, which is exactly where the excerpt
+      // has to cut: `hit.start` is an index into the whole file, not the line.
+      const at = hit.column - 1;
+      const excerpt = searchExcerpt(hit.text, at, at + (hit.end - hit.start));
+      const row = h("button", "search-hit", {
+        attrs: {
+          type: "button",
+          "data-role": "search-hit",
+          "data-path": hit.path,
+          "data-line": String(hit.line),
+          "data-column": String(hit.column),
+          title: `${hit.path}:${hit.line}:${hit.column}`,
+        },
+      });
+      row.append(h("span", "search-where", { text: `${hit.line}:${hit.column}` }));
+      row.append(h("span", "search-text", {
+        children: [
+          document.createTextNode(excerpt.leading),
+          h("mark", "search-mark", { text: excerpt.hit }),
+          document.createTextNode(excerpt.trailing),
+        ],
+      }));
+      row.addEventListener("click", () => {
+        app.openFile(hit.path, { line: hit.line });
+      });
+      frag.append(row);
+    }
+    list.textContent = "";
+    list.append(frag);
+  }
+
+  async function run() {
+    const query = queryInput.value.trim();
+    card.query = queryInput.value;
+    card.glob = globInput.value;
+    app.boardTouched(true);
+    label();
+    if (query === "") {
+      list.textContent = "";
+      status.textContent = "type a word to find, or use `find <text>`";
+      return 0;
+    }
+    const mine = seq + 1;
+    seq = mine;
+    status.textContent = "listing…";
+    let listing;
+    try {
+      listing = await client.call("workspace.list", {
+        glob: globInput.value.trim() || "**/*",
+        limit: 4000,
+      });
+    } catch (err) {
+      status.textContent = `list failed: ${err.message}`;
+      return 0;
+    }
+    if (mine !== seq) {
+      return 0;
+    }
+    const candidates = (listing && Array.isArray(listing.files) ? listing.files : [])
+      .filter((entry) => entry !== null && typeof entry === "object" && entry.dir !== true
+        && typeof entry.path === "string" && entry.path !== "")
+      .filter((entry) => !Number.isFinite(entry.size) || entry.size <= SEARCH_MAX_BYTES);
+    const queue = candidates.slice(0, SEARCH_MAX_FILES);
+    const files = [];
+    let read = 0;
+    let budget = 0;
+    for (const entry of queue) {
+      if (mine !== seq) {
+        return 0;
+      }
+      let text;
+      try {
+        const result = await client.call("file.read", { path: entry.path });
+        text = typeof result.text === "string" ? result.text : "";
+      } catch {
+        continue; // unreadable, or not text at all: a search skips it
+      }
+      read += 1;
+      if (text.includes("\u0000")) {
+        continue; // binary: NUL is the cheapest honest test there is
+      }
+      const found = searchInText(text, query, { caseSensitive, maxPerFile: SEARCH_MAX_PER_FILE });
+      if (found.length === 0) {
+        continue;
+      }
+      files.push({ path: entry.path, text });
+      budget += found.length;
+      if (budget >= SEARCH_MAX_HITS) {
+        break;
+      }
+      if (files.length % 5 === 0) {
+        status.textContent = `searching… ${read} read, ${files.length} with hits`;
+      }
+    }
+    if (mine !== seq) {
+      return 0;
+    }
+    const outcome = searchFiles(files, query, { caseSensitive });
+    renderRows(outcome);
+    const notes = [
+      `${outcome.hits.length} hit${outcome.hits.length === 1 ? "" : "s"}`,
+      `in ${outcome.matchedFiles} file${outcome.matchedFiles === 1 ? "" : "s"}`,
+      `${read} read`,
+    ];
+    if (candidates.length > queue.length) {
+      notes.push(`first ${queue.length} of ${candidates.length}`);
+    }
+    if (outcome.truncated) {
+      notes.push(`stopped at ${SEARCH_MAX_HITS} hits`);
+    }
+    if (outcome.perFileCapped) {
+      notes.push(`first ${SEARCH_MAX_PER_FILE} per file`);
+    }
+    status.textContent = notes.join(" · ");
+    return outcome.hits.length;
+  }
+
+  function onKey(event) {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      run();
+    } else if (event.key === "Escape") {
+      event.target.blur();
+    }
+  }
+
+  queryInput.addEventListener("input", () => {
+    card.query = queryInput.value;
+    app.boardTouched(true);
+    label();
+  });
+  globInput.addEventListener("input", () => {
+    card.glob = globInput.value;
+    app.boardTouched(true);
+  });
+  queryInput.addEventListener("keydown", onKey);
+  globInput.addEventListener("keydown", onKey);
+  caseButton.addEventListener("click", () => {
+    setCase(!caseSensitive);
+    if (queryInput.value.trim() !== "") {
+      run();
+    }
+  });
+  runButton.addEventListener("click", () => {
+    run();
+  });
+
+  setCase(caseSensitive);
+  label();
+  if (queryInput.value.trim() !== "") {
+    run();
+  } else {
+    status.textContent = "type a word to find, or use `find <text>`";
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "search",
+      run,
+      /** Point the card at a new query and search at once (`find <text>`). */
+      setQuery(query) {
+        queryInput.value = typeof query === "string" ? query : "";
+        label();
+        return run();
+      },
+      focus() {
+        queryInput.focus();
+        queryInput.select();
+      },
+      /** What the card is showing, for the smoke test and for `find`. */
+      state() {
+        return { query: queryInput.value, glob: globInput.value, caseSensitive };
+      },
+    },
+    destroy() {
+      seq += 1; // an in-flight search must not write into a card that is gone
     },
   };
 }
@@ -2980,11 +3426,11 @@ function renderSheet(card, ctx) {
 /* ------------------------------------------------------------------ */
 
 /*
- * The five kinds the prototype ships.  Each registration is self-contained: a
- * fork that wants a different note card replaces this object, not a case in a
- * switch three hundred lines away.  Adding a sixth is one more call, and the
- * board, the command line and the kernel need no change at all -- `card.kind`
- * is already an open string everywhere else.
+ * The kinds the prototype ships.  Each registration is self-contained: a fork
+ * that wants a different note card replaces this object, not a case in a switch
+ * three hundred lines away.  Adding another is one more call, and the board, the
+ * command line and the kernel need no change at all -- `card.kind` is already an
+ * open string everywhere else.
  */
 
 registerCardKind({
@@ -3017,6 +3463,14 @@ registerCardKind({
   describe: (card) => `files ${card.filter || "**/*"}`,
   create: () => ({ filter: "**/*" }),
   render: renderFiles,
+});
+
+registerCardKind({
+  kind: "search",
+  title: "Search",
+  describe: (card) => `search ${card.query !== "" && card.query !== undefined ? card.query : "(no query)"}`,
+  create: () => ({ query: "", glob: "**/*", caseSensitive: false }),
+  render: renderSearch,
 });
 
 registerCardKind({

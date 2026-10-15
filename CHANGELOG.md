@@ -19,8 +19,19 @@ version number says how usable it is, not how finished.
   the board.  A group move or delete is one change, one undo step and one save,
   and an edge whose endpoint is deleted goes with it (`1004 INVALID_BOARD`
   otherwise).  The command line gained `select <id...> | all | none`, and `delete`
-  with no argument acts on the selection.  `shell/web/selftest.mjs` is 83 checks
-  and `tools/input_smoke.py` drives the gestures in a real window (21 checks).
+  with no argument acts on the selection.  `shell/web/selftest.mjs` is 89 checks
+  and `tools/input_smoke.py` drives the gestures in a real window (23 checks).
+- The workspace can be searched from the board.  `find <text>` opens a `search`
+  card (or re-points the one already there) at the centre of the view; it lists
+  the workspace once, then reads the files that may hold the text and shows one
+  row per hit as `line:column` plus the line cut around the hit.  A row opens its
+  file — reusing an editor card already showing it — with the caret on that line.
+  The find is literal and runs when asked, not on every keystroke; the budgets are
+  part of the status line (200 files read, 50 hits per file, 200 hits total,
+  nothing over 512 KiB, NUL-containing files skipped as binary), and the status
+  says when one of them stopped the list.  `searchInText`, `searchExcerpt` and
+  `searchFiles` are pure and exported, so the line/column, excerpt and budget
+  arithmetic is checked without a DOM.
 - The editor card gained the keys a text editor needs.  `Tab` and `Shift+Tab`
   indent and outdent the lines the selection touches, `Enter` keeps the line's
   indentation and steps in one more after `{`, `(` or `[`, and `Ctrl+F` opens a
@@ -42,10 +53,10 @@ version number says how usable it is, not how finished.
   now pinned by `langs/selftest.mjs` (92 checks) and `shell/web/selftest.mjs`
   with non-ASCII fixtures.  No behaviour changed — the description
   caught up with the code.
-- `shell/web/README.md` documents the editor card's own keys and the multi-select
-  gestures, `docs/PARADIGM.md` and `docs/FORK.md` no longer list rubber-band
-  selection as missing, and the check counts in `README.md` and
-  `docs/ARCHITECTURE.md` follow the three suites.
+- `shell/web/README.md` documents the editor card's own keys, the multi-select
+  gestures and the search card, `docs/PARADIGM.md` and `docs/FORK.md` no longer
+  list rubber-band selection or finding across the workspace as missing, and the
+  check counts in `README.md` and `docs/ARCHITECTURE.md` follow the three suites.
 
 ## v0.2.1-alpha.2 — 2026-10-15
 ### Docs

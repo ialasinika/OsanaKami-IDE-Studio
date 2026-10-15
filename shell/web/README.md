@@ -43,6 +43,7 @@ line above it. **seIDE has no dialogs**, so nothing ever covers the board.
 | `note` | free text, part of the board | `text` |
 | `files` | a workspace listing, filtered | `filter` |
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
+| `search` | a literal find across the workspace, with a row per hit | `query`, `glob`, `caseSensitive` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
 
 A kind exists because it was registered, and registering is one call at the end
@@ -118,6 +119,7 @@ sheet [title]            drop a structured-data card (typed cells, not text)
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)
+find <text>              search the workspace (or re-point the open search card)
 link <from> <to> [label] connect two cards
 unlink <linkId>          remove a connection
 zoom <n> | in | out | reset
@@ -203,6 +205,34 @@ away: after a `Tab`, `Ctrl+Z` still takes that `Tab` back. The pure parts
 `replaceAllMatches`, `markHits`) are exported for `selftest.mjs`; the wiring is
 pressed for real by `tools/input_smoke.py`.
 
+### Finding things across the workspace
+
+`find <text>` on the command line drops a `search` card (or re-points the one
+already on the board) at the centre of the view, the same way `files` and
+`project` do. It is a **literal** find, case-insensitive unless you turn the `Aa`
+button on, and it runs when you ask it to rather than on every keystroke: reading
+a workspace per keypress is a way to make a quiet editor feel slow.
+
+The card lists the workspace once (`workspace.list`, with its own glob box), then
+reads the files it may contain the text in and shows one row per hit:
+
+* a row's left column is `line:column` and its right column is the line, cut
+  around the hit with `…` at a cut edge, with the hit itself marked;
+* clicking a row (or pressing it with the keyboard) opens that file — reusing an
+  editor card already showing it — and puts the caret on that line, centring the
+  card on the hit;
+* the status line says what happened: `35 hits · in 10 files · 90 read`, plus
+  `first 200 of N` when the file list was cut, `stopped at 200 hits` when the hit
+  budget ran out, and `first 50 per file` when a single file filled its page.
+
+The budgets are part of the answer rather than a hidden failure: at most 200
+files read, 50 hits per file, 200 hits in total, nothing over 512 KiB, and
+anything whose text contains a NUL byte is skipped as binary. `searchInText`,
+`searchExcerpt` and `searchFiles` are pure and exported (`SEARCH_MAX_*` are the
+limits), so `selftest.mjs` pins the line/column arithmetic and the budgets, and
+`tools/input_smoke.py` types `find` into the real command line, waits for real
+rows and checks the caret lands on the line the first row named.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
 * Token offsets are **string indices**, not byte offsets. `lang.tokenize` scans
@@ -229,6 +259,11 @@ pressed for real by `tools/input_smoke.py`.
   a group move or delete is one undo step and one save. There is no field edit
   across a selection (no "retitle every selected card"), no lasso over links, and
   no "select by kind"; the rubber band is the only geometric selector.
+* Search is literal and on demand. There is no regex mode, no search narrowed to
+  a selection or to the selected cards, no replace across files, and no watching
+  the workspace for changes: a stale row can point at a line that moved, which is
+  why the row carries the file and line it was found at rather than an offset
+  into a buffer.
 
 ---
 
@@ -270,5 +305,6 @@ with no DOM and no network: chunk-split frame reassembly, `RpcError` mapping,
 `STALE_REVISION` surfacing `data.current_revision`, board add/move/link/serialize
 round-trips, document repair, viewport clamping, the selection set and
 `cardsWithin` (the rubber band's arithmetic), a group move/delete being one
-change, and token-span application to a string. It prints `ok N/N` and exits
+change, the search arithmetic (line/column, excerpts, the file order and the
+budgets), and token-span application to a string. It prints `ok N/N` and exits
 non-zero if anything fails.

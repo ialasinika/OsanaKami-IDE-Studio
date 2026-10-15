@@ -68,7 +68,7 @@ The cuts a fork usually makes first, in ascending order of pain:
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
 | `exec` | 4 edits + `app.c` | `runner` cards and `exec.*` methods |
 | `board` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — the paradigm |
-| `wksp` | 4 edits + the `editor`, `files` and `project` card kinds | files; the canvas alone remains |
+| `wksp` | 4 edits + the `editor`, `search`, `files` and `project` card kinds | files; the canvas alone remains |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
 
 **Cost:** proportional to what you cut; the reverse — adding a module back — is
@@ -394,8 +394,13 @@ follows is what is genuinely still missing:)
 - **Links with semantics.** A `from`/`to` pair plus a label is already in the
   document; nothing consumes them. A "run the card this link points at" verb is
   a shell feature over existing methods.
-- **Find across the board.** `workspace.list` and `file.read` are enough to
-  build it without new kernel verbs.
+- **Find across the workspace.** Built now — the `search` card and the `find
+  <text>` verb, over `workspace.list` plus `file.read`, with no new kernel verb.
+  What is still on the table here: regex mode, a search narrowed to a selection
+  or to a glob the card cannot express, replace across files, and incremental
+  results while you type.
+- **Search that follows the disk.** The search card reads the workspace when you
+  ask; nothing watches it. A stale row can name a line that moved.
 - **A second client.** The protocol has exactly one consumer today. A second one
   — a CLI, a test harness, an editor plugin — is what would keep the frozen
   contract honest.

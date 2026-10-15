@@ -149,6 +149,13 @@ A second worked example is in [`PROJECT.md`](PROJECT.md): the `project` card
 merges the kernel's `workspace.list` with the board's own editor cards, so a
 kind can depend on *both* the filesystem and the board without changing either.
 
+A third is the `search` card: it is the one kind that is pure *consumer* — it
+calls `workspace.list` and `file.read`, keeps its own query/glob/case fields on
+the board, and hands a hit back to another card kind (`app.openFile(path, {line})`
+lands in an `editor` card) instead of rendering the file itself. Its arithmetic
+(`searchInText`, `searchExcerpt`, `searchFiles`) is exported and pure, which is
+what let the budgets be a tested part of the answer rather than a comment.
+
 ## 4. What the rest of seIDE guarantees a new surface
 
 | layer | guarantee | where |

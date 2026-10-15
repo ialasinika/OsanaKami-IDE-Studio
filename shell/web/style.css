@@ -592,6 +592,89 @@ body {
 .file-meta { color: var(--fg-faint); font-size: 10px; white-space: nowrap; }
 
 /* ------------------------------------------------------------------ */
+/* search card                                                         */
+/* ------------------------------------------------------------------ */
+
+.card-body-search { padding: 0; }
+
+.search-head {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 6px 6px 0;
+}
+
+.search-query,
+.search-glob {
+  font: 11px/1.5 var(--mono-font);
+  color: var(--fg);
+  background: #14171c;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+  min-width: 0;
+}
+.search-query { flex: 2; }
+.search-glob { flex: 1; }
+.search-query:focus,
+.search-glob:focus { border-color: var(--accent-dim); }
+
+.search-case,
+.search-run {
+  flex: 0 0 auto;
+  font: 10.5px/1.5 var(--mono-font);
+  color: var(--fg-dim);
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.search-case.is-on { color: var(--accent); border-color: var(--accent-dim); }
+.search-run:hover,
+.search-case:hover { color: var(--fg); }
+
+.search-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 4px 6px;
+}
+
+.search-file {
+  position: sticky;
+  top: 0;
+  font: 10.5px/1.6 var(--mono-font);
+  color: var(--accent);
+  background: var(--card);
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-hit {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg);
+  font: 11px/1.6 var(--mono-font);
+  padding: 1px 6px 1px 14px;
+  cursor: pointer;
+}
+.search-hit:hover { background: var(--card-hi); }
+.search-where { flex: 0 0 auto; color: var(--fg-faint); font-size: 10px; }
+.search-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.search-mark { background: #6fb3ff33; color: inherit; }
+
+/* ------------------------------------------------------------------ */
 /* project card                                                        */
 /* ------------------------------------------------------------------ */
 
