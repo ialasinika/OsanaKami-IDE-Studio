@@ -28,7 +28,12 @@ typedef struct sde_app sde_app;
 #define SDE_RPC_STALE_REVISION  1001
 #define SDE_RPC_NOT_FOUND       1002
 #define SDE_RPC_IO              1003
-#define SDE_RPC_INVALID_BOARD   1004
+/*
+ * 1004 INVALID_BOARD is reserved and the kernel does not emit it: since
+ * `seide/2` a view document's shape is the client's business, so the client
+ * that validates its own document -- the reference shell does -- is the one
+ * that answers with it.  See `docs/PROTOCOL.md`.
+ */
 #define SDE_RPC_EXEC            1005
 
 /*

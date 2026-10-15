@@ -3,7 +3,85 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
+## Unreleased
+### Kernel
+
+- The kernel no longer knows what a view **is**.  `board.load`, `board.save` and
+  `board.newId` are gone; `view.load {path}` and `view.save {path, document,
+  base_revision?}` replace them.  The kernel keeps *a JSON document* at a path the
+  caller names, hands it back verbatim, and never looks inside it: any JSON value
+  except `null` round-trips exactly — an object shaped like a board, an array, a
+  number — so `1004 INVALID_BOARD` is retired (the number stays reserved) and a
+  malformed document can no longer stop the kernel from starting, because the
+  kernel no longer reads one at startup.  `core/src/board.c` (`fill_defaults`,
+  `validate`, `check_links`, `board_id`) and `core/include/board.h` were deleted,
+  `core/src/view.c` and `core/include/view.h` took their place, and
+  `SDE_WITH_BOARD` became `SDE_WITH_VIEW`.  What survives is the part a client
+  cannot do for itself: the atomic neighbour-replace write, `base_revision`
+  staleness with `data.current_revision` (`1001 STALE_REVISION`), the
+  `view.changed` notification, and `workspace.info`'s `view_path` /
+  `view_revision` — which report the document the kernel last read or wrote, not
+  a workspace setting.  `SDE_PROTOCOL_VERSION` is **2**; the rename is breaking on
+  purpose, so a seide/1 client is refused rather than half-served.  Reasoning,
+  the failures this avoids and the price are in the new `docs/VIEWS.md`.
+
+### Shell
+
+- `shell/web/board.mjs` now owns the board schema, the `.seide/board.json` path
+  (`BOARD_PATH`) and card ids (`makeId`, with `idFactory` left as a seam that
+  nothing supplies — the old `board.newId` had no production caller).  Its rules
+  are unchanged and still refuse what they always refused; the only difference is
+  that the refusal now happens in the process that can explain it.  `main.mjs`
+  names the path on every call and listens for `view.changed` instead of
+  `board.changed`.
+- The classic view, the board and the tab strip are now visibly what they always
+  were in fact: **implementations of a view**, not the definition of one.  A
+  second client that draws a document nobody has drawn before needs no kernel
+  change and no new method.
+
+### Tools
+
+- `tools/seide_cli.py`, `tools/kernel_probe.py`, `tools/e2e.py` and
+  `tools/demo.py` speak `view.load` / `view.save`; the CLI's `new-id` verb is gone
+  with `board.newId` (the client allocates ids) and its `board` command prints
+  whatever `view.load` hands back, with a note — not an error — when the document
+  is not the board shape.  `tools/browser_smoke.py` and `tools/input_smoke.py`
+  need no change at all: `.seide/board.json` was always just a file to them, and
+  that is now the truth of it.  The probe stops pinning refusals the kernel no
+  longer makes and pins the opacity contract instead: a document the board schema
+  would reject is stored and handed back unchanged, a stale `base_revision` is
+  `1001` with `data.current_revision`, and a save with no `document` (or `null`)
+  is `-32602`.  The CLI selfcheck reads `SDE_PROTOCOL_VERSION` out of
+  `core/include/seide_cfg.h` rather than hard-coding `seide/1`.
+
+### Docs
+
+- New `docs/VIEWS.md`: what the kernel defines (that a view exists — a place, a
+  value, a revision, an atomic write, a notification) against what a client
+  defines (what one is — the schema, the meaning, the path, the ids), the three
+  failures that follow from confusing the two, and what it costs.  `docs/BUGS.md`
+  entries A and E are kept as history with that context added.
+- `docs/PROTOCOL.md` documents the two new methods, the eleven-method table, the
+  retired `1004`, and `workspace.info`'s `view_path` / `view_revision`;
+  `docs/ARCHITECTURE.md`, `docs/PARADIGM.md`, `docs/TRIM.md`, `docs/SURFACES.md`,
+  `docs/FORK.md`, `docs/PROJECT.md`, `README.md`, `tools/README.md` and
+  `shell/web/README.md` now say that the board is the shell's convention and where
+  the schema lives.  The counts in README.md, tools/README.md and
+  docs/ARCHITECTURE.md follow the suites.
+
+### Checks
+
+- `make test` (e2e 13, kernel probe, cli-check, JSON, langs 92/92, selftest
+  115/115) and `make smoke` (browser smoke 5, input smoke 34) are green.  Every
+  new promise was sabotaged to prove its check can fail (throwaway
+  `build/sabotage_view.py`): the kernel repairing a document, a stale save
+  accepted, a first-run answer that is `{}` instead of `null`, the client writing
+  a card its own model cannot read, and the client booting from a path of its own
+  invention.  All five were caught, and the three sources were restored
+  byte-identical.
+
 ## v0.2.1-alpha.3 — 2026-10-15
+
 ### Kernel
 
 - A new method, `file.stat`: the revision `file.read` would report, without the

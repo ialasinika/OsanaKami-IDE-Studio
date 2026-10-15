@@ -27,7 +27,7 @@ SRC = \
 	core/src/vec.c \
 	core/src/json.c \
 	core/src/wksp.c \
-	core/src/board.c \
+	core/src/view.c \
 	core/src/exec.c \
 	core/src/rpc.c \
 	core/src/serve.c \
@@ -106,13 +106,14 @@ fullcheck: $(BIN)
 
 # The kernel regression probe: every bug in docs/BUGS.md, checked after the fix.
 # It drives the kernel against a scratch workspace under build/, so it cannot
-# touch your board or your files.
+# touch your view document or your files.
 probe: $(BIN)
 	$(PYTHON) tools/kernel_probe.py
 
 # The second client: `tools/seide_cli.py`, against its own scratch workspace.
-# The board is the protocol's only other consumer, so this is the check that the
-# frozen contract still stands on its own -- no shell code involved.
+# The reference shell is one consumer of the protocol and a board is one kind of
+# document, so this is the check that the frozen contract still stands on its
+# own -- no shell code involved, and no schema assumed.
 cli-check: $(BIN)
 	$(PYTHON) tools/seide_cli.py selfcheck
 

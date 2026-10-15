@@ -74,8 +74,10 @@ It is also why the panel's own state is on the card:
 | --- | --- |
 | `filter` | the glob, default `**/*` |
 
-It round-trips through `.seide/board.json` with the geometry, because the kernel
-stores any field it does not interpret.
+It round-trips through `.seide/board.json` with the geometry, because the board
+model in `shell/web/board.mjs` clones any field it does not interpret — and the
+kernel, which stores the whole document without reading it, clones everything
+([`VIEWS.md`](VIEWS.md)).
 
 ## Why some directories are missing, and why the panel does not fix that
 

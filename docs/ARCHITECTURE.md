@@ -10,7 +10,7 @@ why the kernel deliberately knows nothing about programming languages.
 
 | layer | directory | language | what it is |
 | --- | --- | --- | --- |
-| kernel | `core/` | C89 | files, board persistence, child processes, the JSON-RPC method table |
+| kernel | `core/` | C89 | files, view persistence, child processes, the JSON-RPC method table |
 | shell | `shell/`, `langs/` | JavaScript ESM | the endpoints, the board UI, language colouring |
 | tools | `tools/` | Python 3.12 | build driver, protocol driver, a second protocol client, Brainfuck interpreter, descriptor generator |
 
@@ -49,7 +49,7 @@ Zero dependencies across all three. The shell has no `package.json` and no
                  +--------------v--------------+
                  |  build/seide.exe rpc        |
                  |    - workspace.* file.*     |
-                 |    - board.*                |
+                 |    - view.*                 |
                  |    - exec.*                 |
                  |    - hello                  |
                  +-----------------------------+
@@ -118,14 +118,14 @@ builds and runs without it.
 | `json` | JSON parse/serialise; the protocol's value type | nothing builds | no |
 | `port` | the platform boundary: files, paths, threads, processes | nothing builds; this is the layer a fork replaces to leave Win32 | no |
 | `wksp` | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; only the canvas remains | yes |
-| `board` | the board document: validation, atomic persistence, card ids | the canvas stops surviving restarts, which is the paradigm itself | yes |
+| `view` | the client's view document: opaque JSON, atomic persistence, revisions | no document survives a restart; the client is left with what it holds | yes |
 | `exec` | child processes for `runner` cards, with streamed output | cards can no longer run anything | yes |
 | `serve` | newline-delimited JSON-RPC over stdin/stdout | the kernel has no way in; useful only as a linkable library | yes |
 | `rpc` | the method table that turns frames into actions | nothing is callable; keep it and the kernel has no verbs | no |
 | `app` | constructs and owns the shared state modules are handed | nothing builds | no |
 
 Ten modules. Six required (`buf`, `vec`, `json`, `port`, `rpc`, `app`), four
-optional (`wksp`, `board`, `exec`, `serve`). Beyond the module table there are
+optional (`wksp`, `view`, `exec`, `serve`). Beyond the module table there are
 two compile-time switches in `core/include/seide_cfg.h`:
 
 ```c
@@ -133,8 +133,8 @@ two compile-time switches in `core/include/seide_cfg.h`:
 #ifndef SDE_WITH_EXEC
 #define SDE_WITH_EXEC 1
 #endif
-#ifndef SDE_WITH_BOARD
-#define SDE_WITH_BOARD 1
+#ifndef SDE_WITH_VIEW
+#define SDE_WITH_VIEW 1
 #endif
 ```
 
@@ -172,7 +172,7 @@ and raises two Win32 macros that the kernel depends on:
 
 ## Why the kernel is language-agnostic
 
-The kernel knows about files, boards and processes. It has **no tokenizer, no
+The kernel knows about files, documents and processes. It has **no tokenizer, no
 keyword table, and no shipped grammar**. `core/include/app.h` states it:
 
 > The kernel deliberately knows nothing about programming languages. There is no
@@ -187,7 +187,7 @@ And `core/src/main.c`'s own usage text repeats it:
 Why is this a decision rather than an omission?
 
 1. **It keeps the kernel honest.** Every method in `rpc.c` does one thing to
-   files, processes or the board document. Nothing in C has to grow a table of
+   files, processes or the client's document. Nothing in C has to grow a table of
    language names, and nothing in C has to be rebuilt to support a new language.
 2. **It makes language support deletable and replaceable.** `rm -rf langs/`
    leaves a kernel that still builds and a shell that still runs, rendering
@@ -197,7 +197,7 @@ Why is this a decision rather than an omission?
 3. **The alternative was tried and rejected.** An earlier structure put the
    language layer in the kernel's process. It forced every colouring change to
    be a C rebuild, and it coupled the JSON-RPC method table to a data format
-   that changes far more often than the file/board/process contract does.
+   that changes far more often than the file/document/process contract does.
 4. **The wire is the seam.** `lang.list` and `lang.tokenize` have exactly the
    same shape as kernel methods, so a client cannot tell — and does not need to
    know — which layer answered. The shell multiplexes them onto one endpoint
@@ -216,8 +216,8 @@ is therefore still a data change, and the wire is unchanged: the same ten token
 kinds, the same tiling guarantee.
 
 The consequence for a forker: **language features are the cheapest thing in
-this repository to change and the safest thing to delete.** The board and the
-protocol are the load-bearing parts.
+this repository to change and the safest thing to delete.** The seam between the
+kernel and a view (`docs/VIEWS.md`) and the protocol are the load-bearing parts.
 
 ---
 
@@ -268,10 +268,10 @@ The Makefile's verification targets, in the order `make test` runs them:
 
 | target | command | what it proves |
 | --- | --- | --- |
-| `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, board, exec |
+| `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, the view document, exec |
 | `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
-| `cli-check` | `python tools/seide_cli.py selfcheck` | the protocol's second consumer: eight checks -- hello, a write round-trip, the stale-revision rail, the listing, the starter board through `board.save`, a child's output and exit code, that a shell-only method is still `METHOD_NOT_FOUND`, and that the command line refuses to overwrite a file it was not given a base revision for |
+| `cli-check` | `python tools/seide_cli.py selfcheck` | the protocol's second consumer: eight checks -- hello, a write round-trip, the stale-revision rail, the listing, a document the kernel stores without reading it (and the stale write it refuses), a child's output and exit code, that a shell-only method is still `METHOD_NOT_FOUND`, and that the command line refuses to overwrite a file it was not given a base revision for |
 | `version-check` | `python tools/version.py check` | one version, one changelog section: the copies in `seide_cfg.h` and `shell/main.mjs` |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | 92 descriptor/tokenizer checks, both families, no kernel, no browser |
@@ -310,7 +310,13 @@ up; `docs/RELEASING.md` is the policy.
 - **Binary files as JSON strings.** `wksp` refuses to read a file containing a
   NUL byte ("file is binary") because shipping it as a JSON string would produce
   a document no client can round-trip.
-- **A missing or corrupt board document.** An absent `.seide/board.json` is
-  fine (first run). A board document that **exists but does not parse** is a
-  hard error: silently discarding a user's layout would be worse than refusing
-  to start.
+- **A missing or corrupt view document.** Neither is the kernel's problem any
+  more. An absent `.seide/board.json` is fine (first run: `document: null`,
+  `revision: 0`), and a file that **exists but does not parse** is reported to
+  the client by `view.load` -- the kernel does not open it at start-up at all.
+  The earlier rule ("refuse to start rather than silently discard a user's
+  layout") was reversed in `seide/2`, because the client is the thing that can
+  tell a layout from a parse error, and a kernel that will not start is a worse
+  outcome than a client that offers to rewrite the file. `docs/VIEWS.md` has the
+  reasoning; `docs/BUGS.md` (entries N8, N10) has the two bugs that made the
+  old rule expensive.

@@ -41,16 +41,16 @@
 
 /* The kernel's own version, reported by `hello` and `seide version`. */
 #define SDE_VERSION "0.2.1-alpha.3"
-#define SDE_PROTOCOL "seide/1"
+#define SDE_PROTOCOL "seide/2"
 /* The same version as a number, which is what machines compare. */
-#define SDE_PROTOCOL_VERSION 1
+#define SDE_PROTOCOL_VERSION 2
 
 /* Compile-time switches a fork flips to cut whole subsystems out. */
 #ifndef SDE_WITH_EXEC
 #  define SDE_WITH_EXEC 1
 #endif
-#ifndef SDE_WITH_BOARD
-#  define SDE_WITH_BOARD 1
+#ifndef SDE_WITH_VIEW
+#  define SDE_WITH_VIEW 1
 #endif
 
 #endif /* SEIDE_CFG_H */

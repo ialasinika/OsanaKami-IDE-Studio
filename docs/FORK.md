@@ -43,8 +43,9 @@ Cheapest step. The name appears in these places:
 
 Two traps:
 
-- `core/src/board.c` derives the board path from the literal `SDE_BOARD_RELPATH`
-  (`.seide/board.json`), and `tools/e2e.py` spawns `<binary> rpc`. If you rename
+- The board path is **not** a kernel constant any more: `shell/web/board.mjs`
+  owns `BOARD_PATH` (`.seide/board.json`) and names it on every call, so a fork
+  renames it in one place. `tools/e2e.py` spawns `<binary> rpc`; if you rename
   the executable, update the shell's `DEFAULT_KERNEL` **and** every documented
   command.
 - The function and type names (`sde_*`, `SDE_*`) do **not** need renaming. They
@@ -67,7 +68,7 @@ The cuts a fork usually makes first, in ascending order of pain:
 | --- | --- | --- |
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
 | `exec` | 4 edits + `app.c` | `runner` cards and `exec.*` methods |
-| `board` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — the paradigm |
+| `view` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — and with it the ability to keep any document at all |
 | `wksp` | 4 edits + the `editor`, `search`, `files` and `project` card kinds | files; the canvas alone remains |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
 

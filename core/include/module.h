@@ -18,7 +18,7 @@
 #include <stddef.h>
 
 typedef struct sde_module {
-    const char *name;     /* source stem: "board" -> core/src/board.c */
+    const char *name;     /* source stem: "view" -> core/src/view.c */
     const char *role;     /* one line: what it does */
     const char *loses;    /* one line: what a fork gives up by deleting it */
     int         optional; /* 1 = the kernel still builds and runs without it */

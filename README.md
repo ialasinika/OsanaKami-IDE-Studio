@@ -68,6 +68,11 @@ reference a file, and may be connected by links. The board persists to
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
+This is a decision of the *shell*, not of the kernel: the kernel stores the
+document, whatever it holds, and knows nothing about cards or canvases
+(`docs/VIEWS.md`). A fork that wants a different main surface replaces this
+document and not the core.
+
 The board is also the only document. The shell can draw those same cards a second
 way — `mode classic` puts the focused editor into a code area, the open files
 into a tab strip above it and the project card into a sidebar — but that view is
@@ -97,7 +102,8 @@ discovery and no sandbox.
 
 What there *is* is one hook for new card kinds, because "a card is a file with a
 cursor" is the assumption most likely to make a fork expensive. The kernel
-stores any `kind` verbatim and validates only a card's shape; the shell
+stores whatever document the shell hands it, verbatim, and the shell's board
+model is the only thing that knows what a card is; the shell
 registers a kind with a single call:
 
 ```js
@@ -147,7 +153,7 @@ rejected by `-std=c89 -pedantic -Werror`.
 
 ### 8. Language intelligence is keyword colouring, and it lives in `langs/`
 
-The kernel knows about files, boards and processes — not about programming
+The kernel knows about files, documents and processes — not about programming
 languages. Language support lives in `langs/`, is served by the shell, and is
 **deletable**: `rm -rf langs/` leaves a kernel that still builds and a shell that
 still runs, rendering plain text. Two kinds of language must be supported: the
@@ -275,18 +281,20 @@ protocol method changed, and `mode board` restores every card to the pixels the
 document gives it; [`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
 
 **The protocol suite used to write to your board, and no longer does.** The
-board checks drive `board.save` against the workspace they were given, but they
+board checks drive `view.save` against the workspace they were given, but they
 snapshot the whole document that was already there and restore it before the
 check returns — including when the check fails. A run against `.` leaves
 `./.seide/board.json` semantically identical; with the shipped starter board it
 comes back byte-identical too (3107 bytes, byte-for-byte, because the kernel
-writes every board and re-serialises the same way). If there was no board before
+writes the same canonical form back). If there was no board before
 a run, there is none after it either.
 
 **The board shipped for a fresh clone is verified, not assumed.** The
-`starter board` check saves `examples/board.json` through the real validator and
-requires cards, links and viewport to come back exactly, so a hand-edit the
-kernel would reject fails here rather than on a new user's first launch.
+`starter board` check saves `examples/board.json` and requires cards, links and
+viewport to come back exactly, byte for byte, so a hand-edit that the shell
+cannot read fails here rather than on a new user's first launch. The kernel does
+not judge the shape of that file (`docs/VIEWS.md`); the shell's own model is
+what reads it, and `node shell/web/selftest.mjs` is where the shape is tested.
 
 **Current state of the protocol suite:** both modes are green. Kernel mode
 (`check`) reports 9 passed, 0 failed, 4 skipped — the skips are the four
@@ -320,7 +328,7 @@ The kernel is usable with no UI at all:
 build/seide.exe help
 build/seide.exe version
 build/seide.exe modules
-build/seide.exe board show --root .
+build/seide.exe view show --path .seide/board.json --root .
 build/seide.exe rpc --root . --verbose
 ```
 
@@ -342,9 +350,9 @@ CHANGELOG.md            what is in this version, and what is not
 .gitattributes          the checkout is the repository's bytes: LF everywhere
 
 core/                   the kernel -- C89, no dependencies
-  include/              public headers: buf, vec, json, port, wksp, board, exec,
+  include/              public headers: buf, vec, json, port, wksp, view, exec,
                         serve, rpc, app, module, seide_cfg
-  src/                  one file per module: buf, vec, json, wksp, board, exec,
+  src/                  one file per module: buf, vec, json, wksp, view, exec,
                         rpc, serve, app, main
   port/                 the only OS-aware code: sys_win32.c, proc_win32.c
   tests/                test_json.c (JSON round-trip harness for the kernel)
@@ -383,8 +391,9 @@ forks/                  worked forks the release pipeline knows about
 examples/               hello.bf and shadow.bf (Brainfuck), page.html (every
                         SGML token kind), hello.xml, notes.svg, and board.json --
                         the starter board `tools/demo.py` installs
-docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
-                        PROJECT.md, TRIM.md, FORK.md, BUGS.md, RELEASING.md
+docs/                   PARADIGM.md, VIEWS.md, ARCHITECTURE.md, PROTOCOL.md,
+                        SURFACES.md, PROJECT.md, TRIM.md, FORK.md, BUGS.md,
+                        RELEASING.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
@@ -432,7 +441,9 @@ The protocol is frozen (`docs/PROTOCOL.md`). Keep the JSON-RPC shape and you can
 replace every layer under it in any order.
 
 The docs, in reading order: [`docs/PARADIGM.md`](docs/PARADIGM.md) — why the
-board and not tabs; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
+board and not tabs; [`docs/VIEWS.md`](docs/VIEWS.md) — what the kernel calls a
+view, and why it does not know what is in yours;
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
 layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
 [`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
 [`docs/PROJECT.md`](docs/PROJECT.md) — the workspace as one project;

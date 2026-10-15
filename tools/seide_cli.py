@@ -1,9 +1,10 @@
 """A second client: drive a workspace over the frozen protocol, from a shell.
 
-The board in `shell/web/` is today's only consumer of `docs/PROTOCOL.md`, and a
-contract with one consumer is a contract nobody has tested.  This is the other
-consumer -- a user-facing tool that speaks the same newline-delimited JSON-RPC to
-the kernel, imports nothing from `shell/`, and is useful on its own:
+The reference client in `shell/web/` is today's only consumer of
+`docs/PROTOCOL.md`, and a contract with one consumer is a contract nobody has
+tested.  This is the other consumer -- a user-facing tool that speaks the same
+newline-delimited JSON-RPC to the kernel, imports nothing from `shell/`, and is
+useful on its own:
 
     python tools/seide_cli.py hello
     python tools/seide_cli.py info
@@ -11,9 +12,12 @@ the kernel, imports nothing from `shell/`, and is useful on its own:
     python tools/seide_cli.py cat README.md --meta
     python tools/seide_cli.py write notes.txt --text "hello\n"
     python tools/seide_cli.py board
-    python tools/seide_cli.py new-id
     python tools/seide_cli.py run "python tools/bf.py examples/hello.bf"
     python tools/seide_cli.py selfcheck          # this client's own checks
+
+It is also the second *document*: the kernel persists a view document without
+looking inside it, so this client names its own path and stores its own shape.
+Nothing here needs the kernel to know what a board is.
 
 The transport is `tools/kernel_drive.py`, the same stdlib driver the kernel
 probe uses; everything above it -- the commands, the safety rails, the checks --
@@ -41,6 +45,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -63,6 +68,11 @@ from kernel_drive import EXE, Kernel  # noqa: E402  (after the sys.path line)
 
 #: The fields a card is labelled by, in the order the board UI would show them.
 LABEL_FIELDS = ("title", "file", "path", "cmd", "query", "filter")
+
+#: Where this client keeps its document.  The kernel used to decide
+#: (`SDE_BOARD_RELPATH`); now the client names the path on every call, so this
+#: constant is the only place this tool commits to one.
+DOCUMENT_PATH = ".seide/board.json"
 
 #: `exec.stop` is asked for after this many seconds without an `exec.exit`.
 DEFAULT_RUN_TIMEOUT = 60.0
@@ -195,8 +205,12 @@ def cmd_info(cli, args) -> int:
     print(f"name         {result.get('name')}")
     print(f"root         {result.get('root')}")
     print(f"files        {result.get('file_count')}")
-    print(f"board        {result.get('board_path')}")
-    print(f"revision     {result.get('board_revision')}")
+    # `view_path`/`view_revision` describe what the *kernel* is holding right
+    # now, which for a fresh CLI process is nothing.  The path this client will
+    # use is its own choice, so print both rather than pretend they agree.
+    print(f"document     {DOCUMENT_PATH}")
+    print(f"held         {result.get('view_path') or '(nothing loaded yet)'}")
+    print(f"revision     {result.get('view_revision')}")
     print(f"ignored      {', '.join(result.get('ignored') or [])}")
     return 0
 
@@ -278,31 +292,36 @@ def cmd_write(cli, args) -> int:
 
 
 def cmd_board(cli, args) -> int:
-    result = cli.request("board.load") or {}
+    """Print the document this client keeps, as this client reads it.
+
+    The kernel hands back whatever was stored, so the shape below is *this*
+    tool's convention -- exactly what `shell/web/board.mjs` does with the same
+    bytes.  A document that is not the board shape is reported as such instead
+    of being guessed at.
+    """
+    result = cli.request("view.load", {"path": args.path or DOCUMENT_PATH}) or {}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
-    document = result.get("document") or {}
+    document = result.get("document")
+    print(f"board {result.get('path')} revision {result.get('revision')}")
+    if not isinstance(document, dict) or not isinstance(document.get("cards"), list):
+        print("  (not a board document: no `cards` array)")
+        return 0
     cards = document.get("cards") or []
     links = document.get("links") or []
-    print(f"board {result.get('path')} revision {result.get('revision')}")
     print(f"{len(cards)} card{'s' if len(cards) != 1 else ''},"
           f" {len(links)} link{'s' if len(links) != 1 else ''}")
     for card in cards:
+        if not isinstance(card, dict):
+            print(f"  {card!r}")
+            continue
         geometry = f"{card.get('x')},{card.get('y')} {card.get('w')}x{card.get('h')}"
         print(f"  {str(card.get('id')):<10} {str(card.get('kind')):<8}"
               f" {geometry:<22} {label_of(card)}")
     for link in links:
-        print(f"  {link.get('from')} -> {link.get('to')}")
-    return 0
-
-
-def cmd_new_id(cli, args) -> int:
-    result = cli.request("board.newId") or {}
-    if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    print(result.get("id"))
+        if isinstance(link, dict):
+            print(f"  {link.get('from')} -> {link.get('to')}")
     return 0
 
 
@@ -382,9 +401,20 @@ def cmd_selfcheck(args) -> int:
         result = {}
         try:
             result = cli.request("hello") or {}
-            ok = result.get("protocol") == 1 and bool(result.get("protocol_name"))
+            # The number and the name have to agree with each other and with the
+            # header this binary was built from: a client that trusts one of them
+            # reads a stale contract when the other moves.
+            number = result.get("protocol")
+            header = (REPO_ROOT / "core" / "include" / "seide_cfg.h").read_text(
+                encoding="utf-8")
+            declared = re.search(r"#define\s+SDE_PROTOCOL_VERSION\s+(\d+)", header)
+            ok = (isinstance(number, int) and declared is not None
+                  and number == int(declared.group(1))
+                  and result.get("protocol_name") == f"seide/{number}"
+                  and bool(result.get("kernel_version")))
             check("hello names the protocol and the kernel", ok,
-                  f"protocol={result.get('protocol')} name={result.get('protocol_name')}")
+                  f"protocol={number} name={result.get('protocol_name')}"
+                  f" version={result.get('kernel_version')}")
         except Exception as exc:
             check("hello names the protocol and the kernel", False, str(exc))
 
@@ -424,23 +454,40 @@ def cmd_selfcheck(args) -> int:
         except Exception as exc:
             check("the listing sees what the CLI wrote", False, str(exc))
 
-        # 5. the board: the shipped starter board through the real validator.
+        # 5. the document: the kernel keeps bytes it cannot read, and still
+        #    refuses a write whose base revision has moved on.
         try:
-            starter = json.loads(io.open(REPO_ROOT / "examples" / "board.json",
-                                         "r", encoding="utf-8").read())
-            saved = cli.request("board.save", {"document": starter}) or {}
-            loaded = cli.request("board.load") or {}
-            document = loaded.get("document") or {}
-            fresh = (cli.request("board.newId") or {}).get("id")
-            existing = {card.get("id") for card in document.get("cards") or []}
+            odd = {"app": "seide_cli", "cards": "not an array", "n": [1, {"x": None}]}
+            saved = cli.request("view.save",
+                                {"path": DOCUMENT_PATH, "document": odd}) or {}
+            loaded = cli.request("view.load", {"path": DOCUMENT_PATH}) or {}
+            # The rail compares against what the kernel last read or wrote, so
+            # the absent-path read comes last: it would leave the kernel holding
+            # nothing, and then even a correct base revision would look stale.
+            stale = refused(cli, "view.save",
+                            {"path": DOCUMENT_PATH, "document": odd,
+                             "base_revision": int(saved.get("revision") or 0) - 1})
+            null = refused(cli, "view.save",
+                           {"path": DOCUMENT_PATH, "document": None})
+            absent = cli.request("view.load",
+                                 {"path": ".seide/never-written.json"}) or {}
             ok = (saved.get("saved") is True
-                  and len(document.get("cards") or []) == len(starter.get("cards") or [])
-                  and len(document.get("links") or []) == len(starter.get("links") or [])
-                  and isinstance(fresh, str) and fresh not in existing)
-            check("the starter board round-trips through board.save and board.load", ok,
-                  f"cards={len(document.get('cards') or [])} new_id={fresh}")
+                  and loaded.get("document") == odd
+                  and absent.get("document") is None
+                  and not absent.get("revision")
+                  and stale.name == "STALE_REVISION"
+                  and (stale.data or {}).get("current_revision") == saved.get("revision")
+                  and null.code == -32602)
+            check("the kernel keeps a document it cannot read, and refuses a stale write",
+                  ok, f"round_trip={loaded.get('document') == odd}"
+                      f" saved={saved.get('saved')!r}"
+                      f" absent={absent.get('document')!r}/{absent.get('revision')!r}"
+                      f" stale={stale.name}"
+                      f" current={(stale.data or {}).get('current_revision')!r}"
+                      f"/{saved.get('revision')!r} null_document={null.code}")
         except Exception as exc:
-            check("the starter board round-trips through board.save and board.load", False, str(exc))
+            check("the kernel keeps a document it cannot read, and refuses a stale write",
+                  False, str(exc))
 
         # 6. a real child: output over the notification stream, and its exit code.
         try:
@@ -527,7 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="seide_cli.py",
         description="A second client for the seIDE kernel protocol: read, write, "
-                    "list, run and inspect a board without opening the window.",
+                    "list, run and inspect a document without opening the window.",
     )
     parser.add_argument("--root", default=".", metavar="DIR",
                         help="the workspace to point the kernel at (default: .)")
@@ -542,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
         return sub
 
     add("hello", "ask the kernel who it is", cmd_hello)
-    add("info", "the workspace: root, name, file count, board path", cmd_info)
+    add("info", "the workspace: root, name, file count, this client's document", cmd_info)
 
     ls = add("ls", "list the workspace", cmd_ls)
     ls.add_argument("glob", nargs="?", metavar="GLOB", help="the glob to list")
@@ -563,8 +610,12 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--force", action="store_true",
                        help="replace an existing file with no base revision")
 
-    add("board", "print the board: cards, links, revision", cmd_board)
-    add("new-id", "ask the kernel for a fresh card id", cmd_new_id)
+    # The kernel stores a document without reading it, so the *client* owns the
+    # path and the schema.  `board` is how this client draws the one it keeps.
+    board = add("board", "print the document this client keeps: cards, links, revision",
+                cmd_board)
+    board.add_argument("--path", metavar="PATH",
+                       help=f"the document to read (default: {DOCUMENT_PATH})")
 
     run = add("run", "start a child and stream what it says", cmd_run)
     run.add_argument("cmd", nargs="+", metavar="CMD",

@@ -160,7 +160,7 @@ what let the budgets be a tested part of the answer rather than a comment.
 
 | layer | guarantee | where |
 |---|---|---|
-| kernel (`core/`) | validates `id`/`kind`/`x`/`y`/`w`/`h` and stores every other field byte-for-byte | `core/src/board.c` |
+| kernel (`core/`) | stores the view document verbatim, whatever its shape — no field is read, no kind is known | `core/src/view.c` |
 | protocol | a card payload is arbitrary nested JSON; unknown kinds are never rejected | `docs/PROTOCOL.md` |
 | board model | deep-clones payloads (`cloneDocument`) and never interprets them | `shell/web/board.mjs` |
 | board UI | an unregistered kind renders as an "unknown card" that is **preserved, not deleted** | `renderUnknown` in `shell/web/cards.mjs` |

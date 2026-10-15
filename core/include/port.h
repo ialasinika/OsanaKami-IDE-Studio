@@ -71,7 +71,7 @@ int  sde_port_remove_file(const char *path);
 
 /*
  * Atomically replaces `to` with `from`.  `from` is consumed whether or not
- * the replacement succeeds.  Used to publish a new board document without
+ * the replacement succeeds.  Used to publish a new document without
  * ever leaving a truncated one behind.
  */
 int  sde_port_replace_file(const char *from, const char *to);

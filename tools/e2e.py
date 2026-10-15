@@ -17,11 +17,17 @@ including when a check fails.
 
 The scenario asserted here is the frozen protocol exercised in order: hello,
 workspace.info, lang.list, lang.tokenize (plus its tiling property),
-file.read / file.write / stale write, path containment, board round-trip, the
-shipped starter board, and a real ``exec.start`` run whose stdout must contain the Brainfuck program's
+file.read / file.write / stale write, path containment, the view document
+round-trip, the shipped starter board, and a real ``exec.start`` run whose stdout
+must contain the Brainfuck program's
 output.  The two write checks have to edit the fixture to move its revision
 (a revision is a content hash) and write the original bytes back afterwards, so
 a completed run leaves the file byte-identical.
+
+The view document is stored at a path **this tool chooses**
+(``DOCUMENT_PATH``, the same one the shell uses): since seide/2 the kernel keeps
+a document without reading it, so the path, the schema and the bytes are all
+client business -- except that what goes in must come back out unchanged.
 
 Endpoint modes
     Languages are no longer part of the C kernel: the shell multiplexer serves
@@ -82,6 +88,11 @@ REVISION_PROBE = "\n# e2e: revision probe\n"
 
 #: The command handed to ``exec.start``; ``{python}``/``{bf}``/``{fixture}`` are filled in.
 EXEC_TEMPLATE = '"{python}" "{bf}" "{fixture}"'
+
+#: Where this suite keeps its document.  The kernel has no opinion: a view
+#: document's path is the *client's* convention, and this is the same one
+#: `shell/web/board.mjs` uses, so the suite exercises the path a real user has.
+DOCUMENT_PATH = ".seide/board.json"
 
 
 class DriverError(Exception):
@@ -503,12 +514,13 @@ def build_board(ctx: dict) -> dict:
     ``links: [{id, from, to, label}]``.  An editor card binds a *file path*; the
     text itself lives in the file, never in the card.
 
-    ``kind`` is deliberately open: the kernel validates a card's *shape* (id,
-    kind, x, y, w, h) and never its vocabulary, so a fork can invent kinds
-    without touching C.  The third card below proves it end to end -- a ``sheet``
-    card whose state is a nested object of typed columns and rows, not a string.
-    If the kernel lost, reshaped or re-ordered any of that, the deep comparison
-    in ``check_board_roundtrip`` fails.
+    ``kind`` is deliberately open, and since seide/2 the kernel does not even
+    police the card *shape*: a document is opaque bytes to the kernel, so this
+    payload's job is to prove the round-trip is exact rather than to prove the
+    kernel can read it.  The third card below is a ``sheet`` card whose state is
+    a nested object of typed columns and rows, not a string.  If anything in the
+    path lost, reshaped or re-ordered that, the deep comparison in
+    ``board_roundtrip`` fails.
     """
     return {
         "version": 1,
@@ -571,10 +583,10 @@ def build_board(ctx: dict) -> dict:
 def board_arrays(loaded) -> tuple:
     """Accept ``{cards, links}``, ``{board: ...}`` and the kernel's ``{document: ...}``.
 
-    ``board.load`` answers ``{path, revision, document}``; a client that kept the
+    ``view.load`` answers ``{path, revision, document}``; a client that kept the
     document under ``board`` is tolerated too.
     """
-    require(isinstance(loaded, dict), "board.load did not return an object")
+    require(isinstance(loaded, dict), "view.load did not return an object")
     if "cards" in loaded or "links" in loaded:
         return loaded.get("cards"), loaded.get("links")
     for key in ("document", "board"):
@@ -582,7 +594,7 @@ def board_arrays(loaded) -> tuple:
         if isinstance(inner, dict):
             return inner.get("cards"), inner.get("links")
     raise CheckFailed(
-        f"board.load returned neither cards, document nor board: {_short(loaded)}"
+        f"view.load returned neither cards, document nor board: {_short(loaded)}"
     )
 
 
@@ -634,6 +646,14 @@ def define_checks(h: Harness) -> list:
         require(isinstance(info, dict), "workspace.info result is not an object")
         require(isinstance(info.get("root"), str), "workspace.info.root is not a string")
         require(isinstance(info.get("file_count"), int), "workspace.info.file_count is not an int")
+        # `view_path`/`view_revision` describe the document the *kernel* is
+        # holding right now, which -- this early in the run -- is whatever the
+        # last process left.  A fresh kernel has read nothing, so an empty path
+        # and revision 0 are the honest answer, not a missing member.
+        require(isinstance(info.get("view_path"), str),
+                "workspace.info.view_path is not a string")
+        require(isinstance(info.get("view_revision"), (int, float)),
+                "workspace.info.view_revision is not a number")
         if ctx["mode"] == "full":
             langs = info.get("langs")
             require(isinstance(langs, list), "workspace.info.langs is not a list (full mode)")
@@ -850,16 +870,21 @@ def define_checks(h: Harness) -> list:
         this suite happens to know about -- rebuilding it by hand is exactly how
         the viewport (where the developer put the camera) got reset on every
         run, silently and with exit 0.
+
+        The kernel answers with the document it is holding, so "was there one
+        before the run" is not something its reply can say: this suite reads the
+        path it named itself.  That is the point of the split -- the client owns
+        the path, the kernel owns the bytes.
         """
-        loaded = client.call("board.load", {})
+        loaded = client.call("view.load", {"path": DOCUMENT_PATH})
         document = loaded.get("document") if isinstance(loaded, dict) else None
-        path = loaded.get("path") if isinstance(loaded, dict) else None
+        absolute = os.path.join(ctx["root"], DOCUMENT_PATH.replace("/", os.sep))
         return {
             "document": (
                 json.loads(json.dumps(document)) if isinstance(document, dict) else None
             ),
-            "path": path if isinstance(path, str) and path else None,
-            "existed": bool(isinstance(path, str) and path and os.path.exists(path)),
+            "path": absolute,
+            "existed": os.path.exists(absolute),
         }
 
     def board_restore(state):
@@ -867,7 +892,7 @@ def define_checks(h: Harness) -> list:
         if state["document"] is None:
             return
         if state["existed"]:
-            client.call("board.save", {"document": state["document"]})
+            client.call("view.save", {"path": DOCUMENT_PATH, "document": state["document"]})
         elif state["path"] and os.path.basename(state["path"]) == "board.json":
             # No board before the run, none after it either -- and no empty
             # state directory left behind where the board used to be.
@@ -881,11 +906,11 @@ def define_checks(h: Harness) -> list:
         state = board_state()
         try:
             board = build_board(ctx)
-            saved = client.call("board.save", {"board": board})
-            require(isinstance(saved, dict), "board.save result is not an object")
-            require(_is_id(saved.get("revision")), "board.save.revision is not an int or string")
-            require(saved.get("saved") is True, "board.save.saved is not true")
-            loaded = client.call("board.load", {})
+            saved = client.call("view.save", {"path": DOCUMENT_PATH, "document": board})
+            require(isinstance(saved, dict), "view.save result is not an object")
+            require(_is_id(saved.get("revision")), "view.save.revision is not an int or string")
+            require(saved.get("saved") is True, "view.save.saved is not true")
+            loaded = client.call("view.load", {"path": DOCUMENT_PATH})
             cards, links = board_arrays(loaded)
             require(
                 cards == board["cards"],
@@ -894,6 +919,16 @@ def define_checks(h: Harness) -> list:
             require(
                 links == board["links"],
                 f"links did not round-trip: sent {_short(board['links'])} got {_short(links)}",
+            )
+            # The document travels under one name.  A client that puts it
+            # somewhere else gets an answer, not a silently stored nothing.
+            error = client.expect_error(
+                "view.save", {"path": DOCUMENT_PATH, "board": board}
+            )
+            code = error.get("name", error.get("code"))
+            require(
+                code == "INVALID_PARAMS",
+                f"a document under the wrong member was refused with {code!r}",
             )
             detail = (
                 f"{len(cards)} cards and {len(links)} links round-tripped exactly "
@@ -908,14 +943,16 @@ def define_checks(h: Harness) -> list:
         return detail
 
     def starter_board():
-        """The board shipped for a fresh clone must be one the kernel accepts.
+        """The board shipped for a fresh clone must survive the store untouched.
 
         `examples/board.json` is what `tools/demo.py` installs into a new
-        workspace, and it is the board the README's screenshots show.  Nothing
-        else in the suite reads it, so a hand-edit the kernel would reject -- a
-        card with no id, a link pointing at nothing, a viewport that is not a
-        viewport -- would first be discovered by a new user, on the day they are
-        deciding whether any of this works.
+        workspace, and it is the board the README's screenshots show.  The
+        kernel no longer validates it -- a document's shape is the client's
+        business, and the client's reader lives in `shell/web/board.mjs` -- so
+        what this check can still prove is the other half of the contract: the
+        shipped bytes, viewport included, come back exactly as they went in.
+        A starter board that a *client* would mangle is caught where the client
+        runs: `shell/web/selftest.mjs` and `make smoke`.
         """
         path = REPO_ROOT / "examples" / "board.json"
         require(path.is_file(), f"{path} is missing")
@@ -933,10 +970,12 @@ def define_checks(h: Harness) -> list:
 
         state = board_state()
         try:
-            saved = client.call("board.save", {"document": document})
+            saved = client.call(
+                "view.save", {"path": DOCUMENT_PATH, "document": document}
+            )
             require(isinstance(saved, dict), "the starter board was not accepted")
             require(saved.get("saved") is True, "the starter board was not saved")
-            loaded = client.call("board.load", {})
+            loaded = client.call("view.load", {"path": DOCUMENT_PATH})
             got_cards, got_links = board_arrays(loaded)
             require(
                 got_cards == cards,
@@ -1044,7 +1083,7 @@ def define_checks(h: Harness) -> list:
         ("file.write", file_write, None),
         ("file.write stale revision", file_write_stale, None),
         ("file.read path containment", path_containment, None),
-        ("board.save/board.load round-trip", board_roundtrip, None),
+        ("view.save/view.load round-trip", board_roundtrip, None),
         ("starter board", starter_board, None),
         ("exec.start run", exec_run, None),
     ]

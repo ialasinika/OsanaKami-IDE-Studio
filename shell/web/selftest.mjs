@@ -430,10 +430,10 @@ await testAsync("rpc: an ok:false reply becomes an RpcError carrying code/name/m
 });
 
 await testAsync("rpc: a success reply resolves to result and the request is well formed", async () => {
-  const fetchImpl = fakeFetch({ replies: [{ ok: true, result: { protocol: "seide/1" } }] });
+  const fetchImpl = fakeFetch({ replies: [{ ok: true, result: { protocol: "seide/2" } }] });
   const client = createClient({ origin: "http://127.0.0.1:3939", fetchImpl });
   const result = await client.call("hello", {});
-  assert.deepEqual(result, { protocol: "seide/1" });
+  assert.deepEqual(result, { protocol: "seide/2" });
   assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3939/rpc");
   assert.equal(fetchImpl.calls[0].init.method, "POST");
   // A request, not a notification: the id is what makes the host answer.
@@ -646,11 +646,11 @@ test("board: removeCard drops the links that pointed at it", () => {
   board.linkCards(b.id, c.id);
   assert.equal(board.links.length, 2);
   assert.equal(board.removeCard(b.id), true);
-  assert.equal(board.links.length, 0, "a link to a dead card would fail kernel validation");
+  assert.equal(board.links.length, 0, "a link to a dead card is not a document this format can write");
   assert.equal(board.removeCard("nope"), false);
 });
 
-test("board: a document the kernel would reject is repaired on load", () => {
+test("board: an unreadable document is repaired on load", () => {
   const result = normaliseDocument({
     version: 1,
     viewport: { x: "nope", y: 5, zoom: 900 },
@@ -672,7 +672,7 @@ test("board: a document the kernel would reject is repaired on load", () => {
   assert.equal(result.droppedLinks, 2);
   assert.equal(result.document.cards[0].w, MIN_SIZE.w, "a zero width is repaired, not fatal");
   assert.equal(result.document.cards[0].h, MIN_SIZE.h);
-  assert.equal(result.document.cards[0].z, 0, "a missing z defaults to 0, as the kernel does");
+  assert.equal(result.document.cards[0].z, 0, "a missing z defaults to 0, as normaliseCard does");
   assert.equal(result.document.viewport.x, 0);
   assert.equal(result.document.viewport.y, 5);
   assert.equal(result.document.viewport.zoom, ZOOM_MAX);
@@ -727,8 +727,8 @@ test("board: link ids are unique board-wide, and unlink removes exactly one", ()
 
   const first = board.addLink(a.id, b.id, "runs", "L1");
   assert.equal(first.id, "L1");
-  // Accepting the collision would let the UI build a document its own backend
-  // refuses with 1004 INVALID_BOARD, so it is an error, not a second link.
+  // Accepting the collision would let the UI build a document its own writer
+  // refuses, so it is an error, not a second link.
   assert.throws(() => board.addLink(a.id, b.id, "second", "L1"), /already used/,
     "an id that is already in use must be refused");
   assert.throws(() => board.addLink(a.id, b.id, "empty", ""), /must not be empty/);
@@ -739,7 +739,7 @@ test("board: link ids are unique board-wide, and unlink removes exactly one", ()
    * A file can still carry the collision even though the API now refuses it.
    * The loader keeps both edges and renames the second: losing a connection the
    * user can see is the worse repair, and a document with two links named `L1`
-   * is one the kernel will not save back.
+   * is one this format cannot write back.
    */
   const doc = board.serialize();
   doc.links = [{ ...doc.links[0] }, { ...doc.links[0] }];
@@ -748,7 +748,7 @@ test("board: link ids are unique board-wide, and unlink removes exactly one", ()
   assert.equal(repaired.document.links.length, 2, "the duplicate edge is kept, not dropped");
   assert.equal(new Set(repaired.document.links.map((link) => link.id)).size, 2);
   board.load(repaired.document);
-  assert.doesNotThrow(() => board.serialize(), "the repaired board is a document the kernel accepts");
+  assert.doesNotThrow(() => board.serialize(), "the repaired board is a document this format accepts");
 
   /*
    * The API cannot build a collision any more, so make one behind its back.
@@ -758,7 +758,7 @@ test("board: link ids are unique board-wide, and unlink removes exactly one", ()
   board.document.links.push({ id: "L1", from: a.id, to: b.id });
   assert.equal(board.links.length, 3);
   assert.throws(() => board.serialize(), /repeats link id "L1"/,
-    "serialize refuses what the kernel would refuse");
+    "serialize refuses a document it cannot write");
   assert.equal(board.unlink("L1"), true);
   assert.equal(board.links.length, 2, "exactly one link was removed");
   assert.equal(board.links.filter((link) => link.id === "L1").length, 1, "the other link keeps its id");
@@ -780,7 +780,7 @@ test("board: serialize refuses an invalid card instead of dropping it quietly", 
   assert.throws(() => board.serialize(), /cards\[1\] is not a valid card/);
   assert.equal(board.document.cards.length, 2, "the invalid card is kept, not silently dropped");
 
-  // A repeated card id is refused for the same reason (the kernel rejects it).
+  // A repeated card id is refused for the same reason.
   board.document.cards.pop();
   board.document.cards.push({ ...board.document.cards[0] });
   assert.throws(() => board.serialize(), /repeats card id "c1"/);
@@ -916,7 +916,7 @@ test("board: a group move and a group delete are one change each", () => {
   assert.deepEqual(board.removeCards([a.id, b.id]).sort(), [a.id, b.id].sort());
   assert.equal(changes - beforeDelete, 1, "a group delete notifies once");
 
-  // The kernel refuses a link with a missing endpoint (1004 INVALID_BOARD), so
+  // A link with a missing endpoint is not a document this format can write, so
   // an edge goes with whichever of its endpoints left -- but an edge that named
   // neither card stays exactly where it was.
   assert.deepEqual(board.links.map((link) => [link.from, link.to]), [[c.id, d.id]]);
@@ -1141,7 +1141,7 @@ test("files: formatListing sorts directories first and formats sizes", () => {
     files: [
       { path: "tools/bf.py", size: 2048, mtime: now - 3600, dir: false },
       { path: "examples", size: 0, mtime: now - 10, dir: true },
-      { path: "core/src/board.c", size: 500, mtime: now - 90, dir: false },
+      { path: "core/src/view.c", size: 500, mtime: now - 90, dir: false },
       { path: "big.bin", size: 5 * 1024 * 1024, mtime: now - 86400 * 3, dir: false },
       { path: "", size: 1, mtime: 0, dir: false },
       null,
@@ -1153,7 +1153,7 @@ test("files: formatListing sorts directories first and formats sizes", () => {
   assert.equal(count, 5);
   assert.equal(truncated, true);
   assert.deepEqual(rows.map((row) => row.path), [
-    "examples", "big.bin", "core/src/board.c", "tools/bf.py",
+    "examples", "big.bin", "core/src/view.c", "tools/bf.py",
   ]);
   assert.equal(rows[0].dir, true);
   assert.equal(rows[0].name, "examples");
@@ -1182,10 +1182,10 @@ test("files: the filter box understands globs and substrings", () => {
   assert.equal(matchesFilter("examples/hello.bf", "**/*"), true);
   assert.equal(matchesFilter("examples/hello.bf", "**/*.bf"), true);
   assert.equal(matchesFilter("examples/sub/a.bf", "**/*.bf"), true);
-  assert.equal(matchesFilter("core/src/board.c", "**/*.bf"), false);
-  assert.equal(matchesFilter("core/src/board.c", "board"), true);
-  assert.equal(matchesFilter("core/src/board.c", "src/*.c"), false);
-  assert.equal(matchesFilter("core/src/board.c", "core/src/*.c"), true);
+  assert.equal(matchesFilter("core/src/view.c", "**/*.bf"), false);
+  assert.equal(matchesFilter("core/src/view.c", "view"), true);
+  assert.equal(matchesFilter("core/src/view.c", "src/*.c"), false);
+  assert.equal(matchesFilter("core/src/view.c", "core/src/*.c"), true);
   assert.equal(matchesFilter("anything", ""), true);
 });
 
@@ -1206,7 +1206,7 @@ test("files: the filter box understands globs and substrings", () => {
  */
 const PROJECT_LISTING = {
   files: [
-    { path: "core/src/board.c", size: 500, mtime: 900_000, dir: false },
+    { path: "core/src/view.c", size: 500, mtime: 900_000, dir: false },
     { path: "core/src/rpc.c", size: 400, mtime: 900_000, dir: false },
     { path: "README.md", size: 100, mtime: 900_000, dir: false },
     { path: "examples/hello.bf", size: 820, mtime: 900_000, dir: false },
@@ -1222,10 +1222,10 @@ test("project: the project is the files of the workspace, grouped", () => {
   // directory entry in the listing is counted but never becomes a row.
   assert.deepEqual(view.groups.map((group) => group.label), ["(root)", "core/src/", "examples/"]);
   assert.deepEqual(view.groups[0].rows.map((row) => row.name), ["README.md"]);
-  assert.deepEqual(view.groups[1].rows.map((row) => row.name), ["board.c", "rpc.c"]);
+  assert.deepEqual(view.groups[1].rows.map((row) => row.name), ["rpc.c", "view.c"]);
   assert.deepEqual(view.groups[2].rows.map((row) => row.name), ["hello.bf"]);
   assert.equal(view.groups[1].rows[0].folder, "core/src");
-  assert.equal(view.groups[1].rows[0].sizeText, "500B");
+  assert.equal(view.groups[1].rows[0].sizeText, "400B");
 
   assert.equal(view.counts.files, 4);
   assert.equal(view.counts.dirs, 1);
@@ -1270,7 +1270,7 @@ test("project: an open editor is marked, and a file that left the disk is named"
   assert.equal(byPath.get("core/src/rpc.c").open, true);
   assert.equal(byPath.get("core/src/rpc.c").dirty, true);
   assert.equal(byPath.get("core/src/rpc.c").cardId, "c2");
-  assert.equal(byPath.get("core/src/board.c").open, false);
+  assert.equal(byPath.get("core/src/view.c").open, false);
 
   // The open list is the board's answer to "what am I editing", file order.
   assert.deepEqual(view.openRows.map((row) => row.path), [
@@ -1310,9 +1310,9 @@ test("project: the filter narrows the tree and never the open list", () => {
   assert.equal(view.counts.shown, 2);
   assert.equal(view.counts.open, 1, "an open file stays visible however the tree is filtered");
 
-  const word = projectRows(PROJECT_LISTING, { filter: "board" });
+  const word = projectRows(PROJECT_LISTING, { filter: "view" });
   assert.deepEqual(word.groups.flatMap((group) => group.rows).map((row) => row.path), [
-    "core/src/board.c",
+    "core/src/view.c",
   ], "a substring hits the path");
   assert.deepEqual(projectRows(PROJECT_LISTING, { filter: "nothing-matches" }).groups, []);
   assert.deepEqual(projectRows(PROJECT_LISTING, { filter: "build/**" }).groups, [],
@@ -1450,24 +1450,26 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
       };
       switch (parsed.method) {
         case "hello":
-          reply({ ok: true, result: { protocol: "seide/1", kernel_version: "0.1.0", root: "C:/codes/seIDE", pid: 4242 } });
+          reply({ ok: true, result: { protocol: "seide/2", kernel_version: "0.0.0-mock", root: "C:/codes/seIDE", pid: 4242 } });
           return;
-        case "board.load":
-          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, document: board } });
+        case "view.load":
+          // The client names the document it wants; the host answers with that
+          // path, exactly as the kernel does.
+          reply({ ok: true, result: { path: parsed.params.path, revision: boardRevision, document: board } });
           return;
-        case "board.save":
+        case "view.save":
           if (parsed.params.base_revision !== boardRevision) {
             reply({
               ok: false,
               error: {
-                code: 409, name: "STALE_REVISION", message: "board moved on",
+                code: 409, name: "STALE_REVISION", message: "the view document moved on",
                 data: { current_revision: boardRevision },
               },
             });
             return;
           }
           boardRevision += 1;
-          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, saved: true } });
+          reply({ ok: true, result: { path: parsed.params.path, revision: boardRevision, saved: true } });
           return;
         case "file.read":
           reply({ ok: true, result: { path: parsed.params.path, text: "++ [>+<]\n", revision: fileRevision, size: 9, eol: "lf" } });
@@ -1517,22 +1519,23 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
     assert.equal(client.connected, true);
 
     const hello = await client.call("hello", {});
-    assert.equal(hello.protocol, "seide/1");
+    assert.equal(hello.protocol, "seide/2");
     assert.equal(hello.pid, 4242);
 
-    const loaded = await client.call("board.load", {});
+    const loaded = await client.call("view.load", { path: ".seide/board.json" });
+    assert.equal(loaded.path, ".seide/board.json", "the host answers with the path that was asked for");
     assert.equal(loaded.revision, 3);
     assert.deepEqual(loaded.document.cards, []);
 
-    const saved = await client.call("board.save", { document: board, base_revision: 3 });
+    const saved = await client.call("view.save", { path: ".seide/board.json", document: board, base_revision: 3 });
     assert.equal(saved.saved, true);
     assert.equal(saved.revision, 4, "the host bumps the revision");
 
-    const stale = await client.call("board.save", { document: board, base_revision: 3 }).then(
+    const stale = await client.call("view.save", { path: ".seide/board.json", document: board, base_revision: 3 }).then(
       () => null,
       (err) => err,
     );
-    assert.ok(stale instanceof RpcError, "a stale board save must reject");
+    assert.ok(stale instanceof RpcError, "a stale save must reject");
     assert.equal(stale.code, 409);
     assert.equal(stale.errorName, "STALE_REVISION");
     assert.equal(stale.data.current_revision, 4);
@@ -1568,7 +1571,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
     assert.equal(client.connected, false, "the host ended the stream, so we report disconnected");
 
     assert.deepEqual(seenMethods, [
-      "hello", "board.load", "board.save", "board.save",
+      "hello", "view.load", "view.save", "view.save",
       "file.read", "file.write", "file.write", "lang.tokenize", "nope",
     ]);
     client.close();
@@ -1872,9 +1875,10 @@ test("protocol: an unknown kind is preserved, never silently dropped", () => {
   assert.deepEqual(out.cards[0].payload, { deep: [1, 2, { three: true }] });
 });
 
-test("protocol: the kernel's card check is shape, not vocabulary", () => {
-  /* The kernel (core/src/board.c) requires id/kind/x/y/w/h and nothing else,
-     which is what lets a fork invent kinds without touching C. */
+test("protocol: the document's card check is shape, not vocabulary", () => {
+  /* The schema (board.mjs) requires id/kind/x/y/w/h and nothing else, which is
+     what lets a fork invent kinds without touching C -- and the kernel no
+     longer has a card check of its own to disagree with. */
   const shape = normaliseDocument({
     cards: [
       { id: "c1", kind: "sheet", x: 0, y: 0, w: 10, h: 10, doc: { anything: true } },
@@ -2015,7 +2019,7 @@ test("main: every save outcome is reported, and a failure never reads as a succe
   const deferred = saveOutcomeMessage({ status: "deferred", force: true });
   assert.match(deferred.text, /forced save/);
 
-  // A forced overwrite the kernel refused -- the case that used to look like a
+  // A forced overwrite the host refused -- the case that used to look like a
   // success because `force` was asked for and no error was raised.
   const refused = saveOutcomeMessage({
     status: "refused",
