@@ -302,6 +302,28 @@ body {
 .card.is-accent { border-color: var(--accent-dim); }
 .card.is-accent .card-title { background: #262b34; }
 
+/* The primary member of a multi-selection: the card the HUD names and the one a
+   command with no argument acts on.  A ring, not another border colour, so it
+   reads *on top of* .is-selected instead of fighting it. */
+.card.is-primary {
+  box-shadow: 0 6px 22px #00000073, 0 0 0 2px var(--accent);
+}
+
+/* The rubber band.  It lives inside #stage, so its transform is world-space and
+   it zooms with the board for free; pointer-events: none keeps it from stealing
+   the pointer that is drawing it. */
+.marquee {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2147483000;
+  border: 1px dashed var(--accent);
+  border-radius: 2px;
+  background: #6fb3ff24;
+  pointer-events: none;
+}
+.marquee[hidden] { display: none; }
+
 .card-tools { display: flex; align-items: center; gap: 6px; color: var(--fg-dim); }
 
 .card-grip {

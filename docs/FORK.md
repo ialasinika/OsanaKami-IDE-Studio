@@ -386,9 +386,11 @@ follows is what is genuinely still missing:)
 
 - **A minimap or "fit board to window".** The viewport is three numbers; the
   cards are a flat list with geometry. This is a shell-only feature.
-- **Multi-select.** Gestures are per-card in `installGestures()`; a
-  rubber-band selection is a new gesture and a set instead of a scalar
-  `selectedId`.
+- **More than one kind of multi-select.** Multi-select itself is built — Ctrl+A,
+  ctrl/shift-click, a shift+drag rubber band, group move and group delete, with
+  the set held in `board.mjs` and a primary member for single-card verbs — but
+  the rubber band is the only geometric selector: no lasso over links, no
+  "select every card of this kind", no field edit across a selection.
 - **Links with semantics.** A `from`/`to` pair plus a label is already in the
   document; nothing consumes them. A "run the card this link points at" verb is
   a shell feature over existing methods.

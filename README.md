@@ -178,7 +178,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 15 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 21 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
 ```
@@ -190,11 +190,11 @@ python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                    # keys, wheel and the editor keys in it: 15 passed, 0 failed
+python tools/input_smoke.py                    # keys, wheel, the editor and multi-select: 21 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 92/92 checks passed
-node shell/web/selftest.mjs                    # ok 80/80 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 83/83 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `version-check`,
@@ -205,7 +205,11 @@ browser: it renders the board (`browser_smoke.py`, 5 checks) and then drives it
 by hand -- Ctrl+Z and Ctrl+Shift+Z, a wheel over a card's own contents, and the
 editor card's own keys: Tab and Shift+Tab, Enter after an opener, Ctrl+F, the
 find bar's next-match button, replace-all, Escape, and that the textarea's own
-undo still holds those edits (`input_smoke.py`, 15 checks). On a clone that has no
+undo still holds those edits. Then it selects the whole board with Ctrl+A, takes
+one card out and puts it back with ctrl+click, draws a rubber band with
+shift+drag, drags one selected card and checks the whole set moved by one delta,
+runs `select all` on the command line, and deletes the set in one step that one
+Ctrl+Z brings back (`input_smoke.py`, 21 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 

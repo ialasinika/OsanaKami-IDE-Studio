@@ -6,6 +6,21 @@ version number says how usable it is, not how finished.
 ## Unreleased
 ### Shell
 
+- The board can select more than one card.  `Ctrl+A` selects every card,
+  ctrl/⌘-click (and shift-click) add or remove one, `Shift`+drag on empty space
+  draws a rubber band that selects everything it touches, dragging any selected
+  card moves the whole set by one delta, and `Delete` removes the set.  The
+  selection is a set of ids with a primary member rather than a scalar
+  `selectedId`; `selectedId` still names the primary, so single-card verbs are
+  unchanged, and the collapse back to one card happens on mouse-up when the
+  pointer never moved.  `cardsWithin` (intersection, not containment, because a
+  band that clips a corner must still pick the card up) lives in `board.mjs` and
+  is pure; the band is drawn inside `#stage`, so it is world-space and zooms with
+  the board.  A group move or delete is one change, one undo step and one save,
+  and an edge whose endpoint is deleted goes with it (`1004 INVALID_BOARD`
+  otherwise).  The command line gained `select <id...> | all | none`, and `delete`
+  with no argument acts on the selection.  `shell/web/selftest.mjs` is 83 checks
+  and `tools/input_smoke.py` drives the gestures in a real window (21 checks).
 - The editor card gained the keys a text editor needs.  `Tab` and `Shift+Tab`
   indent and outdent the lines the selection touches, `Enter` keeps the line's
   indentation and steps in one more after `{`, `(` or `[`, and `Ctrl+F` opens a
@@ -16,8 +31,8 @@ version number says how usable it is, not how finished.
   rather than by assigning `.value`, so `Ctrl+Z` still takes back a `Tab`.  The
   arithmetic is pure and exported (`indentSelection`, `indentAfterEnter`,
   `findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits`) and checked
-  in `shell/web/selftest.mjs` (80 checks now); `tools/input_smoke.py` presses the
-  keys in a real window and now runs 15 checks.
+  in `shell/web/selftest.mjs`; `tools/input_smoke.py` presses the keys in a real
+  window.
 
 ### Docs
 
@@ -25,10 +40,12 @@ version number says how usable it is, not how finished.
   `lang.tokenize` always returned: six places said byte offsets, and a client
   that believed them would slice non-ASCII text in the wrong unit.  The claim is
   now pinned by `langs/selftest.mjs` (92 checks) and `shell/web/selftest.mjs`
-  (80 checks) with non-ASCII fixtures.  No behaviour changed — the description
+  with non-ASCII fixtures.  No behaviour changed — the description
   caught up with the code.
-- `shell/web/README.md` documents the editor card's own keys, and the check
-  counts in `README.md` follow the three suites.
+- `shell/web/README.md` documents the editor card's own keys and the multi-select
+  gestures, `docs/PARADIGM.md` and `docs/FORK.md` no longer list rubber-band
+  selection as missing, and the check counts in `README.md` and
+  `docs/ARCHITECTURE.md` follow the three suites.
 
 ## v0.2.1-alpha.2 — 2026-10-15
 ### Docs

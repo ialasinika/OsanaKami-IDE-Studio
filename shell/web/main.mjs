@@ -20,7 +20,7 @@
  */
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
-import { createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
+import { createBoard, cardsWithin, DEFAULT_SIZE, MIN_SIZE, normaliseRect, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import {
   COMMAND_HELP,
@@ -250,6 +250,9 @@ const HINT_TEXT = [
   "Drag empty space to pan · wheel pans, but a wheel over a card's own contents",
   "scrolls the card first · ^wheel to zoom about the cursor.",
   "Drag a card title to move it · drag its corner to resize.",
+  "Shift+drag empty space for a rubber band, ctrl/shift+click to add one card,",
+  "Ctrl+A for all of them.  Drag any selected card to move the whole set;",
+  "Delete removes it (one undo step).",
   "Double-click empty space for a note.",
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
   "those keys undo the typing, as they do anywhere else.",
@@ -446,11 +449,30 @@ function createApp() {
   }
 
   function renderHud() {
-    const card = selectedCard();
-    selectionEl.textContent = card === null ? "no card" : `${describeCard(card)} — ${card.id}`;
+    selectionEl.textContent = describeSelection();
     revEl.textContent = boardRevision === null ? "unsaved" : `rev ${boardRevision}`;
     dirtyEl.textContent = dirty ? "unsaved changes" : "saved";
     dirtyEl.classList.toggle("is-dirty", dirty);
+  }
+
+  /**
+   * What the selection line says.
+   *
+   * One card reads as itself.  Several read as a count *and* their ids: "3
+   * cards" alone is untraceable on a board where two of them can be off screen,
+   * and the ids are what a following `delete`/`focus` takes.
+   */
+  function describeSelection() {
+    const ids = board.selection;
+    if (ids.length === 0) {
+      return "no card";
+    }
+    if (ids.length === 1) {
+      const only = selectedCard();
+      return only === null ? "no card" : `${describeCard(only)} — ${only.id}`;
+    }
+    const names = ids.slice(0, 3).join(", ");
+    return `${ids.length} cards — ${names}${ids.length > 3 ? `, +${ids.length - 3}` : ""}`;
   }
 
   function renderCards() {
@@ -475,7 +497,10 @@ function createApp() {
       node.style.height = `${card.h}px`;
       // z-index only orders hit-testing and shadows; positions stay world-space.
       node.style.zIndex = String(Math.round(card.z) || 0);
-      node.classList.toggle("is-selected", card.id === board.selectedId);
+      // One class for "in the selection" and a second for "the one a command
+      // with no argument acts on", so a multi-selection still has a leader.
+      node.classList.toggle("is-selected", board.isSelected(card.id));
+      node.classList.toggle("is-primary", card.id === board.selectedId && board.selectionCount > 1);
     }
 
     for (const [id, entry] of mounted) {
@@ -814,11 +839,16 @@ function createApp() {
     return true;
   }
 
-  function deleteCard(id) {
+  /** Unsaved text is never discarded silently, so it is named before any delete. */
+  function warnUnsaved(id) {
     const entry = mounted.get(id);
     if (entry !== undefined && entry.handle.dirty) {
       log("warn", `card ${id} has unsaved text; saving is not implicit — use ^S in the card first`);
     }
+  }
+
+  function deleteCard(id) {
+    warnUnsaved(id);
     if (!board.removeCard(id)) {
       log("warn", `no card ${id}`);
       return false;
@@ -827,6 +857,32 @@ function createApp() {
     renderLinks();
     boardTouched();
     return true;
+  }
+
+  /**
+   * Delete everything selected (the Delete key, or `delete` with no argument).
+   *
+   * One removal, so it is one undo step and one save: the cards and the links
+   * between them come back together.  Unsaved text is named first, exactly as
+   * for a single card -- a group delete must not become the quiet way to lose a
+   * buffer.
+   *
+   * @returns {number} how many cards left the board
+   */
+  function deleteSelection() {
+    const ids = board.selection;
+    if (ids.length === 0) {
+      log("warn", "nothing is selected (Ctrl+A selects every card)");
+      return 0;
+    }
+    for (const id of ids) {
+      warnUnsaved(id);
+    }
+    const removed = board.removeCards(ids);
+    renderCards();
+    renderLinks();
+    boardTouched();
+    return removed.length;
   }
 
   /** Scroll a card into view by panning, keeping the zoom. */
@@ -987,13 +1043,38 @@ function createApp() {
 
   /**
    * One delegated pointer gesture for the whole surface:
-   *   empty space  -> pan
-   *   card         -> focus + raise
-   *   card-title   -> move
-   *   grip         -> resize
+   *   empty space      -> pan
+   *   shift+empty      -> rubber band (ctrl/shift adds to the selection)
+   *   card             -> focus + raise, and select it (ctrl/shift = toggle)
+   *   card-title       -> move (every selected card moves together)
+   *   grip             -> resize
+   *
+   * Selection is not part of the document, so deciding what is selected is not a
+   * board edit: only the gestures that move or remove cards call
+   * `boardTouched`, and each of them calls it once, at the end.
    */
   function installGestures() {
     let gesture = null;
+    /** A pointer that moved less than this was a click, not a drag. */
+    const CLICK_SLOP = 3;
+    const bandEl = el("div", "marquee");
+    bandEl.hidden = true;
+    stageEl.append(bandEl);
+
+    const farEnough = (event, from) => Math.abs(event.clientX - from.px) > CLICK_SLOP
+      || Math.abs(event.clientY - from.py) > CLICK_SLOP;
+
+    function renderBand() {
+      if (gesture === null || gesture.kind !== "band") {
+        bandEl.hidden = true;
+        return;
+      }
+      const rect = normaliseRect({ x: gesture.ox, y: gesture.oy }, { x: gesture.x, y: gesture.y });
+      bandEl.hidden = false;
+      bandEl.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+      bandEl.style.width = `${rect.w}px`;
+      bandEl.style.height = `${rect.h}px`;
+    }
 
     boardEl.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) {
@@ -1005,33 +1086,93 @@ function createApp() {
       }
       const cardNode = target instanceof Element ? target.closest("[data-card-id]") : null;
       const role = target instanceof Element && target.dataset ? target.dataset.role : null;
-      const zoom = board.viewport.zoom;
+      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
 
       if (cardNode === null) {
-        gesture = { kind: "pan", startX: board.viewport.x, startY: board.viewport.y, px: event.clientX, py: event.clientY };
-        board.setSelection(null);
-        renderCards();
-        renderHud();
+        const world = screenToWorld(event.clientX, event.clientY);
+        if (event.shiftKey) {
+          // A band replaces the selection; holding ctrl as well adds to it.
+          const keep = event.ctrlKey || event.metaKey;
+          gesture = {
+            kind: "band",
+            ox: world.x,
+            oy: world.y,
+            x: world.x,
+            y: world.y,
+            base: board.selection,
+            keep,
+            moved: false,
+            px: event.clientX,
+            py: event.clientY,
+          };
+          if (!keep) {
+            board.clearSelection();
+          }
+          renderBand();
+          renderCards();
+          renderHud();
+        } else {
+          gesture = { kind: "pan", startX: board.viewport.x, startY: board.viewport.y, px: event.clientX, py: event.clientY };
+          board.setSelection(null);
+          renderCards();
+          renderHud();
+        }
       } else {
         const card = board.findCard(cardNode.dataset.cardId);
         if (card === null) {
           return;
         }
-        board.setSelection(card.id);
+        const already = board.isSelected(card.id);
+        if (additive) {
+          board.toggleSelection(card.id);
+        } else if (already) {
+          // Clicking one of several keeps the set (a drag then moves them all)
+          // and only makes this card the leader; the collapse to a single card
+          // is decided on pointerup, if the pointer never moved.
+          board.applySelection(board.selection, card.id);
+        } else {
+          board.setSelection(card.id);
+        }
         // Bringing a card to the front changes `z`, which is part of the
         // document, so it has to be marked dirty or the HUD says "saved" and
         // the stack order is gone after a reload.  It is not an undo step:
         // nobody means to take back "I clicked that card".
         board.raiseCard(card.id);
         boardTouched(true, { record: false });
+        const collapse = !additive && already && board.selectionCount > 1;
         if (role === "card-title") {
           const world = screenToWorld(event.clientX, event.clientY);
-          gesture = { kind: "move", card, dx: world.x - card.x, dy: world.y - card.y };
+          // Where every selected card started, so the whole group can be dragged
+          // by whichever one the pointer happens to be on.
+          const start = new Map();
+          for (const id of board.selection) {
+            const other = board.findCard(id);
+            if (other !== null) {
+              start.set(id, { x: other.x, y: other.y });
+            }
+          }
+          gesture = {
+            kind: "move",
+            card,
+            start,
+            ox: world.x,
+            oy: world.y,
+            collapse,
+            moved: false,
+            px: event.clientX,
+            py: event.clientY,
+          };
         } else if (role === "grip") {
           const world = screenToWorld(event.clientX, event.clientY);
           gesture = { kind: "resize", card, dx: world.x - card.x, dy: world.y - card.y };
         } else {
-          gesture = { kind: "focus", card };
+          gesture = {
+            kind: "focus",
+            card,
+            collapse,
+            px: event.clientX,
+            py: event.clientY,
+          };
           renderCards();
           renderHud();
           return;
@@ -1063,17 +1204,34 @@ function createApp() {
           y: gesture.startY + (event.clientY - gesture.py),
         });
         viewportTouched();
+      } else if (gesture.kind === "band") {
+        const world = screenToWorld(event.clientX, event.clientY);
+        gesture.x = world.x;
+        gesture.y = world.y;
+        gesture.moved = gesture.moved || farEnough(event, gesture);
+        const rect = normaliseRect({ x: gesture.ox, y: gesture.oy }, { x: world.x, y: world.y });
+        const touched = cardsWithin(board.cards, rect);
+        board.applySelection(gesture.keep ? [...gesture.base, ...touched] : touched, null);
+        renderBand();
+        renderCards();
+        renderHud();
       } else if (gesture.kind === "move") {
         // The card can vanish under the pointer -- another writer's
-        // board.changed, or a `delete`.  board.moveCard throws for an unknown
-        // id, and an exception here would skip scheduleRender() and leave the
-        // stage stale, so a dead gesture just ends.
+        // board.changed, or a `delete`.  board.moveCards ignores an unknown id,
+        // but a gesture on a card that is gone has nothing left to move.
         if (board.findCard(gesture.card.id) === null) {
           gesture = null;
           return;
         }
         const world = screenToWorld(event.clientX, event.clientY);
-        board.moveCard(gesture.card.id, Math.round(world.x - gesture.dx), Math.round(world.y - gesture.dy));
+        gesture.moved = gesture.moved || farEnough(event, gesture);
+        const dx = world.x - gesture.ox;
+        const dy = world.y - gesture.oy;
+        const moves = [];
+        for (const [id, from] of gesture.start) {
+          moves.push({ id, x: Math.round(from.x + dx), y: Math.round(from.y + dy) });
+        }
+        board.moveCards(moves);
       } else if (gesture.kind === "resize") {
         if (board.findCard(gesture.card.id) === null) {
           gesture = null;
@@ -1094,9 +1252,28 @@ function createApp() {
       if (gesture === null) {
         return;
       }
+      if (gesture.kind === "band") {
+        gesture = null;
+        renderBand();
+        renderCards();
+        renderHud();
+        if (boardEl.hasPointerCapture && boardEl.hasPointerCapture(event.pointerId)) {
+          boardEl.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+      if ((gesture.kind === "move" || gesture.kind === "focus")
+          && gesture.collapse === true && gesture.moved !== true) {
+        // A click that never became a drag collapses the set to the card it
+        // landed on -- the other half of "drag one of three moves all three".
+        board.setSelection(gesture.card.id);
+        renderCards();
+        renderHud();
+      }
       if (gesture.kind === "move" || gesture.kind === "resize" || gesture.kind === "pan") {
         // For a pan this is also where the HUD catches up, since the movement
-        // path deliberately skips it.
+        // path deliberately skips it.  A group move is one undo step for the
+        // whole selection, not one per card.
         boardTouched(gesture.kind !== "pan");
       }
       if (boardEl.hasPointerCapture && boardEl.hasPointerCapture(event.pointerId)) {
@@ -1174,7 +1351,7 @@ function createApp() {
 
   const KNOWN_COMMANDS = [
     "open", "note", "run", "files", "project", "link", "unlink", "zoom",
-    "focus", "delete", "save", "undo", "redo", "help", "clear",
+    "focus", "select", "delete", "save", "undo", "redo", "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1309,12 +1486,37 @@ function createApp() {
         return;
       }
       case "delete": {
-        const id = arg(0) !== undefined ? arg(0) : board.selectedId;
-        if (id === null || id === undefined) {
-          log("warn", "usage: delete <id> (or select a card first)");
+        if (argc < 1) {
+          // No argument means "what is selected", which is now a set.
+          deleteSelection();
           return;
         }
-        deleteCard(id);
+        deleteCard(arg(0));
+        return;
+      }
+      case "select": {
+        const first = (arg(0) || "").toLowerCase();
+        if (argc < 1 || first === "all") {
+          const count = board.selectAll();
+          log("info", count === 0 ? "no cards to select" : `selected ${count} card${count === 1 ? "" : "s"}`);
+        } else if (first === "none") {
+          board.clearSelection();
+          log("info", "selection cleared");
+        } else {
+          const wanted = tokens.slice(1);
+          const known = wanted.filter((id) => board.findCard(id) !== null);
+          const missing = wanted.filter((id) => board.findCard(id) === null);
+          if (missing.length > 0) {
+            log("warn", `no card ${missing.join(", ")}`);
+          }
+          if (known.length === 0) {
+            return;
+          }
+          board.applySelection(known, known[known.length - 1]);
+          log("info", `selected ${board.selection.join(", ")}`);
+        }
+        renderCards();
+        renderHud();
         return;
       }
       case "save": {
@@ -1655,6 +1857,22 @@ function createApp() {
       const typing = event.target instanceof HTMLInputElement
         || event.target instanceof HTMLTextAreaElement
         || (event.target instanceof HTMLElement && event.target.isContentEditable);
+      if ((event.ctrlKey || event.metaKey) && !typing && key === "a") {
+        // Ctrl+A means "all the cards" on the board and "all the text" in a
+        // field; the check above is what keeps those two from fighting.
+        event.preventDefault();
+        const count = board.selectAll();
+        log("info", count === 0 ? "no cards to select" : `selected ${count} card${count === 1 ? "" : "s"}`);
+        renderCards();
+        renderHud();
+        return;
+      }
+      if (!typing && (key === "delete" || key === "backspace") && board.selectionCount > 0) {
+        // Backspace would otherwise be "go back" outside a field.
+        event.preventDefault();
+        deleteSelection();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && !typing && (key === "z" || key === "y")) {
         event.preventDefault();
         if (key === "y" || event.shiftKey) {

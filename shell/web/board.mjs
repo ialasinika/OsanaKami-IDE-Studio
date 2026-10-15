@@ -115,6 +115,52 @@ export function emptyDocument() {
   };
 }
 
+/**
+ * A rectangle from two corners, whichever way round they were dragged.
+ * `w` and `h` come out non-negative, so the result is comparable with `card`.
+ */
+export function normaliseRect(a, b) {
+  const x1 = Math.min(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x, b.x);
+  const y2 = Math.max(a.y, b.y);
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+/** True when two axis-aligned boxes touch or overlap. Edges count as touching. */
+export function boxesIntersect(a, b) {
+  return a.x <= b.x + b.w && b.x <= a.x + a.w
+    && a.y <= b.y + b.h && b.y <= a.y + a.h;
+}
+
+/**
+ * The ids of the cards a rubber band touches, in document order.
+ *
+ * Touching is enough: a band that clips a card selects it, which is what a file
+ * manager's band does and what a person expects when they drag past a corner.
+ * Containment would make the gesture feel broken on a dense board, where the
+ * band would have to swallow whole cards to select anything.
+ *
+ * A band with a non-finite edge selects nothing rather than everything: an
+ * unmeasurable rectangle must not quietly become "select all".
+ */
+export function cardsWithin(cards, rect) {
+  const box = isPlainObject(rect) ? rect : {};
+  if (!isFiniteNumber(box.x) || !isFiniteNumber(box.y)
+    || !isFiniteNumber(box.w) || !isFiniteNumber(box.h)) {
+    return [];
+  }
+  const band = { x: box.x, y: box.y, w: box.w, h: box.h };
+  const list = Array.isArray(cards) ? cards : [];
+  const out = [];
+  for (const card of list) {
+    if (isValidCard(card) && boxesIntersect(card, band)) {
+      out.push(card.id);
+    }
+  }
+  return out;
+}
+
 /** True for a card the kernel would accept. Geometry may be repaired later. */
 export function isValidCard(card) {
   if (!isPlainObject(card)) {
@@ -248,7 +294,18 @@ export function createBoard(initial, options = {}) {
   const { idFactory = null } = options;
 
   let document = normaliseDocument(initial).document;
-  let selectedId = null;
+  /*
+   * The selection is a *set* of ids, held in document order, plus the primary
+   * one: the card the HUD describes and the one a following command with no
+   * argument acts on.  `selectedId` (the getter) reports the primary, so every
+   * caller written when the selection was a single card keeps working.
+   *
+   * It is deliberately not part of the document: nothing about which card is
+   * highlighted belongs in `.seide/board.json`, and a reload must not resurrect
+   * somebody else's selection.
+   */
+  let selection = [];
+  let primaryId = null;
   let nextLocalId = 1;
   let sequence = 0;
 
@@ -321,9 +378,7 @@ export function createBoard(initial, options = {}) {
   function load(next) {
     const result = normaliseDocument(next);
     document = result.document;
-    if (selectedId !== null && !findCard(selectedId)) {
-      selectedId = null;
-    }
+    pruneSelection();
     changed();
     return result;
   }
@@ -368,19 +423,9 @@ export function createBoard(initial, options = {}) {
     return card;
   }
 
+  /** Remove exactly one card (and its links). @returns {boolean} */
   function removeCard(id) {
-    const at = document.cards.findIndex((card) => card.id === id);
-    if (at < 0) {
-      return false;
-    }
-    document.cards.splice(at, 1);
-    // Links pointing at a dead card would make the next save fail validation.
-    document.links = document.links.filter((link) => link.from !== id && link.to !== id);
-    if (selectedId === id) {
-      selectedId = null;
-    }
-    changed();
-    return true;
+    return removeCards([id]).length > 0;
   }
 
   function moveCard(id, x, y) {
@@ -514,16 +559,174 @@ export function createBoard(initial, options = {}) {
   }
 
   function setSelection(id) {
-    const next = id === null || id === undefined ? null : id;
-    if (next !== null && !findCard(next)) {
-      return false;
-    }
-    if (next === selectedId) {
+    if (id === null || id === undefined) {
+      applySelection([], null);
       return true;
     }
-    selectedId = next;
-    changed();
+    if (!findCard(id)) {
+      return false;
+    }
+    applySelection([id], id);
     return true;
+  }
+
+  function isSelected(id) {
+    return selection.includes(id);
+  }
+
+  /**
+   * Replace the selection with `ids`, dropping ids that name no card and
+   * keeping document order.  `primary` names the card the HUD should describe;
+   * it defaults to the last one, which is the one a person just touched, and
+   * falls back when the caller names something that did not survive the filter.
+   *
+   * @returns {boolean} whether the selection actually moved
+   */
+  function applySelection(ids, primary = null) {
+    const order = new Map();
+    document.cards.forEach((card, at) => order.set(card.id, at));
+    const seen = new Set();
+    const next = [];
+    for (const id of Array.isArray(ids) ? ids : []) {
+      if (typeof id === "string" && order.has(id) && !seen.has(id)) {
+        seen.add(id);
+        next.push(id);
+      }
+    }
+    next.sort((a, b) => order.get(a) - order.get(b));
+    const nextPrimary = primary !== null && seen.has(primary)
+      ? primary
+      : (next.length === 0 ? null : next[next.length - 1]);
+    const same = next.length === selection.length
+      && next.every((id, at) => selection[at] === id)
+      && nextPrimary === primaryId;
+    selection = next;
+    primaryId = nextPrimary;
+    if (!same) {
+      changed();
+    }
+    return !same;
+  }
+
+  /** Forget ids that are no longer on the board (after a load or a removal). */
+  function pruneSelection() {
+    const live = new Set(document.cards.map((card) => card.id));
+    const kept = selection.filter((id) => live.has(id));
+    if (kept.length === selection.length && (primaryId === null || live.has(primaryId))) {
+      return false;
+    }
+    selection = kept;
+    if (primaryId === null || !live.has(primaryId)) {
+      primaryId = kept.length === 0 ? null : kept[kept.length - 1];
+    }
+    return true;
+  }
+
+  function clearSelection() {
+    applySelection([], null);
+    return true;
+  }
+
+  /** Add a card to the selection (ctrl/shift-click), or take it out again. */
+  function toggleSelection(id) {
+    if (!findCard(id)) {
+      return false;
+    }
+    if (selection.includes(id)) {
+      // Removing the primary promotes another card rather than leaving the HUD
+      // pointing at something that is no longer selected.
+      applySelection(selection.filter((other) => other !== id), null);
+    } else {
+      applySelection([...selection, id], id);
+    }
+    return true;
+  }
+
+  /** Add a card to the selection, keeping what is already there. */
+  function addSelection(id) {
+    if (!findCard(id)) {
+      return false;
+    }
+    applySelection([...selection, id], id);
+    return true;
+  }
+
+  /** Select every card (Ctrl+A). @returns {number} how many are selected now */
+  function selectAll() {
+    applySelection(document.cards.map((card) => card.id), null);
+    return selection.length;
+  }
+
+  /** Select the cards a rubber band touches. @returns {string[]} the selection */
+  function selectWithin(rect) {
+    applySelection(cardsWithin(document.cards, rect), null);
+    return selection.slice();
+  }
+
+  /**
+   * Move several cards in one step.
+   *
+   * The whole list is applied before anything is notified, so a group drag is
+   * one change and one render rather than one per card.  Absolute positions are
+   * taken, not deltas: a drag that loses an event must not accumulate drift.
+   *
+   * @param {Array<{id: string, x?: number, y?: number}>} moves
+   * @returns {number} how many cards moved
+   */
+  function moveCards(moves) {
+    const list = Array.isArray(moves) ? moves : [];
+    let moved = 0;
+    for (const move of list) {
+      if (!isPlainObject(move)) {
+        continue;
+      }
+      const card = findCard(move.id);
+      if (card === null) {
+        continue;
+      }
+      if (isFiniteNumber(move.x)) {
+        card.x = move.x;
+      }
+      if (isFiniteNumber(move.y)) {
+        card.y = move.y;
+      }
+      moved += 1;
+    }
+    if (moved > 0) {
+      changed();
+    }
+    return moved;
+  }
+
+  /**
+   * Remove several cards, and every link that named one of them.
+   *
+   * The kernel refuses a link with a missing endpoint (`1004 INVALID_BOARD`), so
+   * an edge to a dead card is dropped with it -- one change for the whole
+   * removal, so undoing a group delete brings the cards *and* their edges back
+   * together.
+   *
+   * @returns {string[]} the ids that were actually on the board
+   */
+  function removeCards(ids) {
+    const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
+    const dead = new Set();
+    const kept = [];
+    for (const card of document.cards) {
+      if (wanted.has(card.id)) {
+        dead.add(card.id);
+      } else {
+        kept.push(card);
+      }
+    }
+    if (dead.size === 0) {
+      return [];
+    }
+    document.cards = kept;
+    document.links = document.links.filter((link) => !dead.has(link.from) && !dead.has(link.to));
+    pruneSelection();
+    changed();
+    return [...dead];
   }
 
   /**
@@ -604,7 +807,14 @@ export function createBoard(initial, options = {}) {
       return document.viewport;
     },
     get selectedId() {
-      return selectedId;
+      return primaryId;
+    },
+    /** Every selected id, in document order (a copy). */
+    get selection() {
+      return selection.slice();
+    },
+    get selectionCount() {
+      return selection.length;
     },
     get sequence() {
       return sequence;
@@ -623,6 +833,17 @@ export function createBoard(initial, options = {}) {
     setViewport,
     setCardFields,
     setSelection,
+    // selection (a set, with `selectedId` as its primary member)
+    applySelection,
+    clearSelection,
+    toggleSelection,
+    addSelection,
+    selectAll,
+    selectWithin,
+    isSelected,
+    // group writes
+    moveCards,
+    removeCards,
     serialize,
     subscribe,
   };

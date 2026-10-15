@@ -82,6 +82,12 @@ document, so a board can record *why* things are next to each other.
 | drag a card title | move the card |
 | drag a card's bottom-right corner | resize the card |
 | click a card | focus it; it comes to the front |
+| ctrl/⌘ + click a card | add it to the selection, or take it out again |
+| shift + click a card | the same, for the hand that expects shift to extend |
+| ctrl/⌘ + A | select every card (and, in a text field, all its text — the field wins) |
+| shift + drag empty space | rubber band: select every card the band touches (add ctrl to keep what was selected) |
+| drag a selected card's title | move the whole selection by one delta |
+| Delete / Backspace, with a selection | remove the selected cards and their links, in one undo step |
 | double-click empty space | drop a new note there |
 | `:` | focus the command line |
 | ctrl/⌘ + S | save the board |
@@ -90,6 +96,18 @@ document, so a board can record *why* things are next to each other.
 
 Zoom is clamped to 20 %–400 %, and a card is clamped to 120×80 px so a card can
 never be resized into something you cannot grab again.
+
+The selection is a **set** of card ids with one *primary* member. `selectedId`
+still names the primary, so every verb written when the selection was a single
+card keeps working; the primary is the card the HUD describes and the one a
+command with no argument acts on. Clicking a selected card without a modifier
+keeps the set and only makes that card the leader — the collapse to a single
+card happens on mouse-up, if the pointer never moved, which is what makes
+"drag one of three" and "click one of three" the same gesture at the start. The
+rubber band is drawn inside `#stage`, so it is world-space and zooms with the
+board for free; it uses intersection, not containment, because requiring a whole
+card inside the band makes the gesture useless on a dense board. A band with a
+non-finite edge selects nothing rather than everything.
 
 ### Command line
 
@@ -104,7 +122,8 @@ link <from> <to> [label] connect two cards
 unlink <linkId>          remove a connection
 zoom <n> | in | out | reset
 focus <id>               select and centre a card
-delete <id>              remove a card
+select <id...> | all | none  replace the selection with these cards
+delete <id>              remove a card (with no id: everything selected)
 save [force]             write .seide/board.json
 undo                     take back the last board edit (Ctrl+Z)
 redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)
@@ -206,6 +225,10 @@ pressed for real by `tools/input_smoke.py`.
   edits the editor card makes itself, which go in as browser edits so `Ctrl+Z`
   still takes them back. The steps live in
   memory (`history.mjs`) and a reload forgets them.
+* Multi-select acts on the **set as a whole**: it moves and deletes together, and
+  a group move or delete is one undo step and one save. There is no field edit
+  across a selection (no "retitle every selected card"), no lasso over links, and
+  no "select by kind"; the rubber band is the only geometric selector.
 
 ---
 
@@ -245,5 +268,7 @@ node shell/web/selftest.mjs
 It imports the pure parts of the shell and drives them against a fake SSE stream
 with no DOM and no network: chunk-split frame reassembly, `RpcError` mapping,
 `STALE_REVISION` surfacing `data.current_revision`, board add/move/link/serialize
-round-trips, document repair, viewport clamping, and token-span application to a
-string. It prints `ok N/N` and exits non-zero if anything fails.
+round-trips, document repair, viewport clamping, the selection set and
+`cardsWithin` (the rubber band's arithmetic), a group move/delete being one
+change, and token-span application to a string. It prints `ok N/N` and exits
+non-zero if anything fails.

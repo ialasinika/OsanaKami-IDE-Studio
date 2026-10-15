@@ -36,6 +36,7 @@ import {
   MIN_SIZE,
   ZOOM_MAX,
   ZOOM_MIN,
+  cardsWithin,
   clampViewport,
   createBoard,
   normaliseDocument,
@@ -760,6 +761,143 @@ test("board: serialize refuses an invalid card instead of dropping it quietly", 
 /* ------------------------------------------------------------------ */
 /* cards.mjs -- token spans and the pure helpers                        */
 /* ------------------------------------------------------------------ */
+
+test("board: the selection is a set, and the primary is the card commands act on", () => {
+  const ids = ["c1", "c2", "c3"];
+  const board = createBoard(undefined, { idFactory: () => ids.shift() });
+  const a = board.addCard("note", 0, 0);
+  const b = board.addCard("note", 200, 0);
+  const c = board.addCard("note", 400, 0);
+
+  /*
+   * The selection is held in *document* order, not in the order a caller
+   * happened to name the ids: two clicks in the other order must not reorder
+   * what `delete` walks, or undo would restore cards in a different order.
+   */
+  board.applySelection([c.id, a.id], null);
+  assert.deepEqual(board.selection, [a.id, c.id]);
+  assert.equal(board.selectedId, c.id, "no primary named: the last member is it");
+  assert.equal(board.selectionCount, 2);
+
+  // Ids that name no card -- and repeats, and non-strings -- are dropped.
+  board.applySelection([a.id, a.id, 42, null, "nope"], a.id);
+  assert.deepEqual(board.selection, [a.id]);
+  assert.equal(board.selectedId, a.id);
+
+  // A primary that did not survive that filter falls back to a live member --
+  // the last one in document order, which is the one the caller named second.
+  board.applySelection([b.id, a.id], "nope");
+  assert.equal(board.selectedId, b.id, "a dead primary falls back, it is not kept");
+
+  /*
+   * Ctrl-click removes a member that is already selected; when that member was
+   * the primary, another one is promoted rather than leaving the HUD describing
+   * a card that is no longer selected.
+   */
+  board.applySelection([a.id, b.id], b.id);
+  assert.equal(board.toggleSelection(a.id), true);
+  assert.deepEqual(board.selection, [b.id]);
+  assert.equal(board.selectedId, b.id, "removing the primary promotes a member");
+
+  assert.equal(board.toggleSelection(c.id), true);
+  assert.deepEqual(board.selection, [b.id, c.id], "adding keeps the rest, in document order");
+  assert.equal(board.selectedId, c.id);
+  assert.equal(board.toggleSelection("nope"), false, "a toggle on no card reports false");
+
+  assert.equal(board.selectAll(), 3);
+  assert.deepEqual(board.selection, [a.id, b.id, c.id]);
+  assert.equal(board.selectedId, c.id);
+
+  // setSelection is still the one-card path every older caller uses.
+  board.setSelection(b.id);
+  assert.deepEqual(board.selection, [b.id]);
+  assert.equal(board.isSelected(a.id), false);
+
+  board.clearSelection();
+  assert.deepEqual(board.selection, []);
+  assert.equal(board.selectedId, null);
+  assert.equal(board.selectionCount, 0);
+});
+
+test("board: a rubber band selects what it touches, and a dead band selects nothing", () => {
+  const cards = [
+    { id: "a", kind: "note", x: 0, y: 0, w: 100, h: 100, z: 1 },
+    { id: "b", kind: "note", x: 200, y: 0, w: 100, h: 100, z: 2 },
+    { id: "c", kind: "note", x: 0, y: 200, w: 100, h: 100, z: 3 },
+  ];
+
+  // A band that only clips a corner still picks the card up: requiring full
+  // containment would make the gesture useless on a dense board.
+  assert.deepEqual(cardsWithin(cards, { x: 90, y: 90, w: 10, h: 10 }), ["a"]);
+  assert.deepEqual(cardsWithin(cards, { x: 0, y: 0, w: 400, h: 400 }), ["a", "b", "c"]);
+  assert.deepEqual(cardsWithin(cards, { x: 150, y: 0, w: 40, h: 10 }), [],
+    "a band in the gap between two cards selects neither");
+
+  // An unmeasurable band must not quietly become "select all".
+  assert.deepEqual(cardsWithin(cards, { x: Number.NaN, y: 0, w: 10, h: 10 }), []);
+  assert.deepEqual(cardsWithin(cards, { x: 0, y: 0 }), []);
+  assert.deepEqual(cardsWithin(cards, null), []);
+
+  // Document order is what the caller gets, whatever order the list was in.
+  assert.deepEqual(cardsWithin([cards[2], cards[0]], { x: 0, y: 0, w: 400, h: 400 }), ["c", "a"]);
+
+  // The board applies it and hands back the resulting selection.
+  const ids = ["c1", "c2"];
+  const board = createBoard(undefined, { idFactory: () => ids.shift() });
+  const one = board.addCard("note", 0, 0);
+  const two = board.addCard("note", 400, 400);
+  assert.deepEqual(board.selectWithin({ x: 0, y: 0, w: 50, h: 50 }), [one.id]);
+  assert.deepEqual(board.selection, [one.id], "the band replaces the selection, it does not add to it");
+  assert.deepEqual(board.selectWithin({ x: 0, y: 0, w: Number.NaN, h: 50 }), []);
+  assert.equal(board.selectionCount, 0, "a dead band clears the selection instead of keeping it");
+  assert.ok(two.id);
+});
+
+test("board: a group move and a group delete are one change each", () => {
+  const ids = ["c1", "c2", "c3", "c4"];
+  const board = createBoard(undefined, { idFactory: () => ids.shift() });
+  const a = board.addCard("note", 0, 0);
+  const b = board.addCard("note", 200, 0);
+  const c = board.addCard("note", 400, 0);
+  const d = board.addCard("note", 600, 0);
+  board.linkCards(a.id, b.id);
+  board.linkCards(b.id, c.id);
+  board.linkCards(c.id, d.id);
+
+  let changes = 0;
+  board.subscribe(() => { changes += 1; });
+
+  /*
+   * A drag of N cards is one edit, not N: N notifications would put N steps in
+   * the undo ring and N saves on the wire for one gesture.
+   */
+  const beforeMove = changes;
+  assert.equal(board.moveCards([
+    { id: a.id, x: 10 },
+    { id: b.id, x: 210 },
+    { id: "nope", x: 1 },
+  ]), 2);
+  assert.equal(changes - beforeMove, 1, "a group move notifies once");
+  assert.equal(a.x, 10);
+  assert.equal(b.x, 210);
+  assert.equal(a.y, 0, "a move that names no y leaves y alone");
+
+  board.applySelection([a.id, b.id, c.id], c.id);
+  const beforeDelete = changes;
+  assert.deepEqual(board.removeCards([a.id, b.id]).sort(), [a.id, b.id].sort());
+  assert.equal(changes - beforeDelete, 1, "a group delete notifies once");
+
+  // The kernel refuses a link with a missing endpoint (1004 INVALID_BOARD), so
+  // an edge goes with whichever of its endpoints left -- but an edge that named
+  // neither card stays exactly where it was.
+  assert.deepEqual(board.links.map((link) => [link.from, link.to]), [[c.id, d.id]]);
+  // And the selection forgets what is gone rather than naming a dead card.
+  assert.deepEqual(board.selection, [c.id]);
+  assert.equal(board.selectedId, c.id);
+
+  assert.deepEqual(board.removeCards([a.id]), [], "removing what is already gone is a no-op");
+  assert.equal(changes - beforeDelete, 1, "and a no-op is not a change");
+});
 
 test("tokens: spans are applied in order, with the gap rendered as plain", () => {
   const text = "++ hello world";

@@ -242,7 +242,11 @@ Honesty is part of the paradigm, not a disclaimer bolted on. As of this
 prototype:
 
 - There is no minimap, no overview mode, no "fit board to window".
-- There is no rubber-band multi-select and no multi-card operations.
+- Multi-select exists (Ctrl+A, ctrl/shift-click, a shift+drag rubber band that
+  paints in world space, group move, group delete) and is a *set* of ids with a
+  primary member, because a board needs a way to act on several cards without
+  giving up the single-card gestures. There are still no multi-card field edits
+  (no "set every selected card's title"), and no lasso over a *link*.
 - Links carry a label but nothing consumes them.
 - Card kinds are registered with one call (`registerCardKind`) rather than edited
   into a switch, but there is still no plugin system: no loading, no discovery,

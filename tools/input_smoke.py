@@ -299,9 +299,142 @@ async function main() {
     say("editor-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && editorOk
-    ? "undo, redo, wheel ownership and the editor keys work in a real browser"
-    : "FAILED -- see the counts, wheel and editor lines above"));
+  /* --- multi-select: Ctrl+A, ctrl-click, the rubber band, a group drag, delete --- */
+  let selectOk = true;
+  const cardIds = () => [...doc.querySelectorAll("#cards [data-card-id]")].map((n) => n.dataset.cardId);
+  const picked = (selector) => [...doc.querySelectorAll("#cards [data-card-id]" + selector)].map((n) => n.dataset.cardId);
+  const boxOf = (id) => {
+    const el = doc.querySelector('[data-card-id="' + id + '"]');
+    const where = /translate\\((-?[\\d.]+)px,\\s*(-?[\\d.]+)px\\)/.exec(el.style.transform || "");
+    return { el, x: where ? Number(where[1]) : NaN, y: where ? Number(where[2]) : NaN,
+      rect: el.getBoundingClientRect() };
+  };
+  const titleOf = (id) => doc.querySelector('[data-card-id="' + id + '"] .card-title');
+  const press2 = (type, target, init) => target.dispatchEvent(new win.PointerEvent(type, Object.assign(
+    { bubbles: true, cancelable: true, pointerId: 7, isPrimary: true, button: 0,
+      buttons: type === "pointerup" ? 0 : 1 }, init)));
+  const clickCard = async (id, mods) => {
+    const rect = boxOf(id).rect;
+    const at = { clientX: Math.round(rect.left + 24), clientY: Math.round(rect.top + 10) };
+    press2("pointerdown", titleOf(id), Object.assign({}, at, mods));
+    press2("pointerup", titleOf(id), Object.assign({}, at, mods, { buttons: 0 }));
+    await sleep(200);
+  };
+  try {
+    // The editor card may still hold focus; the board's keys are document-level,
+    // but blurring keeps the pointer path below honest about what is under it.
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
+
+    const every = cardIds();
+    key(win, doc, { key: "a", ctrlKey: true });
+    await sleep(250);
+    const all = picked(".is-selected");
+    const leaders = picked(".is-primary");
+    const selectedAll = every.length > 1 && all.length === every.length && leaders.length === 1;
+    say("select-all: cards=" + every.length + " selected=" + all.length + " primary=" + leaders.length);
+
+    /* Ctrl+click takes one card out of the set, and puts it back. */
+    const victim = every[every.length - 1];
+    await clickCard(victim, { ctrlKey: true });
+    const without = picked(".is-selected");
+    await clickCard(victim, { ctrlKey: true });
+    const again = picked(".is-selected").length;
+    const toggled = without.length === every.length - 1 && !without.includes(victim)
+      && again === every.length;
+    say("select-ctrl-click: without=" + without.length + " back=" + again + " (of " + every.length + ")");
+
+    /* Shift+drag over empty board space is a rubber band. */
+    const boardRect = board.getBoundingClientRect();
+    let empty = null;
+    for (let gx = 0.03; gx < 1 && empty === null; gx += 0.03) {
+      for (let gy = 0.03; gy < 1; gy += 0.03) {
+        const x = Math.round(boardRect.left + boardRect.width * gx);
+        const y = Math.round(boardRect.top + boardRect.height * gy);
+        const node = doc.elementFromPoint(x, y);
+        if (node && !node.closest("[data-card-id]")) { empty = { x, y }; break; }
+      }
+    }
+    let bandOk = false;
+    if (empty === null) {
+      say("select-band: none -- no empty board space to start a band from");
+    } else {
+      const union = every.map((id) => boxOf(id).rect).reduce((acc, r) => ({
+        left: Math.min(acc.left, r.left), top: Math.min(acc.top, r.top),
+        right: Math.max(acc.right, r.right), bottom: Math.max(acc.bottom, r.bottom),
+      }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+      const to = {
+        clientX: Math.round(Math.min(win.innerWidth - 3, union.right + 12)),
+        clientY: Math.round(Math.min(win.innerHeight - 3, union.bottom + 12)),
+      };
+      press2("pointerdown", board, Object.assign({ shiftKey: true }, empty));
+      press2("pointermove", board, Object.assign({ shiftKey: true }, to));
+      await sleep(250);
+      const band = doc.querySelector(".marquee");
+      const drawn = band !== null && band.hidden === false;
+      press2("pointerup", board, Object.assign({ shiftKey: true, buttons: 0 }, to));
+      await sleep(200);
+      const closed = band !== null && band.hidden === true;
+      const banded = picked(".is-selected");
+      bandOk = drawn && closed && banded.length >= 2;
+      say("select-band: drawn=" + drawn + " closed=" + closed
+        + " selected=" + banded.length + " of " + every.length);
+    }
+
+    /* Dragging one selected card moves the whole set, by one delta. */
+    key(win, doc, { key: "a", ctrlKey: true });
+    await sleep(200);
+    const before = new Map(every.map((id) => [id, boxOf(id)]));
+    const startBox = before.get(every[0]);
+    const from = { clientX: Math.round(startBox.rect.left + 30), clientY: Math.round(startBox.rect.top + 10) };
+    const to = { clientX: from.clientX + 70, clientY: from.clientY + 50 };
+    press2("pointerdown", titleOf(every[0]), from);
+    press2("pointermove", board, to);
+    press2("pointerup", board, Object.assign({ buttons: 0 }, to));
+    // The move path paints on the next animation frame; a headless run can
+    // starve frames, so wait for one (or 300ms) and then nudge a synchronous
+    // render with Ctrl+A, which re-paints the positions the drag just set.
+    await Promise.race([
+      new Promise((resolve) => win.requestAnimationFrame(() => resolve())),
+      sleep(300),
+    ]);
+    key(win, doc, { key: "a", ctrlKey: true });
+    await sleep(250);
+    const deltas = every.map((id) => {
+      const now = boxOf(id);
+      return [Math.round(now.x - before.get(id).x), Math.round(now.y - before.get(id).y)];
+    });
+    const same = deltas.every(([dx, dy]) => dx === deltas[0][0] && dy === deltas[0][1]);
+    const moved = same && (deltas[0][0] !== 0 || deltas[0][1] !== 0);
+    say("select-group-drag: delta=" + JSON.stringify(deltas[0]) + " same-for-all=" + same);
+
+    /* The command line names the same set without the keyboard. */
+    const command = doc.getElementById("command");
+    command.value = "select all";
+    command.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    await sleep(250);
+    const byCommand = picked(".is-selected").length;
+    say("select-command: selected=" + byCommand + "  | log: " + logTail());
+
+    /* Delete removes the whole set in one step, and one Ctrl+Z brings it back. */
+    const beforeDelete = cardIds().length;
+    key(win, doc, { key: "Delete" });
+    await sleep(500);
+    const afterDelete = cardIds().length;
+    key(win, doc, { key: "z", ctrlKey: true });
+    await sleep(600);
+    const restored = cardIds().length;
+    say("select-delete: " + beforeDelete + " -> " + afterDelete + " undo -> " + restored);
+
+    selectOk = selectedAll && toggled && bandOk && moved
+      && byCommand === every.length && afterDelete === 0 && restored === beforeDelete;
+  } catch (error) {
+    selectOk = false;
+    say("select-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && editorOk && selectOk
+    ? "undo, redo, wheel ownership, the editor keys and multi-select work in a real browser"
+    : "FAILED -- see the counts, wheel, editor and select lines above"));
   document.title = "input smoke done";
 }
 
@@ -318,7 +451,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Boot the real app in the system browser, make a board change, press "
             "Ctrl+Z and Ctrl+Shift+Z, dispatch a wheel over a card's own scroll "
             "region and over the board, and drive the editor card's indent, "
-            "auto-indent, find and replace keys. Exit codes: 0 pass or skipped, "
+            "auto-indent, find and replace keys, then select with Ctrl+A, "
+            "ctrl+click and a shift+drag rubber band, drag the group and delete "
+            "it. Exit codes: 0 pass or skipped, "
             "1 a check failed, 2 could not run, 3 usage."
         ),
     )
@@ -395,6 +530,27 @@ def parse_editor(body: str) -> dict:
     return found
 
 
+def parse_select(body: str) -> dict:
+    """The multi-select lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    patterns = (
+        ("all", r"select-all: cards=(\d+) selected=(\d+) primary=(\d+)"),
+        ("toggle", r"select-ctrl-click: without=(\d+) back=(\d+) \(of (\d+)\)"),
+        ("band", r"select-band: drawn=(\w+) closed=(\w+) selected=(\d+) of (\d+)"),
+        ("drag", r"select-group-drag: delta=(\[[^\]]*\]) same-for-all=(\w+)"),
+        ("command", r"select-command: selected=(\d+)"),
+        ("delete", r"select-delete: (\d+) -> (\d+) undo -> (\d+)"),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"select-band: none -- (.+)", body)
+    if none is not None:
+        found["band_none"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -410,7 +566,7 @@ def main(argv=None) -> int:
         edge = bs.find_edge(args.edge)
     except bs.DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 15 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 21 skipped (no browser)")
         return 0
 
     backup = bs.BoardBackup(bs.BOARD_PATH)
@@ -534,6 +690,45 @@ def main(argv=None) -> int:
         else:
             detail = f"no editor-{key} line"
         results.check(name, got == want, detail)
+
+    select = parse_select(body)
+
+    def select_detail(key: str) -> str:
+        got = select.get(key)
+        if got is not None:
+            return " ".join(got)
+        if key == "band" and select.get("band_none") is not None:
+            return f"{select['band_none'][0]} -- not proven"
+        return f"no select-{key} line"
+
+    all_line = select.get("all")
+    results.check("Ctrl+A selects every card and leaves exactly one leader",
+                  bool(all_line) and all_line[0] == all_line[1] != "0" and all_line[2] == "1",
+                  select_detail("all"))
+    toggle = select.get("toggle")
+    results.check("ctrl+click takes one card out of the set and puts it back",
+                  bool(toggle) and int(toggle[0]) == int(toggle[2]) - 1 and toggle[1] == toggle[2],
+                  f"without={toggle[0]} back={toggle[1]} of {toggle[2]}" if toggle else select_detail("toggle"))
+    band = select.get("band")
+    if band is None:
+        results.check("shift+drag draws a rubber band that selects what it touches",
+                      False, select_detail("band"))
+    else:
+        results.check("shift+drag draws a rubber band that selects what it touches",
+                      band[0] == "true" and band[1] == "true" and int(band[2]) >= 2,
+                      f"drawn={band[0]} closed={band[1]} selected={band[2]} of {band[3]}")
+    drag = select.get("drag")
+    results.check("dragging one selected card moves the whole set by one delta",
+                  bool(drag) and drag[1] == "true" and drag[0] != "[0,0]",
+                  f"delta={drag[0]} same-for-all={drag[1]}" if drag else select_detail("drag"))
+    command = select.get("command")
+    results.check("`select all` on the command line names the same set",
+                  bool(command) and bool(all_line) and command[0] == all_line[1],
+                  f"selected={command[0]}" if command else select_detail("command"))
+    gone = select.get("delete")
+    results.check("Delete removes the whole set in one step and one Ctrl+Z brings it back",
+                  bool(gone) and gone[1] == "0" and gone[2] == gone[0],
+                  f"{gone[0]} -> {gone[1]} undo -> {gone[2]}" if gone else select_detail("delete"))
 
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")
