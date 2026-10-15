@@ -265,7 +265,7 @@ Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
                         test, modules, run, clean, version-check, release-dry,
                         release, and the JSON test target
 README.md               this file
-VERSION                 the one line that decides the version: 0.2.0-alpha.1
+VERSION                 the one line that decides the version; tools/version.py
 LICENSE                 MIT -- the code.  Except the docs: see below
 LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
 CHANGELOG.md            what is in this version, and what is not
@@ -378,12 +378,14 @@ and fix, so a fork knows what was already tried.
 
 ## Version, licence, CI
 
-The version is one line in [`VERSION`](VERSION) — currently **`0.2.0-alpha.1`** —
+The version is one line in [`VERSION`](VERSION) — currently **`0.2.0-alpha.2`** —
 and two files must copy it, because C89 and JavaScript cannot read a file at
 build time: `core/include/seide_cfg.h` and `shell/main.mjs`. `tools/version.py`
 writes and checks them (`make version-check`, which runs inside `make test`), so
 the binary, the shell and the changelog cannot drift apart. The last tagged
-release is **`v0.1.0-alpha`**. Cutting the next one is `make release-dry` — the
+release is **`v0.2.0-alpha.2`**, a source-only alpha whose notes, manifest and
+zip are in `dist/0.2.0-alpha.2/` (generated, not committed). Cutting the next
+one is `make release-dry` — the
 whole plan, nothing written — and `make release`; [`docs/RELEASING.md`](docs/RELEASING.md)
 is the policy: the channels, the branches, what each one ships, how a fork joins
 in, and what the pipeline does not claim.
@@ -399,6 +401,10 @@ scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS).
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
-board headless. It is written but has never run on a GitHub runner (it was
-authored on a machine with none), so treat it as unproven until the first green
-run; the commands inside it are exactly the ones in [Run the checks](#run-the-checks).
+board headless.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) is the other
+half: a pushed tag in, a rebuilt release directory and a GitHub release out,
+with `tools/release.py --no-tag`. Neither file has run on a GitHub runner (they
+were authored on a machine with none), so treat them as unproven until the first
+green run; the commands inside them are exactly the ones in
+[Run the checks](#run-the-checks).

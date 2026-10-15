@@ -237,12 +237,40 @@ The board is never installed into the install directory: it is per-user state
 
 ---
 
-## 7. What this pipeline does not claim
+## 7. What CI does
+
+Two workflow files, and neither of them has ever run on a GitHub runner:
+
+- `.github/workflows/ci.yml` -- on every push: a `test` job runs `make CC=gcc`
+  and `make CC=gcc test`, the same commands a maintainer runs, and a separate
+  `smoke` job renders the board headless.  The smoke job is allowed to fail,
+  because a runner without a browser is not a defect in the release.
+- `.github/workflows/release.yml` -- on a pushed tag: it does **not** cut the
+  release.  Cutting is local, because it dates the changelog, builds the
+  artifacts and tags the commit.  A tag push takes the tag as given and does the
+  rest of the work again on a clean machine: it checks that the tag names
+  `VERSION`, rebuilds that commit, runs the same suite, and writes the same
+  notes, manifest and artifacts with
+
+      python tools/release.py --no-tag --no-freeze --allow-branch
+
+  `--no-tag` is what makes that possible: without it the run would refuse,
+  because a release run is normally the thing that creates the tag.  It keeps
+  the directory as a workflow artifact, and publishes it as a GitHub release --
+  `--prerelease` when `VERSION` carries a pre-release identifier.
+
+`git archive` of a commit is deterministic, so the source zip a tag push
+rebuilds should hash the same as the one cut on the maintainer's machine.  That
+equality is the only cross-check between the two machines, and it is why the
+source zip is the one artifact CI can prove rather than merely produce.
+
+## 8. What this pipeline does not claim
 
 - **Nothing has been pushed.**  No remote is configured; `--push` will fail
   until one is.
-- **The GitHub workflow has never run.**  `.github/workflows/ci.yml` exists and
-  says in its own header that it has not been executed on a GitHub runner.
+- **Neither GitHub workflow has run.**  `.github/workflows/ci.yml` and
+  `.github/workflows/release.yml` each say in their own header that they have not
+  been executed on a GitHub runner, and the release notes repeat it.
 - **No MSI has ever been built.**  No WiX and no `dotnet` on this machine;
   `tools/msi/README.md` states it plainly, and the WiX UI extension needs to be
   available to the WiX install before the first real build.

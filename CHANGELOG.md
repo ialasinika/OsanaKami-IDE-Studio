@@ -17,6 +17,27 @@ What the 1.0.0 rehearsal turned up.
 - A 1.x bundle cut with `--no-msi` says the installer is missing on purpose in
   its own `START-HERE.txt`, not only in the notes beside it.
 
+### CI
+
+- `.github/workflows/release.yml` takes a pushed tag and rebuilds the release
+  that was cut locally: it checks that the tag names `VERSION`, runs the same
+  suite, writes the same notes, manifest and artifacts with
+  `python tools/release.py --no-tag --no-freeze --allow-branch`, keeps the
+  directory as a workflow artifact and publishes it as a GitHub release
+  (`--prerelease` when the version carries a pre-release identifier).  Like
+  `ci.yml`, it has never run on a GitHub runner and says so in its own header.
+- `tools/release.py --no-tag` no longer requires the tag to be free.  A run that
+  will not create a tag should not refuse because one already exists, and that
+  is exactly the position a tag push is in.
+
+### Tools
+
+- `tools/release.py` captures a suite's output as UTF-8, with replacement
+  characters instead of an exception, and tells the child Python to write UTF-8.
+  The locale on the machine a release is cut on is cp936, and a suite that
+  printed an em dash made the capture come back empty: a real run's notes said
+  `exit 0: (no output)` for a command that had printed 13 KB of evidence.
+
 ## v0.2.0-alpha.2 — 2026-10-15
 The build stopped contradicting itself about its own version, and the release
 pipeline can now rehearse a GA on a machine that has no Windows installer

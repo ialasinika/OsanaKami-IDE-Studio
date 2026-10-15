@@ -113,9 +113,19 @@ class _Parser(argparse.ArgumentParser):
 
 
 def run(command, cwd=REPO_ROOT, capture: bool = True, timeout=None, env=None):
-    """Run a command, echoing it.  Returns ``(exit code, output)``."""
+    """Run a command, echoing it.  Returns ``(exit code, output)``.
+
+    The captured bytes are decoded as UTF-8 with replacement characters, and
+    the child's Python is told to write UTF-8.  This machine's locale is cp936,
+    so a suite that prints an em dash used to make ``text=True`` raise inside
+    the read -- and the release notes recorded ``exit 0: (no output)`` for a run
+    that had printed thirteen kilobytes of evidence.  A release note that says
+    nothing is worse than one that says the truth badly.
+    """
     shown = " ".join(str(part) for part in command)
     print(f"==> {shown}  (cwd={cwd})", flush=True)
+    child_env = dict(os.environ if env is None else env)
+    child_env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         if capture:
             done = subprocess.run(
@@ -123,13 +133,15 @@ def run(command, cwd=REPO_ROOT, capture: bool = True, timeout=None, env=None):
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
-                env=env,
+                env=child_env,
                 check=False,
             )
             output = (done.stdout or "") + (done.stderr or "")
             return done.returncode, output
-        return subprocess.call([str(part) for part in command], cwd=str(cwd), env=env), ""
+        return subprocess.call([str(part) for part in command], cwd=str(cwd), env=child_env), ""
     except OSError as exc:
         raise ReleaseError(f"cannot run {shown}: {exc}", 2)
     except subprocess.TimeoutExpired:
@@ -819,9 +831,17 @@ def preflight(context: dict) -> None:
 
     tag = context["tag"]
     code, _ = git("rev-parse", "-q", "--verify", f"refs/tags/{tag}")
-    if code == 0:
+    if args.no_tag:
+        # --no-tag says the tag is not this run's business.  That is the CI
+        # case: the tag was pushed, and the runner is asked for the notes and
+        # the artifacts that belong to it -- refusing because it exists would
+        # make the whole workflow impossible.
+        state = "already exists" if code == 0 else "does not exist yet"
+        print(f"[ok   ] --no-tag: tag {tag} {state}; this run will not touch it")
+    elif code == 0:
         raise ReleaseError(f"tag {tag} already exists; pick the next version (tools/version.py bump)")
-    print(f"[ok   ] tag {tag} is free")
+    else:
+        print(f"[ok   ] tag {tag} is free")
 
     if args.push and not remote_names():
         raise ReleaseError("--push was given but this repository has no remote configured")
