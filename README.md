@@ -192,7 +192,8 @@ node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
 `make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
 both JavaScript self-tests **in that order**, so a `fullcheck` failure would stop
 the run before the self-tests are reached. `smoke` is separate because it needs a
-browser. As of this writing nothing fails.
+browser; on a clone that has no board yet it installs `examples/board.json` for
+the run and removes it again afterwards. As of this writing nothing fails.
 
 **The protocol suite used to write to your board, and no longer does.** The
 board checks drive `board.save` against the workspace they were given, but they
@@ -256,6 +257,7 @@ LICENSE                 MIT
 CHANGELOG.md            what is in this version, and what is not
 .github/workflows/      CI: the same make targets, on a Windows runner
 .gitignore              build artefacts and workspace-local state
+.gitattributes          the checkout is the repository's bytes: LF everywhere
 
 core/                   the kernel -- C89, no dependencies
   include/              public headers: buf, vec, json, port, wksp, board, exec,

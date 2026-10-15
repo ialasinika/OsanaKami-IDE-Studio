@@ -62,13 +62,27 @@ worst were silent data loss in `board.save`, `file.write` ignoring a
 wrong-typed `base_revision`, and validation that was quadratic in the number of
 cards (20 000 cards: 72.59 s → 0.81 s).
 
+Two more were found by cloning the repository and running the suite in the
+clone, which is the only way to see what a new reader sees:
+
+- **A clone on Windows got CRLF line endings.**  Git for Windows ships
+  `core.autocrlf=true`, so `examples/hello.bf` arrived as 841 bytes instead of
+  820 and the byte-exact fixture check failed on a checkout nobody had edited.
+  `.gitattributes` now pins `* text=auto eol=lf`, and `kernel_probe.py` compares
+  the fixture against what it read at the start of the run instead of a size
+  written into the source.
+- **`make smoke` failed on a fresh clone**, because there was no
+  `.seide/board.json` to paint (it is gitignored).  It now installs
+  `examples/board.json` for the run and removes it again.
+
 ### Verification
 
 `make check` (9 passed, 0 failed, 4 skipped), `make fullcheck` (13/0/0),
 `make probe` (43 checks, all ok), `make smoke` (5/0, real browser), the C JSON
-test, `langs/selftest.mjs` (87/87) and `shell/web/selftest.mjs` (60/60).  Two
-defects are recorded as **not** fixed in `docs/BUGS.md`; the browser suite has
-no pointer or focus coverage, and says so in its own output.
+test, `langs/selftest.mjs` (87/87) and `shell/web/selftest.mjs` (60/60) — all of
+them also run from a fresh `git clone` of the tagged commit.  Two defects are
+recorded as **not** fixed in `docs/BUGS.md`; the browser suite has no pointer or
+focus coverage, and says so in its own output.
 
 ### Known limits
 
