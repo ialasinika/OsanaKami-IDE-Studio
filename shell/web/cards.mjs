@@ -726,6 +726,8 @@ export const COMMAND_HELP = [
   "focus <id>               select and centre a card",
   "delete <id>              remove a card",
   "save                     write the board to .seide/board.json",
+  "undo                     take back the last board edit (Ctrl+Z)",
+  "redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)",
 ];
 
 /* ------------------------------------------------------------------ */

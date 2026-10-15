@@ -21,6 +21,7 @@
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
+import { createHistory } from "./history.mjs";
 import {
   COMMAND_HELP,
   describeCard,
@@ -229,11 +230,13 @@ const HINT_TEXT = [
   "Drag empty space to pan · wheel to pan · ^wheel to zoom about the cursor.",
   "Drag a card title to move it · drag its corner to resize.",
   "Double-click empty space for a note.",
+  "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
+  "those keys undo the typing, as they do anywhere else.",
   "",
   "Commands go on the line at the bottom:",
   "  open <path> · run <cmd> · files · note <text> · sheet [title]",
   "  project [glob] · link <from> <to> · zoom in|out|reset · focus <id>",
-  "  delete <id> · save",
+  "  delete <id> · undo · redo · save",
   "",
   "This arrangement is saved in .seide/board.json, not a tab history.",
   "Delete this card once it has told you what you need (`delete` on it).",
@@ -283,6 +286,12 @@ function createApp() {
   let reconnectTimer = null;
   let reconnectDelay = 800;
   let renderQueued = false;
+
+  /* Undo/redo for the board document -- see history.mjs.  `applyingHistory` is
+     set while a step is being put back, so putting it back is not itself
+     recorded as an edit (it would be, and the stack would never end). */
+  const history = createHistory();
+  let applyingHistory = false;
 
   /** cardId -> {el, handle, destroy, card} */
   const mounted = new Map();
@@ -551,15 +560,58 @@ function createApp() {
   /* board mutations                                                     */
   /* ------------------------------------------------------------------ */
 
-  function boardTouched(isDirty = true) {
+  /**
+   * Something changed the board.  `isDirty` false means the change is not worth
+   * saving (a live pan, whose end will mark the board dirty once), and
+   * `detail.record` false means it is worth saving but not worth an undo step
+   * (raising a card to the front is a consequence of clicking it, not an edit
+   * anybody wants to take back).
+   */
+  function boardTouched(isDirty = true, detail = {}) {
     if (isDirty) {
       dirty = true;
       boardGeneration += 1;
+      if (detail.record !== false && !applyingHistory) {
+        // `history.record` copies what it is given, and ignores documents that
+        // differ only in the viewport, so this is safe to call on every edit.
+        history.record(board.serialize(), detail.label ? { label: detail.label } : {});
+      }
     }
     renderHud();
     if (isDirty && autosave && !initializing) {
       scheduleAutosave();
     }
+  }
+
+  /**
+   * Put one history step back on the board.  The document goes through the same
+   * `loadDocument` an external reload uses, so cards are mounted, links
+   * redrawn and the HUD repainted exactly as they are for any other load; the
+   * only difference is that history is left alone and the result is marked
+   * dirty, because the board on screen and the board on disk now differ.
+   */
+  function applyHistoryStep(step, verb) {
+    if (step === null) {
+      log("warn", `nothing to ${verb}`);
+      return false;
+    }
+    applyingHistory = true;
+    try {
+      loadDocument(step.document, { history: "keep" });
+    } finally {
+      applyingHistory = false;
+    }
+    log("info", `${verb === "undo" ? "undid" : "redid"}: ${step.label}`);
+    boardTouched(true, { record: false });
+    return true;
+  }
+
+  function undoBoard() {
+    return applyHistoryStep(history.undo(), "undo");
+  }
+
+  function redoBoard() {
+    return applyHistoryStep(history.redo(), "redo");
   }
 
   /*
@@ -945,7 +997,12 @@ function createApp() {
           return;
         }
         board.setSelection(card.id);
+        // Bringing a card to the front changes `z`, which is part of the
+        // document, so it has to be marked dirty or the HUD says "saved" and
+        // the stack order is gone after a reload.  It is not an undo step:
+        // nobody means to take back "I clicked that card".
         board.raiseCard(card.id);
+        boardTouched(true, { record: false });
         if (role === "card-title") {
           const world = screenToWorld(event.clientX, event.clientY);
           gesture = { kind: "move", card, dx: world.x - card.x, dy: world.y - card.y };
@@ -1069,7 +1126,7 @@ function createApp() {
 
   const KNOWN_COMMANDS = [
     "open", "note", "run", "files", "project", "link", "unlink", "zoom",
-    "focus", "delete", "save", "help", "clear",
+    "focus", "delete", "save", "undo", "redo", "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1216,6 +1273,14 @@ function createApp() {
         await saveBoard({ force: arg(0) === "force" });
         return;
       }
+      case "undo": {
+        undoBoard();
+        return;
+      }
+      case "redo": {
+        redoBoard();
+        return;
+      }
       case "help": {
         log("info", "commands:");
         for (const row of COMMAND_HELP) {
@@ -1353,7 +1418,15 @@ function createApp() {
     log("info", `reloaded the board (${reason})`);
   }
 
-  function loadDocument(document_) {
+  /**
+   * Put a document on the board.  `history` is "reset" for a board that came
+   * from somewhere else (boot, or another writer's `board.changed`): the undo
+   * stack is thrown away there, because undoing across somebody else's edit
+   * would resurrect the cards they just deleted.  An undo or redo of our own
+   * passes "keep", since it is the stack walking itself.
+   */
+  function loadDocument(document_, options = {}) {
+    const { history: historyMode = "reset" } = options;
     const { droppedCards, droppedLinks, repairedLinkIds = [] } = board.load(document_);
     if (droppedCards.length > 0) {
       log("warn", `dropped ${droppedCards.length} unreadable card(s) while loading the board`);
@@ -1378,6 +1451,11 @@ function createApp() {
     mounted.clear();
     linkNodes.forEach((node) => node.group.remove());
     linkNodes.clear();
+    if (historyMode === "reset") {
+      // What is on the board now is step zero: the first thing Ctrl+Z can take
+      // back is the first edit made after this load.
+      history.reset(board.serialize());
+    }
     renderAll();
   }
 
@@ -1519,6 +1597,25 @@ function createApp() {
         saveBoard({});
         return;
       }
+      /*
+       * Undo and redo.  A text field keeps the browser's own undo -- taking a
+       * sentence back inside a note should touch the note, not the board -- so
+       * this only fires when the keystroke did not land in one.  The editor and
+       * note textareas stop propagation anyway; this is the belt to that
+       * braces, and it also covers inputs that do not.
+       */
+      const typing = event.target instanceof HTMLInputElement
+        || event.target instanceof HTMLTextAreaElement
+        || (event.target instanceof HTMLElement && event.target.isContentEditable);
+      if ((event.ctrlKey || event.metaKey) && !typing && (key === "z" || key === "y")) {
+        event.preventDefault();
+        if (key === "y" || event.shiftKey) {
+          redoBoard();
+        } else {
+          undoBoard();
+        }
+        return;
+      }
       // `:` focuses the command line, vim-style, but only outside a text field.
       if (key === ":" && !(event.target instanceof HTMLInputElement)
         && !(event.target instanceof HTMLTextAreaElement)) {
@@ -1589,4 +1686,6 @@ export const LIMITATIONS = [
   "same thing for ASCII. Non-ASCII in a card can shift a colour by a few glyphs.",
   "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and links are straight",
   "lines -- there is no router and no automatic layout.",
+  "Undo is board-level and in memory: Ctrl+Z takes back board edits in this window,",
+  "not the typing inside a card, and a reload forgets the steps.",
 ];

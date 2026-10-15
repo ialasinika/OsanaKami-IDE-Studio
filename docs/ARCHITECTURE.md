@@ -245,6 +245,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | `board.mjs` | the board model: cards, links, viewport, serialise | seIDE stops being seIDE; there is nothing to render |
 | `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
 | `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
+| `history.mjs` | the undo ring: document snapshots, coalescing, the redo branch | the board works, but `Ctrl+Z` does nothing |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
 
@@ -267,7 +268,9 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | 87 descriptor/tokenizer checks, both families, no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | 60 checks of the protocol plumbing, board model and token spans, no DOM |
+| — | `node shell/web/selftest.mjs` | 69 checks of the protocol plumbing, board model, token spans and the undo ring, no DOM |
+| — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
+| — | `python tools/undo_smoke.py` | the board's undo really is wired to the keys: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back |
 
 ---
 

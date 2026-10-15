@@ -8,6 +8,22 @@ version number says how usable it is, not how finished.
 First alpha.  Everything below was built after this date's earlier work on the
 prototype, and the whole tree passes `make test` plus `make smoke`.
 
+### Board undo and redo
+
+- `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y` too), and the `undo` / `redo` commands,
+  take back the last **board** change: a card added, removed, moved, resized or
+  edited, a link made or dropped, z-order brought forward.  Typing inside a card
+  keeps the textarea's own undo, as in any other editor — a sentence is not a
+  board step.
+- The step list lives in `shell/web/history.mjs`, in memory only: a reload
+  forgets it, and saving does not create a step.  Same-label edits within 700 ms
+  fold into one step, and 200 steps are kept.
+- Verified by nine DOM-free checks in `shell/web/selftest.mjs` (69 checks in
+  total) **and** by `tools/undo_smoke.py`, which boots the real app in the system
+  browser, adds a card by double-clicking empty space, and then sends the
+  keystrokes: six checks, including that Ctrl+Z with a text field focused leaves
+  the board alone.  `make smoke` runs it.
+
 **The board is still the project state.** Cards on an infinite plane, links
 between them, no tabs and no file tree.  A fresh clone opens an **empty canvas**
 (the layout lives in `.seide/`, which is git-ignored) — `python tools/demo.py`
@@ -52,7 +68,7 @@ screen in the README.
   `e2e.py` drives the protocol end to end; `newlang.py` writes a conforming
   descriptor; `bf.py` is the Brainfuck reference interpreter;
   `kernel_probe.py` re-checks every fixed bug; `browser_smoke.py` renders the
-  window headless and asserts on the DOM.
+  window headless and asserts on the DOM; `undo_smoke.py` presses Ctrl+Z in it.
 
 ### Bugs found and fixed before this release
 
@@ -78,17 +94,19 @@ clone, which is the only way to see what a new reader sees:
 ### Verification
 
 `make check` (9 passed, 0 failed, 4 skipped), `make fullcheck` (13/0/0),
-`make probe` (43 checks, all ok), `make smoke` (5/0, real browser), the C JSON
-test, `langs/selftest.mjs` (87/87) and `shell/web/selftest.mjs` (60/60) — all of
-them also run from a fresh `git clone` of the tagged commit.  Two defects are
-recorded as **not** fixed in `docs/BUGS.md`; the browser suite has no pointer or
-focus coverage, and says so in its own output.
+`make probe` (43 checks, all ok), the C JSON test, `langs/selftest.mjs` (87/87),
+`shell/web/selftest.mjs` (69/69), and `make smoke` in the real browser
+(`browser_smoke.py` 5/0, `undo_smoke.py` 6/0) — all of them also run from a fresh
+`git clone` of the tagged commit.  Two defects are recorded as **not** fixed in
+`docs/BUGS.md`; `browser_smoke.py` still drives no pointer, and says so in its own
+output.
 
 ### Known limits
 
 - Windows only: `core/port/` has one implementation (`sys_win32.c`,
   `proc_win32.c`).  The port layer is the only OS-aware code.
-- No undo/redo yet.
+- No undo of the typing inside a card, and board undo steps are not written to
+  disk: a reload forgets them.
 - The card-kind hook is fork-time only: there is no plugin loading.
 - CI (`.github/workflows/ci.yml`) is written but has never run on a GitHub
   runner — it was authored on a machine without one.  Its steps are exactly the

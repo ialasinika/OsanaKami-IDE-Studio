@@ -203,7 +203,10 @@ never becomes unusable because the thing you need is buried.
   There is no minimap and no "projekt overview" panel to save you.
 - **No automatic layout.** Nothing tiles, snaps, aligns or prevents overlap.
   With twenty cards, a board becomes a mess that only its author can read.
-- **No undo.** (See `docs/FORK.md`: this is one of the cheapest things to add.)
+- **Undo is board-level and in-memory.** `Ctrl+Z` takes back the last board
+  edit — a card added, removed, moved or edited, a link made or dropped — and
+  only in this window: the steps are never written down, so a reload forgets
+  them. Typing inside a card is the textarea's own undo, not the board's.
 - **Keyboard-only navigation is weak.** The command line is a single line with
   a single focus model; there is no chord language, no keyboard card
   switching, and no search across the board.
@@ -246,8 +249,9 @@ prototype:
   no manifest, no sandbox (constraint 3). Registering happens while the shell's
   module graph is evaluated, so it is a fork-time hook, not a runtime one.
 - The `sheet` kind is one structured surface, not a general structured-editing
-  framework: no formulas, no sorting, no selection ranges, no undo, and its
-  column types are fixed at four.
+  framework: no formulas, no sorting, no selection ranges, and its column types
+  are fixed at four. A cell edit is a board edit, so the board's undo takes it
+  back like any other change.
 - The editor is ASCII-clean only for colouring purposes: `lang.tokenize`
   returns **byte** offsets and the shell treats them as string indices, which is
   the same thing only for ASCII. The shell exports this as `LIMITATIONS` in

@@ -5,8 +5,8 @@
  *
  * It imports the pure parts of the web shell and drives them with a fake
  * `fetch` (an in-memory SSE stream) and no DOM at all, so the protocol
- * plumbing, the board model and the token-span logic are checked exactly as
- * the browser will use them.
+ * plumbing, the board model, the undo ring and the token-span logic are checked
+ * exactly as the browser will use them.
  *
  * What that means: there is no browser here. Canvas layout, pointer gestures
  * (drag, resize, drawing a link), focus, keyboard handling and every CSS rule
@@ -86,6 +86,8 @@ import {
  * of through a browser.
  */
 import { saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
+
+import { createHistory, describeChange } from "./history.mjs";
 
 /* ------------------------------------------------------------------ */
 /* the smallest useful test harness                                    */
@@ -1722,13 +1724,225 @@ test("main: every save outcome is reported, and a failure never reads as a succe
 });
 
 /* ------------------------------------------------------------------ */
+/* undo and redo                                                       */
+/* ------------------------------------------------------------------ */
+
+/** A board with two cards and one link -- enough for every kind of edit. */
+function historyDoc() {
+  return {
+    version: 1,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    cards: [
+      { id: "c1", kind: "note", x: 0, y: 0, w: 300, h: 180, z: 1, text: "hello" },
+      { id: "c2", kind: "editor", x: 400, y: 0, w: 680, h: 460, z: 2, file: "examples/hello.bf" },
+    ],
+    links: [{ id: "l1", from: "c1", to: "c2", label: "notes" }],
+  };
+}
+
+function edited(mutate) {
+  const document = historyDoc();
+  mutate(document);
+  return document;
+}
+
+test("history: a fresh history has nothing to undo or redo", () => {
+  const history = createHistory();
+  history.reset(historyDoc());
+  assert.equal(history.canUndo(), false);
+  assert.equal(history.canRedo(), false);
+  assert.equal(history.size(), 1);
+  assert.equal(history.position(), 0);
+  assert.equal(history.undo(), null, "undo at the start returns nothing");
+  assert.equal(history.redo(), null, "redo when there is nothing ahead returns nothing");
+  assert.deepEqual(history.current(), historyDoc(), "current() is the state it was reset to");
+  assert.equal(history.label(), "the board as loaded");
+});
+
+test("history: an edit is one step and undo puts the document back", () => {
+  const history = createHistory();
+  const before = historyDoc();
+  history.reset(before);
+  const after = edited((doc) => {
+    doc.cards[0].text = "hello there";
+  });
+  assert.equal(history.record(after), true, "a real edit pushes a step");
+  assert.equal(history.canUndo(), true);
+  assert.equal(history.label(), "edited the note card c1");
+  const step = history.undo();
+  assert.deepEqual(step.document, before, "undo restores the document it recorded from");
+  assert.equal(step.label, "edited the note card c1");
+  assert.equal(history.canUndo(), false);
+  assert.equal(history.canRedo(), true);
+  assert.deepEqual(history.redo().document, after, "redo walks forward to the same document");
+  assert.equal(history.canRedo(), false);
+});
+
+test("history: a snapshot is a copy, so editing the board cannot rewrite the past", () => {
+  const history = createHistory();
+  const before = historyDoc();
+  history.reset(before);
+  const after = edited((doc) => {
+    doc.cards[0].text = "new";
+  });
+  history.record(after);
+  // The caller keeps mutating the very object it handed over: history must not
+  // alias it, or every undo would "restore" the newest state.
+  after.cards[0].text = "newer still";
+  after.cards.push({ id: "c9", kind: "note", x: 0, y: 0, w: 100, h: 100, z: 3, text: "" });
+  assert.deepEqual(history.undo().document, before, "the recorded document is untouched");
+});
+
+test("history: nothing changed, and a viewport-only move, are not steps", () => {
+  const history = createHistory();
+  history.reset(historyDoc());
+  assert.equal(history.record(historyDoc()), false, "an identical document is not an edit");
+  const panned = edited((doc) => {
+    doc.viewport = { x: -120, y: 40, zoom: 1.5 };
+  });
+  assert.equal(history.record(panned), false, "panning and zooming are navigation, not edits");
+  assert.equal(describeChange(historyDoc(), panned), null);
+  assert.equal(history.size(), 1);
+  const raised = edited((doc) => {
+    doc.cards[0].z = 7;
+  });
+  assert.equal(history.record(raised), false, "raising a card is not an undo step");
+});
+
+test("history: a typing burst is one step, and a pause starts the next", () => {
+  let clock = 1000;
+  const history = createHistory({ now: () => clock });
+  history.reset(historyDoc());
+  const first = edited((doc) => {
+    doc.cards[0].text = "h";
+  });
+  assert.equal(history.record(first), true, "the first keystroke opens a step");
+  clock += 120;
+  const second = edited((doc) => {
+    doc.cards[0].text = "he";
+  });
+  assert.equal(history.record(second), false, "the next keystroke folds into it");
+  clock += 120;
+  const third = edited((doc) => {
+    doc.cards[0].text = "hel";
+  });
+  history.record(third);
+  assert.equal(history.size(), 2, "one step so far: the loaded board, then the sentence");
+  assert.deepEqual(history.undo().document, historyDoc(), "undo takes back the whole burst");
+  clock += 5000;
+  history.redo();
+  const later = edited((doc) => {
+    doc.cards[0].text = "hello again";
+  });
+  assert.equal(history.record(later), true, "a pause ends the burst: this is a new step");
+  assert.equal(history.size(), 3);
+});
+
+test("history: a new edit after an undo throws the redo branch away", () => {
+  const history = createHistory();
+  history.reset(historyDoc());
+  const one = edited((doc) => {
+    doc.cards[0].text = "one";
+  });
+  const two = edited((doc) => {
+    doc.cards[0].text = "two";
+  });
+  history.record(one);
+  history.record(two);
+  assert.equal(history.undo().label, "edited the note card c1");
+  assert.equal(history.canRedo(), true);
+  const branch = edited((doc) => {
+    doc.cards[0].text = "another branch";
+  });
+  history.record(branch);
+  assert.equal(history.canRedo(), false, "the abandoned future is gone");
+  assert.equal(history.size(), 2);
+  assert.deepEqual(history.current(), branch);
+});
+
+test("history: the ring forgets the oldest steps past its limit", () => {
+  const history = createHistory({ limit: 3 });
+  history.reset(historyDoc());
+  for (let n = 1; n <= 5; n += 1) {
+    const document = edited((doc) => {
+      doc.cards[0].text = `step ${n}`;
+    });
+    history.record(document, { label: `edit ${n}` });
+  }
+  assert.equal(history.size(), 3, "the limit is a ceiling, not a suggestion");
+  assert.equal(history.position(), 2);
+  assert.equal(history.canUndo(), true);
+  assert.equal(history.undo().label, "edit 5");
+  assert.equal(history.undo().label, "edit 4");
+  assert.equal(history.canUndo(), false, "the steps past the limit are gone, not hidden");
+  assert.equal(history.size(), 3);
+});
+
+test("history: describeChange names the edit a person just made", () => {
+  const base = historyDoc();
+  const adding = edited((doc) => {
+    doc.cards.push({ id: "c3", kind: "note", x: 900, y: 0, w: 200, h: 120, z: 3, text: "" });
+  });
+  assert.equal(describeChange(base, adding), "added a card c3");
+  const removing = edited((doc) => {
+    doc.cards = doc.cards.filter((card) => card.id !== "c2");
+    doc.links = [];
+  });
+  assert.equal(describeChange(base, removing), "removed a card c2 and unlinked l1");
+  const moving = edited((doc) => {
+    doc.cards[0].x += 40;
+    doc.cards[0].y += 40;
+  });
+  assert.equal(describeChange(base, moving), "moved a card c1");
+  const resizing = edited((doc) => {
+    doc.cards[0].w = 420;
+  });
+  assert.equal(describeChange(base, resizing), "resized a card c1");
+  const editing = edited((doc) => {
+    doc.cards[1].file = "examples/page.html";
+  });
+  assert.equal(describeChange(base, editing), "edited the editor card c2");
+  const linking = edited((doc) => {
+    doc.links.push({ id: "l2", from: "c2", to: "c1", label: "back" });
+  });
+  assert.equal(describeChange(base, linking), "linked c2 to c1");
+  const twoThings = edited((doc) => {
+    doc.cards[0].x += 10;
+    doc.cards[1].text = "something";
+  });
+  assert.equal(describeChange(base, twoThings), "edited the editor card c2 and moved a card c1");
+  assert.equal(describeChange(base, base), null, "no change, no phrase");
+});
+
+test("history: clear() empties it and a record after that starts over", () => {
+  const history = createHistory();
+  history.reset(historyDoc());
+  history.record(
+    edited((doc) => {
+      doc.cards[0].text = "x";
+    }),
+  );
+  history.clear();
+  assert.equal(history.size(), 0);
+  assert.equal(history.position(), -1);
+  assert.equal(history.canUndo(), false);
+  assert.equal(history.current(), null);
+  const document = edited((doc) => {
+    doc.cards[0].text = "after the clear";
+  });
+  assert.equal(history.record(document), true, "the first record after a clear seeds the ring");
+  assert.equal(history.size(), 1);
+  assert.deepEqual(history.current(), document);
+});
+
+/* ------------------------------------------------------------------ */
 
 const passed = checks - failures.length;
 /*
  * Said on every run, pass or fail, because a green `ok N/N` is easy to read as
  * "the UI works". It does not: this suite has no browser in it.
  */
-const note = `note: ${checks} checks, no DOM -- canvas layout, focus and pointer behaviour are not covered`;
+const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer and keyboard input are not covered`;
 if (failures.length > 0) {
   for (const { name, err } of failures) {
     console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);

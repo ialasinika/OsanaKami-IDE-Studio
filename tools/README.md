@@ -12,6 +12,7 @@ build, scaffolding, verification and reference tools.
 | [`kernel_probe.py`](kernel_probe.py) | The regression probe for every bug in `docs/BUGS.md`: spawns the kernel against a scratch workspace under `build/` and asserts the safe outcome of each fix. `make probe`. |
 | [`kernel_drive.py`](kernel_drive.py) | The stdio JSON-RPC harness `kernel_probe.py` runs on: starts `<seide> rpc --root DIR`, pumps both pipes on threads, and turns a silent method into `<silence>` instead of a hang. |
 | [`browser_smoke.py`](browser_smoke.py) | The window, without a human: starts the host, drives the system browser headless (`--dump-dom`), and asserts on the rendered DOM — HUD, workspace root, painted board. Restores the board byte-identically and kills the host by pid; with no board at all (a fresh clone) it installs `examples/board.json` for the run and removes it again. `make smoke`. |
+| [`undo_smoke.py`](undo_smoke.py) | The keystroke `--dump-dom` cannot press: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, then sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone. `make smoke`. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
 | [`demo.py`](demo.py) | Installs `examples/board.json` — the five-card board in the README's screenshots — as this workspace's `.seide/board.json`. `.seide/` is gitignored, so a fresh clone otherwise opens an empty canvas, and every screenshot and bug report in the docs would be unreproducible. Refuses to overwrite an existing board without `--force`; `--print` shows the board and changes nothing. |
 
@@ -53,6 +54,16 @@ and exits 0 with a SKIP when there is none)
 python tools/browser_smoke.py
 python tools/browser_smoke.py --edge "C:\path\to\msedge.exe" --keep
 ```
+
+**6. Press Ctrl+Z in that window** (same browser requirement; the check
+`browser_smoke.py` cannot make, because `--dump-dom` drives no input)
+
+```console
+python tools/undo_smoke.py
+python tools/undo_smoke.py --keep      # leave the wrapper page for a look
+```
+
+`make smoke` runs both.
 
 **6. Verify a build end to end** (`--seide-cmd` takes the whole command line, so
 the shell multiplexer can be driven too; the default `--seide` is the

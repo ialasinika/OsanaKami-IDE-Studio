@@ -335,10 +335,10 @@ the step you do first and the rest of the prototype becomes your backend.
 
 ## Ideas the prototype leaves on the table
 
-Not implemented, not promised, and each cheap enough to be tempting:
+Not implemented, not promised, and each cheap enough to be tempting.  (Undo used
+to head this list; it is built now — `shell/web/history.mjs`, `Ctrl+Z` — so what
+follows is what is genuinely still missing:)
 
-- **Undo.** `board.mjs` returns a deep copy from `serialize()` and never aliases
-  the model, so a snapshot ring is a small change in the shell alone.
 - **A minimap or "fit board to window".** The viewport is three numbers; the
   cards are a flat list with geometry. This is a shell-only feature.
 - **Multi-select.** Gestures are per-card in `installGestures()`; a

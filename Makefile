@@ -99,10 +99,12 @@ probe: $(BIN)
 	$(PYTHON) tools/kernel_probe.py
 
 # The window, without a human: starts the host, drives the system browser
-# headless, and asserts on the rendered DOM.  Needs a browser; says so and
-# skips (exit 0) when there is none.
+# headless, and asserts on the rendered DOM -- then presses Ctrl+Z and
+# Ctrl+Shift+Z in it and counts the cards.  Needs a browser; both say so and
+# skip (exit 0) when there is none.
 smoke: $(BIN)
 	$(PYTHON) tools/browser_smoke.py --timeout 90
+	$(PYTHON) tools/undo_smoke.py --timeout 180
 
 # Everything the project can prove about itself without a window: the C JSON
 # codec, the language layer, the browser modules, the fixed bugs, and both

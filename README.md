@@ -36,8 +36,8 @@ without fighting a plugin API, keep reading.
 ## What seIDE is not
 
 - **Not a complete product.** There is no settings UI, no terminal emulator, no
-  debugger, no Git integration, no refactoring, no search across the workspace,
-  no undo.
+  debugger, no Git integration, no refactoring, no search across the workspace.
+  Undo takes back a *board* edit; it does not take back typing inside a card.
 - **Not extensible.** There is no plugin system, by design. Extension means
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
@@ -173,7 +173,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 passed, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 6 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, the JSON test, both JS self-tests
 ```
 
@@ -184,16 +184,19 @@ python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
+python tools/undo_smoke.py                     # presses Ctrl+Z in it: 6 passed, 0 failed
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 87/87 checks passed
-node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 69/69 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
 both JavaScript self-tests **in that order**, so a `fullcheck` failure would stop
 the run before the self-tests are reached. `smoke` is separate because it needs a
-browser; on a clone that has no board yet it installs `examples/board.json` for
-the run and removes it again afterwards. As of this writing nothing fails.
+browser: it renders the board (`browser_smoke.py`, 5 checks) and then presses
+Ctrl+Z and Ctrl+Shift+Z in it (`undo_smoke.py`, 6 checks). On a clone that has no
+board yet both install `examples/board.json` for the run and remove it again
+afterwards. As of this writing nothing fails.
 
 **The protocol suite used to write to your board, and no longer does.** The
 board checks drive `board.save` against the workspace they were given, but they
@@ -280,7 +283,7 @@ langs/                  language support, deliberately OUTSIDE the kernel
 shell/                  the front end and the endpoints
   main.mjs              `seide rpc` (stdio) and `seide serve` (HTTP + SSE + browser)
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
-                        rpc.mjs, main.mjs, selftest.mjs, README.md
+                        history.mjs, rpc.mjs, main.mjs, selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
@@ -315,7 +318,7 @@ Stated plainly, because a fork needs to know what it is inheriting.
   the shell treats them as string indices; those are the same thing only for
   ASCII. See `shell/web/main.mjs`'s exported `LIMITATIONS`.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
-  layout, and no undo on the board.
+  layout.
 - **The shell is the only client.** There is no second front end, so the protocol
   has exactly one consumer to keep honest.
 
@@ -356,7 +359,8 @@ and fix, so a fork knows what was already tried.
 ## Version, licence, CI
 
 This is **v0.1.0-alpha**: the constraint set holds and the suites are green, but
-there is no undo, no portability beyond Windows, and no plugin loading. See
+undo covers the board and not the typing inside a card, there is no portability
+beyond Windows, and there is no plugin loading. See
 [CHANGELOG.md](CHANGELOG.md) for what is in it and what is not.
 
 [MIT](LICENSE) — take it, fork it, rename it.
