@@ -204,8 +204,9 @@ python tools/release.py --fork electron-example
 
 The fork then gets its own tag (`<name>-v<version>`), its own release
 directory (`dist/<version>/<name>/`), a bundle with `files/` laid over the
-bundle root, and `<name>-fork.zip` -- the fork's whole delta plus an `APPLY.md`
-that says what to lay it on.  `fork.json` may set `"no_fork_zip": true` for a
+bundle root, and `<name>-fork.zip` -- the fork's whole delta, kept under
+`forks/<name>/` the way the base tree keeps it, plus an `APPLY.md` that says
+what to lay it on.  `fork.json` may set `"no_fork_zip": true` for a
 fork that only exists as an overlay.
 
 `forks/electron-example/` is the worked example: an Electron window around the

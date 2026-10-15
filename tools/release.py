@@ -382,19 +382,31 @@ def source_archive(stem: str, version: str, rev: str, dest: Path) -> dict:
     return {"name": dest.name, "bytes": dest.stat().st_size, "sha256": file_sha256(dest)}
 
 
-def start_here(version: str, channel: str, info: dict) -> str:
+def start_here(version: str, channel: str, info: dict, no_msi: bool = False) -> str:
     """The three lines a bundle needs to be usable by someone who just unzipped it."""
     stage = (
         f"this is a {channel} build: the interface may still change"
         if info["channel"]
         else "this is a final build"
     )
+    if channel in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR:
+        # A 1.x GA is supposed to come with an installer; say when it does not,
+        # in the bundle itself and not only in the notes beside it.
+        installer = (
+            "  This bundle has no installer: it was cut with `--no-msi`, so the\n"
+            "MSI a 1.x release promises is missing on purpose.\n"
+            if no_msi
+            else "  No service, no registry: the MSI is the installer.\n"
+        )
+    else:
+        installer = "  No installer, no service, no registry.\n"
     return (
         f"seIDE {version} -- win64 bundle ({channel}; {stage})\n"
         "\n"
         "What is in here: the kernel (build/seide.exe), the shell (shell/), the\n"
         "language descriptors (langs/), the docs (docs/), the example board and\n"
-        f"files (examples/).  No installer, no service, no registry.\n"
+        "files (examples/).\n"
+        f"{installer}"
         "\n"
         "What is NOT in here: the C sources.  They ship in the matching source\n"
         f"archive (seide-{version}-src.zip); this bundle is the built article.\n"
@@ -443,13 +455,13 @@ def fork_overlay_items(name: str):
     return items
 
 
-def bundle_items(version: str, channel: str, info: dict, fork: str):
+def bundle_items(version: str, channel: str, info: dict, fork: str, no_msi: bool = False):
     """The runnable bundle, as ``(arcname, bytes, mode)`` entries.
 
     Deterministic on purpose: sorted names, one fixed mtime, explicit modes, so
     the same commit produces the same zip and SHA256SUMS means something.
     """
-    items = [("START-HERE.txt", start_here(version, channel, info).encode("utf-8"), 0o644)]
+    items = [("START-HERE.txt", start_here(version, channel, info, no_msi).encode("utf-8"), 0o644)]
     items += zip_items_from_disk([(rel, rel, 0o644) for rel in BUNDLE_FILES], REPO_ROOT)
     items += zip_items_from_disk([(rel, rel, 0o644) for rel in tracked(BUNDLE_TREES)], REPO_ROOT)
     items.append((BUNDLE_KERNEL, (REPO_ROOT / BUNDLE_KERNEL).read_bytes(), 0o755))
@@ -478,10 +490,15 @@ def write_staging(items, root: Path) -> Path:
 
 
 def build_fork_zip(version: str, fork: str, fork_data: dict, base: dict, dest: Path) -> dict:
-    """A fork's whole delta, plus the instructions to lay it on the base tree."""
+    """A fork's whole delta, plus the instructions to lay it on the base tree.
+
+    The archive keeps the ``forks/<name>/`` prefix: APPLY.md tells the reader to
+    copy it over the base tree, and the base tree keeps its forks in a
+    directory, so unpacking it there has to land in the same place.
+    """
     prefix = f"forks/{fork}"
     items = zip_items_from_disk(
-        [(relative[len(prefix) + 1 :], relative, 0o644) for relative in tracked([prefix])], REPO_ROOT
+        [(relative, relative, 0o644) for relative in tracked([prefix])], REPO_ROOT
     )
     apply_text = (
         f"{fork_data['title']} -- a seIDE fork ({fork_data.get('kind', 'source overlay')})\n"
@@ -489,9 +506,10 @@ def build_fork_zip(version: str, fork: str, fork_data: dict, base: dict, dest: P
         f"Base: seIDE {version}, commit {base['commit']} ({base['date']}).\n"
         f"This release: {tag_name(fork, version)}.\n"
         "\n"
-        "What this is: everything the fork changes, and nothing else.  The base\n"
-        f"tree is seide-{version}-src.zip (or `git archive` of the tag\n"
-        f"{tag_name('', version)}); copy this archive over it, then read\n"
+        "What this is: everything the fork changes, and nothing else.  It holds\n"
+        f"the same {prefix}/ directory the base tree does.  The base tree is\n"
+        f"seide-{version}-src.zip (or `git archive` of the tag\n"
+        f"{tag_name('', version)}); unpack this archive over it, then read\n"
         "docs/FORK.md for what a fork is allowed to touch and what it is not.\n"
         "\n"
         "The fork's files in the runnable bundle are laid over the bundle root,\n"
@@ -918,7 +936,7 @@ def cut_artifacts(context: dict) -> None:
 
     items = None
     if "bundle" in context["artifact_kinds"]:
-        items = bundle_items(info["version"], channel, info, fork)
+        items = bundle_items(info["version"], channel, info, fork, context["no_msi"])
         dest = dist / f"{stem}-{info['version']}-win64.zip"
         artifacts.append(write_zip(dest, items))
         print(f"[ok   ] {dest.name} ({artifacts[-1]['bytes']} bytes)")
@@ -930,7 +948,7 @@ def cut_artifacts(context: dict) -> None:
 
     if context["wants_msi"] or context["with_msi"]:
         if items is None:
-            items = bundle_items(info["version"], channel, info, fork)
+            items = bundle_items(info["version"], channel, info, fork, context["no_msi"])
         staging_parent = REPO_ROOT / "build" / "staging" / info["version"]
         try:
             staging = write_staging(items, staging_parent / "bundle")

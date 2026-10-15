@@ -11,6 +11,11 @@ What the 1.0.0 rehearsal turned up.
 
 - A fork release's notes name the fork and its delta in a sentence of their own
   instead of trailing them after the MSI clause.
+- A fork's delta archive keeps the `forks/<name>/` prefix, so unpacking it over
+  the base tree lands exactly where the base tree keeps forks.  `APPLY.md` says
+  so, which is what makes "copy this over the base tree" literally true.
+- A 1.x bundle cut with `--no-msi` says the installer is missing on purpose in
+  its own `START-HERE.txt`, not only in the notes beside it.
 
 ## v0.2.0-alpha.2 — 2026-10-15
 The build stopped contradicting itself about its own version, and the release

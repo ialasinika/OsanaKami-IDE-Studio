@@ -357,7 +357,8 @@ python tools/release.py --fork <name>              # a 1.x channel, in practice
 
 The fork then gets `<name>-v<version>` as its tag, its own release directory, a
 bundle with `files/` laid over the bundle root, and `<name>-fork.zip` -- the
-fork's whole delta plus an `APPLY.md`.  `fork.json` can set
+fork's whole delta, kept under `forks/<name>/` the way the base tree keeps it,
+plus an `APPLY.md`.  `fork.json` can set
 `"no_fork_zip": true` for a fork that only exists as an overlay.
 
 Two rules make this work.  **The overlay is `files/`**: a fork does not patch
