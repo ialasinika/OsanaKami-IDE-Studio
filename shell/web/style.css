@@ -1,4 +1,4 @@
-/* style.css -- the entire look of seIDE.
+/* style.css -- the entire look of InfantGod Studio.
  *
  * One dark surface, four accents, and a dot grid.  Nothing here is decorative
  * for its own sake: the grid makes the board read as a continuous plane (so it
@@ -714,7 +714,7 @@ body {
 #command::placeholder { color: var(--fg-faint); }
 .bar-hint { color: var(--fg-faint); font: 10.5px/1 var(--mono-font); white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
 
-/* An inline choice strip -- seIDE's replacement for a dialog. */
+/* An inline choice strip -- InfantGod Studio's replacement for a dialog. */
 .ask {
   display: flex;
   align-items: center;
@@ -913,4 +913,173 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
 .sheet-grid .sheet-empty {
   color: var(--fg-faint);
   font-style: italic;
+}
+
+/* ------------------------------------------------------------------ */
+/* the 幼神 surfaces: mod, problems, docs                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * These three read game data rather than files, so they share one layout: a
+ * one-line control strip, a headline, a scrollable list and a status line.
+ * They deliberately reuse the palette above instead of introducing a second
+ * theme, so a fork that retints the board retints them too.
+ */
+
+.card-body-mod,
+.card-body-problems,
+.card-body-docs { padding: 0; background: #1a1d22; }
+
+.mod-controls {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mod-dir,
+.problems-root,
+.docs-query {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg-deep);
+  color: var(--fg);
+  font: 11px/1.5 var(--mono-font);
+  outline: none;
+}
+.mod-dir:focus,
+.problems-root:focus,
+.docs-query:focus { border-color: var(--accent-dim); }
+
+.card-button {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--card-hi);
+  color: var(--fg-dim);
+  font: 10.5px/1.4 var(--ui-font);
+  cursor: pointer;
+}
+.card-button:hover { color: var(--fg); border-color: var(--accent-dim); }
+
+.mod-headline {
+  flex: 0 0 auto;
+  padding: 6px 8px 2px;
+  color: var(--fg);
+  font: 11.5px/1.5 var(--ui-font);
+  word-break: break-word;
+}
+
+.mod-counts {
+  flex: 0 0 auto;
+  padding: 0 8px 6px;
+  color: var(--fg-faint);
+  font: 10.5px/1.5 var(--mono-font);
+}
+
+.mod-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/*
+ * Only the Yarn list scrolls.  The manifest and the define list are short and
+ * content-sized, so they must not be shrunk by it: with `flex: 1 1 auto` on all
+ * three, the Yarn section's couple of hundred rows squeezed the other two below
+ * the height of their own headings, and "mod.json" and "Defines" painted on top
+ * of each other while both row lists disappeared.
+ */
+.mod-manifest,
+.mod-defines {
+  flex: 0 0 auto;
+}
+
+.mod-manifest .mod-rows,
+.mod-defines .mod-rows {
+  max-height: 132px;
+}
+
+.mod-yarn {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mod-section-title {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--fg-dim);
+  font: 10px/1.4 var(--ui-font);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mod-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0 6px;
+}
+
+.mod-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  width: 100%;
+  padding: 2px 8px;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font: 11px/1.6 var(--mono-font);
+  text-align: left;
+}
+button.mod-row { cursor: pointer; }
+button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
+.mod-row.is-dir { color: var(--fg); }
+.mod-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.mod-row-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+.mod-row-empty { color: var(--fg-faint); font-style: italic; }
+
+/* Severity is the one thing a problems card must communicate at a glance. */
+.mod-row.sev-error { color: var(--error); }
+.mod-row.sev-warning { color: var(--warn); }
+.mod-row.sev-info { color: var(--fg-dim); }
+
+.problems-rows .mod-row-name { flex: 0 0 auto; white-space: normal; }
+
+.docs-rows { flex: 0 1 auto; max-height: 40%; }
+
+.docs-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-top: 1px solid var(--line-soft);
+  color: var(--fg);
+  font: var(--code-size)/1.55 var(--code-font);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

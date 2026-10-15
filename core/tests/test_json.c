@@ -2,7 +2,7 @@
  * test_json.c - self-check for json.c.  Not part of the shipped kernel; it
  * exists so a fork can run `make check` after touching the protocol layer.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <string.h>

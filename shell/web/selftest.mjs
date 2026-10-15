@@ -51,15 +51,21 @@ import {
   cardKind,
   coerceSheetValue,
   describeCard,
+  diagCounts,
+  diagFile,
+  diagWhere,
   dirNameOf,
   emptySheet,
   formatAge,
   formatExit,
   formatListing,
   formatSize,
+  groupDefines,
   knownCardKinds,
   lineColumn,
   matchesFilter,
+  modHeadline,
+  modPath,
   nextSheetSelection,
   normaliseSheet,
   normaliseTokenKind,
@@ -376,7 +382,7 @@ await testAsync("rpc: an ok:false reply becomes an RpcError carrying code/name/m
   const client = createClient({ fetchImpl });
   let caught = null;
   try {
-    await client.call("file.write", { path: "a.bf", text: "x", base_revision: 7 });
+    await client.call("file.write", { path: "a.yarn", text: "x", base_revision: 7 });
   } catch (err) {
     caught = err;
   }
@@ -391,10 +397,10 @@ await testAsync("rpc: an ok:false reply becomes an RpcError carrying code/name/m
 });
 
 await testAsync("rpc: a success reply resolves to result and the request is well formed", async () => {
-  const fetchImpl = fakeFetch({ replies: [{ ok: true, result: { protocol: "seide/1" } }] });
+  const fetchImpl = fakeFetch({ replies: [{ ok: true, result: { protocol: "infantgod/1" } }] });
   const client = createClient({ origin: "http://127.0.0.1:3939", fetchImpl });
   const result = await client.call("hello", {});
-  assert.deepEqual(result, { protocol: "seide/1" });
+  assert.deepEqual(result, { protocol: "infantgod/1" });
   assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:3939/rpc");
   assert.equal(fetchImpl.calls[0].init.method, "POST");
   // A request, not a notification: the id is what makes the host answer.
@@ -415,7 +421,7 @@ await testAsync("rpc: STALE_REVISION surfaces data.current_revision to the calle
   const client = createClient({ fetchImpl });
   let caught = null;
   try {
-    await client.call("file.write", { path: "a.bf", text: "x", base_revision: 3 });
+    await client.call("file.write", { path: "a.yarn", text: "x", base_revision: 3 });
   } catch (err) {
     caught = err;
   }
@@ -558,8 +564,8 @@ await testAsync("rpc: a handler that throws does not stop the other handlers", a
 test("board: addCard/moveCard/linkCards/serialize round-trips", () => {
   let next = 1;
   const board = createBoard(undefined, { idFactory: () => `c${next++}` });
-  const a = board.addCard("editor", 40, 60, { file: "examples/hello.bf" });
-  const b = board.addCard("runner", 720, 300, { cmd: "python tools/bf.py examples/hello.bf", cwd: "." });
+  const a = board.addCard("editor", 40, 60, { file: "examples/hello.yarn" });
+  const b = board.addCard("runner", 720, 300, { cmd: "python tools/e2e.py examples/hello.yarn", cwd: "." });
   const link = board.linkCards(a.id, b.id, "runs");
 
   assert.equal(a.id, "c1");
@@ -577,7 +583,7 @@ test("board: addCard/moveCard/linkCards/serialize round-trips", () => {
   assert.equal(doc.cards.length, 2);
   assert.deepEqual(doc.links, [{ id: "l1", from: "c1", to: "c2", label: "runs" }]);
   assert.deepEqual(doc.cards[0], {
-    id: "c1", kind: "editor", x: 100, y: 120, w: 640, h: 420, z: 1, file: "examples/hello.bf",
+    id: "c1", kind: "editor", x: 100, y: 120, w: 640, h: 420, z: 1, file: "examples/hello.yarn",
   });
   // A second card re-loads from exactly what serialize() produced.
   const again = createBoard(doc);
@@ -815,10 +821,10 @@ test("files: formatListing sorts directories first and formats sizes", () => {
   const now = 1_000_000;
   const listing = {
     files: [
-      { path: "tools/bf.py", size: 2048, mtime: now - 3600, dir: false },
+      { path: "tools/e2e.py", size: 2048, mtime: now - 3600, dir: false },
       { path: "examples", size: 0, mtime: now - 10, dir: true },
       { path: "core/src/board.c", size: 500, mtime: now - 90, dir: false },
-      { path: "big.bin", size: 5 * 1024 * 1024, mtime: now - 86400 * 3, dir: false },
+      { path: "README.md", size: 5 * 1024 * 1024, mtime: now - 86400 * 3, dir: false },
       { path: "", size: 1, mtime: 0, dir: false },
       null,
     ],
@@ -829,7 +835,7 @@ test("files: formatListing sorts directories first and formats sizes", () => {
   assert.equal(count, 5);
   assert.equal(truncated, true);
   assert.deepEqual(rows.map((row) => row.path), [
-    "examples", "big.bin", "core/src/board.c", "tools/bf.py",
+    "examples", "README.md", "core/src/board.c", "tools/e2e.py",
   ]);
   assert.equal(rows[0].dir, true);
   assert.equal(rows[0].name, "examples");
@@ -855,10 +861,10 @@ test("files: size and age formatting stay readable", () => {
 });
 
 test("files: the filter box understands globs and substrings", () => {
-  assert.equal(matchesFilter("examples/hello.bf", "**/*"), true);
-  assert.equal(matchesFilter("examples/hello.bf", "**/*.bf"), true);
-  assert.equal(matchesFilter("examples/sub/a.bf", "**/*.bf"), true);
-  assert.equal(matchesFilter("core/src/board.c", "**/*.bf"), false);
+  assert.equal(matchesFilter("examples/hello.yarn", "**/*"), true);
+  assert.equal(matchesFilter("examples/hello.yarn", "**/*.yarn"), true);
+  assert.equal(matchesFilter("examples/sub/a.yarn", "**/*.yarn"), true);
+  assert.equal(matchesFilter("core/src/board.c", "**/*.yarn"), false);
   assert.equal(matchesFilter("core/src/board.c", "board"), true);
   assert.equal(matchesFilter("core/src/board.c", "src/*.c"), false);
   assert.equal(matchesFilter("core/src/board.c", "core/src/*.c"), true);
@@ -876,7 +882,7 @@ test("files: the filter box understands globs and substrings", () => {
  * never handed over at all.
  *
  * The fixture is what `workspace.list` really returns: the kernel skips
- * `.git`, `.seide`, `build`, `node_modules` and friends *while walking*
+ * `.git`, `.infantgod`, `build`, `node_modules` and friends *while walking*
  * (`IGNORED_DIRS` in `core/src/wksp.c`), so no listing carries them and the
  * panel has nothing to filter. `workspace.info.ignored` names them instead.
  */
@@ -885,7 +891,7 @@ const PROJECT_LISTING = {
     { path: "core/src/board.c", size: 500, mtime: 900_000, dir: false },
     { path: "core/src/rpc.c", size: 400, mtime: 900_000, dir: false },
     { path: "README.md", size: 100, mtime: 900_000, dir: false },
-    { path: "examples/hello.bf", size: 820, mtime: 900_000, dir: false },
+    { path: "examples/hello.yarn", size: 807, mtime: 900_000, dir: false },
     { path: "core", size: 0, mtime: 900_000, dir: true },
   ],
   count: 5,
@@ -899,7 +905,7 @@ test("project: the project is the files of the workspace, grouped", () => {
   assert.deepEqual(view.groups.map((group) => group.label), ["(root)", "core/src/", "examples/"]);
   assert.deepEqual(view.groups[0].rows.map((row) => row.name), ["README.md"]);
   assert.deepEqual(view.groups[1].rows.map((row) => row.name), ["board.c", "rpc.c"]);
-  assert.deepEqual(view.groups[2].rows.map((row) => row.name), ["hello.bf"]);
+  assert.deepEqual(view.groups[2].rows.map((row) => row.name), ["hello.yarn"]);
   assert.equal(view.groups[1].rows[0].folder, "core/src");
   assert.equal(view.groups[1].rows[0].sizeText, "500B");
 
@@ -919,7 +925,7 @@ test("project: the panel shows what it is given, it does not re-filter it", () =
   const withGenerated = {
     files: [
       { path: "core/src/rpc.c", size: 400, mtime: 900_000, dir: false },
-      { path: "build/seide.exe", size: 999, mtime: 900_000, dir: false },
+      { path: "build/infantgod.exe", size: 999, mtime: 900_000, dir: false },
       { path: "node_modules/dep/index.js", size: 1, mtime: 900_000, dir: false },
     ],
     truncated: false,
@@ -939,7 +945,7 @@ test("project: an open editor is marked, and a file that left the disk is named"
     open: [
       { id: "c2", path: "core/src/rpc.c", dirty: true },
       { id: "c5", path: "gone/away.c", dirty: false },
-      { id: "c1", path: "examples/hello.bf", dirty: false },
+      { id: "c1", path: "examples/hello.yarn", dirty: false },
     ],
   });
   const byPath = new Map(view.groups.flatMap((group) => group.rows).map((row) => [row.path, row]));
@@ -950,7 +956,7 @@ test("project: an open editor is marked, and a file that left the disk is named"
 
   // The open list is the board's answer to "what am I editing", file order.
   assert.deepEqual(view.openRows.map((row) => row.path), [
-    "core/src/rpc.c", "examples/hello.bf", "gone/away.c",
+    "core/src/rpc.c", "examples/hello.yarn", "gone/away.c",
   ]);
   assert.deepEqual(view.openRows.map((row) => row.present), [true, true, false]);
   assert.deepEqual(view.missingRows.map((row) => row.path), ["gone/away.c"]);
@@ -979,7 +985,7 @@ test("project: a missing file is only a fact when the listing is complete", () =
 test("project: the filter narrows the tree and never the open list", () => {
   const view = projectRows(PROJECT_LISTING, {
     filter: "**/*.c",
-    open: [{ id: "c1", path: "examples/hello.bf" }],
+    open: [{ id: "c1", path: "examples/hello.yarn" }],
   });
   assert.deepEqual(view.groups.map((group) => group.label), ["core/src/"]);
   assert.equal(view.counts.files, 4, "the whole project is still counted");
@@ -1046,8 +1052,8 @@ test("runner: exit codes read as words, not numbers", () => {
 });
 
 test("command line: quoting, zoom words and card descriptions", () => {
-  assert.deepEqual(parseCommandLine("open examples/hello.bf"), ["open", "examples/hello.bf"]);
-  assert.deepEqual(parseCommandLine('  run  "python tools/bf.py" "a b.bf" '), ["run", "python tools/bf.py", "a b.bf"]);
+  assert.deepEqual(parseCommandLine("open examples/hello.yarn"), ["open", "examples/hello.yarn"]);
+  assert.deepEqual(parseCommandLine('  run  "python tools/e2e.py" "a b.yarn" '), ["run", "python tools/e2e.py", "a b.yarn"]);
   assert.deepEqual(parseCommandLine('link c1 c2 "runs the file"'), ["link", "c1", "c2", "runs the file"]);
   assert.deepEqual(parseCommandLine("note hello world"), ["note", "hello", "world"]);
   assert.deepEqual(parseCommandLine("   "), []);
@@ -1061,7 +1067,7 @@ test("command line: quoting, zoom words and card descriptions", () => {
   assert.equal(parseZoomArgument("banana"), null);
   assert.equal(parseZoomArgument(""), null);
 
-  assert.equal(describeCard({ kind: "editor", file: "a.bf" }), "editor a.bf");
+  assert.equal(describeCard({ kind: "editor", file: "a.yarn" }), "editor a.yarn");
   assert.equal(describeCard({ kind: "runner", cmd: "ls" }), "runner ls");
   assert.equal(describeCard({ kind: "files" }), "files **/*");
   assert.equal(describeCard(null), "no card selected");
@@ -1126,10 +1132,10 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
       };
       switch (parsed.method) {
         case "hello":
-          reply({ ok: true, result: { protocol: "seide/1", kernel_version: "0.1.0", root: "C:/codes/seIDE", pid: 4242 } });
+          reply({ ok: true, result: { protocol: "infantgod/1", kernel_version: "0.1.0", root: "C:/codes/InfantGod Studio", pid: 4242 } });
           return;
         case "board.load":
-          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, document: board } });
+          reply({ ok: true, result: { path: ".infantgod/board.json", revision: boardRevision, document: board } });
           return;
         case "board.save":
           if (parsed.params.base_revision !== boardRevision) {
@@ -1143,10 +1149,12 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
             return;
           }
           boardRevision += 1;
-          reply({ ok: true, result: { path: ".seide/board.json", revision: boardRevision, saved: true } });
+          reply({ ok: true, result: { path: ".infantgod/board.json", revision: boardRevision, saved: true } });
           return;
         case "file.read":
-          reply({ ok: true, result: { path: parsed.params.path, text: "++ [>+<]\n", revision: fileRevision, size: 9, eol: "lf" } });
+          // The real first line of `examples/hello.yarn` -- the text the token
+          // spans below are the shipped descriptor's answer for.
+          reply({ ok: true, result: { path: parsed.params.path, text: "title: Live_Node\n", revision: fileRevision, size: 17, eol: "lf" } });
           return;
         case "file.write":
           if (parsed.params.base_revision !== fileRevision) {
@@ -1163,7 +1171,9 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
           reply({ ok: true, result: { path: parsed.params.path, revision: fileRevision, size: parsed.params.text.length, eol: "lf" } });
           return;
         case "lang.tokenize":
-          reply({ ok: true, result: { lang: { id: "bf", title: "Brainfuck" }, tokens: [[0, 2, "command"], [3, 8, "command"]] } });
+          // The spans `langs/yarn.lang` really produces for `title: Live_Node\n`:
+          // the keyword, the `:` command, the space, the identifier, the newline.
+          reply({ ok: true, result: { lang: { id: "yarn", title: "Yarn" }, tokens: [[0, 5, "keyword"], [5, 6, "command"], [6, 7, "ws"], [7, 16, "ident"], [16, 17, "ws"]] } });
           return;
         default:
           reply({ ok: false, error: { code: 404, name: "NO_METHOD", message: `no method ${parsed.method}` } });
@@ -1193,7 +1203,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
     assert.equal(client.connected, true);
 
     const hello = await client.call("hello", {});
-    assert.equal(hello.protocol, "seide/1");
+    assert.equal(hello.protocol, "infantgod/1");
     assert.equal(hello.pid, 4242);
 
     const loaded = await client.call("board.load", {});
@@ -1215,7 +1225,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
     assert.equal(staleCurrentRevision(stale), 4);
     assert.ok(client.isStaleRevision(stale));
 
-    const read = await client.call("file.read", { path: "examples/hello.bf" });
+    const read = await client.call("file.read", { path: "examples/hello.yarn" });
     assert.equal(read.revision, 11);
     const written = await client.call("file.write", {
       path: read.path, text: read.text, base_revision: read.revision,
@@ -1227,10 +1237,14 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
     assert.equal(staleCurrentRevision(staleWrite), 12, "the second writer sees the live revision");
 
     const tokenized = await client.call("lang.tokenize", { path: read.path, text: read.text });
-    assert.equal(tokenized.lang.id, "bf");
+    assert.equal(tokenized.lang.id, "yarn");
     const segments = applyTokenSpans(read.text, tokenized.tokens);
     assert.equal(segmentsText(read.text, tokenized.tokens), read.text);
-    assert.equal(segments[0].kind, "command");
+    // The whole pipeline over the wire: a Yarn header key is the first span, and
+    // the `:` command and the identifier that follow are not swallowed by it.
+    assert.deepEqual(segments.map((seg) => seg.kind), ["keyword", "command", "plain", "plain", "plain"]);
+    assert.deepEqual(segments.map((seg) => read.text.slice(seg.start, seg.end)),
+      ["title", ":", " ", "Live_Node", "\n"]);
 
     const unknown = await client.call("nope", {}).then(() => null, (err) => err);
     assert.equal(unknown.errorName, "NO_METHOD");
@@ -1260,8 +1274,11 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 /* the card-kind hook                                                  */
 /* ------------------------------------------------------------------ */
 
-test("hook: the six built-in kinds register in a known order", () => {
-  assert.deepEqual(knownCardKinds(), ["editor", "runner", "note", "files", "project", "sheet"]);
+test("hook: the built-in kinds register in a known order", () => {
+  assert.deepEqual(knownCardKinds(), [
+    "editor", "runner", "note", "files", "project", "sheet",
+    "mod", "problems", "docs",
+  ]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
     assert.equal(spec.kind, kind);
@@ -1719,6 +1736,67 @@ test("main: every save outcome is reported, and a failure never reads as a succe
     assert.doesNotMatch(line.text, /board saved/, `${status} must not claim a save`);
   }
   assert.equal(saveOutcomeMessage({ status: "saved-ish" }), null, "an unknown status claims nothing");
+});
+
+/* ------------------------------------------------------------------ */
+/* the 幼神 cards' pure helpers                                          */
+/* ------------------------------------------------------------------ */
+
+test("mods: severity is counted by kind, and an unknown one counts as info", () => {
+  const counts = diagCounts([
+    { severity: "error" }, { severity: "error" },
+    { severity: "warning" },
+    { severity: "info" }, { severity: "info" }, { severity: "info" },
+    { severity: "weird" },
+    {},
+  ]);
+  assert.deepEqual(counts, { error: 2, warning: 1, info: 5 });
+  assert.deepEqual(diagCounts(null), { error: 0, warning: 0, info: 0 });
+  assert.deepEqual(diagCounts([]), { error: 0, warning: 0, info: 0 });
+});
+
+test("mods: defines group by type with both levels sorted", () => {
+  const grouped = groupDefines([
+    { type: "Topic", techName: "B" },
+    { type: "Attr", techName: "Z" },
+    { type: "Topic", techName: "A" },
+    { type: "Topic", techName: "C" },
+  ]);
+  assert.deepEqual(grouped.map((g) => g.type), ["Attr", "Topic"]);
+  assert.deepEqual(grouped[0].items.map((d) => d.techName), ["Z"]);
+  assert.deepEqual(grouped[1].items.map((d) => d.techName), ["A", "B", "C"]);
+  /* A define with no type must still be shown, not dropped. */
+  assert.deepEqual(groupDefines([{ techName: "X" }]).map((g) => g.type), ["(unknown)"]);
+  assert.deepEqual(groupDefines(undefined), []);
+});
+
+test("mods: the headline names the package and its load order", () => {
+  assert.equal(
+    modHeadline({ manifest: { name: "MyMod", version: "1.0.0", loadOrder: 0, gameVersion: "1.0" } }),
+    "MyMod 1.0.0 — loadOrder 0 · gameVersion 1.0");
+  assert.equal(modHeadline(null), "no mod opened");
+  assert.equal(modHeadline({}), "(unnamed) ? — loadOrder ? · gameVersion ?");
+});
+
+test("mods: mod-relative paths are joined, absolute ones are left alone", () => {
+  assert.equal(modPath("Mods/MyMod", "Defines/Attr/A.json"), "Mods/MyMod/Defines/Attr/A.json");
+  assert.equal(modPath("Mods/MyMod/", "x.json"), "Mods/MyMod/x.json");
+  assert.equal(modPath("Mods\\MyMod", "x.json"), "Mods/MyMod/x.json", "a Windows root still joins with /");
+  assert.equal(modPath("Mods/MyMod", "/abs/x.json"), "/abs/x.json");
+  assert.equal(modPath("Mods/MyMod", "C:/abs/x.json"), "C:/abs/x.json");
+  assert.equal(modPath("", "x.json"), "x.json");
+  assert.equal(modPath("Mods/MyMod", ""), "");
+});
+
+test("mods: a diagnostic splits into a file and a JSON pointer", () => {
+  const diagnostic = { path: "Defines/Goods/Folk.json#/icon", severity: "error" };
+  assert.equal(diagFile(diagnostic), "Defines/Goods/Folk.json");
+  assert.equal(diagWhere(diagnostic), "/icon");
+  /* A package-level diagnostic has no pointer: the whole path is the file. */
+  assert.equal(diagFile({ path: "mod.json" }), "mod.json");
+  assert.equal(diagWhere({ path: "mod.json" }), "");
+  assert.equal(diagFile({}), "");
+  assert.equal(diagWhere(null), "");
 });
 
 /* ------------------------------------------------------------------ */

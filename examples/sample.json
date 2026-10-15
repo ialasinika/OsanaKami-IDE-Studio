@@ -1,0 +1,15 @@
+{
+  "title": "幼神 · 直播节点",
+  "version": 1,
+  "enabled": true,
+  "fallback": null,
+  "cast": ["Aistalt", "Echo", "Nagi"],
+  "node": {
+    "id": "Live_Node",
+    "when": "always",
+    "tags": ["hub", "reach"],
+    "weight": 1.5,
+    "repeatable": false,
+    "next": null
+  }
+}

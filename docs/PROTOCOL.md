@@ -1,9 +1,9 @@
 # Protocol
 
-The wire contract between a client and seIDE. There are two endpoints and one
+The wire contract between a client and InfantGod Studio. There are two endpoints and one
 frame format; this document is the frozen reference for both.
 
-- **Kernel endpoint** — `build/seide.exe rpc`. Answers the eleven methods in the
+- **Kernel endpoint** — `build/infantgod.exe rpc`. Answers the eleven methods in the
   table below. Knows nothing about languages.
 - **Shell endpoint** — `node shell/main.mjs rpc` (stdio) or
   `node shell/main.mjs serve` (HTTP + SSE). Forwards every kernel method, adds
@@ -36,7 +36,7 @@ the reader permanently.
 ### Request
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"file.read","params":{"path":"examples/hello.bf"}}
+{"jsonrpc":"2.0","id":1,"method":"file.read","params":{"path":"examples/hello.yarn"}}
 ```
 
 - `jsonrpc` is `"2.0"`.
@@ -49,7 +49,7 @@ the reader permanently.
 ### Response
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"path":"examples/hello.bf","text":"...","revision":123456789,"eol":"lf","size":1234,"mtime":1700000000}}
+{"jsonrpc":"2.0","id":1,"result":{"path":"examples/hello.yarn","text":"...","revision":123456789,"eol":"lf","size":1234,"mtime":1700000000}}
 ```
 
 Exactly one of `result` or `error` is present. When a handler produced no
@@ -103,7 +103,7 @@ or mis-typing them produces `-32602 INVALID_PARAMS`.
 ### `hello`
 
 ```json
-{"protocol":1,"protocol_name":"seide/1","kernel_version":"0.1.0","root":"C:/codes/seIDE","pid":12345}
+{"protocol":1,"protocol_name":"infantgod/1","kernel_version":"0.1.0","root":"C:/codes/InfantGod Studio","pid":12345}
 ```
 
 `protocol` is the integer a client can compare; `protocol_name` is the same
@@ -112,7 +112,7 @@ version spelled out for a human reading a log line.
 ### `workspace.info`
 
 ```json
-{"root":"C:/codes/seIDE","name":"seIDE","file_count":42,"board_path":"C:/codes/seIDE/.seide/board.json","board_revision":3901234567,"ignored":[".git",".seide",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
+{"root":"C:/codes/InfantGod Studio","name":"InfantGod Studio","file_count":42,"board_path":"C:/codes/InfantGod Studio/.infantgod/board.json","board_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
 ```
 
 `name` is the last path segment of `root`. `board_path` is the absolute path of
@@ -125,7 +125,7 @@ here means the list is never written down twice.
 **The shell adds one more member to this result:**
 
 ```json
-{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]}
+{"langs":[{"id":"yarn","title":"Yarn","extensions":[".yarn",".yarnproject"]}]}
 ```
 
 The kernel is language-agnostic, so the language inventory is added by the layer
@@ -159,12 +159,12 @@ Result:
 `size: 0`. A `.mtime` member is documented on the header and returned by
 `file.read`; `workspace.list` items carry `path`, `dir` and `size` only.
 
-The walk skips `.git`, `.seide`, `.hg`, `.svn`, `node_modules`, `__pycache__`,
+The walk skips `.git`, `.infantgod`, `.hg`, `.svn`, `node_modules`, `__pycache__`,
 `.vscode`, `.idea`, `.cache`, `dist`, `build`, `target` and `obj`, caps
 directory depth at 24, and **skips an unreadable directory rather than
 failing**. Glob rules: `*` matches within one segment, `?` matches one
 non-separator character, `**` matches across separators (and matches zero
-directories, so `**/*.bf` finds a file at the top level). Comparison is
+directories, so `**/*.yarn` finds a file at the top level). Comparison is
 case-folded because Windows paths are case-insensitive: a glob that behaved
 differently from the filesystem underneath it would be a bug generator.
 
@@ -173,7 +173,7 @@ differently from the filesystem underneath it would be a bug generator.
 Required parameter: `path` (non-empty string, relative to the workspace root).
 
 ```json
-{"path":"examples/hello.bf","text":"...","revision":123456789,"eol":"lf","size":1234,"mtime":1700000000}
+{"path":"examples/hello.yarn","text":"...","revision":123456789,"eol":"lf","size":1234,"mtime":1700000000}
 ```
 
 `revision` is a 32-bit FNV-1a hash of the file's bytes, carried as a number;
@@ -191,7 +191,7 @@ client's own arrangement, minus the defaults the validator filled in.
 **The shell adds one more member to this result:**
 
 ```json
-{"path":"examples/hello.bf","text":"...","revision":1873099737,"eol":"lf","size":820,"mtime":1700000000,"lang":"brainfuck"}
+{"path":"examples/hello.yarn","text":"...","revision":1873099737,"eol":"lf","size":807,"mtime":1700000000,"lang":"yarn"}
 ```
 
 `lang` is the language the shell detected from the path, or `null` when nothing
@@ -220,7 +220,7 @@ rejects `absolute paths are not allowed: <path>` and
 | `text` | string, required | the whole new contents; send `""` to empty the file. A non-string is `INVALID_PARAMS` with `` `text` must be a string ``, and omitting it is `INVALID_PARAMS` too |
 | `base_revision` | number, optional | the revision the client read; omit for last-writer-wins |
 
-Result: `{"path":"examples/hello.bf","revision":987654321,"eol":"lf","size":1240}`.
+Result: `{"path":"examples/hello.yarn","revision":987654321,"eol":"lf","size":1240}`.
 
 With a `base_revision` that no longer matches the file on disk, the write is
 refused with:
@@ -232,13 +232,13 @@ refused with:
 On success the kernel emits a notification **before** the response is written:
 
 ```json
-{"event":"file.changed","path":"examples/hello.bf","revision":987654321}
+{"event":"file.changed","path":"examples/hello.yarn","revision":987654321}
 ```
 
 ### `board.load`
 
 ```json
-{"path":"C:/codes/seIDE/.seide/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
+{"path":"C:/codes/InfantGod Studio/.infantgod/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
 ```
 
 `document` is a clone, so a client may keep and mutate it freely.
@@ -305,7 +305,7 @@ Parameter: `run_id` (number; a non-number is `-32602` with
 ### `exec.list`
 
 ```json
-{"runs":[{"run_id":1,"card_id":"c3","cmd":"python tools/bf.py examples/hello.bf","running":false,"code":0,"started":1700000000000}]}
+{"runs":[{"run_id":1,"card_id":"c3","cmd":"build/infantgod.exe version","running":false,"code":0,"started":1700000000000}]}
 ```
 
 `code` is `-1` while the run is alive or was killed. `started` is
@@ -403,12 +403,13 @@ The grammar is frozen and documented in `langs/README.md`. A descriptor is a
 plain text file, one `key value` per line:
 
 ```
-# seIDE language descriptor
-id brainfuck
-title Brainfuck
-ext .bf
-line_comment #
-kind command "+" "-" "<" ">" "[" "]" "." ","
+# InfantGod Studio language descriptor
+id json
+title JSON
+ext .json
+string "\""
+kind keyword "true" "false" "null"
+kind command "{" "}" "[" "]" ":" ","
 ```
 
 Rules:
@@ -438,15 +439,26 @@ Scaffold a new one:
 python tools/newlang.py --id mylang --ext .ml --keywords "if,else,while"
 ```
 
-### Verbatim: `langs/brainfuck.lang`
+### Verbatim: `langs/yarn.lang`
+
+The shipped descriptor, with only its long explanatory comment block elided:
 
 ```
-# seIDE language descriptor
-id brainfuck
-title Brainfuck
-ext .bf
-line_comment #
-kind command "+" "-" "<" ">" "[" "]" "." ","
+# InfantGod Studio language descriptor
+# Yarn Spinner dialogue -- the format 《幼神》 is written in.
+id yarn
+title Yarn
+ext .yarn
+ext .yarnproject
+line_comment //
+block_comment_open /*
+block_comment_close */
+string "\""
+kind keyword "title" "when" "tags" "subtitle" "tracking" "position"
+kind keyword "if" "elseif" "else" "endif" "set" "declare" "jump" "detour" "return" "stop" "once" "endonce" "wait"
+kind keyword "true" "false" "null"
+kind command "<<" ">>" "---" "===" "->" "#" "$" ":" "," "(" ")" "[" "]" "{" "}" "|"
+kind command "<" ">"
 ```
 
 ---
@@ -461,7 +473,7 @@ kernel endpoint directly will get `METHOD_NOT_FOUND` for both.
 Parameters: none.
 
 ```json
-{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]}
+{"langs":[{"id":"yarn","title":"Yarn","extensions":[".yarn",".yarnproject"]}]}
 ```
 
 When `langs/` has been deleted, the shell's fallback answers `{"langs":[]}`.
@@ -475,10 +487,13 @@ When `langs/` has been deleted, the shell's fallback answers `{"langs":[]}`.
 | `lang` | string, optional | an explicit language id; it wins over `path` |
 
 ```json
-{"tokens":[[0,2,"command"],[2,3,"punct"],[3,4,"command"]],"lang":"brainfuck"}
+{"tokens":[[0,2,"command"],[2,3,"ws"],[9,10,"ident"]],"lang":"yarn"}
 ```
 
-`tokens` is an array of `[start, end, kind]` triples over **byte offsets**.
+`tokens` is an array of `[start, end, kind]` triples over **JS string indices**
+(UTF-16 code units of the JSON string that was sent), not UTF-8 byte offsets.
+For ASCII the two are identical; for a Chinese line — every 《幼神》 script — they
+are not, and the shell's editor consumes the indices directly.
 `lang` is the resolved language id, or `null` when nothing matched.
 
 Guarantees:

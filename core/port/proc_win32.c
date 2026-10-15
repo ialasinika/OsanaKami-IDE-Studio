@@ -12,7 +12,7 @@
  * kernel polls that queue from its single main loop, so no part of the IDE
  * outside this file has to know about threads, handles or blocking reads.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #if defined(SDE_PLATFORM_WIN32)
 

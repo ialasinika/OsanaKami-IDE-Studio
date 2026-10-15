@@ -6,7 +6,7 @@
  * table in `module.h` honest: a fork deletes a handler, deletes its line in
  * `sde_methods[]`, and the protocol shrinks cleanly.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>

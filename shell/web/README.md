@@ -1,4 +1,4 @@
-# `shell/web/` — the seIDE board UI
+# `shell/web/` — the InfantGod Studio board UI
 
 This directory is the entire front end. It is served straight off disk by
 `node shell/main.mjs serve` on `http://127.0.0.1:<port>/`, with no build step
@@ -23,7 +23,7 @@ pannable, zoomable 2-D space, and everything you work on is a **card** placed at
 a point in it. Opening a file does not add a tab; it puts a card somewhere on
 the plane. Closing a card does not lose the file; it removes a rectangle.
 
-The layout *is* project data. It lives in `.seide/board.json` next to your
+The layout *is* project data. It lives in `.infantgod/board.json` next to your
 sources, so the IDE remembers a spatial arrangement — what you had open, where
 you put it, what was linked to what — rather than a tab history. Two people on
 the same repository open the same board.
@@ -31,7 +31,7 @@ the same repository open the same board.
 The command line at the bottom is the only place commands live. It is not a
 modal palette and not a fuzzy finder popup: it stays where it is, it acts on the
 currently focused card, and every message it has for you is appended to the log
-line above it. **seIDE has no dialogs**, so nothing ever covers the board.
+line above it. **InfantGod Studio has no dialogs**, so nothing ever covers the board.
 
 ### Card kinds (registered, not hard-coded)
 
@@ -101,7 +101,7 @@ unlink <linkId>          remove a connection
 zoom <n> | in | out | reset
 focus <id>               select and centre a card
 delete <id>              remove a card
-save [force]             write .seide/board.json
+save [force]             write .infantgod/board.json
 help                     list the commands
 clear                    empty the log
 ```
@@ -141,7 +141,7 @@ that arrives after you typed again is discarded.
 
 The revision returned by `file.read` is remembered and sent back as
 `base_revision` on every write. If another writer got there first the kernel
-answers `STALE_REVISION`, and seIDE does **not** silently overwrite:
+answers `STALE_REVISION`, and InfantGod Studio does **not** silently overwrite:
 
 * the card's status line says the file changed on disk, and
 * a row of buttons appears above the command line — *reload from disk*,

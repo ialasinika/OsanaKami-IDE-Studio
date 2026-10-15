@@ -1,19 +1,19 @@
 /*
  * module.h - the trim manifest.
  *
- * seIDE is meant to be forked, and the first thing a fork does is decide what
+ * InfantGod Studio is meant to be forked, and the first thing a fork does is decide what
  * *not* to keep.  That decision should be answerable in one screen, so the
  * kernel keeps an explicit table of its own source modules: what each one
  * does, and what disappears with it.
  *
  * The table is documentation with a runtime home, not a plugin registry.
  * Nothing is loaded dynamically and no module is discovered at runtime; the
- * table exists so `seide modules` can print the truth, and so that a fork's
+ * table exists so `infantgod modules` can print the truth, and so that a fork's
  * first diff is obviously "delete a line here, a line in Makefile, a line in
  * rpc.c, and the file itself".
  */
-#ifndef SEIDE_MODULE_H
-#define SEIDE_MODULE_H
+#ifndef INFANTGOD_MODULE_H
+#define INFANTGOD_MODULE_H
 
 #include <stddef.h>
 
@@ -27,4 +27,4 @@ typedef struct sde_module {
 /* Returns the table and, through `count`, how many entries it has. */
 const sde_module *sde_modules(size_t *count);
 
-#endif /* SEIDE_MODULE_H */
+#endif /* INFANTGOD_MODULE_H */

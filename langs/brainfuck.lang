@@ -1,6 +1,0 @@
-# seIDE language descriptor
-id brainfuck
-title Brainfuck
-ext .bf
-line_comment #
-kind command "+" "-" "<" ">" "[" "]" "." ","

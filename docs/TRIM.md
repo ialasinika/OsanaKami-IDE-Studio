@@ -1,13 +1,13 @@
 # Trimming the kernel
 
-seIDE is built to be cut down. Every subsystem in `core/` is a whole module with
+InfantGod Studio is built to be cut down. Every subsystem in `core/` is a whole module with
 a stated cost of removal, and the seed of that list is compiled into the binary —
-`seide modules` prints it.
+`infantgod modules` prints it.
 
 Run it yourself:
 
 ```sh
-build/seide.exe modules
+build/infantgod.exe modules
 ```
 
 This document explains the removal procedure, shows the exact output, and states
@@ -19,7 +19,7 @@ what a trimmed kernel still does.
 
 `core/src/main.c`'s header comment names the complete set:
 
-> `seide modules` prints the trim manifest below. That table, plus the SRC list
+> `infantgod modules` prints the trim manifest below. That table, plus the SRC list
 > in the Makefile and the method table in rpc.c, is the complete list of places a
 > fork touches to remove a subsystem.
 
@@ -76,7 +76,7 @@ For `exec` that is the `#if SDE_WITH_EXEC` block and its three table rows:
 
 There is a cheaper alternative to edit 4, and it is the one the code already
 supports: instead of deleting the methods, flip the switch in
-`core/include/seide_cfg.h`.
+`core/include/infantgod_cfg.h`.
 
 ```c
 /* Compile-time switches a fork flips to cut whole subsystems out. */
@@ -116,10 +116,10 @@ grep -rn "sde_exec" core/
 
 ## The trim manifest, verbatim
 
-`seide modules` on this build prints exactly this:
+`infantgod modules` on this build prints exactly this:
 
 ```text
-seIDE kernel 0.1.0 -- 10 source modules
+InfantGod Studio kernel 0.1.0 -- 10 source modules
 To drop one: delete its line in the Makefile SRC list, its file
 under core/, and any method in rpc.c that calls it.
 
@@ -216,7 +216,7 @@ entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
 - Protocol loses `board.load`, `board.save`, `board.newId`, the `board.changed`
   notification, and the `board_path` / `board_revision` members of
   `workspace.info`.
-- `.seide/board.json` is no longer written or read.
+- `.infantgod/board.json` is no longer written or read.
 - **Verification note:** `tools/e2e.py` drives `board.save` against the workspace
   it is pointed at. It snapshots whatever board was already there and restores it
   when the check finishes, so a normal run leaves your layout in place — but the
@@ -225,7 +225,7 @@ entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
   looks.
 - **Survives:** files, processes, the protocol.
 - **What is lost is the paradigm itself:** the layout stops existing between
-  runs. Everything else still works; the reason to use seIDE does not.
+  runs. Everything else still works; the reason to use InfantGod Studio does not.
 - **Shell must change too:** yes and heavily — `board.mjs` and `main.mjs` both
   assume `board.load` / `board.save` exist.
 
@@ -248,11 +248,11 @@ plus their four table rows in `rpc.c`.
 
 Delete `core/src/serve.c`, `core/include/serve.h`, its `SRC` line, its table
 entry, and the `rpc` subcommand in `main.c`. The kernel then has no transport:
-`seide rpc` does not exist, and the process has no way to receive a frame.
+`infantgod rpc` does not exist, and the process has no way to receive a frame.
 
 - **Survives:** everything the kernel *can* do, as a linkable library. Nothing
   outside the process can reach it.
-- **Shell must change too:** yes — `shell/main.mjs` spawns `build/seide.exe rpc`
+- **Shell must change too:** yes — `shell/main.mjs` spawns `build/infantgod.exe rpc`
   and there is no such mode.
 
 ### Cutting the required modules

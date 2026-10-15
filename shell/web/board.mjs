@@ -1,7 +1,7 @@
 /**
  * board.mjs -- the board document and the operations the canvas performs.
  *
- * DELETE THIS FILE and seIDE stops being seIDE: it holds the only definition of
+ * DELETE THIS FILE and InfantGod Studio stops being InfantGod Studio: it holds the only definition of
  * what a board *is* (cards, links, viewport) and the only place the layout is
  * assembled before `board.save`.  Without it there is nothing to render.
  *
@@ -30,7 +30,10 @@
  * list at runtime is `knownCardKinds()` in cards.mjs, which is what the
  * built-in renderers register themselves into.
  */
-export const CARD_KINDS = ["editor", "runner", "note", "files", "project", "sheet"];
+export const CARD_KINDS = [
+  "editor", "runner", "note", "files", "project", "sheet",
+  "mod", "problems", "docs",
+];
 
 export const BOARD_VERSION = 1;
 
@@ -42,6 +45,9 @@ export const DEFAULT_SIZE = {
   files: { w: 300, h: 520 },
   sheet: { w: 460, h: 320 },
   project: { w: 340, h: 580 },
+  mod: { w: 420, h: 520 },
+  problems: { w: 520, h: 420 },
+  docs: { w: 460, h: 520 },
 };
 
 /** Cards never get smaller than this; a zero-size card is unclickable. */

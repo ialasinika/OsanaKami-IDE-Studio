@@ -1,6 +1,6 @@
 # Architecture
 
-seIDE is three layers in three languages, connected by one frozen protocol.
+InfantGod Studio is three layers in three languages, connected by one frozen protocol.
 This document describes what each layer is, how the processes are arranged, and
 why the kernel deliberately knows nothing about programming languages.
 
@@ -12,7 +12,7 @@ why the kernel deliberately knows nothing about programming languages.
 | --- | --- | --- | --- |
 | kernel | `core/` | C89 | files, board persistence, child processes, the JSON-RPC method table |
 | shell | `shell/`, `langs/` | JavaScript ESM | the endpoints, the board UI, language colouring |
-| tools | `tools/` | Python 3.12 | build driver, protocol driver, Brainfuck interpreter, descriptor generator |
+| tools | `tools/` | Python 3.12 | build driver, protocol driver, language-descriptor generator |
 
 The languages are not an accident and not a fashion statement:
 
@@ -34,8 +34,8 @@ Zero dependencies across all three. The shell has no `package.json` and no
 ```
                  +-----------------------------+
    browser  <--> |  shell/main.mjs             |
-   (Edge/       |  `seide rpc`  or            |
-    Chromium    |  `seide serve`              |
+   (Edge/       |  `infantgod rpc`  or            |
+    Chromium    |  `infantgod serve`              |
     --app=)     |    - HTTP static + /rpc     |
                  |    - SSE /events            |
                  |    - lang.list              |
@@ -47,7 +47,7 @@ Zero dependencies across all three. The shell has no `package.json` and no
                        over stdin / stdout
                                 |
                  +--------------v--------------+
-                 |  build/seide.exe rpc        |
+                 |  build/infantgod.exe rpc        |
                  |    - workspace.* file.*     |
                  |    - board.*                |
                  |    - exec.*                 |
@@ -56,7 +56,7 @@ Zero dependencies across all three. The shell has no `package.json` and no
 ```
 
 The shell **spawns the kernel** and owns its lifetime. `shell/main.mjs` locates
-the binary at `build/seide.exe` on Windows or `build/seide` elsewhere
+the binary at `build/infantgod.exe` on Windows or `build/infantgod` elsewhere
 (`DEFAULT_KERNEL`), writes one JSON frame per line to its stdin, and reads lines
 from its stdout.
 
@@ -106,7 +106,7 @@ Requests are answered with a response carrying the same `id`. A frame with no
 
 ## Module inventory (the trim manifest)
 
-`seide modules` prints the same table that lives in `sde_module_table[]` at the
+`infantgod modules` prints the same table that lives in `sde_module_table[]` at the
 top of `core/src/main.c`. It is the authoritative list of what the kernel is
 made of and what deleting each piece costs. `optional` means the kernel still
 builds and runs without it.
@@ -126,7 +126,7 @@ builds and runs without it.
 
 Ten modules. Six required (`buf`, `vec`, `json`, `port`, `rpc`, `app`), four
 optional (`wksp`, `board`, `exec`, `serve`). Beyond the module table there are
-two compile-time switches in `core/include/seide_cfg.h`:
+two compile-time switches in `core/include/infantgod_cfg.h`:
 
 ```c
 /* Compile-time switches a fork flips to cut whole subsystems out. */
@@ -159,7 +159,7 @@ a fork can swap the implementation without recompiling its callers. Paths
 crossing that API always use `/` as the separator; the Win32 implementation
 accepts both on input and normalises internally.
 
-`core/include/seide_cfg.h` must be included **first, before any system header**,
+`core/include/infantgod_cfg.h` must be included **first, before any system header**,
 and raises two Win32 macros that the kernel depends on:
 
 - `__USE_MINGW_ANSI_STDIO 1` — MinGW hides the C99 `snprintf`/`vsnprintf`
@@ -202,7 +202,7 @@ Why is this a decision rather than an omission?
    same shape as kernel methods, so a client cannot tell — and does not need to
    know — which layer answered. The shell multiplexes them onto one endpoint
    with one `dispatch()` function (`shell/main.mjs`), used identically by
-   `seide rpc` (stdio) and `seide serve` (HTTP), so the wire behaviour cannot
+   `infantgod rpc` (stdio) and `infantgod serve` (HTTP), so the wire behaviour cannot
    drift between the two modes.
 
 The consequence for a forker: **language features are the cheapest thing in
@@ -217,7 +217,7 @@ protocol are the load-bearing parts.
 
 | mode | command | what it is |
 | --- | --- | --- |
-| stdio front end | `node shell/main.mjs rpc --workspace .` | spawns the kernel, forwards every frame, answers `lang.*` itself; this is the "full endpoint" `tools/e2e.py --seide-cmd` drives |
+| stdio front end | `node shell/main.mjs rpc --workspace .` | spawns the kernel, forwards every frame, answers `lang.*` itself; this is the "full endpoint" `tools/e2e.py --kernel-cmd` drives |
 | HTTP front end | `node shell/main.mjs serve --workspace .` | static files from `shell/web/`, `POST /rpc`, `GET /events` (SSE), then launches the system browser in `--app=` mode |
 
 Both modes share one `dispatch()`, so a method behaves the same either way.
@@ -232,7 +232,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | --- | --- | --- |
 | `index.html` | the entire page | nothing loads |
 | `style.css` | layout, card chrome, the editor's two-layer metrics | cards render unstyled |
-| `board.mjs` | the board model: cards, links, viewport, serialise | seIDE stops being seIDE; there is nothing to render |
+| `board.mjs` | the board model: cards, links, viewport, serialise | InfantGod Studio stops being InfantGod Studio; there is nothing to render |
 | `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
 | `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
@@ -253,11 +253,11 @@ The Makefile's verification targets, in the order `make test` runs them:
 
 | target | command | what it proves |
 | --- | --- | --- |
-| `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, board, exec |
-| `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
+| `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files, board, exec |
+| `fullcheck` | `python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | 43 descriptor/tokenizer checks, no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | 30 checks of the protocol plumbing, board model and token spans, no DOM |
+| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (approx. 74), no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model and token spans (approx. 65 checks), no DOM |
 
 ---
 
@@ -281,7 +281,7 @@ The Makefile's verification targets, in the order `make test` runs them:
 - **Binary files as JSON strings.** `wksp` refuses to read a file containing a
   NUL byte ("file is binary") because shipping it as a JSON string would produce
   a document no client can round-trip.
-- **A missing or corrupt board document.** An absent `.seide/board.json` is
+- **A missing or corrupt board document.** An absent `.infantgod/board.json` is
   fine (first run). A board document that **exists but does not parse** is a
   hard error: silently discarding a user's layout would be worse than refusing
   to start.

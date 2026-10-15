@@ -8,7 +8,7 @@
  * writes to stdout, and both go through the same emit callback, which the
  * shell layer serialises behind one mutex.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>

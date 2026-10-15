@@ -7,7 +7,7 @@ would have seen, the root cause with a line reference, and what changed.
 The probe scripts live in `build/probes/` (git-ignored, like the rest of
 `build/`).  `python build/probes/kernel/probe_fixes.py` is the regression probe:
 every fix below has a check there, and it re-runs against a freshly built
-`build/seide.exe`.
+`build/infantgod.exe`.
 
 Severity is what the bug costs a *fork*, which is the point of this codebase.
 
@@ -174,10 +174,10 @@ Regression evidence for this wave lives in
 ## Tools
 
 - **N1 — `tools/e2e.py` reset the board viewport on every run.** The suite
-  overwrote `.seide/board.json` wholesale, so a developer who had panned or
+  overwrote `.infantgod/board.json` wholesale, so a developer who had panned or
   zoomed lost the layout just by running the tests.  It now snapshots the whole
   document and restores it in a `finally`.
-- **N2 — `tools/e2e.py` could leave its probe text inside `examples/hello.bf`
+- **N2 — `tools/e2e.py` could leave its probe text inside `examples/hello.yarn`
   forever.** A failure between "write" and "restore" left the fixture mutated.
   The edit/restore pair now runs in `try/finally` via `_restore_fixture()`, and
   `probe_e2e_leftover.py` asserts the tree is byte-identical afterwards.
@@ -217,7 +217,7 @@ Regression evidence for this wave lives in
 - **N9 — `file.write` with no `text` member truncated the file to 0 bytes.**
   A client that mis-spelled the parameter lost the file.  `text` is now
   required (`-32602`).
-- **N10 — a UTF-8 BOM in `.seide/board.json` made the kernel refuse to start.**
+- **N10 — a UTF-8 BOM in `.infantgod/board.json` made the kernel refuse to start.**
   Windows editors add one readily, and the failure was a refused startup rather
   than a diagnostic.  The loader now skips a leading BOM.
 - **N6 — a board large enough to exceed the shell's 30 s call timeout could not
@@ -259,7 +259,7 @@ Regression evidence for this wave lives in
   look like flags are now rejected with exit 2 and a usage line.
 - **A port already in use leaked a kernel process.** The host exited without
   reaping the child it had already spawned; it now exits 1 promptly with no
-  `seide.exe` left behind.
+  `infantgod.exe` left behind.
 
 ## Browser layer (`shell/web/`)
 

@@ -1,7 +1,7 @@
 /*
  * json.h - a small JSON tree, its parser and its writer.
  *
- * seIDE's kernel talks to the outside world in exactly one wire format:
+ * InfantGod Studio's kernel talks to the outside world in exactly one wire format:
  * newline-delimited JSON.  This module is that format.  It is written as a
  * plain owned tree (no arena, no sharing) because the kernel's messages are
  * small and short-lived, and because a fork that wants a different serializer
@@ -14,8 +14,8 @@
  * Ownership: sde_json_set() and sde_json_push() take ownership of the value
  * they are handed.  sde_json_free() on the container frees the whole tree.
  */
-#ifndef SEIDE_JSON_H
-#define SEIDE_JSON_H
+#ifndef INFANTGOD_JSON_H
+#define INFANTGOD_JSON_H
 
 #include <stddef.h>
 #include "buf.h"
@@ -128,4 +128,4 @@ int          sde_json_write_pretty(sde_buf *out, const sde_json *v, int indent);
 int          sde_json_escape_n(sde_buf *out, const char *s, size_t len);
 int          sde_json_escape(sde_buf *out, const char *s);
 
-#endif /* SEIDE_JSON_H */
+#endif /* INFANTGOD_JSON_H */

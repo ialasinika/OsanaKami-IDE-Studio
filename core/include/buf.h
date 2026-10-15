@@ -4,8 +4,8 @@
  * Every module that builds text uses this.  It is deliberately tiny and has
  * no dependency on anything else in the kernel, so it survives any trim.
  */
-#ifndef SEIDE_BUF_H
-#define SEIDE_BUF_H
+#ifndef INFANTGOD_BUF_H
+#define INFANTGOD_BUF_H
 
 #include <stddef.h>
 
@@ -27,4 +27,4 @@ int         sde_buf_addf(sde_buf *b, const char *fmt, ...);
 const char *sde_buf_cstr(sde_buf *b);
 char       *sde_buf_take(sde_buf *b);
 
-#endif /* SEIDE_BUF_H */
+#endif /* INFANTGOD_BUF_H */

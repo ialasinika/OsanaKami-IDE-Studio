@@ -8,8 +8,8 @@
  * Exits 0 on success, 1 on the first failure.
  */
 
-import { readdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LangError, LangRegistry, parseDescriptor } from "./lang.mjs";
@@ -56,22 +56,59 @@ function assertTiles(text, spans) {
 
 section("descriptor parsing");
 
-const bfText = `# seIDE language descriptor
-id brainfuck
-title Brainfuck
-ext .bf
-line_comment #
-kind command "+" "-" "<" ">" "[" "]" "." ","
+/* The same eight keys and the same shapes as `langs/yarn.lang` -- quoted word
+ * kinds, unquoted markers, two extensions, both comment styles -- so the parser
+ * is exercised by an inline descriptor while the tokenizer below runs on the
+ * file that actually ships. */
+const inlineText = `# InfantGod Studio language descriptor
+id yarn
+title Yarn
+ext .yarn
+ext .yarnproject
+line_comment //
+block_comment_open /*
+block_comment_close */
+string "\\""
+kind keyword "title" "when" "tags" "subtitle" "tracking" "position"
+kind keyword "if" "elseif" "else" "endif" "set" "declare" "jump" "detour" "return" "stop" "once" "endonce" "wait"
+kind keyword "true" "false" "null"
+kind command "<<" ">>" "---" "===" "->" "#" "$" ":" "," "(" ")" "[" "]" "{" "}" "|"
+kind command "<" ">"
 `;
 
-const bf = parseDescriptor(bfText, "brainfuck.lang");
-check("id parsed", bf.id === "brainfuck", bf.id);
-check("title parsed", bf.title === "Brainfuck", bf.title);
-check("extension parsed", bf.extensions.length === 1 && bf.extensions[0] === ".bf");
-check("line comment is not quoted", bf.lineComment === "#", JSON.stringify(bf.lineComment));
-check("eight command literals", bf.literals.length === 8, String(bf.literals.length));
-check("literals are longest-first", bf.literals.every((e, i, a) => i === 0 || a[i - 1].text.length >= e.text.length));
-check("no word entries for punctuation", bf.words.size === 0, String(bf.words.size));
+const inlineLang = parseDescriptor(inlineText, "yarn.lang");
+check("id parsed", inlineLang.id === "yarn", inlineLang.id);
+check("title parsed", inlineLang.title === "Yarn", inlineLang.title);
+check(
+  "extensions parsed",
+  inlineLang.extensions.length === 2 &&
+    inlineLang.extensions[0] === ".yarn" &&
+    inlineLang.extensions[1] === ".yarnproject",
+  JSON.stringify(inlineLang.extensions),
+);
+check("line comment is not quoted", inlineLang.lineComment === "//", JSON.stringify(inlineLang.lineComment));
+check(
+  "block comment delimiters are not quoted",
+  inlineLang.blockOpen === "/*" && inlineLang.blockClose === "*/",
+  `${JSON.stringify(inlineLang.blockOpen)}/${JSON.stringify(inlineLang.blockClose)}`,
+);
+check("one string delimiter", inlineLang.strings.length === 1 && inlineLang.strings[0] === '"', JSON.stringify(inlineLang.strings));
+check("eighteen command literals", inlineLang.literals.length === 18, String(inlineLang.literals.length));
+check(
+  "literals are longest-first",
+  inlineLang.literals.every((e, i, a) => i === 0 || a[i - 1].text.length >= e.text.length),
+  JSON.stringify(inlineLang.literals.map((e) => e.text)),
+);
+check(
+  "literals and words are split by first char",
+  inlineLang.words.size === 22,
+  String(inlineLang.words.size),
+);
+check(
+  "word entries detected by first char",
+  inlineLang.words.get("title") === "keyword" && inlineLang.words.get("if") === "keyword",
+  JSON.stringify([...inlineLang.words].slice(0, 4)),
+);
 
 const quoted = parseDescriptor('id x\next .x\nline_comment "//"\n', "x.lang");
 check("quoted marker unquoted on read", quoted.lineComment === "//", JSON.stringify(quoted.lineComment));
@@ -106,38 +143,51 @@ rejects("empty quoted token is fatal", 'id x\next .x\nkind keyword ""\n');
 section("registry");
 
 const registry = LangRegistry.fromDir(HERE);
-check("brainfuck is loaded", registry.byId("brainfuck") !== null);
+check("yarn is loaded", registry.byId("yarn") !== null);
+check("json is loaded", registry.byId("json") !== null);
 check("unknown id resolves to null", registry.byId("cobol") === null);
-check("detect by extension", registry.detect("examples/hello.bf")?.id === "brainfuck");
-check("detect ignores case", registry.detect("EXAMPLES/HELLO.BF")?.id === "brainfuck");
+check("detect by extension", registry.detect("examples/hello.yarn")?.id === "yarn");
+check("detect by the second extension", registry.detect("project.yarnproject")?.id === "yarn");
+check("detect JSON by extension", registry.detect("examples/sample.json")?.id === "json");
+check("detect ignores case", registry.detect("EXAMPLES/HELLO.YARN")?.id === "yarn");
 check("detect unknown extension", registry.detect("notes.md") === null);
-check("resolve prefers explicit lang", registry.resolve({ lang: "brainfuck", path: "a.md" })?.id === "brainfuck");
+check("resolve prefers explicit lang", registry.resolve({ lang: "json", path: "examples/hello.yarn" })?.id === "json");
 check(
   "list is wire shaped",
-  JSON.stringify(registry.list()) === '[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]',
+  JSON.stringify(registry.list()) ===
+    '[{"id":"json","title":"JSON","extensions":[".json"]},' +
+      '{"id":"yarn","title":"Yarn","extensions":[".yarn",".yarnproject"]}]',
   JSON.stringify(registry.list()),
 );
 
 section("tokenizer");
 
-const program = "++[>+<-] # ignore\n.>,\n";
-const spans = tokenize(bf, program);
-const commentSpan = spans.find((s) => s[2] === "comment");
-check("tiles the input", assertTiles(program, spans) === null, assertTiles(program, spans));
-check("all eleven commands classified", spans.filter((s) => s[2] === "command").length === 11, JSON.stringify(spans));
-check("exactly one comment span", spans.filter((s) => s[2] === "comment").length === 1, JSON.stringify(spans));
+/* The real fixture, read from disk rather than inlined, because the offsets
+ * below are asserted exactly and a re-typed copy could drift from the file the
+ * editor will actually open. */
+const yarnSrc = readFileSync(join(HERE, "..", "examples", "hello.yarn"), "utf8");
+const yarnSpans = tokenize(inlineLang, yarnSrc);
+const commentSpans = yarnSpans.filter((s) => s[2] === "comment");
+check("tiles the input", assertTiles(yarnSrc, yarnSpans) === null, assertTiles(yarnSrc, yarnSpans));
 check(
-  "comment spans the marker to end of line, excluding the newline",
-  JSON.stringify(commentSpan) === '[9,17,"comment"]',
-  JSON.stringify(commentSpan),
+  "every Yarn command marker classified",
+  yarnSpans.filter((s) => s[2] === "command").length === 66,
+  String(yarnSpans.filter((s) => s[2] === "command").length),
+);
+check("exactly two comment spans", commentSpans.length === 2, JSON.stringify(commentSpans));
+check(
+  "a block comment spans the marker to the closer, excluding the newline",
+  JSON.stringify(commentSpans[0]) === '[86,112,"comment"]',
+  JSON.stringify(commentSpans[0]),
 );
 check(
   "whitespace is reported, not skipped",
-  JSON.stringify(spans.filter((s) => s[2] === "ws")) === '[[8,9,"ws"],[17,18,"ws"],[21,22,"ws"]]',
-  JSON.stringify(spans.filter((s) => s[2] === "ws")),
+  JSON.stringify(tokenize(inlineLang, "<<if $x>> // note\n  hello\n").filter((s) => s[2] === "ws")) ===
+    '[[4,5,"ws"],[9,10,"ws"],[17,20,"ws"],[25,26,"ws"]]',
+  JSON.stringify(tokenize(inlineLang, "<<if $x>> // note\n  hello\n").filter((s) => s[2] === "ws")),
 );
 
-check("empty input yields no spans", tokenize(bf, "").length === 0);
+check("empty input yields no spans", tokenize(inlineLang, "").length === 0);
 check("plain text tiles", assertTiles("hello, world\n", tokenizePlain("hello, world\n")) === null);
 check(
   "plain text has no ident spans",
@@ -157,14 +207,126 @@ check("two comment spans", cSpans.filter((s) => s[2] === "comment").length === 2
 check("escaped quote stays inside the string", cSpans.filter((s) => s[2] === "string").length === 1, JSON.stringify(cSpans.filter((s) => s[2] === "string")));
 check("number recognized", cSpans.some((s) => s[2] === "number"), JSON.stringify(cSpans));
 
-const lines = tokenizeLines(bf, program);
-check("line grouping covers every line", lines.length === 3, String(lines.length));
+const lineGroups = tokenizeLines(inlineLang, yarnSrc);
+check(
+  "line grouping covers every line",
+  Array.isArray(lineGroups) && lineGroups.length === 27,
+  Array.isArray(lineGroups) ? String(lineGroups.length) : "no line groups",
+);
 check(
   "line grouping is exactly the flat spans, regrouped",
-  JSON.stringify(lines.flat()) === JSON.stringify(spans),
-  JSON.stringify(lines.flat()),
+  (() => {
+    /* A span that crosses a line boundary -- the whitespace inside the block
+     * comment's line, or around `---` -- is split into one span per line, so the
+     * flat form is the same TEXT covered by the same number of characters, not
+     * the same list of spans.  Both halves of that claim are asserted: a dropped
+     * or double-counted span fails either one. */
+    const flat = lineGroups.flat();
+    const lengthOf = (list) => list.reduce((total, span) => total + (span[1] - span[0]), 0);
+    const textOf = (list) => list.map((span) => yarnSrc.slice(span[0], span[1])).join("");
+    return lengthOf(flat) === lengthOf(yarnSpans) && textOf(flat) === textOf(yarnSpans);
+  })(),
+  JSON.stringify(lineGroups.flat().slice(0, 3)),
 );
-check("a trailing newline does not invent a line", lines[2].length === 0, JSON.stringify(lines[2]));
+check(
+  "a trailing newline does not invent a line",
+  lineGroups[lineGroups.length - 1].length === 0,
+  JSON.stringify(lineGroups[lineGroups.length - 1]),
+);
+
+/* ------------------------------------------------------------------ */
+/* the shipped descriptors, exercised over the shipped fixtures        */
+
+section("yarn and json descriptors");
+
+const EX = join(HERE, "..", "examples");
+const yarn = registry.byId("yarn");
+const json = registry.byId("json");
+
+check("yarn descriptor is registered", yarn !== null);
+check("yarn id and title", yarn.id === "yarn" && yarn.title === "Yarn", `${yarn.id}/${yarn.title}`);
+check(
+  "yarn extensions",
+  JSON.stringify(yarn.extensions) === '[".yarn",".yarnproject"]',
+  JSON.stringify(yarn.extensions),
+);
+check("yarn has a line comment", yarn.lineComment === "//", JSON.stringify(yarn.lineComment));
+check("yarn has a block comment", yarn.blockOpen === "/*" && yarn.blockClose === "*/");
+check("yarn has one string delimiter", yarn.strings.length === 1 && yarn.strings[0] === '"', JSON.stringify(yarn.strings));
+check("yarn header keys are words", yarn.words.get("title") === "keyword" && yarn.words.get("tags") === "keyword");
+check("yarn builtins are words", yarn.words.get("if") === "keyword" && yarn.words.get("jump") === "keyword");
+check("yarn booleans are words", yarn.words.get("true") === "keyword" && yarn.words.get("null") === "keyword");
+check(
+  "yarn command markers are literals",
+  yarn.literals.some((e) => e.text === "<<" && e.kind === "command") &&
+    yarn.literals.some((e) => e.text === "===" && e.kind === "command"),
+);
+check("yarn declares no numbers as words", !yarn.words.has("1") && !yarn.words.has("0"));
+
+check("json descriptor is registered", json !== null);
+check("json id and title", json.id === "json" && json.title === "JSON", `${json.id}/${json.title}`);
+check("json extension", JSON.stringify(json.extensions) === '[".json"]', JSON.stringify(json.extensions));
+check("json has no line comment", json.lineComment === "", JSON.stringify(json.lineComment));
+check("json has no block comment", json.blockOpen === "" && json.blockClose === "");
+check("json keywords", json.words.get("true") === "keyword" && json.words.get("null") === "keyword");
+check(
+  "json punctuation is command",
+  json.literals.length === 6 && json.literals.every((e) => e.kind === "command"),
+  JSON.stringify(json.literals),
+);
+
+/* The file parsed above and the file on disk must describe the same language:
+ * a descriptor edit that only touched one of them is the failure this catches.
+ * Both tokenize appends below, so `hello.yarn` is read once. */
+const fixtureSrc = readFileSync(join(EX, "hello.yarn"), "utf8");
+const fixtureSpans = tokenize(yarn, fixtureSrc);
+check("yarn fixture tiles", assertTiles(fixtureSrc, fixtureSpans) === null, assertTiles(fixtureSrc, fixtureSpans));
+check(
+  "the shipped descriptor and the inline one tokenize identically",
+  JSON.stringify(tokenize(inlineLang, fixtureSrc)) === JSON.stringify(fixtureSpans),
+  `${tokenize(inlineLang, fixtureSrc).length} spans vs ${fixtureSpans.length}`,
+);
+check("yarn has a comment span", fixtureSpans.some((s) => s[2] === "comment"));
+check("yarn has a string span", fixtureSpans.some((s) => s[2] === "string"));
+check("yarn has a keyword span", fixtureSpans.some((s) => s[2] === "keyword"));
+check("yarn has a command span", fixtureSpans.some((s) => s[2] === "command"));
+{
+  // `<<` must win over `<`: the longest-first literal table is what makes the
+  // two-character marker one span instead of two `<` puncts.
+  const open = fixtureSrc.indexOf("<<");
+  const span = fixtureSpans.find((s) => s[0] === open);
+  check(
+    "yarn `<<` wins over `<`",
+    open >= 0 && span !== undefined && span[1] === open + 2 && span[2] === "command",
+    `${JSON.stringify(span)} at ${open}`,
+  );
+}
+
+const jsonSrc = readFileSync(join(EX, "sample.json"), "utf8");
+const jsonSpans = tokenize(json, jsonSrc);
+check("json fixture tiles", assertTiles(jsonSrc, jsonSpans) === null, assertTiles(jsonSrc, jsonSpans));
+check("json has a string span", jsonSpans.some((s) => s[2] === "string"));
+check("json has a number span", jsonSpans.some((s) => s[2] === "number"));
+check("json has a keyword span", jsonSpans.some((s) => s[2] === "keyword"));
+check("json has a command span", jsonSpans.some((s) => s[2] === "command"));
+
+/* Non-ASCII: the tokenizer runs on a JavaScript string, so its offsets should be
+ * JS/UTF-16 string indices, not UTF-8 byte offsets.  If this ever fails, the
+ * docstring in tokenize.mjs ("every offset from 0 to text.length") is a lie for
+ * any file containing CJK text -- which is every 《幼神》 script.  The assertion is
+ * deliberately exact rather than tolerant. */
+{
+  const text = "Aistalt: 嗨，大家好。 #line:0630975\n";
+  const spans = tokenize(yarn, text);
+  const tiling = assertTiles(text, spans);
+  check("non-ASCII (Chinese) input tiles by string index", tiling === null, tiling);
+  const last = spans[spans.length - 1];
+  check(
+    "last non-ASCII span ends at text.length",
+    last !== undefined && last[1] === text.length,
+    `${JSON.stringify(last)} vs length ${text.length}`,
+  );
+}
 
 section("independence from the kernel");
 

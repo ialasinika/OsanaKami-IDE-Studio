@@ -10,8 +10,8 @@
  * Contract: stdout carries protocol frames and nothing else.  Every
  * diagnostic goes to stderr.
  */
-#ifndef SEIDE_SERVE_H
-#define SEIDE_SERVE_H
+#ifndef INFANTGOD_SERVE_H
+#define INFANTGOD_SERVE_H
 
 #include "app.h"
 
@@ -29,4 +29,4 @@ int sde_serve(sde_app *app);
  */
 int sde_serve_emit(void *ud, sde_json *payload);
 
-#endif /* SEIDE_SERVE_H */
+#endif /* INFANTGOD_SERVE_H */

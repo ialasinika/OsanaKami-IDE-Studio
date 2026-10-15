@@ -1,6 +1,6 @@
 # The board paradigm
 
-This document explains the one design decision that makes seIDE unlike every
+This document explains the one design decision that makes InfantGod Studio unlike every
 IDE you have used: **the main surface is a persistent 2-D canvas, not a set of
 tabs over a file tree.**
 
@@ -10,7 +10,7 @@ project and change it — but change it knowingly, because several other decisio
 
 ---
 
-## The two things seIDE removes
+## The two things InfantGod Studio removes
 
 ### No tabs
 
@@ -19,7 +19,7 @@ exactly one document in focus at a time. The moment you open the fifth file you
 begin managing the tab strip instead of the code. Closed tabs are gone; the
 only way back is the file tree and your memory of the path.
 
-In seIDE, opening a file creates a **card at a point on the canvas**. Nothing
+In InfantGod Studio, opening a file creates a **card at a point on the canvas**. Nothing
 closes when you open something else. The card you opened yesterday is still
 where you left it, next to the note where you wrote down why you opened it.
 
@@ -30,10 +30,10 @@ answer "which files am I working on, and what is the relationship between
 them?" — that question is answered by the filesystem's directory layout, which
 is an accident of history.
 
-seIDE replaces the tree with the `files` card: a filterable listing you place
+InfantGod Studio replaces the tree with the `files` card: a filterable listing you place
 where you want it, and `workspace.list` underneath. The listing is a card like
 any other, so you can open three of them with different filters
-(`core/**/*.c`, `langs/**/*`, `examples/*.bf`) and leave them open.
+(`core/**/*.c`, `langs/**/*`, `examples/*.yarn`) and leave them open.
 
 ---
 
@@ -129,7 +129,7 @@ would make the next save fail validation.
 
 ### The board file
 
-The board persists to `<root>/.seide/board.json`. The format is JSON:
+The board persists to `<root>/.infantgod/board.json`. The format is JSON:
 
 ```json
 {
@@ -150,7 +150,7 @@ serialised document, and it is the token the optimistic-concurrency checks use.
 This file is why **where you put things is part of the project state**. Two
 developers with different board files are working on different projects in a
 way no `.gitignore`d editor state can express. Commit it or ignore it — but
-decide on purpose, because seIDE's `.gitignore` ignores all of `.seide/` and you
+decide on purpose, because InfantGod Studio's `.gitignore` ignores all of `.infantgod/` and you
 may want your fork to keep `board.json`.
 
 ---
@@ -188,8 +188,8 @@ never becomes unusable because the thing you need is buried.
   knowing where it is. Related work sits together because you put it together.
 - **No context destruction.** Opening a fifth file does not evict the fourth.
   There is no stack to exhaust.
-- **Relationships are first-class.** A link between a Brainfuck source card and
-  the runner card that executes it is visible without a build-system file
+- **Relationships are first-class.** A link between a Yarn script card and the
+  `mod` card for the package it ships in is visible without a build-system file
   saying so.
 - **One surface, no modes.** Panning, zooming, moving, resizing and editing all
   work with the same pointer gestures and the same transform.
@@ -216,7 +216,7 @@ never becomes unusable because the thing you need is buried.
 
 ## Contrast with mainstream IDEs, concretely
 
-| concern | mainstream IDE | seIDE |
+| concern | mainstream IDE | InfantGod Studio |
 | --- | --- | --- |
 | Where is my file? | in the tree, at its path | wherever you put the card; the tree is a `files` card |
 | Which files am I working on? | the open tabs | the cards on the visible part of the board |
@@ -229,7 +229,7 @@ never becomes unusable because the thing you need is buried.
 | What is persisted? | editor settings, open-tab session | the whole layout, as `board.json` |
 
 The comparison that matters: in a tabbed IDE, the layout is a **transient view**
-of the filesystem. In seIDE, the layout is **part of the work**.
+of the filesystem. In InfantGod Studio, the layout is **part of the work**.
 
 ---
 

@@ -5,7 +5,7 @@
  * document that exists and does not parse is a hard error, because silently
  * discarding a user's layout would be worse than refusing to start.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>

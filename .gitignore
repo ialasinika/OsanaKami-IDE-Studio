@@ -1,21 +1,22 @@
-# seIDE -- build artefacts and workspace-local state.
+# InfantGod Studio -- build artefacts and workspace-local state.
 #
-# Deliberately NOT ignored: examples/ and every *.bf source.  The fixtures are
-# part of the project, and tools/e2e.py runs them.
+# Deliberately NOT ignored: examples/ and its hello.yarn / sample.json fixtures.
+# The fixtures are part of the project, and tools/e2e.py and langs/selftest.mjs
+# run them.
 
 # ---------------------------------------------------------------------------
-# build output (Makefile: BIN = build/seide.exe, OBJDIR = build/obj)
+# build output (Makefile: BIN = build/infantgod.exe, OBJDIR = build/obj)
 # ---------------------------------------------------------------------------
 build/
 
 # ---------------------------------------------------------------------------
-# workspace-local state (the board document lives at <root>/.seide/board.json)
+# workspace-local state (the board document lives at <root>/.infantgod/board.json)
 #
 # The board is where you put things, so it is project state.  Ignoring all of
-# .seide/ keeps each clone's layout private; a fork that wants layouts reviewed
+# .infantgod/ keeps each clone's layout private; a fork that wants layouts reviewed
 # in pull requests should drop the next line and keep board.json instead.
 # ---------------------------------------------------------------------------
-.seide/
+.infantgod/
 
 # ---------------------------------------------------------------------------
 # C objects and binaries

@@ -1,7 +1,7 @@
 /*
  * port.h - everything the kernel needs from the operating system.
  *
- * The rest of seIDE is written against this header and nothing else, so
+ * The rest of InfantGod Studio is written against this header and nothing else, so
  * porting to a new platform (or replacing Win32 with something else) means
  * writing two new .c files, not touching the IDE.
  *
@@ -15,8 +15,8 @@
  * Function-pointer callbacks and opaque structs are used deliberately: a
  * fork may swap the implementation without recompiling its callers.
  */
-#ifndef SEIDE_PORT_H
-#define SEIDE_PORT_H
+#ifndef INFANTGOD_PORT_H
+#define INFANTGOD_PORT_H
 
 #include <stddef.h>
 #include "buf.h"
@@ -151,4 +151,4 @@ long sde_proc_read(sde_proc *p, int *stream, sde_buf *out, size_t max);
 int  sde_proc_running(sde_proc *p);
 int  sde_proc_exit_code(sde_proc *p);   /* valid once sde_proc_read() is -1 */
 
-#endif /* SEIDE_PORT_H */
+#endif /* INFANTGOD_PORT_H */

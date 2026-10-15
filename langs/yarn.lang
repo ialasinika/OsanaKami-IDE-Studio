@@ -1,0 +1,57 @@
+# InfantGod Studio language descriptor
+# Yarn Spinner dialogue -- the format 《幼神》 is written in.
+#
+# Colouring targets, in the order the tokenizer scans them:
+#   block comment /* */  ->  line comment //  ->  string "..."  ->
+#   number  ->  word  ->  literal  ->  punctuation
+#
+# Only the 8 frozen keys are used; every choice below is forced by that grammar.
+#
+# 1. `line_comment //` is safe for this dialect: Yarn writes a command as `<<...>>`
+#    and a node separator as `->`, so there is no legitimate `//` in the parts of a
+#    .yarn file we colour.  URLs in prose would be a false positive; 《幼神》's prose
+#    is Chinese and carries none.
+# 2. `block_comment_open /*` / `block_comment_close */` cannot be written at all in
+#    Yarn.  They are declared anyway because the brief asks for them and because an
+#    author pasting a commented-out snippet gets a sane colour instead of a wall of
+#    punct.  Comments outrank strings, so a `/*` inside a quoted title would win --
+#    an accepted grammar limitation, not a choice.
+# 3. `string "\""` matches Yarn's own requirement that `title:` and `when:` values
+#    and every `<<if>>` operand be double-quoted.
+# 4. Word kinds.  `kind keyword` covers the three positions where a bare English word
+#    carries meaning: header keys, builtin commands, and boolean literals.  `true
+#    false null` belong to `keyword` rather than `constant` because the grammar has no
+#    notion of scope and a keyword colour is what an author expects to see there.
+#    Giving them their own `constant` line would colour identically only if the theme
+#    happened to agree -- the brief picks one, so they live with the keywords.
+# 5. Literal kinds.  All of them are `command`: they are the ceremony of the format
+#    -- node headers, node separators, the end marker, expressions, hashtags, the jump
+#    arrow and grouping punctuation.  `->` and `-` are deliberately both declared;
+#    longest-first matching is what makes `->` win, and that is the same mechanism
+#    that makes `<<` win over `<`.
+# 6. `<<` and `>>` are declared alongside `<` and `>`.  Yarn has no bare `<`, so a
+#    stray one is prose, but declaring both keeps the longest-first rule load-bearing
+#    and testable (`langs/selftest.mjs` asserts the `<<` span is one span, not two).
+# 7. No `number` tokens are declared.  The tokenizer produces `number` from digits on
+#    its own, which is what colours `#line:0630975` and `$Fan_Join` operands; a
+#    declared token would add nothing and could only add false positives.
+#
+# Known, accepted limitations (properties of the frozen grammar, not fixable here):
+#   * A declared keyword also colours inside prose, so an English word like `if` in a
+#     line of dialogue becomes a keyword.  《幼神》's prose is Chinese, so this is rare.
+#   * `$variable` is a literal `$` followed by an `ident`; the grammar cannot say
+#     "dollar followed by an identifier is one token".  The two spans sit adjacent, so
+#     the colour is still correct at the boundary.
+id yarn
+title Yarn
+ext .yarn
+ext .yarnproject
+line_comment //
+block_comment_open /*
+block_comment_close */
+string "\""
+kind keyword "title" "when" "tags" "subtitle" "tracking" "position"
+kind keyword "if" "elseif" "else" "endif" "set" "declare" "jump" "detour" "return" "stop" "once" "endonce" "wait"
+kind keyword "true" "false" "null"
+kind command "<<" ">>" "---" "===" "->" "#" "$" ":" "," "(" ")" "[" "]" "{" "}" "|"
+kind command "<" ">"

@@ -4,7 +4,7 @@
  * Written to the C89 subset: no // comments, no declarations after
  * statements, no long long, no compound literals.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <errno.h>
 #include <stdlib.h>

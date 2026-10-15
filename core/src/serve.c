@@ -9,7 +9,7 @@
  * `exec.output` at any moment, and a half-written frame would desynchronise
  * the shell's parser permanently.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>

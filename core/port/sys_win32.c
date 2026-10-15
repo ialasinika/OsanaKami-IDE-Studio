@@ -5,7 +5,7 @@
  * A fork that targets another platform writes a sibling of this file; the
  * kernel never includes <windows.h> itself.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #if defined(SDE_PLATFORM_WIN32)
 

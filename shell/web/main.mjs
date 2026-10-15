@@ -193,7 +193,7 @@ export function saveOutcomeMessage(outcome) {
       const revision = outcome.revision === undefined || outcome.revision === null
         ? "unknown"
         : outcome.revision;
-      return { level: "info", text: `board saved (rev ${revision}) → .seide/board.json${tail}` };
+      return { level: "info", text: `board saved (rev ${revision}) → .infantgod/board.json${tail}` };
     }
     case "unchanged":
       // Typing `save` and seeing nothing is indistinguishable from a save that
@@ -222,7 +222,7 @@ export function saveOutcomeMessage(outcome) {
 const STATUS_LIST = ["connecting", "ready", "unreachable"];
 
 /** The welcome card a brand-new project gets. It is an ordinary note card. */
-const HINT_SIZE = { w: 380, h: 300 };
+const HINT_SIZE = { w: 380, h: 340 };
 const HINT_TEXT = [
   "Board: no tabs, no tree.",
   "",
@@ -230,12 +230,17 @@ const HINT_TEXT = [
   "Drag a card title to move it · drag its corner to resize.",
   "Double-click empty space for a note.",
   "",
+  "幼神 Mod 面板 / Mod surfaces:",
+  "  mod <dir>       open a mod package (defines, Yarn, sprites)",
+  "  problems <dir>  validate it; click a row to open the file",
+  "  docs [query]    search the game's own 136 commands / 63 functions",
+  "",
   "Commands go on the line at the bottom:",
   "  open <path> · run <cmd> · files · note <text> · sheet [title]",
   "  project [glob] · link <from> <to> · zoom in|out|reset · focus <id>",
   "  delete <id> · save",
   "",
-  "This arrangement is saved in .seide/board.json, not a tab history.",
+  "This arrangement is saved in .infantgod/board.json, not a tab history.",
   "Delete this card once it has told you what you need (`delete` on it).",
 ].join("\n");
 
@@ -357,7 +362,7 @@ function createApp() {
    *
    * Returns a promise that resolves with the chosen value, or `null` if the
    * user typed something else into the command line first.  Deliberately not a
-   * modal: seIDE has no dialogs, so a decision is a row of buttons on the board.
+   * modal: InfantGod Studio has no dialogs, so a decision is a row of buttons on the board.
    */
   function ask(message, choices) {
     const strip = el("div", "ask");
@@ -774,7 +779,7 @@ function createApp() {
   /**
    * The editor cards currently on the board, as plain data.
    *
-   * This is what "open" means in seIDE: there is no tab strip and no document
+   * This is what "open" means in InfantGod Studio: there is no tab strip and no document
    * list outside the board -- a file is open exactly when a card holds it.
    */
   function openEditors() {
@@ -1068,8 +1073,8 @@ function createApp() {
   /* ------------------------------------------------------------------ */
 
   const KNOWN_COMMANDS = [
-    "open", "note", "run", "files", "project", "link", "unlink", "zoom",
-    "focus", "delete", "save", "help", "clear",
+    "open", "note", "sheet", "run", "files", "project", "mod", "problems",
+    "docs", "link", "unlink", "zoom", "focus", "delete", "save", "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1145,6 +1150,38 @@ function createApp() {
           Math.round(centre.y - size.h / 2),
           { filter: filter === null ? "**/*" : filter },
           size);
+        return;
+      }
+      case "mod": {
+        // One mod at a time, like one project: a second `mod` re-points the
+        // card you already have, and `docs`/`problems` follow it.
+        const dir = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
+        const existing = board.cards.find((card) => card.kind === "mod");
+        if (existing !== undefined) {
+          const entry = mounted.get(existing.id);
+          if (entry !== undefined && typeof entry.handle.setDir === "function") {
+            entry.handle.setDir(dir);
+          }
+          revealCard(existing.id);
+          return;
+        }
+        const size = DEFAULT_SIZE.mod;
+        const centre = centreWorld();
+        addCard("mod", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { dir }, size);
+        return;
+      }
+      case "problems": {
+        const root = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
+        const size = DEFAULT_SIZE.problems;
+        const centre = centreWorld();
+        addCard("problems", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { root }, size);
+        return;
+      }
+      case "docs": {
+        const query = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
+        const size = DEFAULT_SIZE.docs;
+        const centre = centreWorld();
+        addCard("docs", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { query }, size);
         return;
       }
       case "link": {
@@ -1456,7 +1493,7 @@ function createApp() {
     }
     const stamp = await client.call("hello", {}).catch(() => null);
     if (stamp !== null && !quiet) {
-      log("info", `seIDE ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
+      log("info", `InfantGod Studio ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
     }
 
     // Where the kernel was pointed. It is the one piece of project context that
@@ -1486,7 +1523,7 @@ function createApp() {
     if (board.cards.length === 0) {
       // A brand-new project: one note card explains the paradigm on the board
       // itself, and is deleted like any other card. Creating it must not mark
-      // the board dirty, or merely opening seIDE would write a board.json.
+      // the board dirty, or merely opening InfantGod Studio would write a board.json.
       const wasDirty = dirty;
       addCard("note", 80, 80, { text: HINT_TEXT }, { w: HINT_SIZE.w, h: HINT_SIZE.h });
       dirty = wasDirty;
@@ -1585,8 +1622,8 @@ if (app !== null) {
 export const LIMITATIONS = [
   "Token colours are painted on a <pre> under a transparent <textarea>; the two share",
   "fixed metrics, so a font with different line heights would shear them apart.",
-  "Byte offsets from lang.tokenize are treated as string indices, which is only the",
-  "same thing for ASCII. Non-ASCII in a card can shift a colour by a few glyphs.",
+  "Tokens span JS string indices, not bytes -- verified for Chinese prose, which is",
+  "the common case; an astral character (emoji, rare CJK ext-B) counts as two.",
   "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and links are straight",
   "lines -- there is no router and no automatic layout.",
 ];

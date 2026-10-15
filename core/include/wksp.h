@@ -9,14 +9,14 @@
  * content revision).  It deliberately does not guess a file's language: that
  * is the language layer's job, and it lives outside `core/`.
  */
-#ifndef SEIDE_WKSP_H
-#define SEIDE_WKSP_H
+#ifndef INFANTGOD_WKSP_H
+#define INFANTGOD_WKSP_H
 
 #include <stddef.h>
 #include "json.h"
 
-#ifndef SEIDE_APP_TYPEDEF
-#define SEIDE_APP_TYPEDEF
+#ifndef INFANTGOD_APP_TYPEDEF
+#define INFANTGOD_APP_TYPEDEF
 typedef struct sde_app sde_app;
 #endif
 
@@ -78,4 +78,4 @@ int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
                    sde_json **out, unsigned long *cur_rev,
                    char *err, size_t errcap);
 
-#endif /* SEIDE_WKSP_H */
+#endif /* INFANTGOD_WKSP_H */

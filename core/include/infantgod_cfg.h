@@ -1,7 +1,7 @@
 /*
- * seide_cfg.h - include this FIRST, before any system header.
+ * infantgod_cfg.h - include this FIRST, before any system header.
  *
- * seIDE's kernel is written to the C89 subset (ISO/IEC 9899:1990) with
+ * InfantGod Studio's kernel is written to the C89 subset (ISO/IEC 9899:1990) with
  * -std=c89 -pedantic -Werror.  That choice is enforced by the compiler, which
  * rejects C++ comments, mid-block declarations, `long long` and variadic
  * macros.
@@ -14,10 +14,10 @@
  *   2. _WIN32_WINNT must be raised before <windows.h> so that condition
  *      variables / TryEnterCriticalSection are visible.
  *
- * Nothing here depends on anything else in seIDE, so a fork may replace it.
+ * Nothing here depends on anything else in InfantGod Studio, so a fork may replace it.
  */
-#ifndef SEIDE_CFG_H
-#define SEIDE_CFG_H
+#ifndef INFANTGOD_CFG_H
+#define INFANTGOD_CFG_H
 
 #if defined(_WIN32)
 
@@ -39,9 +39,9 @@
 #  define SDE_PLATFORM_POSIX 1
 #endif
 
-/* The kernel's own version, reported by `hello` and `seide version`. */
+/* The kernel's own version, reported by `hello` and `infantgod version`. */
 #define SDE_VERSION "0.1.0"
-#define SDE_PROTOCOL "seide/1"
+#define SDE_PROTOCOL "infantgod/1"
 /* The same version as a number, which is what machines compare. */
 #define SDE_PROTOCOL_VERSION 1
 
@@ -53,4 +53,4 @@
 #  define SDE_WITH_BOARD 1
 #endif
 
-#endif /* SEIDE_CFG_H */
+#endif /* INFANTGOD_CFG_H */

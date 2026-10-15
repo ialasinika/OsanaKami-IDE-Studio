@@ -1,4 +1,4 @@
-# seIDE kernel -- C89, zero third-party dependencies, offline build.
+# InfantGod Studio kernel -- C89, zero third-party dependencies, offline build.
 #
 # Everything this file needs is a C89 compiler and GNU make.  There is no
 # configure step, no package manager and no network access: `make` either
@@ -6,13 +6,13 @@
 #
 # A fork trims the kernel by deleting lines from the SRC list below, the
 # matching file under core/, and any method in core/src/rpc.c that calls it.
-# `seide modules` prints what each line costs.
+# `infantgod modules` prints what each line costs.
 
 CC      = C:/mingw64/mingw64/bin/gcc.exe
 CFLAGS  = -std=c89 -pedantic -Wall -Wextra -Werror -O2 -Icore/include
 LDFLAGS =
 
-BIN     = build/seide.exe
+BIN     = build/infantgod.exe
 OBJDIR  = build/obj
 
 PYTHON  = python
@@ -86,18 +86,24 @@ $(OBJDIR)/%.o: core/port/%.c
 # End-to-end against the kernel alone: drives the real binary over stdio and
 # asserts the protocol.  Languages are skipped here -- they live in the shell.
 check: $(BIN)
-	$(PYTHON) tools/e2e.py --seide $(BIN)
+	$(PYTHON) tools/e2e.py --kernel $(BIN)
 
 # The same suite against the whole endpoint, which adds language support.
 fullcheck: $(BIN)
-	$(PYTHON) tools/e2e.py --seide-cmd "$(NODE) shell/main.mjs rpc --workspace ."
+	$(PYTHON) tools/e2e.py --kernel-cmd "$(NODE) shell/main.mjs rpc --workspace ."
 
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, and both protocol modes.
+# codec, the language layer, the browser modules, the mod layer, and both
+# protocol modes.
+#
+# Note the explicit --workspace for the mod suite: the mod layer refuses any
+# path outside its root, and that containment rule is itself under test, so the
+# suite must not be run from whatever directory happens to be current.
 test: check fullcheck $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs
+	$(NODE) shell/mods/selftest.mjs
 
 modules: $(BIN)
 	$(BIN) modules

@@ -1,0 +1,22 @@
+# InfantGod Studio language descriptor
+# JSON (RFC 8259) -- used for `board.json`, `.yarnproject` metadata and fixtures.
+#
+# Notes on the eight-key grammar:
+#   * No `line_comment`.  JSON has no comments at all, and inventing one here would
+#     colour a URL's `//` as a comment and swallow the rest of the line.
+#   * `string "\""` is the only string delimiter JSON has.  Escapes are honoured by
+#     the tokenizer, so `"a\"b"` stays one span.
+#   * `true` / `false` / `null` are declared as `keyword` because they are the file
+#     format's reserved words; they are matched as whole identifiers, so a value like
+#     `"true"` inside a string is not affected (strings are scanned first).
+#   * Structural punctuation is `command`, matching yarn.lang's use of that kind
+#     for "the characters that carry the format".
+#   * Numbers are not declared: the tokenizer classifies digit runs itself, so
+#     `-1.5e-9` needs no tokens here.  A leading `-` is not declared either, so it
+#     falls into a `punct` run, which is the right colour for it.
+id json
+title JSON
+ext .json
+string "\""
+kind keyword "true" "false" "null"
+kind command "{" "}" "[" "]" ":" ","

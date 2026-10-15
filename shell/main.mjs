@@ -6,13 +6,13 @@
  * about languages and nothing about HTTP.  This file supplies both halves of
  * that gap, in one process, with no dependencies at all:
  *
- *   seide rpc      a stdio front end.  It spawns `build/seide.exe rpc`, forwards
+ *   infantgod rpc      a stdio front end.  It spawns `build/infantgod.exe rpc`, forwards
  *                  every frame the kernel understands, and answers `lang.list`
  *                  and `lang.tokenize` itself.  This is the "full endpoint"
- *                  that `tools/e2e.py --seide-cmd` drives, and the reason the
+ *                  that `tools/e2e.py --kernel-cmd` drives, and the reason the
  *                  test can exercise the language layer without a browser.
  *
- *   seide serve    an HTTP front end: static files from `shell/web/` plus
+ *   infantgod serve    an HTTP front end: static files from `shell/web/` plus
  *                  `POST /rpc` and `GET /events` (SSE).  Then it launches the
  *                  system's Edge/Chromium in --app= mode.  No Electron, no
  *                  bundled Chromium, nothing to download.
@@ -38,11 +38,12 @@ const SHELL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(SHELL_DIR);
 const WEB_DIR = path.join(SHELL_DIR, "web");
 const LANGS_DIR = path.join(ROOT, "langs");
+const MODS_DIR = path.join(SHELL_DIR, "mods");
 
 const SHELL_VERSION = "0.1.0";
 const DEFAULT_KERNEL = process.platform === "win32"
-  ? path.join(ROOT, "build", "seide.exe")
-  : path.join(ROOT, "build", "seide");
+  ? path.join(ROOT, "build", "infantgod.exe")
+  : path.join(ROOT, "build", "infantgod");
 
 /*
  * How long a single kernel call may take before this side gives up waiting.
@@ -414,16 +415,106 @@ function failure(id, code, name, message, data) {
   return { jsonrpc: "2.0", id, error };
 }
 
+/* ------------------------------------------------------------------ */
+/* the mod layer -- game knowledge the kernel must not have            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `shell/mods/` is the game-aware half of this fork.  It opens a mod package,
+ * validates it against the shipped JSON Schemas and the extracted baseline,
+ * diagnoses Yarn, and searches the knowledge base built from the game's own
+ * generated command list.
+ *
+ * Like `langs/`, it is optional: the board is still a general-purpose canvas
+ * without it, so a missing or broken layer disables the `mod.*` verbs instead
+ * of refusing to boot.  The kernel is never consulted for any of them.
+ */
+async function loadMods(options, log = () => {}) {
+  try {
+    const mod = await import(pathToFileURL(path.join(MODS_DIR, "index.js")).href);
+    const factory = mod.createMods ?? (mod.default && mod.default.createMods);
+    if (typeof factory !== "function") {
+      log("mod layer: index.js exports no createMods(); mod verbs are unavailable");
+      return null;
+    }
+    return factory({ modsRoot: options.modsRoot ?? options.workspace });
+  } catch (err) {
+    log(`mod layer: did not load (${err && err.message}); mod verbs are unavailable`);
+    return null;
+  }
+}
+
+function needParam(params, name) {
+  const value = params === null || typeof params !== "object" ? undefined : params[name];
+  if (typeof value !== "string" || value === "") {
+    throw new RpcError({
+      code: -32602,
+      name: "INVALID_PARAMS",
+      message: `missing non-empty string \`${name}\``,
+    });
+  }
+  return value;
+}
+
+function optionalString(params, name) {
+  const value = params === null || typeof params !== "object" ? undefined : params[name];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/*
+ * Every `mod.*` verb, in one table, so adding one is a row and not a branch.
+ * The facade behind these is synchronous; `mod.scaffold` writes files and is
+ * the only one with a side effect.
+ */
+const MOD_METHODS = {
+  "mod.stats": (_params, mods) => mods.stats(),
+  "mod.types": (_params, mods) => mods.types(),
+  "mod.templates": (_params, mods) => mods.templates(),
+  "mod.characters": (_params, mods) => mods.characters(),
+
+  "mod.open": (params, mods) => mods.openMod({ dir: needParam(params, "dir") }),
+  "mod.validate": (params, mods) => mods.validatePackage({ root: needParam(params, "root") }),
+  "mod.validateDefine": (params, mods) => mods.validateDefineText({
+    type: needParam(params, "type"),
+    text: typeof params.text === "string" ? params.text : "",
+    relPath: optionalString(params, "relPath"),
+  }),
+  "mod.diagnose": (params, mods) => mods.diagnoseYarn({
+    text: typeof params.text === "string" ? params.text : "",
+    fileName: optionalString(params, "fileName"),
+    root: optionalString(params, "root"),
+  }),
+  "mod.scaffold": (params, mods) => mods.scaffold({
+    dir: needParam(params, "dir"),
+    modName: needParam(params, "modName"),
+    template: optionalString(params, "template") ?? "full",
+  }),
+  "mod.search": (params, mods) => mods.search({
+    query: typeof params.query === "string" ? params.query : "",
+    limit: typeof params.limit === "number" ? params.limit : undefined,
+  }),
+  "mod.docFor": (params, mods) => mods.docFor({
+    kind: needParam(params, "kind"),
+    name: needParam(params, "name"),
+  }),
+  "mod.suggest": (params, mods) => mods.suggest({
+    prefix: typeof params.prefix === "string" ? params.prefix : "",
+    context: optionalString(params, "context") ?? undefined,
+  }),
+  "mod.localization": (params, mods) => mods.localization({ root: needParam(params, "root") }),
+};
+
 /**
  * Answers one request.  Returns the response object, or null when the frame
  * was a notification (which must not be answered).
  *
  * Methods the shell owns:
  *   lang.list, lang.tokenize            served from langs/, no kernel involved
+ *   mod.*                               served from shell/mods/, no kernel involved
  *   workspace.info                      the kernel's answer plus `langs`
  * Everything else is forwarded verbatim.
  */
-export async function dispatch(frame, kernel, languages) {
+export async function dispatch(frame, kernel, languages, mods = null) {
   if (frame === null || typeof frame !== "object" || Array.isArray(frame)) {
     return failure(null, -32600, "INVALID_REQUEST", "a frame must be a JSON object");
   }
@@ -457,13 +548,37 @@ export async function dispatch(frame, kernel, languages) {
       })));
     }
 
+    if (method.startsWith("mod.")) {
+      if (mods === null) {
+        return answer(() => failure(id, -32601, "METHOD_NOT_FOUND",
+          "the mod layer is not loaded; `mod.*` is unavailable in this checkout"));
+      }
+      const handler = MOD_METHODS[method];
+      if (handler === undefined) {
+        return answer(() => failure(id, -32601, "METHOD_NOT_FOUND", `no such method \`${method}\``));
+      }
+      /*
+       * `mod.scaffold` writes files, so a facade verb may answer with a promise.
+       * Awaiting it here is what keeps a rejection inside this function's catch:
+       * passing a rejected promise to `response()` would answer with `{}` and
+       * then surface as an unhandled rejection that takes the whole shell -- and
+       * the kernel child with it -- down instead of sending an error frame.
+       */
+      const result = await handler(params, mods);
+      return answer(() => response(id, result));
+    }
+
     const result = await kernel.call(method, frame.params);
 
     // The kernel is language-agnostic, so the language inventory is added by
     // the layer that actually owns it.  A client that only needs the kernel
     // can ignore the member entirely.
     if (method === "workspace.info" && result !== null && typeof result === "object") {
-      return answer(() => response(id, { ...result, langs: languages.list().langs }));
+      return answer(() => response(id, {
+        ...result,
+        langs: languages.list().langs,
+        mods: mods !== null,
+      }));
     }
 
     // Same reasoning for a single file: `file.read` names the language the
@@ -508,6 +623,9 @@ async function runRpc(options) {
   const languages = await loadLanguages(LANGS_DIR, (message) => {
     process.stderr.write(`[shell] ${message}\n`);
   });
+  const mods = await loadMods(options, (message) => {
+    process.stderr.write(`[shell] ${message}\n`);
+  });
 
   await kernel.start();
   if (options.verbose) {
@@ -531,7 +649,7 @@ async function runRpc(options) {
 
       // Sequential on purpose: the kernel answers one frame at a time, and a
       // client that pipelines still gets its replies in order.
-      const reply = await dispatch(frame, kernel, languages);
+      const reply = await dispatch(frame, kernel, languages, mods);
       if (reply !== null) writeStdout(reply);
     }
   } finally {
@@ -611,7 +729,7 @@ function readBody(req, limit = 64 * 1024 * 1024) {
 /** The candidate browser executables, in the order a Windows box has them. */
 function browserCandidates() {
   const list = [];
-  if (process.env.SEIDE_BROWSER) list.push(process.env.SEIDE_BROWSER);
+  if (process.env.INFANTGOD_BROWSER) list.push(process.env.INFANTGOD_BROWSER);
   const pf = process.env["ProgramFiles"] ?? "C:\\Program Files";
   const pf86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
   const local = process.env["LOCALAPPDATA"] ?? "";
@@ -628,13 +746,13 @@ function browserCandidates() {
 function openWindow(url, { verbose = false } = {}) {
   const exe = browserCandidates().find((candidate) => candidate && existsSync(candidate));
   if (!exe) {
-    process.stderr.write("seIDE: no Edge/Chromium found; open the URL printed above yourself\n");
+    process.stderr.write("InfantGod Studio: no Edge/Chromium found; open the URL printed above yourself\n");
     return null;
   }
 
   // A throwaway profile keeps app mode out of the user's real browser session,
   // and keeps `--app` from adopting an existing window.
-  const profile = mkdtempSync(path.join(tmpdir(), "seide-profile-"));
+  const profile = mkdtempSync(path.join(tmpdir(), "infantgod-profile-"));
   const args = [
     `--app=${url}`,
     `--user-data-dir=${profile}`,
@@ -644,13 +762,16 @@ function openWindow(url, { verbose = false } = {}) {
   ];
   if (verbose) process.stderr.write(`[shell] ${exe} ${args.join(" ")}\n`);
   const child = spawn(exe, args, { stdio: "ignore", detached: false, windowsHide: false });
-  child.on("error", (err) => process.stderr.write(`seIDE: cannot launch ${exe}: ${err.message}\n`));
+  child.on("error", (err) => process.stderr.write(`InfantGod Studio: cannot launch ${exe}: ${err.message}\n`));
   return child;
 }
 
 async function runServe(options) {
   const kernel = new Kernel(options);
   const languages = await loadLanguages(LANGS_DIR, (message) => {
+    process.stderr.write(`[shell] ${message}\n`);
+  });
+  const mods = await loadMods(options, (message) => {
     process.stderr.write(`[shell] ${message}\n`);
   });
   await kernel.start();
@@ -701,7 +822,7 @@ async function runServe(options) {
         connection: "keep-alive",
         "x-accel-buffering": "no",
       });
-      res.write(": seide events\n\n");
+      res.write(": infantgod events\n\n");
       subscribers.add(res);
 
       const beat = setInterval(() => {
@@ -736,7 +857,7 @@ async function runServe(options) {
         return;
       }
 
-      const reply = await dispatch(frame, kernel, languages);
+      const reply = await dispatch(frame, kernel, languages, mods);
       // A notification is answered with 204: HTTP always needs a status, but
       // there is no response frame to give.
       if (reply === null) {
@@ -836,7 +957,7 @@ async function runServe(options) {
   const address = server.address();
   const url = `http://127.0.0.1:${address.port}/`;
 
-  process.stdout.write(`seIDE ${SHELL_VERSION}\n`);
+  process.stdout.write(`InfantGod Studio ${SHELL_VERSION}\n`);
   process.stdout.write(`  board   ${url}\n`);
   process.stdout.write(`  kernel  ${kernel.exe}\n`);
   process.stdout.write(`  root    ${kernel.workspace}\n`);
@@ -862,22 +983,29 @@ async function runServe(options) {
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
-const USAGE = `seIDE shell ${SHELL_VERSION}
+const USAGE = `InfantGod Studio shell ${SHELL_VERSION}
 
 usage: node shell/main.mjs <command> [options]
 
-  rpc     [--workspace DIR] [--kernel PATH] [--timeout-ms N] [--verbose]
-          Speak newline-delimited JSON-RPC on stdin/stdout.  Forwards to the
-          kernel; answers lang.list and lang.tokenize from langs/; adds the
-          \`langs\` member to workspace.info.
-
-  serve   [--workspace DIR] [--kernel PATH] [--port N] [--no-open]
+  rpc     [--workspace DIR] [--mods-root DIR] [--kernel PATH]
           [--timeout-ms N] [--verbose]
+          Speak newline-delimited JSON-RPC on stdin/stdout.  Forwards to the
+          kernel; answers lang.list and lang.tokenize from langs/, mod.* from
+          shell/mods/; adds the \`langs\` and \`mods\` members to workspace.info.
+
+  serve   [--workspace DIR] [--mods-root DIR] [--kernel PATH] [--port N]
+          [--no-open] [--timeout-ms N] [--verbose]
           Serve shell/web/ over HTTP with POST /rpc and GET /events, then
           launch the system browser in --app= mode.  --port 0 (default) picks
           a free port; --no-open skips the browser.
 
   help    This text.
+
+--workspace DIR is the directory the kernel may read and write; it is also
+what the board's file tree, editor and runner cards see.
+
+--mods-root DIR bounds every \`mod.*\` call: a path that resolves outside it is
+refused.  Defaults to --workspace.
 
 --timeout-ms N is how long this side waits for one kernel call before giving
 up (default ${DEFAULT_TIMEOUT_MS}).  Giving up does not cancel the call.
@@ -891,6 +1019,7 @@ function parseArgs(argv) {
   const options = {
     command: null,
     workspace: process.cwd(),
+    modsRoot: null,
     kernel: null,
     port: 0,
     noOpen: false,
@@ -899,7 +1028,7 @@ function parseArgs(argv) {
     help: false,
   };
 
-  const takesValue = new Set(["--workspace", "--kernel", "--port", "--timeout-ms"]);
+  const takesValue = new Set(["--workspace", "--mods-root", "--kernel", "--port", "--timeout-ms"]);
   const rest = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -936,6 +1065,7 @@ function parseArgs(argv) {
   }
   options.exe = path.resolve(options.kernel ?? DEFAULT_KERNEL);
   options.workspace = path.resolve(options.workspace);
+  if (options.modsRoot !== null) options.modsRoot = path.resolve(options.modsRoot);
   return options;
 }
 
@@ -945,6 +1075,7 @@ function applyOption(options, name, value) {
   // worked.
   if (value === "") throw new Error(`${name} needs a value`);
   if (name === "--workspace") options.workspace = value;
+  else if (name === "--mods-root") options.modsRoot = value;
   else if (name === "--kernel") options.kernel = value;
   else if (name === "--port") {
     const port = Number(value);
@@ -966,7 +1097,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     options = parseArgs(argv);
   } catch (err) {
-    process.stderr.write(`seIDE: ${err.message}\n\n${USAGE}`);
+    process.stderr.write(`InfantGod Studio: ${err.message}\n\n${USAGE}`);
     return 2;
   }
 
@@ -979,11 +1110,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "rpc") return await runRpc(options);
     if (options.command === "serve") return await runServe(options);
   } catch (err) {
-    process.stderr.write(`seIDE: ${err && err.message ? err.message : err}\n`);
+    process.stderr.write(`InfantGod Studio: ${err && err.message ? err.message : err}\n`);
     return 1;
   }
 
-  process.stderr.write(`seIDE: unknown command: ${options.command}\n\n${USAGE}`);
+  process.stderr.write(`InfantGod Studio: unknown command: ${options.command}\n\n${USAGE}`);
   return 2;
 }
 

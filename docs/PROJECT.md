@@ -1,6 +1,6 @@
 # The project card
 
-seIDE has one workspace and one project: the tree the kernel was pointed at. The
+InfantGod Studio has one workspace and one project: the tree the kernel was pointed at. The
 `project` card is the surface that treats it as **one project** rather than as a
 list of files — it answers two questions in the same panel:
 
@@ -21,7 +21,7 @@ project state.
 ## What it shows
 
 ```
-workspace — C:\codes\seIDE
+workspace — C:\codes\InfantGod Studio
 [ **/*                       ] [ refresh ]
 
 OPEN · 2
@@ -34,7 +34,7 @@ CORE/SRC/
   ○  board.c                                24K 30s
      rpc.c                                  31K 30s
 EXAMPLES/
-     hello.bf                               820B 3d
+     hello.yarn                             807B 3d
 6 files · 1 folders · 2 open · 1 unsaved
 ```
 
@@ -45,7 +45,7 @@ EXAMPLES/
   a new one. `×` takes a card off the board — the file is not touched, and the
   tooltip says so.
 - **A directory the kernel skips is named, not faked.** `build/`, `.git/`,
-  `.seide/`, `node_modules/` and the rest never appear in a listing at all — the
+  `.infantgod/`, `node_modules/` and the rest never appear in a listing at all — the
   kernel skips those names while it walks (see below) — so the panel reports
   them from `workspace.info.ignored` in the root line's tooltip, and names them
   again when a filter matches nothing. Nothing is ever hidden by this side.
@@ -69,7 +69,7 @@ It is also why the panel's own state is on the card:
 | --- | --- |
 | `filter` | the glob, default `**/*` |
 
-It round-trips through `.seide/board.json` with the geometry, because the kernel
+It round-trips through `.infantgod/board.json` with the geometry, because the kernel
 stores any field it does not interpret.
 
 ## Why some directories are missing, and why the panel does not fix that
@@ -78,7 +78,7 @@ stores any field it does not interpret.
 in `core/src/wksp.c`:
 
 ```
-.git  .seide  .hg  .svn  node_modules  __pycache__
+.git  .infantgod  .hg  .svn  node_modules  __pycache__
 .vscode  .idea  .cache  dist  build  target  obj
 ```
 

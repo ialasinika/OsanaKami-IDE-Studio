@@ -6,14 +6,14 @@
  * method in this file's table, which is also the list a fork reads to decide
  * what to cut.
  */
-#ifndef SEIDE_RPC_H
-#define SEIDE_RPC_H
+#ifndef INFANTGOD_RPC_H
+#define INFANTGOD_RPC_H
 
 #include <stddef.h>
 #include "json.h"
 
-#ifndef SEIDE_APP_TYPEDEF
-#define SEIDE_APP_TYPEDEF
+#ifndef INFANTGOD_APP_TYPEDEF
+#define INFANTGOD_APP_TYPEDEF
 typedef struct sde_app sde_app;
 #endif
 
@@ -49,4 +49,4 @@ sde_json *sde_rpc_error(const sde_json *id, int code, const char *name,
  */
 sde_json *sde_rpc_handle(sde_app *app, const sde_json *req);
 
-#endif /* SEIDE_RPC_H */
+#endif /* INFANTGOD_RPC_H */

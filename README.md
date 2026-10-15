@@ -1,49 +1,68 @@
-# seIDE
+# InfantGod Studio · 幼神工坊
 
-seIDE is an **IDE prototype whose purpose is to be forked** into something else —
-typically a proprietary IDE with a different product name and a different audience.
+InfantGod Studio is a **mod IDE for 《幼神》 (Infant God)** — a board-shaped
+editor for the game's Yarn scripts, ScriptableObject definitions, sprites and
+localisation tables.
 
-It is deliberately unlike the IDEs you already know, and it is **not a complete
-product**. It is a small, finished, working, honest skeleton: the parts that are
-there work, the parts that are missing are missing on purpose, and every
-deliberate tradeoff is written down instead of discovered.
+It is a fork. The upstream project is a small, finished, honest IDE *prototype*
+whose stated purpose is to be reshaped into a real product for a real audience;
+this repository is one such reshaping. `docs/FORK.md` records exactly what was
+renamed, what was kept byte-identical, and what was added.
 
-If you want a mainstream IDE, this is not one, and it is not trying to become
-one. If you want a code base small enough to read in an afternoon and reshape
-without fighting a plugin API, keep reading.
+What it is *not*: a complete product. There is no settings UI, no debugger, no
+Git integration and no undo. Every deliberate tradeoff is written down instead
+of discovered.
 
-![The seIDE board: an editor card with Brainfuck colouring, a note card, a runner card and two labelled links between them, above a command line](docs/board.png)
+![The InfantGod Studio board: an editor card with Yarn colouring, a mod card listing a package's defines, a problems card, a docs card and labelled links between them](docs/board.png)
 
 ---
 
-## What seIDE is
+## What this fork adds
+
+Three card kinds and one knowledge layer, none of which touches the kernel:
+
+- **`mod`** — opens a mod package: `mod.json`, its defines grouped by type, its
+  Yarn files, its sprites. Click a row to edit that file.
+- **`problems`** — validation output for a package, worst first, each row
+  jumping to the file and JSON pointer it came from.
+- **`docs`** — the game's own knowledge base: 136 commands, 63 functions, 678
+  variables, 1221 nodes, 51 definition schemas, 1305 baseline defines.
+- **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
+- **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
+  package scaffolding, search and completion. Pure Node, zero npm.
+
+See [docs/MODS.md](docs/MODS.md) for the verb table, the three card kinds and
+the containment rules.
+
+## What InfantGod Studio is
 
 - A **board**: an infinite, pannable, zoomable 2-D canvas of cards. No tabs, no
   file tree. Where you put things is part of the project state.
 - **Three layers**, each in a different language, each trimmable:
   - `core/` — the kernel. **C89 only**, zero third-party dependencies.
-  - `shell/` — the front end and the HTTP/stdio endpoints. **JavaScript ESM**,
-    zero npm dependencies.
-  - `tools/` — build driver, protocol driver, a Brainfuck interpreter, a
-    language-descriptor generator. **Python 3.12 standard library only**.
+  - `shell/` — the front end, the HTTP/stdio endpoints, and the game layer.
+    **JavaScript ESM**, zero npm dependencies.
+  - `tools/` — build driver, protocol driver, a language-descriptor generator.
+    **Python 3.12 standard library only**.
 - A **window** made of the system's Edge/Chromium launched in
   `--app=http://127.0.0.1:PORT` app mode.
-- One **language** that is actually supported: Brainfuck keyword colouring.
+- **Languages** that are actually supported: Yarn Spinner and JSON colouring,
+  driven by descriptor files in `langs/`.
 - A **frozen JSON-RPC protocol** on stdio, newline-delimited, with a documented
   method list and error-code table.
 
-## What seIDE is not
+## What InfantGod Studio is not
 
 - **Not a complete product.** There is no settings UI, no terminal emulator, no
-  debugger, no Git integration, no refactoring, no search across the workspace,
-  no undo.
+  debugger, no Git integration, no refactoring, no undo.
 - **Not extensible.** There is no plugin system, by design. Extension means
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
   window; see the WRY/Tauri note below.
-- **Not for every language.** IntelliSense, diagnostics, completion and
-  formatting do not exist. Language support is keyword colouring, and the only
-  language that must work is Brainfuck.
+- **Not a Yarn compiler.** Yarn support is colouring, package validation,
+  diagnosis and completion. It does not run or type-check a story.
+- **Not a binary editor.** The kernel reads and writes UTF-8 text, so `.png`,
+  `.bytes` and archives are listed and copied by hand, not edited in place.
 - **Not portable yet.** The kernel's platform layer is Win32.
 
 ---
@@ -60,7 +79,7 @@ The main surface is one persistent 2-D canvas. Everything you work on is a
 `runner`, `note`, `files`, `project`), a position and size (`x`, `y`, `w`, `h`,
 `z`), may
 reference a file, and may be connected by links. The board persists to
-`<root>/.seide/board.json`, so **where you put things is part of the project
+`<root>/.infantgod/board.json`, so **where you put things is part of the project
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
@@ -104,7 +123,7 @@ platform layer.
 ### 5. Low coupling, trivially trimmable
 
 Each module under `core/src/` is a whole subsystem with a stated cost of
-removal. `seide modules` prints the trim manifest. See `docs/TRIM.md`.
+removal. `infantgod modules` prints the trim manifest. See `docs/TRIM.md`.
 
 ### 6. `core/` is C89 ONLY
 
@@ -130,8 +149,10 @@ rejected by `-std=c89 -pedantic -Werror`.
 The kernel knows about files, boards and processes — not about programming
 languages. Language support lives in `langs/`, is served by the shell, and is
 **deletable**: `rm -rf langs/` leaves a kernel that still builds and a shell that
-still runs, rendering plain text. Brainfuck is the only language that must be
-supported. See `docs/ARCHITECTURE.md` and `docs/PROTOCOL.md`.
+still runs, rendering plain text. Yarn Spinner is the one language that must be
+supported — it is the format 《幼神》 itself is written in, and the descriptor in
+`langs/yarn.lang` is the worked example the grammar is exercised against. See
+`docs/ARCHITECTURE.md` and `docs/PROTOCOL.md`.
 
 ---
 
@@ -147,7 +168,7 @@ GNU Make 4.4.1        (C:\mingw64\mingw64\bin\mingw32-make.exe)
 gcc.exe 14.2.0        (MinGW-W64 x86_64-msvcrt-posix-seh, built by Brecht Sanders, r3)
 ```
 
-Build the kernel (produces `build/seide.exe`):
+Build the kernel (produces `build/infantgod.exe`):
 
 ```sh
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile
@@ -166,20 +187,25 @@ Run the checks:
 ```sh
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 3 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 11 passed, 0 failed, 0 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, both JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, the three JS self-tests
 ```
 
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 3 skipped
-python tools/e2e.py --seide build/seide.exe --keep-going
+python tools/e2e.py --kernel build/infantgod.exe    # 8 passed, 0 failed, 3 skipped
+python tools/e2e.py --kernel build/infantgod.exe --keep-going
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 43/43 checks passed
-node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
+node langs/selftest.mjs                        # 74/74 checks (approx: the count is printed by the footer)
+node shell/web/selftest.mjs                    # ok 65/65 (approx; pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 81/81 checks (approx)
 ```
 
-`make test` runs `check`, then `fullcheck`, then the JSON test and both
+The mod suite reads the game's extracted `Mods` folder for its corpus checks and
+skips them (rather than failing) when it is not there; point it at your own copy
+with `node shell/mods/selftest.mjs --mods <dir>`.
+
+`make test` runs `check`, then `fullcheck`, then the JSON test and the three
 JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
 run before the self-tests are reached. As of this writing nothing fails.
 
@@ -187,7 +213,7 @@ run before the self-tests are reached. As of this writing nothing fails.
 board round-trip check still drives `board.save` against the workspace it was
 given, but it snapshots the document that was already there and restores it
 before the check returns — including when the check fails. A run against `.`
-leaves `./.seide/board.json` semantically identical (the kernel does re-serialise
+leaves `./.infantgod/board.json` semantically identical (the kernel does re-serialise
 it, so the bytes and key order will differ; the cards, links and viewport will
 not). If there was no board before a run, there is none after it either.
 
@@ -208,14 +234,25 @@ node shell/main.mjs serve --workspace . --no-open    # just serve, print the URL
 node shell/main.mjs rpc --workspace .                # stdio endpoint, no browser
 ```
 
+Point it at the game's mods so the 幼神 cards have something to open:
+
+```sh
+node shell/main.mjs serve --workspace . \
+  --mods-root "…/Infant God/StreamingAssets/Mods"
+```
+
+Then, on the board's command line: `mod MyMod`, `problems MyMod`, `docs Love`.
+`--mods-root` narrows what `mod.*` may touch; it defaults to `--workspace` and
+can never widen it.
+
 The kernel is usable with no UI at all:
 
 ```sh
-build/seide.exe help
-build/seide.exe version
-build/seide.exe modules
-build/seide.exe board show --root .
-build/seide.exe rpc --root . --verbose
+build/infantgod.exe help
+build/infantgod.exe version
+build/infantgod.exe modules
+build/infantgod.exe board show --root .
+build/infantgod.exe rpc --root . --verbose
 ```
 
 ---
@@ -230,38 +267,50 @@ README.md               this file
 
 core/                   the kernel -- C89, no dependencies
   include/              public headers: buf, vec, json, port, wksp, board, exec,
-                        serve, rpc, app, module, seide_cfg
+                        serve, rpc, app, module, infantgod_cfg
   src/                  one file per module: buf, vec, json, wksp, board, exec,
                         rpc, serve, app, main
   port/                 the only OS-aware code: sys_win32.c, proc_win32.c
   tests/                test_json.c (JSON round-trip harness for the kernel)
 
 langs/                  language support, deliberately OUTSIDE the kernel
-  brainfuck.lang        the only language descriptor that ships
+  yarn.lang             Yarn Spinner: headers, builtins, <<commands>>, #tags
+  json.lang             JSON, including the ScriptableObject definition files
   lang.mjs              descriptor parsing, validation, registry
   tokenize.mjs          the tokenizer and its tiling guarantee
   selftest.mjs          node langs/selftest.mjs -- no kernel needed
   README.md             the descriptor grammar and wire shapes
 
 shell/                  the front end and the endpoints
-  main.mjs              `seide rpc` (stdio) and `seide serve` (HTTP + SSE + browser)
+  main.mjs              `infantgod rpc` (stdio) and `infantgod serve` (HTTP + SSE +
+                        browser); also the `mod.*` verb table
+  mods/                 the 幼神 layer -- game knowledge, no DOM
+    index.js            the facade: openMod, validatePackage, diagnoseYarn,
+                        scaffold, search, docFor, suggest, localization
+    knowledge.json      136 commands, 63 functions, 678 variables, 1221 nodes,
+                        51 schemas, 1305 baseline defines, 11 locales
+    yarn.js             Yarn lexing, tag extraction, arity and jump checks
+    validate.js         JSON-Schema + baseline validation of a mod package
+    scaffold.js         template-driven package generation (writes real PNGs)
+    search.js           the index behind search/docFor/suggest (no `require`)
+    selftest.mjs        node shell/mods/selftest.mjs -- 81 checks, no kernel
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
                         rpc.mjs, main.mjs, selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
   e2e.py                drives the protocol end to end over stdio
-  bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
   newlang.py            writes a conforming .lang descriptor
   README.md             what each tool is for
 
-examples/               hello.bf (prints "Hello World!"), shadow.bf
+examples/               hello.yarn, sample.json (the shipped fixtures)
 docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
-                        PROJECT.md, TRIM.md, FORK.md, BUGS.md
+                        MODS.md, PROJECT.md, TRIM.md, FORK.md, BUGS.md
 ```
 
-Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
-Git. `examples/` is **not** ignored: the `.bf` sources are part of the project.
+Build artefacts (`build/`, and the workspace-local `.infantgod/`) are ignored by
+Git. `examples/` is **not** ignored: the `.yarn` and `.json` fixtures are part of
+the project.
 
 ---
 
@@ -273,9 +322,21 @@ Stated plainly, because a fork needs to know what it is inheriting.
   `lang` member (the detected language id, or `null`); the kernel does not,
   because it has no language layer. `docs/PROTOCOL.md` marks which members come
   from which layer.
-- **Language colouring is ASCII-only.** `lang.tokenize` returns byte offsets and
-  the shell treats them as string indices; those are the same thing only for
-  ASCII. See `shell/web/main.mjs`'s exported `LIMITATIONS`.
+- **The kernel still caps a single read at 4 MiB.** The game's localisation CSVs
+  are around 4.5 MB, so they will not open through `file.read`. The 幼神 cards
+  read and validate them in Node instead, which is why `problems` works on a
+  package the editor cannot open.
+- **The kernel has no delete or rename.** Copying a mod package into
+  `StreamingAssets/Mods/<Name>/` is therefore a manual step; `mod.scaffold`
+  creates directories through `file.write`'s parent-directory creation.
+- **The kernel refuses any file containing a NUL byte**, so `.png` and `.bytes`
+  assets can be listed and diagnosed but not read or written by the board.
+- **Language colouring offsets are JS string indices, not bytes.** For Yarn this
+  is what makes Chinese prose highlight correctly; the upstream README's
+  "byte offsets" claim was wrong, and `langs/selftest.mjs` pins the Chinese case.
+  An astral character (emoji, rare CJK ext-B) still makes the Python-side tiling
+  check in `tools/e2e.py` see an offset past `len(text)`, because Python counts
+  code points — latent, and not triggered by any current fixture.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
   layout, and no undo on the board.
 - **The shell is the only client.** There is no second front end, so the protocol
@@ -289,8 +350,8 @@ Start with `docs/FORK.md` — it is the playbook, ordered by cost. The short
 version:
 
 1. Rename the product (`README.md`, `shell/main.mjs`'s `SHELL_VERSION` and
-   usage text, `core/include/seide_cfg.h`, `core/src/main.c`).
-2. Delete what you do not want: `seide modules` prints the cost of each module,
+   usage text, `core/include/infantgod_cfg.h`, `core/src/main.c`).
+2. Delete what you do not want: `infantgod modules` prints the cost of each module,
    and `docs/TRIM.md` lists the four edits per removal.
 3. Change the window: replace `shell/main.mjs`'s browser launcher with WRY/Tauri
    (`docs/FORK.md`).

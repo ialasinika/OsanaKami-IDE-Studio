@@ -14,8 +14,8 @@
  * support is a separate, optional layer outside `core/` (see `langs/`), so a
  * fork can delete it, replace it, or never build it at all.
  */
-#ifndef SEIDE_APP_H
-#define SEIDE_APP_H
+#ifndef INFANTGOD_APP_H
+#define INFANTGOD_APP_H
 
 #include <stddef.h>
 #include "json.h"
@@ -25,18 +25,18 @@
  * a module header that wants the forward declaration must not fight app.h
  * over who declares it first.
  */
-#ifndef SEIDE_APP_TYPEDEF
-#define SEIDE_APP_TYPEDEF
+#ifndef INFANTGOD_APP_TYPEDEF
+#define INFANTGOD_APP_TYPEDEF
 typedef struct sde_app sde_app;
 #endif
 
-#ifndef SEIDE_BOARD_TYPEDEF
-#define SEIDE_BOARD_TYPEDEF
+#ifndef INFANTGOD_BOARD_TYPEDEF
+#define INFANTGOD_BOARD_TYPEDEF
 typedef struct sde_board sde_board;
 #endif
 
-#ifndef SEIDE_EXECSET_TYPEDEF
-#define SEIDE_EXECSET_TYPEDEF
+#ifndef INFANTGOD_EXECSET_TYPEDEF
+#define INFANTGOD_EXECSET_TYPEDEF
 typedef struct sde_execset sde_execset;
 #endif
 
@@ -67,4 +67,4 @@ int  sde_app_notify(sde_app *app, sde_json *payload);
 void sde_app_emit_simple(sde_app *app, const char *event, const char *key1,
                          const char *val1);
 
-#endif /* SEIDE_APP_H */
+#endif /* INFANTGOD_APP_H */

@@ -6,11 +6,11 @@
  * debuggable without any user interface at all, which is the whole reason the
  * transport is plain stdio.
  *
- * `seide modules` prints the trim manifest below.  That table, plus the SRC
+ * `infantgod modules` prints the trim manifest below.  That table, plus the SRC
  * list in the Makefile and the method table in rpc.c, is the complete list of
  * places a fork touches to remove a subsystem.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,9 +124,9 @@ static void usage(FILE *out)
      * Split across several calls on purpose: C89 only requires a compiler to
      * accept 509 characters in one string literal, and this text is longer.
      */
-    fprintf(out, "seIDE kernel " SDE_VERSION " (protocol " SDE_PROTOCOL ")\n");
+    fprintf(out, "InfantGod Studio kernel " SDE_VERSION " (protocol " SDE_PROTOCOL ")\n");
     fprintf(out, "\n");
-    fprintf(out, "usage: seide <command> [options]\n");
+    fprintf(out, "usage: infantgod <command> [options]\n");
     fprintf(out, "\n");
     fprintf(out, "  rpc [--root DIR] [--verbose]\n");
     fprintf(out, "        Speak newline-delimited JSON-RPC on stdin/stdout\n");
@@ -171,7 +171,7 @@ static int cmd_rpc(int argc, char **argv)
     err[0] = '\0';
     if (sde_app_init(&app, opt_root(argc, argv), NULL, sde_serve_emit, NULL,
                      err, sizeof(err)) != 0) {
-        fprintf(stderr, "seide: %s\n", err[0] != '\0' ? err : "cannot start");
+        fprintf(stderr, "infantgod: %s\n", err[0] != '\0' ? err : "cannot start");
         return 1;
     }
     app.verbose = has_flag(argc, argv, "--verbose");
@@ -190,7 +190,7 @@ static int cmd_board_show(int argc, char **argv)
     err[0] = '\0';
     if (sde_app_init(&app, opt_root(argc, argv), NULL, emit_discard, NULL,
                      err, sizeof(err)) != 0) {
-        fprintf(stderr, "seide: %s\n", err[0] != '\0' ? err : "cannot start");
+        fprintf(stderr, "infantgod: %s\n", err[0] != '\0' ? err : "cannot start");
         return 1;
     }
 
@@ -198,7 +198,7 @@ static int cmd_board_show(int argc, char **argv)
     if (sde_json_write_pretty(&b, sde_board_document(app.board), 2) != 0) {
         sde_buf_free(&b);
         sde_app_free(&app);
-        fprintf(stderr, "seide: cannot serialise the board\n");
+        fprintf(stderr, "infantgod: cannot serialise the board\n");
         return 1;
     }
     (void) sde_buf_addc(&b, '\n');
@@ -218,7 +218,7 @@ static int cmd_modules(void)
     int               required = 0;
 
     table = sde_modules(&count);
-    printf("seIDE kernel %s -- %lu source modules\n",
+    printf("InfantGod Studio kernel %s -- %lu source modules\n",
            SDE_VERSION, (unsigned long) count);
     printf("To drop one: delete its line in the Makefile SRC list, its file\n"
            "under core/, and any method in rpc.c that calls it.\n\n");
@@ -259,14 +259,14 @@ int main(int argc, char **argv)
         return cmd_modules();
     }
     if (strcmp(cmd, "version") == 0) {
-        printf("seide %s protocol %s\n", SDE_VERSION, SDE_PROTOCOL);
+        printf("infantgod %s protocol %s\n", SDE_VERSION, SDE_PROTOCOL);
         return 0;
     }
     if (strcmp(cmd, "board") == 0) {
         if (argc > 2 && strcmp(argv[2], "show") == 0) {
             return cmd_board_show(argc, argv);
         }
-        fprintf(stderr, "seide: board needs a subcommand (show)\n");
+        fprintf(stderr, "infantgod: board needs a subcommand (show)\n");
         return 2;
     }
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "--help") == 0
@@ -275,7 +275,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    fprintf(stderr, "seide: unknown command: %s\n", cmd);
+    fprintf(stderr, "infantgod: unknown command: %s\n", cmd);
     usage(stderr);
     return 2;
 }

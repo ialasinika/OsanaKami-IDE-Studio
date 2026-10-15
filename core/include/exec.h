@@ -9,19 +9,19 @@
  * Deleting this module costs the IDE exactly one thing: cards can no longer
  * run anything.  Nothing else references it.
  */
-#ifndef SEIDE_EXEC_H
-#define SEIDE_EXEC_H
+#ifndef INFANTGOD_EXEC_H
+#define INFANTGOD_EXEC_H
 
 #include <stddef.h>
 #include "json.h"
 
-#ifndef SEIDE_APP_TYPEDEF
-#define SEIDE_APP_TYPEDEF
+#ifndef INFANTGOD_APP_TYPEDEF
+#define INFANTGOD_APP_TYPEDEF
 typedef struct sde_app sde_app;
 #endif
 
-#ifndef SEIDE_EXECSET_TYPEDEF
-#define SEIDE_EXECSET_TYPEDEF
+#ifndef INFANTGOD_EXECSET_TYPEDEF
+#define INFANTGOD_EXECSET_TYPEDEF
 typedef struct sde_execset sde_execset;
 #endif
 
@@ -57,4 +57,4 @@ int  sde_exec_pump(sde_execset *s);
 /* Number of runs that still have a live child. */
 int  sde_exec_live_count(const sde_execset *s);
 
-#endif /* SEIDE_EXEC_H */
+#endif /* INFANTGOD_EXEC_H */

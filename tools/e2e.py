@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""e2e.py -- end-to-end driver for the seIDE kernel protocol.
+"""e2e.py -- end-to-end driver for the InfantGod Studio kernel protocol.
 
-    python tools/e2e.py [--seide PATH | --seide-cmd CMD] [--fixture PATH]
+    python tools/e2e.py [--kernel PATH | --kernel-cmd CMD]
                         [--timeout SEC] [--keep-going] [--json]
 
 Spawns an endpoint and speaks newline-delimited JSON-RPC over its
@@ -18,8 +18,8 @@ including when a check fails.
 The scenario asserted here is the frozen protocol exercised in order: hello,
 workspace.info, lang.list, lang.tokenize (plus its tiling property),
 file.read / file.write / stale write, path containment, board round-trip, and a
-real ``exec.start`` run whose stdout must contain the Brainfuck program's
-output.  The two write checks have to edit the fixture to move its revision
+real ``exec.start`` run whose stdout must contain the kernel's own version.  The
+two write checks have to edit the fixture to move its revision
 (a revision is a content hash) and write the original bytes back afterwards, so
 a completed run leaves the file byte-identical.
 
@@ -27,26 +27,27 @@ Endpoint modes
     Languages are no longer part of the C kernel: the shell multiplexer serves
     ``lang.list`` / ``lang.tokenize`` and forwards the kernel methods.
 
-    * **kernel mode** (default, ``--seide build/seide.exe``): the driver spawns
-      ``<seide> rpc``.  The kernel does not serve ``lang.*``, so those checks
+    * **kernel mode** (default, ``--kernel build/infantgod.exe``): the driver spawns
+      ``<infantgod> rpc``.  The kernel does not serve ``lang.*``, so those checks
       (three, counting the tiling assertion) are reported as
       *skipped (kernel mode)* and ``workspace.info`` is not required to carry
       ``langs``.
-    * **full mode** (``--seide-cmd "node shell/main.mjs rpc --workspace ."``):
+    * **full mode** (``--kernel-cmd "node shell/main.mjs rpc --workspace ."``):
       the command line is spawned verbatim -- nothing (not even ``rpc``) is
       appended.  ``workspace.info.langs`` is required and the tokenizer checks
       run, including the assertion that token spans tile the whole input.
 
-Fixture
-    ``--fixture`` names the Brainfuck program used by the checks.  Without it the
-    driver prefers ``examples/hello.bf`` and otherwise creates the scratch
-    ``examples/shadow.bf``; if it cannot use a file at all it falls back to an
-    inlined program that prints ``hi``.
+Fixtures
+    The checks read the two scripts that actually ship: ``examples/hello.yarn``
+    (the tokenizer, ``file.read`` and the two write checks) and, for the language
+    inventory, the descriptors in ``langs/``.  There is no scratch fixture and
+    no ``--fixture`` override: every path the suite touches is a file the
+    repository already has, so a run cannot invent one.
 
 Exit codes
     0   every check passed
     1   at least one check failed (or checks were skipped after a failure)
-    2   the driver could not start (missing seide binary, unusable fixture, ...)
+    2   the driver could not start (missing infantgod binary, unusable fixture, ...)
     3   the command line was malformed
 """
 
@@ -66,22 +67,41 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BF_PY = Path(__file__).resolve().parent / "bf.py"
 
 #: Default kernel binary, relative to the repository root (kernel-only mode).
-KERNEL_DEFAULT = "build/seide.exe"
+KERNEL_DEFAULT = "build/infantgod.exe"
 
-#: Fallback Brainfuck program: prints exactly ``hi`` and uses a loop.
-INLINE_BF = "++++++++++[>++++++++++<-]>++++.+."
-INLINE_LF = INLINE_BF + "\n"
+#: The script the tokenizer, ``file.read`` and the write checks exercise.  It is
+#: a file the repository ships, so no check ever depends on a fixture the driver
+#: created (or on ``--fixture`` naming one).
+FIXTURE = "examples/hello.yarn"
+
+#: Name of the kernel binary that ``exec.start`` runs at itself in *both*
+#: endpoint modes.  Derived from the documented ``KERNEL_DEFAULT`` rather than
+#: from the endpoint argv: in full mode the argv is ``node``, and the binary a
+#: `version` reply proves is the kernel's, not the shell's.
+KERNEL_BINARY = REPO_ROOT / KERNEL_DEFAULT
 
 #: Appended to a file to make a real content change for the revision checks.
-#: Every byte outside ``+-<>[].,`` is a comment to Brainfuck, so the file still
-#: runs to exactly the same output while it is edited.
+#: ``#`` starts a comment in Yarn, so the file still parses and still tokenizes
+#: while it is edited.
 REVISION_PROBE = "\n# e2e: revision probe\n"
 
-#: The command handed to ``exec.start``; ``{python}``/``{bf}``/``{fixture}`` are filled in.
-EXEC_TEMPLATE = '"{python}" "{bf}" "{fixture}"'
+#: Kinds ``lang.tokenize`` may put on the wire (mirrors ``langs/lang.mjs``).
+#: Kept here rather than imported so the driver stays runnable against any fork
+#: whose language layer is a reimplementation, as the wire contract allows.
+TOKEN_KINDS = (
+    "keyword",
+    "command",
+    "type",
+    "constant",
+    "number",
+    "string",
+    "comment",
+    "ident",
+    "punct",
+    "ws",
+)
 
 
 class DriverError(Exception):
@@ -151,11 +171,11 @@ def split_command(text: str) -> list:
 
 
 def resolve_argv(setting: str, explicit: bool) -> list:
-    """Turn ``--seide`` into an argv list.
+    """Turn ``--kernel`` into an argv list.
 
     A path to an existing file is used as-is; anything else is split like a shell
-    command, which keeps the documented ``--seide build/seide.exe`` contract while
-    letting a test drive ``--seide "python tools/stub.py"``.
+    command, which keeps the documented ``--kernel build/infantgod.exe`` contract while
+    letting a test drive ``--kernel "python tools/stub.py"``.
     """
     candidate = Path(setting)
     if not candidate.is_absolute():
@@ -164,36 +184,36 @@ def resolve_argv(setting: str, explicit: bool) -> list:
         return [str(candidate)]
     argv = split_command(setting)
     if not argv:
-        raise DriverError("--seide is empty")
+        raise DriverError("--kernel is empty")
     if Path(argv[0]).is_file() or shutil.which(argv[0]):
         return argv
     if not explicit:
         raise DriverError(
-            f"seide binary not found at {candidate}; build it first with `python tools/build.py`"
+            f"infantgod binary not found at {candidate}; build it first with `python tools/build.py`"
         )
-    raise DriverError(f"cannot find {argv[0]!r} (from --seide {setting!r})")
+    raise DriverError(f"cannot find {argv[0]!r} (from --kernel {setting!r})")
 
 
 def resolve_endpoint(args) -> tuple:
-    """Return ``(argv, mode)`` for ``--seide`` (kernel) or ``--seide-cmd`` (full).
+    """Return ``(argv, mode)`` for ``--kernel`` (kernel) or ``--kernel-cmd`` (full).
 
     *kernel* mode appends the ``rpc`` subcommand to the kernel binary; *full*
-    mode runs ``--seide-cmd`` exactly as given, because the caller already wrote
-    the whole command line (``rpc`` included).  ``--seide`` defaults to the
-    kernel binary only when it is absent, so an explicitly written ``--seide``
-    is still detected as a conflict with ``--seide-cmd``.
+    mode runs ``--kernel-cmd`` exactly as given, because the caller already wrote
+    the whole command line (``rpc`` included).  ``--kernel`` defaults to the
+    kernel binary only when it is absent, so an explicitly written ``--kernel``
+    is still detected as a conflict with ``--kernel-cmd``.
     """
-    if args.seide_cmd:
-        if args.seide is not None:
-            raise DriverError("--seide and --seide-cmd are mutually exclusive")
-        argv = split_command(args.seide_cmd)
+    if args.kernel_cmd:
+        if args.kernel is not None:
+            raise DriverError("--kernel and --kernel-cmd are mutually exclusive")
+        argv = split_command(args.kernel_cmd)
         if not argv:
-            raise DriverError("--seide-cmd is empty")
+            raise DriverError("--kernel-cmd is empty")
         if not (Path(argv[0]).is_file() or shutil.which(argv[0])):
-            raise DriverError(f"cannot find {argv[0]!r} (from --seide-cmd)")
+            raise DriverError(f"cannot find {argv[0]!r} (from --kernel-cmd)")
         return argv, "full"
-    seide = args.seide if args.seide is not None else KERNEL_DEFAULT
-    argv = resolve_argv(seide, explicit=args.seide is not None)
+    setting = args.kernel if args.kernel is not None else KERNEL_DEFAULT
+    argv = resolve_argv(setting, explicit=args.kernel is not None)
     return [*argv, "rpc"], "kernel"
 
 
@@ -400,61 +420,47 @@ def require(condition, message: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Fixture handling
+# Fixture and index space
 
 
-def resolve_fixture(explicit) -> dict:
-    """Decide which Brainfuck program the checks use.
+def resolve_fixture() -> dict:
+    """Return the shipped script every text check runs against.
 
-    Returns a dict with ``path`` (absolute), ``text`` and ``expected`` (the bytes
-    the program should print, computed with the bundled interpreter).
+    ``examples/hello.yarn`` is a real Yarn Spinner node, not test scratch space:
+    it carries non-ASCII prose, indentation, comments and dialogue, which is
+    exactly what makes it worth tokenizing.
     """
-    hello = REPO_ROOT / "examples" / "hello.bf"
-    shadow = REPO_ROOT / "examples" / "shadow.bf"
-    created = False
-
-    if explicit:
-        path = Path(explicit)
-        if not path.is_absolute():
-            path = (Path.cwd() / path).resolve()
-        if not path.is_file():
-            raise DriverError(f"--fixture is not a readable file: {path}")
-    elif hello.is_file():
-        path = hello
-    elif shadow.is_file():
-        path = shadow
-    else:
-        path = shadow
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(INLINE_LF, encoding="utf-8", newline="\n")
-            created = True
-        except OSError as exc:
-            raise DriverError(f"cannot create the scratch fixture {path}: {exc}") from exc
-
+    path = REPO_ROOT / FIXTURE
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise DriverError(f"cannot read fixture {path}: {exc}") from exc
-    return {"path": str(path), "text": text, "created": created, "inline": path == shadow and created}
+        raise DriverError(f"cannot read the fixture {path}: {exc}") from exc
+    return {"path": str(path), "text": text}
 
 
-def expected_output(path: str, fallback: str) -> str:
-    """Run the bundled ``bf.py`` over the fixture to learn its expected stdout."""
-    if BF_PY.is_file():
-        try:
-            done = subprocess.run(
-                [sys.executable, str(BF_PY), path], capture_output=True, timeout=60, check=False
-            )
-            if done.returncode == 0:
-                return done.stdout.decode("utf-8", "replace")
-            raise DriverError(
-                f"bf.py failed on {path} (exit {done.returncode}): "
-                f"{done.stderr.decode('utf-8', 'replace').strip()}"
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise DriverError(f"cannot derive the expected output from {path}: {exc}") from exc
-    return fallback
+def js_length(text: str) -> int:
+    """Length of *text* in the tokenizer's index space.
+
+    ``langs/tokenize.mjs`` indexes a JavaScript string, so every offset it emits
+    is a **UTF-16 code unit** count, not a Python character (code point) count.
+    The two agree until a character outside the BMP shows up -- an emoji, say --
+    where one character is a surrogate *pair* and the JS index runs one ahead of
+    ``len(text)``.  Comparing the wire spans against ``len(text)`` would then
+    either fail a correct tokenizer or, worse, let a span past ``len(text)``
+    through ``normalise_tokens``.  Measuring the fixture in the same space keeps
+    the tiling assertion honest for any script, not just this one.
+    """
+    return len(text.encode("utf-16-le")) // 2
+
+
+def scrubbed(raw: bytes) -> str:
+    """Decode a child's captured stdout, dropping bytes that are not UTF-8.
+
+    This is the "sanitised" half of the ``exec.start`` contract: the driver never
+    trusts the wire to be valid UTF-8 (a Windows child can emit a code page),
+    and never lets a stray byte kill the check.
+    """
+    return raw.decode("utf-8", "replace")
 
 
 # --------------------------------------------------------------------------
@@ -589,8 +595,11 @@ def board_arrays(loaded) -> tuple:
 def normalise_tokens(tokens, text_len: int) -> list:
     """Return ``(start, end, kind)`` triples from either wire shape.
 
-    The shell sends ``[start, end, kind]`` arrays; object tokens are accepted too
-    so the check keeps working against an older kernel-side tokenizer.
+    *text_len* is the input's length in the tokenizer's index space (see
+    :func:`js_length`), not ``len(text)`` -- a span is judged against the same
+    units the tokenizer counted in.  The shell sends ``[start, end, kind]``
+    arrays; object tokens are accepted too so the check keeps working against an
+    older kernel-side tokenizer.
     """
     spans = []
     for token in tokens:
@@ -606,10 +615,46 @@ def normalise_tokens(tokens, text_len: int) -> list:
         )
         require(
             0 <= start < end <= text_len,
-            f"token span {start}..{end} is outside the {text_len}-byte text",
+            f"token span {start}..{end} is outside the {text_len}-unit text",
         )
         spans.append((start, end, kind))
     return spans
+
+
+def check_lang_entry(entry) -> str:
+    """Validate one ``lang.list`` entry; returns its id.
+
+    The wire contract is ``{id: string, title: string, extensions: list}`` and
+    nothing more is required of a language -- the driver must not assume any
+    particular id, because which descriptors ship is a fork's decision.
+    """
+    require(isinstance(entry, dict), f"lang.list entry is not an object: {_short(entry)}")
+    for key, kind in (("id", str), ("title", str), ("extensions", list)):
+        require(
+            isinstance(entry.get(key), kind),
+            f"lang {entry.get('id')!r}: {key} is not a {kind.__name__}",
+        )
+    require(entry["id"] != "", f"lang.list entry has an empty id: {_short(entry)}")
+    for extension in entry["extensions"]:
+        require(
+            isinstance(extension, str) and extension.startswith("."),
+            f"lang {entry['id']!r}: extension {extension!r} is not a string like '.yarn'",
+        )
+    return entry["id"]
+
+
+def check_token(kind, start, end, text_len: int) -> None:
+    """Validate one token against the wire contract, for any language.
+
+    Deliberately kind-agnostic: a Yarn ``command``, a JSON ``keyword`` and a
+    plain ``ident`` all satisfy the same shape, and the only kinds allowed on the
+    wire are the ones ``langs/lang.mjs`` publishes.
+    """
+    require(
+        kind in TOKEN_KINDS,
+        f"token {start}..{end} has unknown kind {kind!r} "
+        f"(expected one of {', '.join(TOKEN_KINDS)})",
+    )
 
 
 def define_checks(h: Harness) -> list:
@@ -627,6 +672,9 @@ def define_checks(h: Harness) -> list:
         require(isinstance(result.get("kernel_version"), str), "hello.kernel_version is not a string")
         require(isinstance(result.get("root"), str), "hello.root is not a string")
         ctx["root"] = result["root"]
+        # The `exec.start` check asserts against this: the version is whatever
+        # the live endpoint says it is, never a number written down here.
+        ctx["expected"] = f"infantgod {result['kernel_version']} protocol"
         return f"protocol={result['protocol']} kernel_version={result['kernel_version']} root={result['root']}"
 
     def workspace_info():
@@ -650,17 +698,25 @@ def define_checks(h: Harness) -> list:
         result = client.call("lang.list", {})
         entries = result.get("langs") if isinstance(result, dict) else None
         require(isinstance(entries, list), "lang.list.langs is not a list")
-        by_id = {}
-        for entry in entries:
-            require(isinstance(entry, dict), f"lang.list entry is not an object: {_short(entry)}")
-            for key, kind in (("id", str), ("title", str), ("extensions", list)):
-                require(
-                    isinstance(entry.get(key), kind),
-                    f"lang {entry.get('id')!r}: {key} is not a {kind.__name__}",
-                )
-            by_id[entry["id"]] = entry
-        require("brainfuck" in by_id, f"lang.list has no 'brainfuck' language ({sorted(by_id)})")
-        return f"{len(entries)} languages; brainfuck extensions={by_id['brainfuck']['extensions']}"
+        require(entries, "lang.list returned no languages at all")
+        by_id = {check_lang_entry(entry): entry for entry in entries}
+        # This checkout ships exactly two descriptors -- JSON and Yarn -- so
+        # either one missing (or the list holding anything else) means the
+        # language directory is not the one this suite was written for.  A real
+        # assertion, not a demand for one particular id.
+        for wanted in ("json", "yarn"):
+            require(
+                wanted in by_id,
+                f"lang.list has no {wanted!r} language ({sorted(by_id)})",
+            )
+        require(
+            ".yarn" in by_id["yarn"]["extensions"],
+            f"lang 'yarn' declares extensions {by_id['yarn']['extensions']}, not '.yarn'",
+        )
+        return (
+            f"{len(entries)} languages {sorted(by_id)}; "
+            f"yarn extensions={by_id['yarn']['extensions']}"
+        )
 
     def lang_tokenize():
         text = ctx["source_text"]
@@ -668,22 +724,30 @@ def define_checks(h: Harness) -> list:
         require(isinstance(result, dict), "lang.tokenize result is not an object")
         tokens = result.get("tokens")
         require(isinstance(tokens, list), "lang.tokenize.tokens is not a list")
-        require(tokens, "lang.tokenize returned no tokens for a Brainfuck program")
+        require(tokens, "lang.tokenize returned no tokens for a non-empty file")
         lang = result.get("lang")
         require(lang is None or isinstance(lang, str), "lang.tokenize.lang is neither a string nor null")
-        spans = normalise_tokens(tokens, len(text))
-        commands = sum(1 for _, _, kind in spans if kind == "command")
-        require(commands > 0, "no token of kind 'command' in a Brainfuck program")
+        require(
+            lang == "yarn",
+            f"lang.tokenize.lang is {lang!r}, expected 'yarn' for a .yarn path",
+        )
+        length = ctx["source_units"]
+        spans = normalise_tokens(tokens, length)
+        # Kind-agnostic on purpose: the fixture is Yarn today, but the contract is
+        # "valid triples with known kinds", not "a token of kind 'keyword'".
+        for start, end, kind in spans:
+            check_token(kind, start, end, length)
         ctx["tokens"] = spans
-        return f"{len(spans)} tokens, {commands} of kind 'command', lang={lang!r}"
+        return f"{len(spans)} tokens, kinds {sorted({kind for _, _, kind in spans})}, lang={lang!r}"
 
     def lang_tiling():
         """Spans must tile the input: start at 0, no gap, no overlap, end at length."""
         text = ctx["source_text"]
+        length = ctx["source_units"]
         result = client.call("lang.tokenize", {"path": ctx["fixture_path"], "text": text})
         tokens = result.get("tokens") if isinstance(result, dict) else None
         require(isinstance(tokens, list) and tokens, "lang.tokenize returned no tokens")
-        spans = normalise_tokens(tokens, len(text))
+        spans = normalise_tokens(tokens, length)
         cursor = 0
         for index, (start, end, kind) in enumerate(spans):
             require(
@@ -692,10 +756,10 @@ def define_checks(h: Harness) -> list:
             )
             cursor = end
         require(
-            cursor == len(text),
-            f"spans stop tiling at {cursor}, but the input is {len(text)} bytes long",
+            cursor == length,
+            f"spans stop tiling at {cursor}, but the input is {length} units long",
         )
-        return f"{len(spans)} spans tile 0..{len(text)} with no gaps or overlaps"
+        return f"{len(spans)} spans tile 0..{length} with no gaps or overlaps"
 
     def file_read():
         result = client.call("file.read", {"path": ctx["fixture_path"]})
@@ -709,6 +773,8 @@ def define_checks(h: Harness) -> list:
         required = [("path", str), ("eol", str), ("size", int), ("mtime", int)]
         if ctx["mode"] == "full":
             # Only the shell knows languages; the kernel has no language layer.
+            # The fixture is ``examples/hello.yarn``, so the detected id is not
+            # decorative: it is the extension-to-language mapping, asserted.
             required.append(("lang", str))
         for key, kind in required:
             require(isinstance(result.get(key), kind), f"file.read.{key} is not a {kind.__name__}")
@@ -716,7 +782,12 @@ def define_checks(h: Harness) -> list:
             result["eol"] in ("lf", "crlf"),
             f"file.read.eol is {result['eol']!r}, expected 'lf' or 'crlf'",
         )
-        if ctx["mode"] != "full" and "lang" in result:
+        if ctx["mode"] == "full":
+            require(
+                result["lang"] == "yarn",
+                f"file.read.lang is {result['lang']!r}, expected 'yarn' for {FIXTURE}",
+            )
+        elif "lang" in result:
             require(isinstance(result["lang"], str), "file.read.lang is not a str")
         described = f"revision={result['revision']} eol={result['eol']!r} size={result['size']}"
         if isinstance(result.get("lang"), str):
@@ -751,7 +822,7 @@ def define_checks(h: Harness) -> list:
             )
         except Exception as exc:  # noqa: BLE001 -- a restore may never raise
             sys.stderr.write(
-                f"seIDE e2e: could not restore {ctx['fixture_path']}: {exc}\n"
+                f"InfantGod Studio e2e: could not restore {ctx['fixture_path']}: {exc}\n"
             )
 
     def file_write():
@@ -830,8 +901,8 @@ def define_checks(h: Harness) -> list:
         the repository directory: it is never created and never has to exist,
         because containment is decided before the file is looked up.
         """
-        outside = str(REPO_ROOT.parent / "e2e-outside.bf")
-        for label, path in (("absolute", outside), ("relative", "../e2e-outside.bf")):
+        outside = str(REPO_ROOT.parent / "e2e-outside.yarn")
+        for label, path in (("absolute", outside), ("relative", "../e2e-outside.yarn")):
             error = client.expect_error("file.read", {"path": path})
             code = error.get("code")
             require(
@@ -906,6 +977,31 @@ def define_checks(h: Harness) -> list:
         return detail
 
     def exec_run():
+        """A real child process, its exit code, and its captured stdout.
+
+        The command is the kernel run at **itself**: ``"<infantgod>" version``
+        with the workspace as cwd.  That choice keeps the check honest without
+        inventing anything:
+
+        * it is a genuine process spawn with a real exit code, not a mock;
+        * it needs no fixture file and no interpreter, so the check cannot be
+          broken by one of the project's languages being removed;
+        * the expected stdout is *derived from the endpoint*, not hard-coded --
+          ``ctx['expected']`` is whatever ``hello`` reported as
+          ``kernel_version``, and the assertion is that the child's stdout
+          carries ``infantgod <that version> protocol``.  A checked-in version
+          number would have to be edited every release, and a bare substring
+          match would pass on a value like ``"1"``, which is no assertion at all;
+        * the kernel binary is addressed through ``KERNEL_BINARY`` rather than
+          through the endpoint argv, so the same command proves the same thing
+          in *full* mode, where argv[0] is ``node`` and the kernel is a child of
+          the shell, not of this driver.
+
+        The stdout is decoded with :func:`scrubbed`, which is what "captured and
+        sanitised" means here: invalid UTF-8 becomes U+FFFD instead of an
+        exception, so a child that writes a Windows code page still yields a
+        readable, assertable string.
+        """
         result = client.call(
             "exec.start", {"card_id": ctx["card_id"], "cmd": ctx["cmd"], "cwd": ctx["cwd"]}
         )
@@ -932,10 +1028,10 @@ def define_checks(h: Harness) -> list:
                 exit_code = event.get("code", event.get("exit_code"))
                 finished = True
 
-        text = stdout.decode("utf-8", "replace")
+        text = scrubbed(bytes(stdout))
         require(
             exit_code == 0,
-            f"run {run_id} exited with {exit_code!r}; stderr={stderr[:200].decode('utf-8', 'replace')!r}",
+            f"run {run_id} exited with {exit_code!r}; stderr={scrubbed(bytes(stderr))[:200]!r}",
         )
         require(
             ctx["expected"] in text,
@@ -1009,20 +1105,19 @@ def report(results, style: Style, stream, extra: str = "") -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="e2e.py",
-        description="Drive the seIDE kernel RPC scenario. Exit codes: 0 pass, 1 fail, 2 driver error, 3 usage.",
+        description="Drive the InfantGod Studio kernel RPC scenario. Exit codes: 0 pass, 1 fail, 2 driver error, 3 usage.",
     )
     parser.add_argument(
-        "--seide",
+        "--kernel",
         default=None,
         metavar="PATH",
         help=f"kernel binary, spawned as `<PATH> rpc` (default {KERNEL_DEFAULT})",
     )
     parser.add_argument(
-        "--seide-cmd",
+        "--kernel-cmd",
         metavar="CMD",
         help='full endpoint command line, spawned verbatim, e.g. "node shell/main.mjs rpc --workspace ."',
     )
-    parser.add_argument("--fixture", metavar="PATH", help="Brainfuck program used by the checks")
     parser.add_argument(
         "--timeout", type=float, default=15.0, metavar="SEC", help="per-request timeout (default 15)"
     )
@@ -1045,13 +1140,12 @@ def main(argv=None) -> int:
         return 2
 
     try:
-        argv_seide, mode = resolve_endpoint(args)
-        fixture = resolve_fixture(args.fixture)
-        expected = expected_output(
-            fixture["path"], "hi" if fixture["inline"] or fixture["path"].endswith("shadow.bf") else ""
-        )
-        if not expected:
-            raise DriverError(f"cannot determine the expected output of {fixture['path']}")
+        argv_infantgod, mode = resolve_endpoint(args)
+        fixture = resolve_fixture()
+        # The `exec.start` check runs the kernel at itself, so the command line
+        # is fixed here rather than derived from the endpoint: in full mode the
+        # endpoint is the shell, and the shell's argv[0] is `node`.
+        kernel = resolve_argv(str(KERNEL_BINARY), explicit=True)
     except DriverError as exc:
         return fail_start(str(exc))
 
@@ -1059,22 +1153,25 @@ def main(argv=None) -> int:
         "mode": mode,
         "fixture_path": fixture["path"],
         "source_text": fixture["text"],
-        "expected": expected,
+        "source_units": js_length(fixture["text"]),
+        # Filled in by `hello`; the suite cannot know the version until then.
+        "expected": "",
         "card_id": "e2e-editor",
         "cwd": str(REPO_ROOT),
-        "cmd": EXEC_TEMPLATE.format(python=sys.executable, bf=str(BF_PY), fixture=fixture["path"]),
+        # Quoted because the workspace path may contain spaces and this string
+        # goes straight to CreateProcessA as a raw command line.
+        "cmd": f'"{" ".join(kernel)}" version',
     }
 
     if not args.json:
-        print(style.bold(f"seIDE e2e [{mode} mode]: {' '.join(argv_seide)}"))
-        print(style.dim(f"fixture   : {fixture['path']}{' (created)' if fixture['created'] else ''}"))
-        print(style.dim(f"expected  : {expected!r}"))
+        print(style.bold(f"InfantGod Studio e2e [{mode} mode]: {' '.join(argv_infantgod)}"))
+        print(style.dim(f"fixture   : {fixture['path']} ({ctx['source_units']} units)"))
         print(style.dim(f"exec cmd  : {ctx['cmd']}"))
         if mode == "kernel":
             print(style.dim("note      : kernel mode skips lang.list / lang.tokenize"))
         print(style.dim("-" * 68))
 
-    client = RpcClient(argv_seide, args.timeout)
+    client = RpcClient(argv_infantgod, args.timeout)
     results, stderr_tail = [], ""
     try:
         client.start()
@@ -1106,7 +1203,7 @@ def main(argv=None) -> int:
                 {
                     "ok": code == 0,
                     "mode": mode,
-                    "endpoint": argv_seide,
+                    "endpoint": argv_infantgod,
                     "fixture": fixture["path"],
                     "duration_s": round(time.monotonic() - started, 3),
                     "passed": passed,

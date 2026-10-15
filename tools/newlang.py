@@ -1,32 +1,50 @@
 #!/usr/bin/env python3
-"""newlang.py -- scaffold a seIDE ``.lang`` language descriptor.
+"""newlang.py -- scaffold a InfantGod Studio ``.lang`` language descriptor.
 
     python tools/newlang.py --id ID --ext .EXT [--title T] [--comment CHAR]
+                            [--string TOKEN] [--block-comment-open TOKEN]
+                            [--block-comment-close TOKEN]
                             [--keywords "a,b,c"] [--keyword TOKEN]
                             [--out DIR] [--force]
 
-The written file uses exactly the grammar the seIDE descriptor parser accepts
+The written file uses exactly the grammar the InfantGod Studio descriptor parser accepts
 (``langs/lang.mjs``, loaded by the shell -- languages are not part of the C
 kernel)::
 
-    # seIDE language descriptor
-    id brainfuck
-    title Brainfuck
-    ext .bf
-    line_comment #
-    kind command "+" "-" "<" ">" "[" "]" "." ","
+    # InfantGod Studio language descriptor
+    id yarn
+    title Yarn
+    ext .yarn
+    line_comment //
+    kind keyword "title" "when" "tags" "if" "else" "end"
 
 Only the keys named in that grammar are ever emitted -- an unknown key is a hard
 error for the parser, so inventing one here would produce a broken descriptor.
 ``kind`` is ``command`` when every token is a single non-alphanumeric character
 and ``keyword`` otherwise.  Tokens are always double-quoted, with ``\\"``,
-``\\\\``, ``\\n`` and ``\\t`` escaped.
+``\\\\``, ``\\n`` and ``\\t`` escaped; the marker keys (``line_comment``,
+``block_comment_open``, ``block_comment_close``, ``string``) take the raw marker
+or a quoted one, and this tool always writes the quoted form.
 
-``--keywords`` splits on commas, so a token that is itself a comma (Brainfuck's
-``,``) is given with the repeatable ``--keyword``, which takes one token verbatim::
+``--string`` marks a string delimiter and may repeat, because a language can
+delimit strings more than one way (``string "\\""`` plus ``string "'"`` for
+Python).  ``--block-comment-open`` / ``--block-comment-close`` are one pair: the
+parser rejects either half on its own, so this tool refuses to write one without
+the other.
 
-    python tools/newlang.py --id brainfuck --ext .bf \
-        --keywords "+,-,<,>,[,],." --keyword ","
+``--keywords`` splits on commas, so a token that is itself a comma or a space can
+never come from that flag; give it with the repeatable ``--keyword``, which takes
+one token verbatim.  Yarn's ``->`` and ``<<`` are ordinary tokens and go in the
+comma list, but a language whose own separator is the comma needs ``--keyword``::
+
+    python tools/newlang.py --id yarn --ext .yarn \
+        --keywords "title,when,tags,if,else,end"
+
+A JSON-like language, which needs a string delimiter and no comments::
+
+    python tools/newlang.py --id adoc --ext .adoc --string '"' \
+        --keywords "{,},[,],:" --keyword "," --keyword true --keyword false
+
 
 Exit codes
     0   the descriptor was written
@@ -161,6 +179,9 @@ def verify_descriptor(text: str):
     for required in ("id", "title"):
         if counts.get(required, 0) != 1:
             return f"expected exactly one {required} line"
+    opens, closes = counts.get("block_comment_open", 0), counts.get("block_comment_close", 0)
+    if opens != closes:
+        return "block_comment_open without block_comment_close"
     return None
 
 
@@ -175,7 +196,7 @@ def normalise_extensions(values) -> list:
     for value in values:
         extension = value if value.startswith(".") else f".{value}"
         if not EXT_RE.match(extension):
-            raise ValueError(f"invalid extension {value!r} (want something like .bf)")
+            raise ValueError(f"invalid extension {value!r} (want something like .yarn)")
         if extension not in extensions:
             extensions.append(extension)
     return extensions
@@ -210,6 +231,18 @@ def parse_keywords(values, singles) -> list:
     return keywords
 
 
+def _check_marker(value: str, flag: str) -> None:
+    """Reject a marker that cannot be written back into a descriptor.
+
+    Mirrors ``readMarker`` in ``langs/lang.mjs``: a raw marker is a single token
+    with no whitespace, and an empty one is rejected for a string delimiter.
+    """
+    if not value:
+        raise ValueError(f"{flag} needs a non-empty marker")
+    if WHITESPACE_RE.search(value):
+        raise ValueError(f"{flag} {value!r} contains whitespace")
+
+
 def _check_token(token: str) -> None:
     """Reject a token that cannot be written back as a quoted descriptor token."""
     if not token:
@@ -218,11 +251,24 @@ def _check_token(token: str) -> None:
         raise ValueError(f"token {token!r} contains whitespace")
 
 
-def render(language_id: str, title: str, extensions, comment: str, keywords) -> str:
+def render(
+    language_id: str,
+    title: str,
+    extensions,
+    comment: str,
+    keywords,
+    strings=(),
+    block_open: str = "",
+    block_close: str = "",
+) -> str:
     """Render the descriptor text (always LF-terminated, exactly one final LF)."""
-    lines = ["# seIDE language descriptor", f"id {language_id}", f"title {title}"]
+    lines = ["# InfantGod Studio language descriptor", f"id {language_id}", f"title {title}"]
     lines.extend(f"ext {extension}" for extension in extensions)
+    if block_open:
+        lines.append(f"block_comment_open {escape_token(block_open)}")
+        lines.append(f"block_comment_close {escape_token(block_close)}")
     lines.append(f"line_comment {escape_token(comment)}")
+    lines.extend(f"string {escape_token(delimiter)}" for delimiter in strings)
     if keywords:
         kind = "command" if all(COMMAND_RE.match(token) for token in keywords) else "keyword"
         lines.append("kind " + kind + " " + " ".join(escape_token(t) for t in keywords))
@@ -234,16 +280,35 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="newlang.py",
         description="Write a .lang descriptor for a new language. Exit codes: 0 ok, 2 refused, 3 usage error.",
     )
-    parser.add_argument("--id", required=True, metavar="ID", help="language id, e.g. brainfuck")
+    parser.add_argument("--id", required=True, metavar="ID", help="language id, e.g. yarn")
     parser.add_argument(
         "--ext",
         required=True,
         action="append",
         metavar=".EXT",
-        help="file extension (repeatable), e.g. --ext .bf",
+        help="file extension (repeatable), e.g. --ext .yarn",
     )
     parser.add_argument("--title", metavar="T", help="display title (default: derived from --id)")
     parser.add_argument("--comment", metavar="CHAR", default="#", help="line comment marker (default #)")
+    parser.add_argument(
+        "--string",
+        action="append",
+        default=[],
+        metavar="TOKEN",
+        help='string delimiter (repeatable), e.g. --string \'"\'',
+    )
+    parser.add_argument(
+        "--block-comment-open",
+        metavar="TOKEN",
+        default="",
+        help="block comment opener, e.g. /* (requires --block-comment-close)",
+    )
+    parser.add_argument(
+        "--block-comment-close",
+        metavar="TOKEN",
+        default="",
+        help="block comment closer, e.g. */ (requires --block-comment-open)",
+    )
     parser.add_argument(
         "--keywords",
         action="append",
@@ -279,12 +344,24 @@ def main(argv=None) -> int:
     if not comment or WHITESPACE_RE.search(comment) or comment == '"':
         return _fail(f"invalid --comment {comment!r} (want a non-blank marker without whitespace)")
     try:
+        strings = []
+        for value in args.string:
+            _check_marker(value, "--string")
+            if value not in strings:
+                strings.append(value)
+        block_open, block_close = args.block_comment_open, args.block_comment_close
+        if block_open or block_close:
+            _check_marker(block_open, "--block-comment-open")
+            _check_marker(block_close, "--block-comment-close")
+    except ValueError as exc:
+        return _fail(str(exc))
+    try:
         keywords = parse_keywords(args.keywords, args.keyword)
     except ValueError as exc:
         return _fail(str(exc))
 
     title = args.title if args.title else title_for(args.id)
-    text = render(args.id, title, extensions, comment, keywords)
+    text = render(args.id, title, extensions, comment, keywords, strings, block_open, block_close)
     problem = verify_descriptor(text)
     if problem is not None:
         return _fail(f"refusing to write a descriptor the runtime would reject: {problem}", code=2)

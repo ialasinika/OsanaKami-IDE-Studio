@@ -4,8 +4,8 @@
  * Deliberately untyped: the kernel stores heterogeneous things in lists and
  * does not need the ceremony of a generic container library.
  */
-#ifndef SEIDE_VEC_H
-#define SEIDE_VEC_H
+#ifndef INFANTGOD_VEC_H
+#define INFANTGOD_VEC_H
 
 #include <stddef.h>
 
@@ -21,4 +21,4 @@ void  sde_vec_clear(sde_vec *v);
 int   sde_vec_push(sde_vec *v, void *item);
 void *sde_vec_at(const sde_vec *v, size_t i);
 
-#endif /* SEIDE_VEC_H */
+#endif /* INFANTGOD_VEC_H */

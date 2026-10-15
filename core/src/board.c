@@ -5,7 +5,7 @@
  * (unique ids, numeric geometry, links that point at something) and stores
  * everything else without looking at it.  Card kinds are the fork's business.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,8 +19,8 @@
 
 struct sde_board {
     char     *root;      /* workspace root, or NULL before load */
-    char     *path;      /* <root>/.seide/board.json */
-    char     *tmp_path;  /* <root>/.seide/board.json.tmp */
+    char     *path;      /* <root>/.infantgod/board.json */
+    char     *tmp_path;  /* <root>/.infantgod/board.json.tmp */
     sde_json *doc;       /* always a valid envelope */
 };
 
@@ -563,7 +563,7 @@ int sde_board_save(sde_board *b, char *err, size_t errcap)
         return -1;
     }
 
-    dir = sde_port_path_join(b->root, ".seide");
+    dir = sde_port_path_join(b->root, ".infantgod");
     if (dir != NULL) {
         if (sde_port_mkdirs(dir, err, errcap) != 0) {
             free(dir);

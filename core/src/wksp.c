@@ -8,7 +8,7 @@
  *   2. A write that raced with someone else's write is refused rather than
  *      silently winning.  The board and the editor both rely on this.
  */
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +20,7 @@
 
 /* Directories that are never interesting to a person browsing a workspace. */
 static const char *const IGNORED_DIRS[] = {
-    ".git", ".seide", ".hg", ".svn", "node_modules", "__pycache__",
+    ".git", ".infantgod", ".hg", ".svn", "node_modules", "__pycache__",
     ".vscode", ".idea", ".cache", "dist", "build", "target", "obj"
 };
 

@@ -1,6 +1,6 @@
 # Fork playbook
 
-You are forking seIDE into your own IDE. This is the order of work, cheapest
+You are forking InfantGod Studio into your own IDE. This is the order of work, cheapest
 first, with what each step touches and what it costs.
 
 Read `docs/TRIM.md` first if you have not: trimming is step 2 and it is the
@@ -32,19 +32,19 @@ Cheapest step. The name appears in these places:
 | where | what |
 | --- | --- |
 | `README.md` | the title and all prose |
-| `Makefile` | `BIN = build/seide.exe` (and `OBJDIR`) |
-| `core/include/seide_cfg.h` | `SDE_VERSION`, `SDE_PROTOCOL` |
+| `Makefile` | `BIN = build/infantgod.exe` (and `OBJDIR`) |
+| `core/include/infantgod_cfg.h` | `SDE_VERSION`, `SDE_PROTOCOL` |
 | `core/src/main.c` | `SDE_VERSION`, `usage()`, `cmd_modules()`'s banner |
 | `shell/main.mjs` | `SHELL_VERSION`, the `USAGE` text, `DEFAULT_KERNEL`'s path |
 | `shell/web/index.html` | `<title>`, `.hud-brand` |
 | `shell/web/cards.mjs` | `COMMAND_HELP` if it names the product |
-| `tools/*.py`, `tools/README.md` | banners and the `--seide` / `--seide-cmd` flags |
-| `.gitignore` | if you rename `.seide/` |
+| `tools/*.py`, `tools/README.md` | banners and the `--kernel` / `--kernel-cmd` flags |
+| `.gitignore` | if you rename `.infantgod/` |
 
 Two traps:
 
 - `core/src/board.c` derives the board path from the literal `SDE_BOARD_RELPATH`
-  (`.seide/board.json`), and `tools/e2e.py` spawns `<binary> rpc`. If you rename
+  (`.infantgod/board.json`), and `tools/e2e.py` spawns `<binary> rpc`. If you rename
   the executable, update the shell's `DEFAULT_KERNEL` **and** every documented
   command.
 - The function and type names (`sde_*`, `SDE_*`) do **not** need renaming. They
@@ -56,17 +56,17 @@ Two traps:
 
 ## 2. Delete what you do not want
 
-`build/seide.exe modules` prints the trim manifest. `docs/TRIM.md` describes the
+`build/infantgod.exe modules` prints the trim manifest. `docs/TRIM.md` describes the
 four edits (the file under `core/`, the `SRC` line in `Makefile`, the module
 table in `core/src/main.c`, the method in `core/src/rpc.c`) plus the
-compile-time switches in `core/include/seide_cfg.h`.
+compile-time switches in `core/include/infantgod_cfg.h`.
 
 The cuts a fork usually makes first, in ascending order of pain:
 
 | cut | effort | what you lose |
 | --- | --- | --- |
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
-| `exec` | 4 edits + `app.c` | `runner` cards and `exec.*` methods |
+| `exec` | 4 edits + `app.c` | `runner` cards and the `exec.*` methods — and with them the `exec.start` check in `tools/e2e.py` |
 | `board` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — the paradigm |
 | `wksp` | 4 edits + the `editor`, `files` and `project` card kinds | files; the canvas alone remains |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
@@ -99,7 +99,7 @@ To port:
    `proc_<name>.c` and reimplement the bodies against your platform.
 2. Change the `SRC +=` line in the `Makefile` — this is the only place the
    platform is selected, and the Makefile says so in a comment.
-3. Add the platform switch in `core/include/seide_cfg.h`, which already carries
+3. Add the platform switch in `core/include/infantgod_cfg.h`, which already carries
    the shape:
 
    ```c
@@ -110,7 +110,7 @@ To port:
    #endif
    ```
 
-4. Remove the two lines in `seide_cfg.h` that exist only for MinGW
+4. Remove the two lines in `infantgod_cfg.h` that exist only for MinGW
    (`__USE_MINGW_ANSI_STDIO`, `_WIN32_WINNT`) from your platform's path, and
    remove `#include <windows.h>` from the implementation.
 
@@ -187,20 +187,23 @@ wire methods. Three ways, in order of preference:
 python tools/newlang.py --id mylang --ext .ml --keywords "if,else,while" --comment "#" --out langs
 ```
 
-`--keywords` splits on commas (repeatable), so a token that *is* a comma needs
-the single-token spelling:
+`--keywords` splits on commas (repeatable), so a token that *is* a comma cannot
+be spelled inside the list — pass it separately. This is the same trap Yarn
+Spinner's `,` punctuation falls into:
 
 ```sh
-python tools/newlang.py --id brainfuck --ext .bf \
-    --keywords "+,-,<,>,[,],." --keyword ","
+python tools/newlang.py --id mylang --ext .ml \
+    --keywords "if,else,while" --keyword ","
 ```
 
 The generated file follows the frozen grammar in `docs/PROTOCOL.md`
-(`# seIDE language descriptor`, `id`, `title`, `ext`, optional `line_comment` /
+(`# InfantGod Studio language descriptor`, `id`, `title`, `ext`, optional `line_comment` /
 `block_comment_open` / `block_comment_close` / `string`, and
 `kind <kindname> "<token>" ...`). An unknown key or an unquoted token is a hard
 error — `parseDescriptor` throws `LangError` with `source` and a 1-based `line`,
-so you will know exactly where you went wrong.
+so you will know exactly where you went wrong. `langs/yarn.lang` is the file to
+read when you want to see every key in use: comments, a string delimiter, word
+kinds and literal kinds in one descriptor.
 
 **Check it** with the language self-test, which needs no kernel and no browser:
 
@@ -213,9 +216,11 @@ node langs/selftest.mjs
 language — including a real parser with a real type system — and delete
 `langs/`. The only constants are the two method shapes and the tiling guarantee
 of `lang.tokenize` (spans cover `0..text.length` exactly once, in order).
-Remember that the wire speaks **byte offsets**, and that the shell's editor
-treats them as string indices: that is only correct for ASCII, and it is the
-known papercut listed in `shell/web/main.mjs`'s `LIMITATIONS`.
+Remember that the wire speaks **JS string indices**, not UTF-8 byte offsets, and
+that the shell's editor consumes them directly: that is exact for ASCII, and an
+astral character is the one case where a client that re-derived offsets in bytes
+would disagree. It is the known papercut listed in `shell/web/main.mjs`'s
+`LIMITATIONS`.
 
 **Cost:** ten minutes per language for colouring; weeks if you are building real
 language intelligence, and in that case you are reimplementing the two methods
@@ -312,7 +317,7 @@ the step you do first and the rest of the prototype becomes your backend.
 | --- | --- | --- | --- | --- |
 | 1. Rename | docs, 5 source files, 4 tool files | 1 hour | low | yes |
 | 2. Trim | `core/`, `Makefile`, `main.c`, `rpc.c` | hours | low | yes |
-| 3. Port the platform layer | `core/port/*`, `Makefile`, `seide_cfg.h` | 1 day+ | medium (spawn, atomic replace, threads) | yes |
+| 3. Port the platform layer | `core/port/*`, `Makefile`, `infantgod_cfg.h` | 1 day+ | medium (spawn, atomic replace, threads) | yes |
 | 4. Add a card kind | `shell/web/board.mjs`, `cards.mjs`, `main.mjs`, `style.css` | hours | low | yes |
 | 5. Add a language | `langs/<id>.lang` | 10 minutes | very low | yes |
 | 6. Move the transport | `core/src/serve.c` or `shell/main.mjs` | hours | low if framing and single-writer are preserved | yes |

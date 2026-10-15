@@ -2,7 +2,7 @@
  * cards.mjs -- one renderer and one behaviour set per card kind.
  *
  * DELETE THIS FILE and the board still pans; it just has no cards to put on it.
- * seIDE has no plugin system: extending the visual vocabulary means forking this
+ * InfantGod Studio has no plugin system: extending the visual vocabulary means forking this
  * file.  What it does have is a *hook* -- `registerCardKind()` -- so that
  * "adding a kind" is one self-contained object instead of an edit to a switch
  * in three places.  Six kinds are registered at the bottom of this file:
@@ -266,7 +266,7 @@ function comparePaths(a, b) {
 }
 
 /**
- * A `**\/*.bf`-ish glob, as the `files` card's filter box uses it.
+ * A `**\/*.yarn`-ish glob, as the `files` card's filter box uses it.
  * `**` crosses directories, `*` does not.  A plain substring also matches, so
  * typing `board` finds `core/src/board.c` without knowing the syntax.
  */
@@ -306,7 +306,7 @@ export function matchesFilter(path, filter) {
  *
  * `workspace.list` is the only source of file names here, and the kernel skips
  * whole directories by name while it walks (`IGNORED_DIRS` in
- * `core/src/wksp.c`: `.git`, `.seide`, `build`, `node_modules`, ...).  The call
+ * `core/src/wksp.c`: `.git`, `.infantgod`, `build`, `node_modules`, ...).  The call
  * has no flag to ask for them, so this side cannot un-hide them -- a panel that
  * filtered them itself would be counting rows that never arrive.
  *
@@ -720,12 +720,15 @@ export const COMMAND_HELP = [
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
+  "mod <dir>                幼神 Mod 包卡片（打开目录、列出定义与 Yarn）",
+  "problems <dir>           幼神 Mod 校验结果（错误/警告/提示，可跳转）",
+  "docs [query]             幼神知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "zoom <n> | in | out | reset",
   "focus <id>               select and centre a card",
   "delete <id>              remove a card",
-  "save                     write the board to .seide/board.json",
+  "save                     write the board to .infantgod/board.json",
 ];
 
 /* ------------------------------------------------------------------ */
@@ -1785,7 +1788,7 @@ function renderFiles(card, ctx) {
  * hand over, not just the ones the filter matches -- because the useful
  * sentence it can say is "this file is gone and a card still points at it",
  * and that needs the whole project.  Its one piece of state is `filter`, which
- * lives on the card and therefore in `.seide/board.json`.
+ * lives on the card and therefore in `.infantgod/board.json`.
  */
 function renderProject(card, ctx) {
   const { client, app } = ctx;
@@ -2411,15 +2414,518 @@ function renderSheet(card, ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 《幼神》 mod surfaces                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Three card kinds that make this board a mod IDE for 《幼神》 instead of a
+ * generic canvas.  All three are read-mostly: they call the shell's `mod.*`
+ * verbs (which own the game knowledge) and hand paths to the `editor` card
+ * that already exists.  None of them reaches the kernel directly, and none of
+ * them needs a kernel change, because a card's payload is stored verbatim.
+ */
+
+/** Count diagnostics by severity; anything unrecognised counts as info. */
+export function diagCounts(diagnostics) {
+  const counts = { error: 0, warning: 0, info: 0 };
+  for (const diagnostic of Array.isArray(diagnostics) ? diagnostics : []) {
+    const raw = diagnostic && typeof diagnostic.severity === "string" ? diagnostic.severity : "";
+    const severity = Object.prototype.hasOwnProperty.call(counts, raw) ? raw : "info";
+    counts[severity] += 1;
+  }
+  return counts;
+}
+
+/** A define list grouped by type, types and names in alphabetical order. */
+export function groupDefines(defines) {
+  const byType = new Map();
+  for (const define of Array.isArray(defines) ? defines : []) {
+    const type = define && typeof define.type === "string" ? define.type : "(unknown)";
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type).push(define);
+  }
+  return [...byType.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([type, items]) => ({
+      type,
+      items: items.slice().sort((a, b) => String(a.techName ?? "").localeCompare(String(b.techName ?? ""))),
+    }));
+}
+
+/** The headline a `mod` card shows for an opened package. */
+export function modHeadline(opened) {
+  if (opened === null || typeof opened !== "object") {
+    return "no mod opened";
+  }
+  const manifest = opened.manifest ?? {};
+  const name = typeof manifest.name === "string" && manifest.name !== "" ? manifest.name : "(unnamed)";
+  const version = typeof manifest.version === "string" && manifest.version !== "" ? manifest.version : "?";
+  const order = typeof manifest.loadOrder === "number" ? manifest.loadOrder : "?";
+  const game = typeof manifest.gameVersion === "string" && manifest.gameVersion !== "" ? manifest.gameVersion : "?";
+  return `${name} ${version} — loadOrder ${order} · gameVersion ${game}`;
+}
+
+/**
+ * Join a mod-relative path onto its root, so a card can hand the result to
+ * `app.openFile`.  Absolute paths are left alone: `mod.*` results are
+ * root-relative, but a fork that ever returns absolute ones still works.
+ */
+export function modPath(root, rel) {
+  if (typeof rel !== "string" || rel === "") {
+    return "";
+  }
+  const clean = rel.replace(/\\/g, "/");
+  if (clean.startsWith("/") || /^[A-Za-z]:/.test(clean)) {
+    return clean;
+  }
+  const base = typeof root === "string" ? root.replace(/\\/g, "/").replace(/\/+$/, "") : "";
+  return base === "" ? clean : `${base}/${clean}`;
+}
+
+/** The file a diagnostic points at, without its `#json/pointer` suffix. */
+export function diagFile(diagnostic) {
+  const raw = diagnostic && typeof diagnostic.path === "string" ? diagnostic.path : "";
+  return raw.split("#")[0];
+}
+
+/** Where inside that file the diagnostic sits, or the empty string. */
+export function diagWhere(diagnostic) {
+  const raw = diagnostic && typeof diagnostic.path === "string" ? diagnostic.path : "";
+  const hash = raw.indexOf("#");
+  return hash < 0 ? "" : raw.slice(hash + 1);
+}
+
+function button(label, title, onClick) {
+  const el = h("button", "card-button", { text: label, attrs: { type: "button", title } });
+  el.addEventListener("click", onClick);
+  return el;
+}
+
+/**
+ * A collapsible-looking section: a heading plus clickable rows.  Every row is
+ * `{label, meta, onClick, severity}`; a row without `onClick` is inert text,
+ * and `severity` tints it with the shared `.sev-*` colours.
+ */
+function section(className, title, count) {
+  const head = h("div", "mod-section-title", { text: count === undefined ? title : `${title} (${count})` });
+  const rows = h("div", "mod-rows");
+  return { el: h("div", `mod-section ${className}`, { children: [head, rows] }), rows };
+}
+
+function fillRows(container, rows) {
+  const frag = document.createDocumentFragment();
+  for (const row of rows) {
+    const classes = ["mod-row"];
+    if (row.dir) classes.push("is-dir");
+    if (row.severity) classes.push(`sev-${row.severity}`);
+    const el = h(row.onClick ? "button" : "div", classes.join(" "), {
+      attrs: row.onClick ? { type: "button", title: row.title ?? "" } : {},
+    });
+    el.append(h("span", "mod-row-name", { text: row.label }));
+    if (row.meta !== undefined && row.meta !== "") {
+      el.append(h("span", "mod-row-meta", { text: row.meta }));
+    }
+    if (row.onClick) {
+      el.addEventListener("click", row.onClick);
+    }
+    frag.append(el);
+  }
+  container.textContent = "";
+  container.append(frag);
+}
+
+/* -- kind: mod -- the package itself ---------------------------------- */
+
+function renderMod(card, ctx) {
+  const { client, app } = ctx;
+
+  const dirInput = h("input", "mod-dir", {
+    attrs: { type: "text", spellcheck: "false", placeholder: "Mods/MyMod" },
+  });
+  dirInput.value = typeof card.dir === "string" ? card.dir : "";
+
+  const openButton = button("open", "read mod.json and list the package", () => refresh());
+  const validateButton = button("validate", "check every define and Yarn file", () => validate());
+  const controls = h("div", "mod-controls", { children: [dirInput, openButton, validateButton] });
+
+  const headline = h("div", "mod-headline");
+  const counts = h("div", "mod-counts");
+  const modJsonSection = section("mod-manifest", "mod.json");
+  const definesSection = section("mod-defines", "Defines");
+  const yarnSection = section("mod-yarn", "Yarn");
+  const status = makeStatus();
+
+  const body = h("div", "card-body card-body-mod", {
+    children: [controls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
+  });
+  const shell = cardShell(card, body);
+  shell.label.textContent = dirInput.value === "" ? "(no dir)" : dirInput.value;
+
+  let requestSeq = 0;
+
+  async function openMod() {
+    const dir = dirInput.value.trim();
+    if (dir === "") {
+      status.textContent = "give a mod directory first";
+      return;
+    }
+    const seq = requestSeq + 1;
+    requestSeq = seq;
+    status.textContent = "opening…";
+    let opened;
+    try {
+      opened = await client.call("mod.open", { dir });
+    } catch (err) {
+      status.textContent = `open failed: ${err.message}`;
+      return;
+    }
+    if (seq !== requestSeq) {
+      return;
+    }
+
+    card.dir = dir;
+    shell.label.textContent = dir;
+    headline.textContent = modHeadline(opened);
+    const summary = opened.summary ?? {};
+    counts.textContent = [
+      `${summary.defines ?? 0} defines`,
+      `${summary.yarnFiles ?? summary.yarn ?? 0} yarn`,
+      `${summary.csvFiles ?? summary.csv ?? 0} csv`,
+      `${summary.sprites ?? 0} sprites`,
+    ].join(" · ");
+
+    const manifest = opened.manifest ?? {};
+    fillRows(modJsonSection.rows, Object.keys(manifest).map((key) => ({
+      label: key,
+      meta: typeof manifest[key] === "object" ? JSON.stringify(manifest[key]) : String(manifest[key]),
+    })));
+
+    const root = opened.root ?? dir;
+    const grouped = groupDefines(opened.defines);
+    fillRows(definesSection.rows, grouped.flatMap((group) => [
+      { label: group.type, meta: `${group.items.length}`, title: group.type },
+      ...group.items.map((item) => ({
+        label: `  ${item.techName}`,
+        meta: item.path ?? "",
+        title: item.path ?? "",
+        onClick: item.path ? () => app.openFile(modPath(root, item.path)) : undefined,
+      })),
+    ]));
+
+    const yarnFiles = Array.isArray(opened.yarnFiles) ? opened.yarnFiles : [];
+    fillRows(yarnSection.rows, yarnFiles.map((entry) => {
+      const rel = typeof entry === "string" ? entry : entry.path;
+      return {
+        label: typeof rel === "string" ? rel.split("/").pop() : String(rel),
+        meta: typeof rel === "string" ? rel.split("/").slice(0, -1).join("/") : "",
+        title: rel,
+        onClick: () => app.openFile(modPath(root, rel)),
+      };
+    }));
+
+    status.textContent = `opened ${opened.root ?? dir}`;
+    app.boardTouched(true);
+  }
+
+  async function validate() {
+    const dir = dirInput.value.trim();
+    if (dir === "") {
+      status.textContent = "give a mod directory first";
+      return;
+    }
+    status.textContent = "validating…";
+    let report;
+    try {
+      report = await client.call("mod.validate", { root: dir });
+    } catch (err) {
+      status.textContent = `validate failed: ${err.message}`;
+      return;
+    }
+    const s = report.summary ?? {};
+    const counts2 = diagCounts(report.diagnostics);
+    status.textContent = `${s.files ?? 0} files · ${counts2.error} errors · ${counts2.warning} warnings · ${counts2.info} infos`;
+    app.log(counts2.error === 0 ? "info" : "warn",
+      `${dir}: ${counts2.error} errors, ${counts2.warning} warnings, ${counts2.info} infos`);
+  }
+
+  openButton.addEventListener("click", () => openMod());
+  dirInput.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      openMod();
+    }
+  });
+
+  if (dirInput.value !== "") {
+    openMod();
+  } else {
+    status.textContent = "open a mod directory, e.g. Mods/MyMod";
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "mod",
+      focus() {
+        dirInput.focus();
+      },
+      refresh: openMod,
+      setDir(dir) {
+        dirInput.value = typeof dir === "string" ? dir : "";
+        return openMod();
+      },
+      root() {
+        return dirInput.value.trim();
+      },
+    },
+    destroy() {},
+  };
+}
+
+/* -- kind: problems -- validation output ------------------------------ */
+
+function renderProblems(card, ctx) {
+  const { client, app } = ctx;
+
+  const rootInput = h("input", "problems-root", {
+    attrs: { type: "text", spellcheck: "false", placeholder: "Mods/MyMod" },
+  });
+  rootInput.value = typeof card.root === "string" ? card.root : "";
+
+  const runButton = button("validate", "validate the package and its Yarn", () => run());
+  const controls = h("div", "mod-controls", { children: [rootInput, runButton] });
+  const summaryEl = h("div", "mod-counts");
+  const list = h("div", "mod-rows problems-rows");
+  const status = makeStatus();
+
+  const body = h("div", "card-body card-body-problems", {
+    children: [controls, summaryEl, list, status],
+  });
+  const shell = cardShell(card, body);
+  shell.label.textContent = rootInput.value === "" ? "(no mod)" : rootInput.value;
+
+  function paint(diagnostics, root) {
+    const counts = diagCounts(diagnostics);
+    summaryEl.textContent = `${counts.error} errors · ${counts.warning} warnings · ${counts.info} infos`;
+    const order = { error: 0, warning: 1, info: 2 };
+    const sorted = (Array.isArray(diagnostics) ? diagnostics : [])
+      .slice()
+      .sort((a, b) => (order[a?.severity] ?? 3) - (order[b?.severity] ?? 3));
+    fillRows(list, sorted.map((diagnostic) => {
+      const where = diagWhere(diagnostic);
+      const target = diagFile(diagnostic);
+      return {
+        label: `${diagnostic?.code ?? "?"} ${diagnostic?.message ?? ""}`,
+        meta: where === "" ? target : `${target} ${where}`,
+        title: diagnostic?.message ?? "",
+        severity: diagnostic?.severity ?? "info",
+        onClick: target === "" ? undefined : () => app.openFile(modPath(root, target)),
+      };
+    }));
+    if (sorted.length === 0) {
+      list.append(h("div", "mod-row mod-row-empty", { text: "nothing to report" }));
+    }
+  }
+
+  async function run() {
+    const root = rootInput.value.trim();
+    if (root === "") {
+      status.textContent = "give a mod directory first";
+      return;
+    }
+    status.textContent = "validating…";
+    let report;
+    try {
+      report = await client.call("mod.validate", { root });
+    } catch (err) {
+      status.textContent = `validate failed: ${err.message}`;
+      return;
+    }
+    card.root = root;
+    shell.label.textContent = root;
+    paint(report.diagnostics, root);
+    const counts = diagCounts(report.diagnostics);
+    status.textContent = `${report.summary?.files ?? 0} files checked`;
+    app.log(counts.error === 0 ? "info" : "warn",
+      `${root}: ${counts.error} errors, ${counts.warning} warnings`);
+  }
+
+  rootInput.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      run();
+    }
+  });
+
+  if (rootInput.value !== "") {
+    run();
+  } else {
+    status.textContent = "validate a mod directory, e.g. Mods/MyMod";
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "problems",
+      focus() {
+        rootInput.focus();
+      },
+      run,
+      root() {
+        return rootInput.value.trim();
+      },
+    },
+    destroy() {},
+  };
+}
+
+/* -- kind: docs -- the knowledge base --------------------------------- */
+
+function renderDocs(card, ctx) {
+  const { client } = ctx;
+
+  const queryInput = h("input", "docs-query", {
+    attrs: { type: "text", spellcheck: "false", placeholder: "Love, jump, Aistalt, Goods_Folk…" },
+  });
+  queryInput.value = typeof card.query === "string" ? card.query : "";
+
+  const hbButton = button("window", "what the game hooks into", () => loadWindow());
+  const controls = h("div", "mod-controls", { children: [queryInput, hbButton] });
+  const list = h("div", "mod-rows docs-rows");
+  const doc = h("pre", "docs-text");
+  const status = makeStatus();
+
+  const body = h("div", "card-body card-body-docs", {
+    children: [controls, list, doc, status],
+  });
+  const shell = cardShell(card, body);
+  shell.label.textContent = queryInput.value === "" ? "knowledge base" : queryInput.value;
+
+  let requestSeq = 0;
+
+  async function show(kind, name) {
+    status.textContent = `reading ${kind} ${name}…`;
+    try {
+      const text = await client.call("mod.docFor", { kind, name });
+      doc.textContent = typeof text === "string" ? text : String(text ?? "");
+      doc.scrollTop = 0;
+      status.textContent = `${kind} ${name}`;
+    } catch (err) {
+      status.textContent = `doc failed: ${err.message}`;
+    }
+  }
+
+  async function search() {
+    const query = queryInput.value.trim();
+    const seq = requestSeq + 1;
+    requestSeq = seq;
+    if (query === "") {
+      await loadWindow();
+      return;
+    }
+    card.query = query;
+    shell.label.textContent = query;
+    status.textContent = "searching…";
+    let hits;
+    try {
+      hits = await client.call("mod.search", { query, limit: 80 });
+    } catch (err) {
+      status.textContent = `search failed: ${err.message}`;
+      return;
+    }
+    if (seq !== requestSeq) {
+      return;
+    }
+    const items = Array.isArray(hits) ? hits : (hits?.results ?? []);
+    fillRows(list, items.map((hit) => ({
+      label: hit.name ?? hit.label ?? "?",
+      meta: hit.kind ?? "",
+      title: hit.detail ?? hit.documentation ?? "",
+      onClick: () => show(hit.kind ?? "command", hit.name ?? hit.label),
+    })));
+    status.textContent = `${items.length} hit${items.length === 1 ? "" : "s"}`;
+  }
+
+  async function loadWindow() {
+    status.textContent = "reading the knowledge base…";
+    let stats;
+    try {
+      stats = await client.call("mod.stats", {});
+    } catch (err) {
+      status.textContent = `knowledge base unavailable: ${err.message}`;
+      return;
+    }
+    const keys = Object.keys(stats ?? {});
+    fillRows(list, keys.map((key) => ({
+      label: key,
+      meta: String(stats[key]),
+      title: `${key} = ${stats[key]}`,
+    })));
+    let types = [];
+    try {
+      types = await client.call("mod.types", {});
+    } catch {
+      types = [];
+    }
+    fillRows(list, [
+      ...keys.map((key) => ({ label: key, meta: String(stats[key]) })),
+      ...(Array.isArray(types) ? types : []).map((type) => ({
+        label: type.type,
+        meta: `${type.count ?? 0} baseline`,
+        title: `required: ${(type.required ?? []).join(", ")}`,
+        onClick: () => show("type", type.type),
+      })),
+    ]);
+    doc.textContent = "";
+    status.textContent = "search the knowledge base, or click a type";
+  }
+
+  queryInput.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      search();
+    }
+  });
+  queryInput.addEventListener("input", () => {
+    if (queryInput.value.trim() === "") {
+      loadWindow();
+    }
+  });
+
+  if (queryInput.value !== "") {
+    search();
+  } else {
+    loadWindow();
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "docs",
+      focus() {
+        queryInput.focus();
+      },
+      search,
+      show,
+      query() {
+        return queryInput.value.trim();
+      },
+    },
+    destroy() {},
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* registrations                                                          */
 /* ------------------------------------------------------------------ */
 
 /*
- * The five kinds the prototype ships.  Each registration is self-contained: a
- * fork that wants a different note card replaces this object, not a case in a
- * switch three hundred lines away.  Adding a sixth is one more call, and the
- * board, the command line and the kernel need no change at all -- `card.kind`
- * is already an open string everywhere else.
+ * The kinds this fork ships: the prototype's six, plus the three 幼神 surfaces
+ * at the bottom.  Each registration is self-contained: a fork that wants a
+ * different note card replaces this object, not a case in a switch three
+ * hundred lines away.  Adding one is one more call, and the board, the command
+ * line and the kernel need no change at all -- `card.kind` is already an open
+ * string everywhere else.
  */
 
 registerCardKind({
@@ -2468,4 +2974,30 @@ registerCardKind({
   describe: (card) => `sheet ${card.title !== "" && card.title !== undefined ? card.title : sheetSummary(card.doc)}`,
   create: () => ({ title: "", doc: emptySheet() }),
   render: renderSheet,
+});
+
+/* -- the three 幼神 surfaces ------------------------------------------ */
+
+registerCardKind({
+  kind: "mod",
+  title: "Mod",
+  describe: (card) => `mod ${card.dir || "(no dir)"}`,
+  create: () => ({ dir: "" }),
+  render: renderMod,
+});
+
+registerCardKind({
+  kind: "problems",
+  title: "Problems",
+  describe: (card) => `problems ${card.root || "(no mod)"}`,
+  create: () => ({ root: "" }),
+  render: renderProblems,
+});
+
+registerCardKind({
+  kind: "docs",
+  title: "Docs",
+  describe: (card) => `docs ${card.query || "(knowledge base)"}`,
+  create: () => ({ query: "" }),
+  render: renderDocs,
 });

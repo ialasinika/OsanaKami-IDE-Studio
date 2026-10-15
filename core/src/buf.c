@@ -1,4 +1,4 @@
-#include "seide_cfg.h"
+#include "infantgod_cfg.h"
 
 #include "buf.h"
 
