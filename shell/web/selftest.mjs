@@ -85,7 +85,7 @@ import {
  * the listener-leak and save-reporting fixes be checked here for real instead
  * of through a browser.
  */
-import { saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
+import { saveOutcomeMessage, scrollRoom, wireChoiceStrip } from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
 
@@ -1935,6 +1935,22 @@ test("history: clear() empties it and a record after that starts over", () => {
   assert.deepEqual(history.current(), document);
 });
 
+/*
+ * The wheel rule the board follows: a card's own scroll region keeps the wheel
+ * while it has room in that direction, and the board pans only when it does not.
+ * Which ancestor is a scroll container needs a browser; this is the arithmetic
+ * that decision rests on.
+ */
+test("wheel: a scroll region has room only where it can still move", () => {
+  assert.equal(scrollRoom(0, 100, 400, 120), 300, "at the top, a downward wheel has the rest to go");
+  assert.equal(scrollRoom(300, 100, 400, 120), 0, "at the bottom, a downward wheel has nowhere to go");
+  assert.equal(scrollRoom(120, 100, 400, -120), 120, "a wheel up has the part already scrolled past");
+  assert.equal(scrollRoom(0, 100, 400, -120), 0, "a wheel up at the top has nowhere to go");
+  assert.equal(scrollRoom(0, 400, 400, 120), 0, "content that already fits does not scroll");
+  assert.equal(scrollRoom(10, 100, 400, 0), 0, "a wheel that moves nothing owns nothing");
+  assert.equal(scrollRoom(NaN, 100, 400, 120), 0, "a broken metric never claims room");
+});
+
 /* ------------------------------------------------------------------ */
 
 const passed = checks - failures.length;
@@ -1942,7 +1958,7 @@ const passed = checks - failures.length;
  * Said on every run, pass or fail, because a green `ok N/N` is easy to read as
  * "the UI works". It does not: this suite has no browser in it.
  */
-const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer and keyboard input are not covered`;
+const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer, keyboard and wheel events are not covered`;
 if (failures.length > 0) {
   for (const { name, err } of failures) {
     console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);

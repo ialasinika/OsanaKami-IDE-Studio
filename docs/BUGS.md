@@ -317,9 +317,10 @@ Regression evidence for this wave lives in
 
 ## Browser layer (`shell/web/`)
 
-Every entry below has a check in `shell/web/selftest.mjs`, which grew from 46 to
-53 checks; listed line numbers are in that file.  The browser layer is the one
-place a fork is most likely to write its own code, so these matter more than
+Every entry below has a check in `shell/web/selftest.mjs` -- which grew from 46 to
+53 checks for this wave -- unless the entry says a real browser is needed, as the
+wheel rule does; listed line numbers are in that file.  The browser layer is the
+one place a fork is most likely to write its own code, so these matter more than
 their severity suggests.
 
 - **Duplicate link ids, and `unlink` removing every link with that id.** The
@@ -362,6 +363,19 @@ their severity suggests.
   deferred / refused / failed / offline.  A deferred forced save stays forced
   (`saveAgainForce`), so a second `save force` cannot silently degrade into an
   unforced one.  Checks: `selftest.mjs:1510-1567`.
+- **A wheel over a card panned the board instead of scrolling the card.** The
+  wheel listener sat on `#board` and called `preventDefault()` unconditionally
+  (`main.mjs:1135`), so the event bubbled up out of an editor's text, a sheet or
+  the files list and was cancelled before the browser could scroll it: a card's
+  own contents could not be scrolled at all.  The nearest scroll region below the
+  board that can still move in the wheel's direction now keeps the wheel --
+  `scrollTarget(node, deltaX, deltaY)` (`main.mjs:1120-1133`) reusing
+  `scrollRoom()` (`main.mjs:108-114`) -- and hands it back at the end, so nested
+  scrolling chains; ctrl/⌘+wheel still zooms about the cursor.  Reported from use,
+  not by a probe: the arithmetic is checked in `selftest.mjs`, and the event
+  itself by `tools/input_smoke.py`, which dispatches a real wheel over the editor
+  (`defaultPrevented=false`, the board does not move) and over the board
+  (`defaultPrevented=true`, it pans).
 - **The selftest printed one number for coverage it did not have.** It runs in
   Node with no DOM, yet reported only `N/N`.  It now says so in its header and in
   a final `note:` line printed on both pass and fail:

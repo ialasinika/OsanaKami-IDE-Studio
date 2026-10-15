@@ -93,6 +93,26 @@ export function linkPoints(a, b) {
   return { p1, p2, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
 }
 
+/** The `overflow` values that make an element a scroll container. */
+const SCROLLABLE = new Set(["auto", "scroll", "overlay"]);
+
+/**
+ * How many pixels a scroll container can still move along one axis.
+ *
+ * `delta` is the sign of the wheel's movement (positive scrolls down/right), so
+ * the answer is the room *left in that direction*: 0 means the container is
+ * already at the end the wheel is pushing towards, and a card that is short
+ * enough to fit has no room either way.  Pure arithmetic, exported so the
+ * selftest can prove it without a DOM.
+ */
+export function scrollRoom(scroll, client, total, delta) {
+  if (delta === 0 || !Number.isFinite(scroll) || !Number.isFinite(client) || !Number.isFinite(total)) {
+    return 0;
+  }
+  const room = delta < 0 ? scroll : total - client - scroll;
+  return Math.max(0, Math.floor(room));
+}
+
 /**
  * Zoom keeping the world point under `(px, py)` fixed.
  * `px`/`py` are in the board element's own pixel space (post `getBoundingClientRect`).
@@ -227,7 +247,8 @@ const HINT_SIZE = { w: 380, h: 300 };
 const HINT_TEXT = [
   "Board: no tabs, no tree.",
   "",
-  "Drag empty space to pan · wheel to pan · ^wheel to zoom about the cursor.",
+  "Drag empty space to pan · wheel pans, but a wheel over a card's own contents",
+  "scrolls the card first · ^wheel to zoom about the cursor.",
   "Drag a card title to move it · drag its corner to resize.",
   "Double-click empty space for a note.",
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
@@ -1086,9 +1107,36 @@ function createApp() {
     boardEl.addEventListener("pointerup", endGesture);
     boardEl.addEventListener("pointercancel", endGesture);
 
-    // Wheel: plain scroll pans, ctrl/⌘ or the wheel alone with shift zooms about
-    // the cursor.  Zooming about the cursor is what makes a 2-D board feel solid.
+    // Wheel: a card's own scroll region keeps the wheel while it has somewhere
+    // to go; otherwise plain scroll pans, and ctrl/⌘ (or shift) zooms about the
+    // cursor.  Zooming about the cursor is what makes a 2-D board feel solid.
+    //
+    // A card's contents (an editor's text, a sheet, a runner's output) are a
+    // scroll region *inside* the board, and the wheel event bubbles up to
+    // `boardEl` from there -- so panning unconditionally meant the board moved
+    // and the card never did.  The nearest container below the board that can
+    // still move in this direction wins; at its end the wheel pans again, the
+    // way nested scrolling usually chains.
+    function scrollTarget(node, deltaX, deltaY) {
+      for (let el = node instanceof Element ? node : null; el && el !== boardEl; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        // A textarea scrolls even where `overflow` computes to something else.
+        const vertical = SCROLLABLE.has(style.overflowY) || el.tagName === "TEXTAREA";
+        if (vertical && scrollRoom(el.scrollTop, el.clientHeight, el.scrollHeight, deltaY) > 0) {
+          return el;
+        }
+        if (SCROLLABLE.has(style.overflowX) && scrollRoom(el.scrollLeft, el.clientWidth, el.scrollWidth, deltaX) > 0) {
+          return el;
+        }
+      }
+      return null;
+    }
+
     boardEl.addEventListener("wheel", (event) => {
+      const overCard = !event.ctrlKey && !event.metaKey && scrollTarget(event.target, event.deltaX, event.deltaY) !== null;
+      if (overCard) {
+        return; // the card scrolls; the board stays where it is
+      }
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
         const rect = boardEl.getBoundingClientRect();

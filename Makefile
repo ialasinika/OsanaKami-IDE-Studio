@@ -116,7 +116,7 @@ probe: $(BIN)
 # skip (exit 0) when there is none.
 smoke: $(BIN)
 	$(PYTHON) tools/browser_smoke.py --timeout 90
-	$(PYTHON) tools/undo_smoke.py --timeout 180
+	$(PYTHON) tools/input_smoke.py --timeout 180
 
 # The version is decided in VERSION; every copy of it is checked here so the
 # binary cannot drift from the number a release will be tagged with.

@@ -76,7 +76,8 @@ document, so a board can record *why* things are next to each other.
 | gesture | effect |
 | --- | --- |
 | drag empty space | pan the board |
-| wheel / shift+wheel | pan |
+| wheel over a card's own contents | scroll the card (an editor, a sheet, a runner's output) |
+| wheel / shift+wheel elsewhere | pan |
 | ctrl/⌘ + wheel | zoom about the cursor |
 | drag a card title | move the card |
 | drag a card's bottom-right corner | resize the card |

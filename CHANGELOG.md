@@ -5,12 +5,27 @@ version number says how usable it is, not how finished.
 
 ## Unreleased
 
+### Shell
+
+- A wheel over a card's own contents scrolls the card instead of panning the
+  board.  The wheel listener sits on the board and the event bubbles up from
+  inside a card, so panning was unconditional: an editor's text, a sheet and the
+  files list could not be scrolled at all.  Now the nearest scroll region under
+  the pointer keeps the wheel while it has room in that direction, at its end
+  the board pans again, and ctrl/⌘+wheel still zooms wherever the pointer is.
+  `scrollRoom()` holds that rule's arithmetic and is checked in
+  `shell/web/selftest.mjs` (70 checks now); `tools/input_smoke.py` dispatches the
+  real event over a card and over the board and checks who wins.
+
 ### Tools
 
 - `tools/e2e.py` removes the empty `.seide/` directory left behind when the
   suite created the board and put it back: a test run should not leave a state
   directory nobody asked for.  `make test` in a fresh clone now ends with the
   tree exactly as it started.
+- `tools/undo_smoke.py` is now `tools/input_smoke.py`: it drives the window's
+  input, and the undo keys are no longer the only thing it checks.  The wrapper
+  page and the browser it launches are the same; the name now says what it is.
 
 ## v0.2.0-alpha.3 — 2026-10-15
 What the 1.0.0 rehearsal turned up.

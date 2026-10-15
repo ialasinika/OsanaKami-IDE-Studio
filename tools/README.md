@@ -12,7 +12,7 @@ build, scaffolding, verification and reference tools.
 | [`kernel_probe.py`](kernel_probe.py) | The regression probe for every bug in `docs/BUGS.md`: spawns the kernel against a scratch workspace under `build/` and asserts the safe outcome of each fix. `make probe`. |
 | [`kernel_drive.py`](kernel_drive.py) | The stdio JSON-RPC harness `kernel_probe.py` runs on: starts `<seide> rpc --root DIR`, pumps both pipes on threads, and turns a silent method into `<silence>` instead of a hang. |
 | [`browser_smoke.py`](browser_smoke.py) | The window, without a human: starts the host, drives the system browser headless (`--dump-dom`), and asserts on the rendered DOM — HUD, workspace root, painted board. Restores the board byte-identically and kills the host by pid; with no board at all (a fresh clone) it installs `examples/board.json` for the run and removes it again. `make smoke`. |
-| [`undo_smoke.py`](undo_smoke.py) | The keystroke `--dump-dom` cannot press: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, then sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone. `make smoke`. |
+| [`input_smoke.py`](input_smoke.py) | The input `--dump-dom` cannot drive: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone — then dispatches a wheel over a card's own scroll region (the card must keep it) and over the board (the board must pan). `make smoke`. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
 | [`version.py`](version.py) | The one version: `show`, `check`, `set`, `bump`. `VERSION` is the source; the copies in `core/include/seide_cfg.h` and `shell/main.mjs` are written from it, and `check` also requires the top `##` section of `CHANGELOG.md` to be `## Unreleased` or `## v<version>`. Runs inside `make test`. |
 | [`release.py`](release.py) | Cuts a release in five steps — preflight, verify, freeze the changelog, artifacts, tag — and refuses a dirty tree, the wrong branch, a taken tag, or a changelog that does not name this version. `--dry-run` prints the whole plan and writes nothing; `--fork NAME` releases `forks/NAME` instead. Policy in `docs/RELEASING.md`. |
@@ -58,12 +58,12 @@ python tools/browser_smoke.py
 python tools/browser_smoke.py --edge "C:\path\to\msedge.exe" --keep
 ```
 
-**6. Press Ctrl+Z in that window** (same browser requirement; the check
+**6. Drive that window's input** (same browser requirement; the checks
 `browser_smoke.py` cannot make, because `--dump-dom` drives no input)
 
 ```console
-python tools/undo_smoke.py
-python tools/undo_smoke.py --keep      # leave the wrapper page for a look
+python tools/input_smoke.py
+python tools/input_smoke.py --keep     # leave the wrapper page for a look
 ```
 
 `make smoke` runs both.
