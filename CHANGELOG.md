@@ -3,8 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
-
+## v0.2.0-alpha.2 — 2026-10-15
 The build stopped contradicting itself about its own version, and the release
 pipeline can now rehearse a GA on a machine that has no Windows installer
 toolchain.
