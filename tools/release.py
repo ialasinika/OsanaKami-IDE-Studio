@@ -59,6 +59,14 @@ if str(TOOLS) not in sys.path:
 import build as build_tool  # noqa: E402
 import version as version_tool  # noqa: E402
 
+# A release log must not die on its last line because the console is cp936:
+# `make test` prints lines like "ok   U+1F600 -> F0 9F 98 80", and printing one
+# of those raised UnicodeEncodeError after the tag had already been made.  Print
+# UTF-8 where the stream allows it, replacement characters where it does not.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 FORKS_DIR = REPO_ROOT / "forks"
 MSI_BUILD = TOOLS / "msi" / "build.py"

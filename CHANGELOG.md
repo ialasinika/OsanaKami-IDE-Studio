@@ -3,6 +3,22 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
+## Unreleased
+### Docs
+
+- The README's version paragraph no longer names one release.  It said
+  `0.2.0-alpha.2` and went stale the moment 0.2.1-alpha.1 was cut: the tooling
+  checks the version copies, not prose.  The paragraph now points at
+  `git describe --tags` and `dist/<version>/`.
+
+### Tools
+
+- `tools/release.py` and `tools/version.py` print UTF-8 where the stream allows
+  it.  A run on a cp936 console died with `UnicodeEncodeError` while printing
+  `make test`'s own output (`ok   U+1F600 -> F0 9F 98 80`), which is the worst
+  place to stop -- after the tag already exists.  Captured child output had
+  already been fixed; this is the printing half of the same problem.
+
 ## v0.2.1-alpha.1 — 2026-10-15
 ### Shell
 

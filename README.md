@@ -379,17 +379,19 @@ and fix, so a fork knows what was already tried.
 
 ## Version, licence, CI
 
-The version is one line in [`VERSION`](VERSION) — currently **`0.2.0-alpha.2`** —
-and two files must copy it, because C89 and JavaScript cannot read a file at
-build time: `core/include/seide_cfg.h` and `shell/main.mjs`. `tools/version.py`
-writes and checks them (`make version-check`, which runs inside `make test`), so
-the binary, the shell and the changelog cannot drift apart. The last tagged
-release is **`v0.2.0-alpha.2`**, a source-only alpha whose notes, manifest and
-zip are in `dist/0.2.0-alpha.2/` (generated, not committed). Cutting the next
-one is `make release-dry` — the
-whole plan, nothing written — and `make release`; [`docs/RELEASING.md`](docs/RELEASING.md)
-is the policy: the channels, the branches, what each one ships, how a fork joins
-in, and what the pipeline does not claim.
+The version is one line in [`VERSION`](VERSION) — `python tools/version.py show`
+prints what it says — and two files must copy it, because C89 and JavaScript
+cannot read a file at build time: `core/include/seide_cfg.h` and
+`shell/main.mjs`. `tools/version.py` writes and checks them (`make version-check`,
+which runs inside `make test`), so the binary, the shell and the changelog
+cannot drift apart. The last tagged release is whatever `git describe --tags`
+says; an alpha is a source-only release whose notes, manifest and zip land in
+`dist/<version>/` (generated, not committed). Cutting the next one is
+`make release-dry` — the whole plan, nothing written — and `make release`;
+[`docs/RELEASING.md`](docs/RELEASING.md) is the policy: the channels, the
+branches, what each one ships, how a fork joins in, and what the pipeline does
+not claim. This paragraph used to name one release, and went stale the moment
+the next one was cut.
 
 What this version is **not**: undo covers the board and not the typing inside a
 card, there is no portability beyond Windows, and there is no plugin loading.

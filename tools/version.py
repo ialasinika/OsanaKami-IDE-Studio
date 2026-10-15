@@ -40,6 +40,12 @@ import re
 import sys
 from pathlib import Path
 
+# The changelog's own headings carry an em dash and a section title can carry
+# anything: print UTF-8 rather than dying on a cp936 console.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = REPO_ROOT / "VERSION"
 CFG_HEADER = REPO_ROOT / "core" / "include" / "seide_cfg.h"
