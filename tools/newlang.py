@@ -4,6 +4,8 @@
     python tools/newlang.py --id ID --ext .EXT [--title T] [--comment CHAR]
                             [--keywords "a,b,c"] [--keyword TOKEN]
                             [--out DIR] [--force]
+    python tools/newlang.py --id ID --ext .EXT --family sgml
+                            [--raw-element NAME ...] [--out DIR] [--force]
 
 The written file uses exactly the grammar the seIDE descriptor parser accepts
 (``langs/lang.mjs``, loaded by the shell -- languages are not part of the C
@@ -27,6 +29,16 @@ and ``keyword`` otherwise.  Tokens are always double-quoted, with ``\\"``,
 
     python tools/newlang.py --id brainfuck --ext .bf \
         --keywords "+,-,<,>,[,],." --keyword ","
+
+A language whose syntax is SGML's (HTML, XML, SVG, ...) is scaffolded as a
+*family* member instead.  Its delimiters live in ``langs/markup.mjs``, so the
+descriptor says only who it is and which elements hold raw text::
+
+    python tools/newlang.py --id html --ext .html --family sgml \
+        --raw-element script --raw-element style
+
+``--comment``, ``--keywords`` and ``--keyword`` are flat-scan facts and are
+refused together with ``--family sgml``; ``--raw-element`` is refused without it.
 
 Exit codes
     0   the descriptor was written
@@ -75,12 +87,30 @@ KNOWN_KEYS = (
     "id",
     "title",
     "ext",
+    "family",
+    "raw_element",
     "line_comment",
     "block_comment_open",
     "block_comment_close",
     "string",
     "kind",
 )
+
+#: Tokenizer families a descriptor may name (``langs/lang.mjs``).
+FAMILIES = ("flat", "sgml")
+
+#: Keys that only the flat scanner reads; combining one with ``family sgml`` is
+#: a contradiction rather than a no-op, so it is refused here as well.
+FLAT_ONLY_KEYS = (
+    "line_comment",
+    "block_comment_open",
+    "block_comment_close",
+    "string",
+    "kind",
+)
+
+#: An element name in ``raw_element`` (XML's NameStartChar and NameChar).
+NAME_RE = re.compile(r"^[A-Za-z_:][A-Za-z0-9_:.-]*$")
 
 
 def scan_quoted(text: str) -> list:
@@ -137,6 +167,9 @@ def verify_descriptor(text: str):
     ``None`` when the text satisfies the descriptor grammar.
     """
     counts = {}
+    family = None
+    flat_keys = []
+    raw_element_lines = 0
     for number, raw in enumerate(text.split("\n"), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -155,12 +188,35 @@ def verify_descriptor(text: str):
                 return f"line {number}: {exc}"
             if not values:
                 return f"line {number}: kind {name!r} has no tokens"
+        elif key == "family":
+            if rest not in FAMILIES:
+                return f"line {number}: unknown family {rest!r} (expected one of {', '.join(FAMILIES)})"
+            if family is not None and family != rest:
+                return f"line {number}: family is already {family}; a descriptor names one family"
+            family = rest
+        elif key == "raw_element":
+            try:
+                names = scan_quoted(rest)
+            except ValueError as exc:
+                return f"line {number}: {exc}"
+            if not names:
+                return f"line {number}: raw_element names no element"
+            for name in names:
+                if not NAME_RE.match(name):
+                    return f"line {number}: invalid element name {name!r}"
+            raw_element_lines += 1
         elif not rest:
             return f"line {number}: {key} must not be empty"
+        if key in FLAT_ONLY_KEYS:
+            flat_keys.append(key)
         counts[key] = counts.get(key, 0) + 1
     for required in ("id", "title"):
         if counts.get(required, 0) != 1:
             return f"expected exactly one {required} line"
+    if family == "sgml" and flat_keys:
+        return f"{flat_keys[0]} is a flat-scan key; family sgml has SGML's own delimiters"
+    if raw_element_lines and family != "sgml":
+        return "raw_element belongs to family sgml; add a family line"
     return None
 
 
@@ -218,10 +274,23 @@ def _check_token(token: str) -> None:
         raise ValueError(f"token {token!r} contains whitespace")
 
 
-def render(language_id: str, title: str, extensions, comment: str, keywords) -> str:
+def render(
+    language_id: str,
+    title: str,
+    extensions,
+    comment: str,
+    keywords,
+    family: str = "flat",
+    raw_elements=(),
+) -> str:
     """Render the descriptor text (always LF-terminated, exactly one final LF)."""
     lines = ["# seIDE language descriptor", f"id {language_id}", f"title {title}"]
     lines.extend(f"ext {extension}" for extension in extensions)
+    if family == "sgml":
+        lines.append("family sgml")
+        if raw_elements:
+            lines.append("raw_element " + " ".join(escape_token(e) for e in raw_elements))
+        return "\n".join(lines) + "\n"
     lines.append(f"line_comment {escape_token(comment)}")
     if keywords:
         kind = "command" if all(COMMAND_RE.match(token) for token in keywords) else "keyword"
@@ -243,7 +312,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="file extension (repeatable), e.g. --ext .bf",
     )
     parser.add_argument("--title", metavar="T", help="display title (default: derived from --id)")
-    parser.add_argument("--comment", metavar="CHAR", default="#", help="line comment marker (default #)")
+    parser.add_argument(
+        "--family",
+        choices=FAMILIES,
+        default="flat",
+        help="tokenizer family: flat (the default) or sgml (HTML/XML/SVG)",
+    )
+    parser.add_argument(
+        "--raw-element",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="family sgml: an element whose body is text, not markup (repeatable)",
+    )
+    parser.add_argument(
+        "--comment", metavar="CHAR", default=None, help="line comment marker (default #)"
+    )
     parser.add_argument(
         "--keywords",
         action="append",
@@ -275,7 +359,7 @@ def main(argv=None) -> int:
         return _fail(str(exc))
     if not extensions:
         return _fail("at least one --ext is required")
-    comment = args.comment
+    comment = args.comment if args.comment is not None else "#"
     if not comment or WHITESPACE_RE.search(comment) or comment == '"':
         return _fail(f"invalid --comment {comment!r} (want a non-blank marker without whitespace)")
     try:
@@ -283,8 +367,25 @@ def main(argv=None) -> int:
     except ValueError as exc:
         return _fail(str(exc))
 
+    raw_elements = []
+    for name in args.raw_element:
+        if not NAME_RE.match(name):
+            return _fail(f"invalid --raw-element {name!r} (want an element name like 'script')")
+        if name not in raw_elements:
+            raw_elements.append(name)
+
+    if args.family == "sgml":
+        if args.comment is not None or keywords:
+            return _fail(
+                "--comment/--keywords/--keyword are flat-scan facts; "
+                "a --family sgml descriptor names raw elements instead"
+            )
+    else:
+        if raw_elements:
+            return _fail("--raw-element belongs to --family sgml")
+
     title = args.title if args.title else title_for(args.id)
-    text = render(args.id, title, extensions, comment, keywords)
+    text = render(args.id, title, extensions, comment, keywords, args.family, raw_elements)
     problem = verify_descriptor(text)
     if problem is not None:
         return _fail(f"refusing to write a descriptor the runtime would reject: {problem}", code=2)

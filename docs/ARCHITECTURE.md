@@ -181,7 +181,7 @@ keyword table, and no shipped grammar**. `core/include/app.h` states it:
 And `core/src/main.c`'s own usage text repeats it:
 
 > Language support is deliberately not a kernel concern: `.lang` descriptors and
-> the keyword tokenizer live in `langs/` and are served by the shell. The kernel
+> the tokenizers live in `langs/` and are served by the shell. The kernel
 > knows nothing about programming languages.
 
 Why is this a decision rather than an omission?
@@ -204,6 +204,16 @@ Why is this a decision rather than an omission?
    with one `dispatch()` function (`shell/main.mjs`), used identically by
    `seide rpc` (stdio) and `seide serve` (HTTP), so the wire behaviour cannot
    drift between the two modes.
+
+Two shapes of language are supported, and the difference is where the delimiters
+live. A **flat** language (`langs/brainfuck.lang`) states its markers as data: a
+line comment, a string delimiter, a token list. The **SGML family**
+(`langs/html.lang`, `langs/xml.lang`) cannot be expressed that way — its
+delimiters are SGML's, shared by every member — so `langs/markup.mjs` holds one
+scanner for all of them, and a descriptor only names its extensions and the
+elements whose body is raw text rather than markup. Adding another SGML dialect
+is therefore still a data change, and the wire is unchanged: the same ten token
+kinds, the same tiling guarantee.
 
 The consequence for a forker: **language features are the cheapest thing in
 this repository to change and the safest thing to delete.** The board and the
@@ -256,8 +266,8 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, board, exec |
 | `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | 43 descriptor/tokenizer checks, no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | 30 checks of the protocol plumbing, board model and token spans, no DOM |
+| — | `node langs/selftest.mjs` | 87 descriptor/tokenizer checks, both families, no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | 60 checks of the protocol plumbing, board model and token spans, no DOM |
 
 ---
 

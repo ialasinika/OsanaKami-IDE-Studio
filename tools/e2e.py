@@ -943,12 +943,45 @@ def define_checks(h: Harness) -> list:
         )
         return f"run {run_id} exit 0, stdout {text!r}"
 
+    def lang_tokenize_sgml():
+        """The SGML family has to survive the same path Brainfuck does.
+
+        Nothing here is Brainfuck-shaped: detection is by extension, the scanner
+        is `langs/markup.mjs`, and the token kinds must still tile the file.
+        """
+        path = "examples/page.html"
+        read = client.call("file.read", {"path": path})
+        require(isinstance(read, dict), f"file.read of {path} returned no object")
+        text = read.get("text")
+        require(isinstance(text, str) and text, f"{path} is empty or unreadable")
+        require(
+            read.get("lang") == "html",
+            f"file.read detected lang={read.get('lang')!r} for {path}, expected 'html'",
+        )
+        result = client.call("lang.tokenize", {"path": path, "text": text})
+        require(isinstance(result, dict), "lang.tokenize result is not an object")
+        require(
+            result.get("lang") == "html",
+            f"lang.tokenize resolved lang={result.get('lang')!r} for {path}",
+        )
+        spans = normalise_tokens(result.get("tokens") or [], len(text))
+        kinds = {kind for _, _, kind in spans}
+        for wanted in ("keyword", "type", "string", "comment"):
+            require(wanted in kinds, f"no {wanted!r} span in {path}: {sorted(kinds)}")
+        cursor = 0
+        for start, end, _ in spans:
+            require(start == cursor, f"{path}: spans do not tile (gap or overlap at {cursor})")
+            cursor = end
+        require(cursor == len(text), f"{path}: spans stop at {cursor}, not {len(text)}")
+        return f"{len(spans)} tokens over {len(text)} bytes, kinds={sorted(kinds)}"
+
     return [
         ("hello", hello, None),
         ("workspace.info", workspace_info, None),
         ("lang.list", lang_list, "full"),
         ("lang.tokenize", lang_tokenize, "full"),
         ("lang.tokenize tiling", lang_tiling, "full"),
+        ("lang.tokenize sgml", lang_tokenize_sgml, "full"),
         ("file.read", file_read, None),
         ("file.write", file_write, None),
         ("file.write stale revision", file_write_stale, None),

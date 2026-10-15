@@ -125,7 +125,7 @@ here means the list is never written down twice.
 **The shell adds one more member to this result:**
 
 ```json
-{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]}
+{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]},{"id":"html","title":"HTML","extensions":[".html",".htm",".xhtml"]},{"id":"xml","title":"XML","extensions":[".xml",".svg",".xsl",".xslt",".xsd",".rss",".atom",".plist",".xaml",".csproj",".resx",".props",".targets"]}]}
 ```
 
 The kernel is language-agnostic, so the language inventory is added by the layer
@@ -415,9 +415,10 @@ Rules:
 
 - A line whose **first byte** is `#` is a comment. An indented `#` is not.
 - Blank lines are ignored.
-- Keys: `id`, `title`, `ext`, `line_comment`, `block_comment_open`,
-  `block_comment_close`, `string`, `kind`.
-- `ext` and `string` may repeat; the others may not be meaningfully repeated.
+- Keys: `id`, `title`, `ext`, `family`, `raw_element`, `line_comment`,
+  `block_comment_open`, `block_comment_close`, `string`, `kind`.
+- `ext`, `string` and `raw_element` may repeat; the others may not be
+  meaningfully repeated.
 - **An unknown key is a hard error.**
 - Markers take a raw form (`#`, `//`, `/*`) or a quoted form (`"#"`).
 - `kind <kindname> "<token>" ...`, where `<kindname>` is one of `keyword`,
@@ -427,6 +428,13 @@ Rules:
 - **The token text, not the kind, decides how it matches**: a token starting
   with a letter or `_` matches as a whole word; anything else matches literally,
   longest first.
+- `family flat` (the default) is the scanner above. `family sgml` selects the
+  HTML/XML scanner, and `raw_element "script" "style"` lists elements whose body
+  is text rather than markup. The two families do not mix: a flat-scan key
+  (`line_comment`, `block_comment_*`, `string`, `kind`) in a `family sgml`
+  descriptor is a hard error, `raw_element` without `family sgml` is a hard
+  error, and an unknown family is a hard error. Neither key ever appears in a
+  `lang.*` result — they are facts about scanning, not about the wire.
 
 `parseDescriptor` throws `LangError` (with `source` and a 1-based `line`) on any
 grammar violation; `loadLanguages(dir, { onError })` reports and skips bad files
@@ -436,6 +444,7 @@ Scaffold a new one:
 
 ```sh
 python tools/newlang.py --id mylang --ext .ml --keywords "if,else,while"
+python tools/newlang.py --id myhtml --ext .mh --family sgml --raw-element script
 ```
 
 ### Verbatim: `langs/brainfuck.lang`
@@ -449,6 +458,22 @@ line_comment #
 kind command "+" "-" "<" ">" "[" "]" "." ","
 ```
 
+### Verbatim: `langs/html.lang`
+
+```
+# seIDE language descriptor
+id html
+title HTML
+ext .html
+ext .htm
+ext .xhtml
+family sgml
+raw_element "script" "style" "textarea" "title"
+```
+
+`langs/xml.lang` is the same shape without `raw_element`, covering `.xml` and the
+extensions built on it (`.svg`, `.xsl`, `.xsd`, `.rss`, `.atom`, `.plist`, …).
+
 ---
 
 ## The shell-owned language methods
@@ -461,8 +486,13 @@ kernel endpoint directly will get `METHOD_NOT_FOUND` for both.
 Parameters: none.
 
 ```json
-{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]}
+{"langs":[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]},{"id":"html","title":"HTML","extensions":[".html",".htm",".xhtml"]},{"id":"xml","title":"XML","extensions":[".xml",".svg",".xsl",".xslt",".xsd",".rss",".atom",".plist",".xaml",".csproj",".resx",".props",".targets"]}]}
 ```
+
+`extensions` is lowercase and includes the dot; a client matches by
+case-insensitive suffix. Only `id`, `title` and `extensions` are on the wire —
+a descriptor's `family` and `raw_element` are scanning facts and stay in the
+language layer.
 
 When `langs/` has been deleted, the shell's fallback answers `{"langs":[]}`.
 
@@ -488,11 +518,16 @@ Guarantees:
   skipped.
 - Kinds on the wire: `keyword`, `command`, `type`, `constant`, `number`,
   `string`, `comment`, `ident`, `punct`, `ws`. (`ident`, `punct` and `ws` are
-  produced, never declared.)
-- Frozen scan order: **block comment → line comment → string → number →
-  identifier → literal → punctuation**.
+  produced, never declared.) The kind set is the same for every family, so a
+  client that understands Brainfuck understands HTML's tokens too.
+- Frozen scan order, per family:
+  - `flat`: **block comment → line comment → string → number → identifier →
+    literal → punctuation**.
+  - `sgml`: **comment → doctype/processing instruction → tag or entity → text**.
 - An unterminated string or block comment stops at end of line / end of input,
-  so one stray quote never darkens the rest of the file.
+  so one stray quote never darkens the rest of the file. SGML keeps the same
+  promise in its own terms: an unterminated comment, tag, attribute string or
+  CDATA section ends at end of input.
 - With no descriptor matching, `lang.tokenize` still returns a valid tiling:
   blank runs are `ws`, everything else is `punct`.
 - With `langs/` deleted, the fallback returns one span covering the input with

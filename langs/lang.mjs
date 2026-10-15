@@ -15,6 +15,14 @@
  *     ext .bf
  *     line_comment #
  *     kind command "+" "-" "<" ">" "[" "]" "." ","
+ *
+ * A descriptor may also name the tokenizer *family* it belongs to.  A family
+ * is an engine, not a language fact -- it exists so that a whole class of
+ * languages with the same syntax (here: SGML) costs one text file per member
+ * and no code per member.  `family flat` is the default and means the
+ * delimiters above; `family sgml` means `langs/markup.mjs` and its own
+ * delimiters, with `raw_element "script" "style"` naming the elements whose
+ * bodies are text rather than markup.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -54,6 +62,25 @@ const DECLARABLE_KINDS = new Set([
   "string",
   "comment",
 ]);
+
+/** Tokenizer families a descriptor may name.  `flat` is the default. */
+export const FAMILIES = ["flat", "sgml"];
+
+/**
+ * Keys that only make sense to the flat scanner.  Combining one with
+ * `family sgml` is a contradiction rather than a harmless no-op: the author
+ * believed they were configuring something, and silently dropping it is how
+ * descriptors rot.
+ */
+const FLAT_ONLY_KEYS = new Set([
+  "line_comment",
+  "block_comment_open",
+  "block_comment_close",
+  "string",
+  "kind",
+]);
+
+const RAW_NAME_RE = /^[A-Za-z_:][A-Za-z0-9_:.-]*$/;
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const EXT_RE = /^\.[A-Za-z0-9_+.-]+$/;
@@ -169,6 +196,10 @@ export function parseDescriptor(text, source = "<descriptor>") {
     id: "",
     title: "",
     extensions: [],
+    /** tokenizer family: "flat" (the default) or "sgml" (see langs/markup.mjs) */
+    family: "flat",
+    /** family sgml: the elements whose body is text rather than markup */
+    rawElements: [],
     lineComment: "",
     blockOpen: "",
     blockClose: "",
@@ -178,6 +209,11 @@ export function parseDescriptor(text, source = "<descriptor>") {
     /** word entries: exact identifier -> kind */
     words: new Map(),
   };
+
+  // Cross-key rules are checked once, at the end: a descriptor may name its
+  // family after the keys that family applies to.
+  const flatKeysUsed = new Map();
+  let rawElementLine = 0;
 
   // A UTF-8 BOM would make the first `#` line a key line and confuse everyone.
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
@@ -195,6 +231,10 @@ export function parseDescriptor(text, source = "<descriptor>") {
     }
     const key = m[1];
     const rest = m[2];
+
+    if (FLAT_ONLY_KEYS.has(key) && !flatKeysUsed.has(key)) {
+      flatKeysUsed.set(key, lineNo);
+    }
 
     switch (key) {
       case "id": {
@@ -287,6 +327,47 @@ export function parseDescriptor(text, source = "<descriptor>") {
         }
         break;
       }
+      case "family": {
+        const value = rest.trim();
+        if (!FAMILIES.includes(value)) {
+          throw new LangError(
+            `unknown family ${JSON.stringify(value)} (expected one of ${FAMILIES.join(", ")})`,
+            source,
+            lineNo,
+          );
+        }
+        if (lang.family !== "flat" && lang.family !== value) {
+          throw new LangError(
+            `family is already ${lang.family}; a descriptor names one family`,
+            source,
+            lineNo,
+          );
+        }
+        lang.family = value;
+        break;
+      }
+      case "raw_element": {
+        const tokens = readTokenList(rest, source, lineNo);
+        if (tokens.length === 0) {
+          throw new LangError("raw_element names no element", source, lineNo);
+        }
+        if (rawElementLine === 0) {
+          rawElementLine = lineNo;
+        }
+        for (const token of tokens) {
+          if (!RAW_NAME_RE.test(token)) {
+            throw new LangError(
+              `invalid element name ${JSON.stringify(token)}`,
+              source,
+              lineNo,
+            );
+          }
+          if (!lang.rawElements.includes(token)) {
+            lang.rawElements.push(token);
+          }
+        }
+        break;
+      }
       default:
         throw new LangError(`unknown key ${JSON.stringify(key)}`, source, lineNo);
     }
@@ -297,6 +378,20 @@ export function parseDescriptor(text, source = "<descriptor>") {
   }
   if (lang.title === "") {
     lang.title = titleFromId(lang.id);
+  }
+  if (lang.family === "sgml") {
+    const first = flatKeysUsed.entries().next();
+    if (!first.done) {
+      const [key, line] = first.value;
+      throw new LangError(
+        `\`${key}\` is a flat-scan key; family sgml has SGML's own delimiters ` +
+          "(drop the key, or drop the family)",
+        source,
+        line,
+      );
+    }
+  } else if (lang.rawElements.length > 0) {
+    throw new LangError("`raw_element` belongs to family sgml; add `family sgml`", source, rawElementLine);
   }
   if (lang.blockOpen !== "" && lang.blockClose === "") {
     throw new LangError("block_comment_open without block_comment_close", source, 0);

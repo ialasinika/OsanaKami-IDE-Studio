@@ -1,0 +1,19 @@
+# seIDE language descriptor
+# family sgml, like HTML, but with no raw-text elements: in XML every
+# element's content is markup (langs/markup.mjs).
+id xml
+title XML
+ext .xml
+ext .svg
+ext .xsl
+ext .xslt
+ext .xsd
+ext .rss
+ext .atom
+ext .plist
+ext .xaml
+ext .csproj
+ext .resx
+ext .props
+ext .targets
+family sgml

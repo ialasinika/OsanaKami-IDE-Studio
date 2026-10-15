@@ -161,7 +161,7 @@ memory and asks you to type `save force`.
   Those are the same thing only for ASCII. A file with non-ASCII characters can
   have its colours drift by one glyph per multi-byte character. Fixing it
   properly means mapping byte offsets to UTF-16 indices; for a C89 kernel and a
-  JavaScript shell — the two languages this prototype actually edits — the drift
+  JavaScript shell — whose sources are ASCII — the drift
   never appears, so it was not worth the complexity here.
 * The colour layer and the text layer must share identical metrics. That is
   enforced from `style.css` (`--code-*`), so a card zoomed far out will scale

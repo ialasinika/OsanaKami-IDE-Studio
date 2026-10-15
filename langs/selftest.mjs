@@ -8,8 +8,8 @@
  * Exits 0 on success, 1 on the first failure.
  */
 
-import { readdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LangError, LangRegistry, parseDescriptor } from "./lang.mjs";
@@ -83,6 +83,27 @@ const withWords = parseDescriptor('id toy\next .toy\nkind keyword "if" "else"\nk
 check("word entries detected by first char", withWords.words.get("if") === "keyword");
 check("literal entries detected by first char", withWords.literals.length === 2);
 
+check("flat is the default family", bf.family === "flat" && bf.rawElements.length === 0, bf.family);
+
+const sgml = parseDescriptor(
+  'id html\next .html\nfamily sgml\nraw_element "script" "style"\n',
+  "html.lang",
+);
+check("family parsed", sgml.family === "sgml", sgml.family);
+check(
+  "raw elements parsed",
+  JSON.stringify(sgml.rawElements) === '["script","style"]',
+  JSON.stringify(sgml.rawElements),
+);
+check(
+  "an explicit flat family is allowed",
+  parseDescriptor("id x\next .x\nfamily flat\nline_comment #\n", "x.lang").family === "flat",
+);
+check(
+  "the same family twice is allowed",
+  parseDescriptor("id x\next .x\nfamily flat\nfamily flat\n", "x.lang").family === "flat",
+);
+
 section("descriptor rejection");
 
 function rejects(name, text) {
@@ -102,6 +123,12 @@ rejects("missing id is fatal", "ext .x\n");
 rejects("bad id is fatal", "id 9bad\next .x\n");
 rejects("dangling block open is fatal", "id x\next .x\nblock_comment_open /*\n");
 rejects("empty quoted token is fatal", 'id x\next .x\nkind keyword ""\n');
+rejects("a flat key with family sgml is fatal", "id x\next .x\nfamily sgml\nline_comment #\n");
+rejects("raw_element without a family is fatal", 'id x\next .x\nraw_element "script"\n');
+rejects("an unknown family is fatal", "id x\next .x\nfamily fortran\n");
+rejects("two different families are fatal", "id x\next .x\nfamily sgml\nfamily flat\n");
+rejects("an element name with a space is fatal", 'id x\next .x\nfamily sgml\nraw_element "script style"\n');
+rejects("an empty raw_element is fatal", "id x\next .x\nfamily sgml\nraw_element\n");
 
 section("registry");
 
@@ -112,9 +139,14 @@ check("detect by extension", registry.detect("examples/hello.bf")?.id === "brain
 check("detect ignores case", registry.detect("EXAMPLES/HELLO.BF")?.id === "brainfuck");
 check("detect unknown extension", registry.detect("notes.md") === null);
 check("resolve prefers explicit lang", registry.resolve({ lang: "brainfuck", path: "a.md" })?.id === "brainfuck");
+check("html is loaded as a family member", registry.byId("html")?.family === "sgml");
+check("detect picks html", registry.detect("examples/page.html")?.id === "html");
+check("detect picks html for xhtml", registry.detect("page.xhtml")?.id === "html");
+check("detect picks xml for svg", registry.detect("icon.svg")?.id === "xml");
 check(
   "list is wire shaped",
-  JSON.stringify(registry.list()) === '[{"id":"brainfuck","title":"Brainfuck","extensions":[".bf"]}]',
+  JSON.stringify(registry.list().map((l) => l.id)) === '["brainfuck","html","xml"]' &&
+    registry.list().every((l) => typeof l.title === "string" && Array.isArray(l.extensions)),
   JSON.stringify(registry.list()),
 );
 
@@ -165,6 +197,129 @@ check(
   JSON.stringify(lines.flat()),
 );
 check("a trailing newline does not invent a line", lines[2].length === 0, JSON.stringify(lines[2]));
+
+section("the SGML family");
+
+const html = registry.byId("html");
+const xml = registry.byId("xml");
+
+// A corpus rather than one happy path: half-typed documents are what an
+// editor actually sees, and every one of them still has to tile.
+const sgmlCorpus = [
+  '<!DOCTYPE html>\n<html><head><title>t</title></head>\n<body class="a">x &amp; y</body></html>\n',
+  '<?xml version="1.0"?><a b=\'c\'><![CDATA[x < y]]></a>',
+  "<p>unclosed",
+  '<p title="unclosed>',
+  "<!-- never closed",
+  "<script>if (a < b) { x++; }</script>",
+  "<p>a < b > c & d</p>",
+  "",
+  '<ns:a xmlns:ns="u"><ns:b/></ns:a>',
+];
+for (const one of sgmlCorpus) {
+  const label = one.length > 30 ? `${one.slice(0, 27)}...` : JSON.stringify(one);
+  const bad = assertTiles(one, tokenize(html, one));
+  check(`tiles ${label}`, bad === null, bad);
+}
+
+const rawBody = "<script>if (a < b) { x++; }</script>";
+const rawSpans = tokenize(html, rawBody);
+check(
+  "a raw body is never markup",
+  rawSpans.every(
+    (s) => !(s[0] >= rawBody.indexOf("if") && s[1] <= rawBody.indexOf("</script>") &&
+      ["keyword", "type", "string", "comment"].includes(s[2])),
+  ),
+  JSON.stringify(rawSpans),
+);
+check(
+  "a raw body stops at its closing tag",
+  rawSpans.filter((s) => s[2] === "keyword").length === 2,
+  JSON.stringify(rawSpans),
+);
+check(
+  "the closing tag of a raw element is markup again",
+  JSON.stringify(rawSpans.slice(-3)) === '[[27,29,"punct"],[29,35,"keyword"],[35,36,"punct"]]',
+  JSON.stringify(rawSpans.slice(-3)),
+);
+check(
+  "script is ordinary markup in XML",
+  tokenize(xml, rawBody).filter((s) => s[2] === "keyword").length === 2,
+  JSON.stringify(tokenize(xml, rawBody)),
+);
+
+const commentOnly = tokenize(html, '<!-- <p a="b"> -->');
+check(
+  "a comment swallows markup and quotes",
+  commentOnly.length === 1 && commentOnly[0][2] === "comment" &&
+    commentOnly[0][1] === '<!-- <p a="b"> -->'.length,
+  JSON.stringify(commentOnly),
+);
+check("an unclosed comment runs to the end", JSON.stringify(tokenize(html, "<!-- x <p>y")) === '[[0,11,"comment"]]');
+
+check("an entity is a constant", tokenize(html, "a &amp; b").filter((s) => s[2] === "constant").length === 1);
+check("a bare & is punctuation", tokenize(html, "a & b").every((s) => s[2] !== "constant"));
+check("a lone < is punctuation", tokenize(html, "a < b").some((s) => s[2] === "punct" && s[0] === 2));
+check("a doctype has a keyword", tokenize(xml, "<!DOCTYPE html>").some((s) => s[2] === "keyword"));
+check(
+  "a processing instruction has a keyword",
+  tokenize(xml, '<?xml version="1.0"?>').some((s) => s[2] === "keyword"),
+);
+check("CDATA is a string", tokenize(xml, "<x><![CDATA[a < b]]></x>").some((s) => s[2] === "string"));
+check(
+  "attribute values are strings, attribute names are types",
+  JSON.stringify(tokenize(html, '<p class="x">')) ===
+    '[[0,1,"punct"],[1,2,"keyword"],[2,3,"ws"],[3,8,"type"],[8,9,"punct"],[9,12,"string"],[12,13,"punct"]]',
+  JSON.stringify(tokenize(html, '<p class="x">')),
+);
+
+const page = readFileSync(join(HERE, "..", "examples", "page.html"), "utf8");
+const pageSpans = tokenize(html, page);
+check("examples/page.html tiles", assertTiles(page, pageSpans) === null, assertTiles(page, pageSpans));
+check(
+  "examples/page.html shows off every kind it can",
+  pageSpans.some((s) => s[2] === "keyword") &&
+    pageSpans.some((s) => s[2] === "type") &&
+    pageSpans.some((s) => s[2] === "string") &&
+    pageSpans.some((s) => s[2] === "constant") &&
+    pageSpans.some((s) => s[2] === "comment"),
+  JSON.stringify([...new Set(pageSpans.map((s) => s[2]))]),
+);
+// Whitespace runs cross line boundaries here, so the per-line spans are a
+// refinement of the flat ones rather than the same array.
+const pageLines = tokenizeLines(html, page).flat();
+const kindAt = (spans, at) => spans.find(([s, e]) => s <= at && at < e)?.[2];
+check(
+  "line grouping refines the flat spans without changing a kind",
+  assertTiles(page, pageLines) === null &&
+    pageLines.length >= pageSpans.length &&
+    pageLines.every(([s, e, k]) => kindAt(pageSpans, s) === k && kindAt(pageSpans, e - 1) === k),
+  `${pageLines.length} line spans vs ${pageSpans.length} flat spans`,
+);
+
+const xmlFixture = readFileSync(join(HERE, "..", "examples", "hello.xml"), "utf8");
+const xmlSpans = tokenize(xml, xmlFixture);
+check("examples/hello.xml tiles", assertTiles(xmlFixture, xmlSpans) === null, assertTiles(xmlFixture, xmlSpans));
+check(
+  "examples/hello.xml shows a declaration, a comment, an entity and CDATA",
+  xmlSpans.slice(0, 4).some((s) => s[2] === "keyword") &&
+    xmlSpans.some((s) => s[2] === "comment") &&
+    xmlSpans.some((s) => s[2] === "constant") &&
+    xmlSpans.some((s) => s[2] === "string"),
+  JSON.stringify([...new Set(xmlSpans.map((s) => s[2]))]),
+);
+
+const svgFixture = readFileSync(join(HERE, "..", "examples", "notes.svg"), "utf8");
+const svgSpans = tokenize(xml, svgFixture);
+check("examples/notes.svg tiles", assertTiles(svgFixture, svgSpans) === null, assertTiles(svgFixture, svgSpans));
+check(
+  "examples/notes.svg is coloured as XML, so .svg needs no descriptor of its own",
+  registry.detect("examples/notes.svg")?.id === "xml" &&
+    svgSpans.some((s) => s[2] === "type") &&
+    svgSpans.some((s) => s[2] === "comment") &&
+    svgSpans.some((s) => s[2] === "keyword"),
+  JSON.stringify([...new Set(svgSpans.map((s) => s[2]))]),
+);
 
 section("independence from the kernel");
 

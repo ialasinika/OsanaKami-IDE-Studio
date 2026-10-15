@@ -1,0 +1,10 @@
+# seIDE language descriptor
+# family sgml: tags, attributes, comments and entities come from SGML itself
+# (langs/markup.mjs); raw_element lists the elements whose body is text.
+id html
+title HTML
+ext .html
+ext .htm
+ext .xhtml
+family sgml
+raw_element "script" "style" "textarea" "title"

@@ -146,8 +146,8 @@ static void usage(FILE *out)
     fprintf(out, "        This text.\n");
     fprintf(out, "\n");
     fprintf(out, "Language support is deliberately not a kernel concern:\n");
-    fprintf(out, "`.lang` descriptors and the keyword tokenizer live in langs/\n");
-    fprintf(out, "and are served by the shell.  The kernel knows nothing about\n");
+    fprintf(out, "`.lang` descriptors and the tokenizers live in langs/ and\n");
+    fprintf(out, "are served by the shell.  The kernel knows nothing about\n");
     fprintf(out, "programming languages.\n");
 }
 

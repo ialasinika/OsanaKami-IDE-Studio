@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60">
+  <!-- SVG is XML, so the .xml descriptor colours it with no extra file. -->
+  <rect x="4" y="4" width="112" height="52" rx="6" fill="#151c1c"/>
+  <text x="60" y="34" text-anchor="middle" fill="#6fd3c7">seIDE</text>
+</svg>

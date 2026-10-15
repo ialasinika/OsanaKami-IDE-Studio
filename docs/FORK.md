@@ -195,7 +195,20 @@ python tools/newlang.py --id brainfuck --ext .bf \
     --keywords "+,-,<,>,[,],." --keyword ","
 ```
 
-The generated file follows the frozen grammar in `docs/PROTOCOL.md`
+Syntax that is SGML's rather than one language's — HTML, XML, SVG — is scaffolded
+as a *family* member instead. Its delimiters are the engine in
+`langs/markup.mjs`, so the descriptor names only its id, extensions and the
+elements whose body is raw text:
+
+```sh
+python tools/newlang.py --id html --ext .html --family sgml \
+    --raw-element script --raw-element style --out langs
+```
+
+`--comment`/`--keywords`/`--keyword` are flat-scan facts and are refused with
+`--family sgml`; `--raw-element` is refused without it.
+
+The generated flat descriptor follows the frozen grammar in `docs/PROTOCOL.md`
 (`# seIDE language descriptor`, `id`, `title`, `ext`, optional `line_comment` /
 `block_comment_open` / `block_comment_close` / `string`, and
 `kind <kindname> "<token>" ...`). An unknown key or an unquoted token is a hard

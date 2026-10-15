@@ -28,7 +28,8 @@ without fighting a plugin API, keep reading.
     language-descriptor generator. **Python 3.12 standard library only**.
 - A **window** made of the system's Edge/Chromium launched in
   `--app=http://127.0.0.1:PORT` app mode.
-- One **language** that is actually supported: Brainfuck keyword colouring.
+- **Languages** that are actually supported: Brainfuck, plus an SGML family
+  (HTML and XML, which is what SVG is). Colouring only — see below.
 - A **frozen JSON-RPC protocol** on stdio, newline-delimited, with a documented
   method list and error-code table.
 
@@ -43,7 +44,8 @@ without fighting a plugin API, keep reading.
   window; see the WRY/Tauri note below.
 - **Not for every language.** IntelliSense, diagnostics, completion and
   formatting do not exist. Language support is keyword colouring, and the only
-  language that must work is Brainfuck.
+  languages that must work are Brainfuck and the SGML family (HTML/XML); see
+  [Constraints, 8](#8-language-intelligence-is-keyword-colouring-and-it-lives-in-langs).
 - **Not portable yet.** The kernel's platform layer is Win32.
 
 ---
@@ -130,8 +132,12 @@ rejected by `-std=c89 -pedantic -Werror`.
 The kernel knows about files, boards and processes — not about programming
 languages. Language support lives in `langs/`, is served by the shell, and is
 **deletable**: `rm -rf langs/` leaves a kernel that still builds and a shell that
-still runs, rendering plain text. Brainfuck is the only language that must be
-supported. See `docs/ARCHITECTURE.md` and `docs/PROTOCOL.md`.
+still runs, rendering plain text. Two kinds of language must be supported: the
+**flat** kind (Brainfuck is the worked example — a line comment, a string
+delimiter and a list of tokens) and the **SGML family** (HTML and XML, which is
+what SVG, RSS and the rest of the `.xml` extensions are), whose delimiters are
+SGML's rather than any one language's. See `docs/ARCHITECTURE.md`,
+`langs/README.md` and `docs/PROTOCOL.md`.
 
 ---
 
@@ -175,7 +181,7 @@ The individual pieces, if you want to run them directly:
 python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 3 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 43/43 checks passed
+node langs/selftest.mjs                        # 87/87 checks passed
 node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
 ```
 
@@ -237,8 +243,11 @@ core/                   the kernel -- C89, no dependencies
   tests/                test_json.c (JSON round-trip harness for the kernel)
 
 langs/                  language support, deliberately OUTSIDE the kernel
-  brainfuck.lang        the only language descriptor that ships
+  brainfuck.lang        the flat family: a line comment, a string, a token list
+  html.lang             the SGML family: .html/.htm/.xhtml, raw script/style/...
+  xml.lang              the SGML family: .xml and the dozen extensions built on it
   lang.mjs              descriptor parsing, validation, registry
+  markup.mjs            the SGML scanner (the family's delimiters, in one place)
   tokenize.mjs          the tokenizer and its tiling guarantee
   selftest.mjs          node langs/selftest.mjs -- no kernel needed
   README.md             the descriptor grammar and wire shapes
@@ -252,16 +261,18 @@ tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
   e2e.py                drives the protocol end to end over stdio
   bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
-  newlang.py            writes a conforming .lang descriptor
+  newlang.py            writes a conforming .lang descriptor (flat or sgml)
   README.md             what each tool is for
 
-examples/               hello.bf (prints "Hello World!"), shadow.bf
+examples/               hello.bf and shadow.bf (Brainfuck), page.html (every
+                        SGML token kind), hello.xml, notes.svg
 docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
                         PROJECT.md, TRIM.md, FORK.md, BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
-Git. `examples/` is **not** ignored: the `.bf` sources are part of the project.
+Git. `examples/` is **not** ignored: the `.bf`, `.html` and `.xml` sources are
+part of the project.
 
 ---
 

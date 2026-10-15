@@ -5,17 +5,23 @@
  * in the descriptor; if you ever need `if (lang.id === "rust")` here, the
  * descriptor format is missing a key instead.
  *
+ * The single branch is on the descriptor's *family*, which names an engine
+ * rather than a language: `family sgml` hands the text to `langs/markup.mjs`,
+ * whose delimiters are fixed by SGML itself.  A language of either family
+ * still costs one `.lang` file and no code.
+ *
  * The output is the frozen wire form: an array of `[start, end, kind]` triples
  * that **tiles the whole input** -- every offset from 0 to text.length is
  * covered exactly once, with whitespace reported as `ws`.  A client can
  * therefore colour a document by walking the array once, with no gap logic.
  *
- * Scan order at each offset (frozen):
+ * Scan order at each offset (frozen, family flat):
  *   block comment -> line comment -> string -> number -> identifier -> literal
  *   -> punctuation
  */
 
 import { TOKEN_KINDS } from "./lang.mjs";
+import { tokenizeSgml } from "./markup.mjs";
 
 const KIND_SET = new Set(TOKEN_KINDS);
 
@@ -139,6 +145,10 @@ function startsToken(text, i, lang) {
  * @returns {Array<[number, number, string]>} contiguous spans covering text
  */
 export function tokenize(lang, text) {
+  if (lang !== null && lang !== undefined && lang.family === "sgml") {
+    return tokenizeSgml(lang, text);
+  }
+
   const out = [];
   const n = text.length;
   const plain = lang === null || lang === undefined;

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>seIDE &mdash; a board-first editor</title>
+  <style>
+    :root { --ink: #e6e9ef; --rule: #2b3242; }
+    body { margin: 0; padding: 2rem; background: #12151c; color: var(--ink);
+           font: 15px/1.55 ui-monospace, Consolas, monospace; }
+    .card { border: 1px solid var(--rule); border-radius: 6px; padding: 1rem; }
+    .card h2 { margin-top: 0; }
+  </style>
+</head>
+<body>
+  <!-- The board is the project state; this page is one card's worth of prose. -->
+  <h1>seIDE</h1>
+  <p>An IDE whose project state is a board: cards on an infinite plane, links
+     between them, and no tabs to lose your place in.</p>
+
+  <div class="card" id="kinds">
+    <h2>Card kinds</h2>
+    <ul>
+      <li><code>editor</code> &mdash; one file, coloured by a <em>descriptor</em></li>
+      <li><code>runner</code> &mdash; a command, its output, its exit code</li>
+      <li><code>files</code> &mdash; what is in this folder</li>
+      <li><code>project</code> &mdash; what is in this project, and what is open in it</li>
+      <li><code>sheet</code> &mdash; structured state, no text</li>
+      <li><code>note</code> &mdash; prose</li>
+    </ul>
+  </div>
+
+  <p>Press <kbd>&amp;</kbd> to link two cards, or <kbd>Esc</kbd> to stop a run.
+     Angles are harmless here: 1 &lt; 2 &lt; 3, and &amp;amp; stays an entity.</p>
+
+  <script>
+    // Raw text: the tokenizer must not look for tags in here.
+    const cards = document.querySelectorAll(".card");
+    if (cards.length > 0 && 1 < cards.length) {
+      console.log(`seIDE: ${cards.length} cards on this page`);
+    }
+  </script>
+</body>
+</html>

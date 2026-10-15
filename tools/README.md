@@ -7,7 +7,7 @@ build, scaffolding, verification and reference tools.
 | Tool | What it is for |
 | --- | --- |
 | [`bf.py`](bf.py) | Brainfuck interpreter and reference implementation of the `langs/brainfuck.lang` semantics. It is also what `e2e.py` uses to learn the expected output of a fixture, and what `exec.start` runs. |
-| [`newlang.py`](newlang.py) | Writes a `.lang` descriptor in the exact grammar `langs/lang.mjs` parses (see `langs/README.md` for the grammar itself). |
+| [`newlang.py`](newlang.py) | Writes a `.lang` descriptor in the exact grammar `langs/lang.mjs` parses — flat by default, or an SGML-family member with `--family sgml` and repeatable `--raw-element NAME` (see `langs/README.md` for the grammar itself). |
 | [`e2e.py`](e2e.py) | End-to-end protocol driver: spawns an endpoint, speaks newline-delimited JSON-RPC on its stdin/stdout, and asserts the frozen scenario. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
 

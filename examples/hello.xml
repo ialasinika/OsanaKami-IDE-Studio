@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A small XML document: a namespace, an entity, and a CDATA section. -->
+<catalog xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title>seIDE &amp; friends</dc:title>
+  <entry id="1" kind="card">
+    <note><![CDATA[a < b && c > d]]></note>
+  </entry>
+</catalog>
