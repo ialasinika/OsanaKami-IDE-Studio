@@ -148,8 +148,14 @@ static int ch_fold(int c)
 
 /*
  * `*` matches within one path segment, `?` matches one non-separator
- * character, and `**` matches across separators (including none at all, so
- * `**|*.bf` finds a file at the top level as well as three deep).
+ * character, and `**` matches across separators - including none at all, so a
+ * pattern that wants a file anywhere in the tree also finds one at the top
+ * level.  (Do not spell that separator out next to the stars here: the two
+ * characters together would close this comment, as once happened.)
+ *
+ * The pattern language is the kernel's whole opinion about file names: it
+ * carries no table of extensions, and no example here names a programming
+ * language, because the kernel does not know one.
  */
 static int glob_match(const char *p, const char *s)
 {
