@@ -83,14 +83,25 @@ reference a file, and may be connected by links. The board persists to
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
-### 2. No Electron
+### 2. No Electron in the core
 
-The window is the system's Edge/Chromium launched in
-`--app=http://127.0.0.1:PORT` app mode, with a throwaway profile. There is no
-Electron, no bundled Chromium and nothing to download.
-**For a real product, the replacement path is WRY/Tauri** — currently nothing in
-this repository uses either; the WRY path is described in `docs/FORK.md` and is
-future work, not present work.
+Nothing below the window knows what a window is: the protocol, the language
+layer, the mod layer and the board are all indifferent to how they are hosted.
+The default host stays the system's Edge/Chromium launched in
+`--app=http://127.0.0.1:PORT` app mode with a throwaway profile — no bundled
+Chromium, nothing to download, and `node shell/main.mjs serve` works on a machine
+that has never run `npm install`.
+
+This fork adds an *optional* desktop shell on top: `electron/`, reached with
+`npm start`. Handing an installer to mod authors needs a real window, a real
+taskbar entry and no dependency on which browser happens to be installed. It is
+one file with no preload script and no IPC, and it changes nothing under
+`shell/`, `langs/` or `core/`; see `electron/README.md`. `node_modules/` stays a
+build-time dependency of the shell, never a runtime dependency of the product.
+
+**For a smaller binary the replacement path is WRY/Tauri**, described in
+`docs/FORK.md`; it would also be what makes the kernel portable, which is the
+larger piece of work. Electron is what this fork actually ships.
 
 ### 3. No plugin system, by design
 
@@ -142,6 +153,7 @@ rejected by `-std=c89 -pedantic -Werror`.
 | --- | --- | --- |
 | `core/` | C89 | none beyond libc and the OS |
 | `langs/`, `shell/` | JavaScript ESM | zero npm dependencies |
+| `electron/` | JavaScript (CommonJS) | Electron + electron-builder, dev only |
 | `tools/` | Python 3.12 | standard library only |
 
 ### 8. Language intelligence is keyword colouring, and it lives in `langs/`

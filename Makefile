@@ -50,7 +50,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck test run clean modules
+.PHONY: all check fullcheck test run clean modules icon window package
 
 all: $(BIN)
 
@@ -107,6 +107,20 @@ test: check fullcheck $(JSONTEST)
 
 modules: $(BIN)
 	$(BIN) modules
+
+# The Electron window's icon is generated from the app palette, not drawn by
+# hand, so it stays in step with style.css.  Needs Pillow.
+icon:
+	$(PYTHON) tools/make_icon.py
+
+# The Electron window itself.  `npm install` first; the kernel must be built,
+# because the wrapper ships it as a separate binary rather than a JS module.
+window: $(BIN)
+	npm start
+
+# An unpacked Electron tree in dist/win-unpacked, and an NSIS installer.
+package: $(BIN)
+	npm run dist
 
 # The window: a static server plus the system browser in app mode.  No
 # Electron, no bundled Chromium, no download.

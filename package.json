@@ -1,0 +1,59 @@
+{
+  "name": "infantgod-studio",
+  "productName": "InfantGod Studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "幼神工坊 — a board-shaped mod IDE for 《幼神》",
+  "license": "UNLICENSED",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "pack": "electron-builder --win --x64 --dir"
+  },
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.infantgod.studio",
+    "productName": "InfantGod Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/infantgod.exe",
+        "to": "infantgod.exe"
+      },
+      {
+        "from": "shell",
+        "to": "shell"
+      },
+      {
+        "from": "langs",
+        "to": "langs"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  }
+}

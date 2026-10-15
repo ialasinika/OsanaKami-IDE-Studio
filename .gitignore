@@ -46,10 +46,12 @@ __pycache__/
 venv/
 
 # ---------------------------------------------------------------------------
-# Node (the shell has no package.json and no dependencies; these appear only
-# if a fork adds them)
+# Node: the shell itself still has zero runtime dependencies, but the window
+# wrapper (electron/) brings npm in for the first time, so node_modules/ and
+# the packager's output are ignored here.
 # ---------------------------------------------------------------------------
 node_modules/
+dist/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
