@@ -101,11 +101,16 @@ check(
 );
 check(
   "literals and words are split by first char",
-  inlineLang.words.size === 22,
-  String(inlineLang.words.size),
+  inlineLang.words.size === 22 && inlineLang.literals.length === 18,
+  `words ${inlineLang.words.size} literals ${inlineLang.literals.length}`,
 );
 check(
-  "word entries detected by first char",
+  "punctuation never lands in the word map",
+  !inlineLang.words.has("<<") && !inlineLang.words.has(":"),
+  JSON.stringify([...inlineLang.words.keys()]),
+);
+check(
+  "word entries carry their declared kind",
   inlineLang.words.get("title") === "keyword" && inlineLang.words.get("if") === "keyword",
   JSON.stringify([...inlineLang.words].slice(0, 4)),
 );
