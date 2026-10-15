@@ -148,10 +148,10 @@ node langs/selftest.mjs
 
 More than seventy checks covering descriptor parsing, rejection of malformed
 descriptors, registry lookup, tiling, comment/string/number classification, line
-grouping, and the shipped `yarn.lang`/`json.lang` descriptors exercised over the
-fixtures in `examples/`. The count moves as descriptors and cases are added, so
-trust the footer it prints, not this line. It needs no kernel, no shell and no
-network.
+grouping, the code-unit-versus-byte offset gap, and the shipped
+`yarn.lang`/`json.lang` descriptors exercised over the fixtures in `examples/`.
+The count moves as descriptors and cases are added, so trust the footer it
+prints, not this line. It needs no kernel, no shell and no network.
 
 ## Known limitations of the frozen grammar
 
@@ -176,6 +176,6 @@ These are properties of the eight-key descriptor format, not bugs in
   quoted title would start a comment: an accepted consequence of that order.
 - **Offsets are JS string indices, not byte offsets.** The wire docstring in
   `tokenize.mjs` says `text.length`; for a Chinese file that is UTF-16 code
-  units, not UTF-8 bytes. `langs/selftest.mjs` asserts this explicitly for a
-  CJK input, because the error messages elsewhere in the repo say "byte" and a
-  client that converted them would be off by the difference.
+  units, not UTF-8 bytes. `langs/selftest.mjs` pins the gap over a shipped CJK
+  fixture — units and bytes both measured, an astral character included — because
+  the two agree for ASCII and a regression would otherwise go unnoticed.

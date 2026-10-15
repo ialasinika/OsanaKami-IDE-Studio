@@ -315,23 +315,76 @@ check("json has a number span", jsonSpans.some((s) => s[2] === "number"));
 check("json has a keyword span", jsonSpans.some((s) => s[2] === "keyword"));
 check("json has a command span", jsonSpans.some((s) => s[2] === "command"));
 
-/* Non-ASCII: the tokenizer runs on a JavaScript string, so its offsets should be
- * JS/UTF-16 string indices, not UTF-8 byte offsets.  If this ever fails, the
- * docstring in tokenize.mjs ("every offset from 0 to text.length") is a lie for
- * any file containing CJK text -- which is every 《幼神》 script.  The assertion is
- * deliberately exact rather than tolerant. */
-{
-  const text = "Aistalt: 嗨，大家好。 #line:0630975\n";
-  const spans = tokenize(yarn, text);
-  const tiling = assertTiles(text, spans);
-  check("non-ASCII (Chinese) input tiles by string index", tiling === null, tiling);
-  const last = spans[spans.length - 1];
-  check(
-    "last non-ASCII span ends at text.length",
-    last !== undefined && last[1] === text.length,
-    `${JSON.stringify(last)} vs length ${text.length}`,
-  );
-}
+/* `tokenize` scans a JavaScript *string*, so every offset it reports is a UTF-16
+ * code unit index -- what `text.length` counts -- and not a byte offset.  The two
+ * coincide for ASCII and differ for Chinese prose, which is every 《幼神》 script,
+ * so the difference is measured on the shipped fixture instead of asserted.  The
+ * docs send a reader here for exactly this claim (`langs/README.md`,
+ * `docs/FORK.md`, `docs/PARADIGM.md`, `docs/PROTOCOL.md`), and the check names
+ * spell out the tiling property -- start at 0, no gap, end at `text.length` -- so
+ * a failure names which half moved. */
+section("offsets are string indices, not bytes");
+
+/* An inline fixture carries the two cases a file on disk cannot guarantee:
+ * Chinese text and an astral character -- one code point, two code units. */
+const wideInline = "<<set $x = 1>> \u4E2D\u6587 \u{1F600}\n";
+const wideInlineSpans = tokenize(yarn, wideInline);
+const wideInlineTiling = assertTiles(wideInline, wideInlineSpans);
+check("inline non-ASCII input tiles", wideInlineTiling === null, wideInlineTiling);
+check(
+  "the inline fixture's code units and bytes really differ",
+  wideInline.length !== Buffer.byteLength(wideInline, "utf8"),
+  `units=${wideInline.length} bytes=${Buffer.byteLength(wideInline, "utf8")}`,
+);
+check(
+  "an astral character is two code units and one code point",
+  wideInline.length - [...wideInline].length === 1,
+  `units=${wideInline.length} code points=${[...wideInline].length}`,
+);
+const wideInlineLast = wideInlineSpans[wideInlineSpans.length - 1];
+check(
+  "its last offset is the code-unit length, not the byte length",
+  wideInlineLast !== undefined && wideInlineLast[1] === wideInline.length,
+  `${JSON.stringify(wideInlineLast)} units=${wideInline.length}`
+    + ` bytes=${Buffer.byteLength(wideInline, "utf8")}`,
+);
+check(
+  "slicing by those offsets rebuilds the exact text",
+  wideInlineSpans.map(([s, e]) => wideInline.slice(s, e)).join("") === wideInline,
+);
+
+/* The shipped fixture, read from disk rather than re-typed: 632 code units and
+ * 807 bytes as committed, so a drifted fixture shows up in the failure detail. */
+const fixtureTiling = assertTiles(fixtureSrc, fixtureSpans);
+const fixtureLast = fixtureSpans[fixtureSpans.length - 1];
+check("the shipped non-ASCII fixture tiles", fixtureTiling === null, fixtureTiling);
+check(
+  "the shipped fixture's code units and bytes really differ",
+  fixtureSrc.length !== Buffer.byteLength(fixtureSrc, "utf8"),
+  `units=${fixtureSrc.length} bytes=${Buffer.byteLength(fixtureSrc, "utf8")}`,
+);
+check(
+  "the first span starts at 0",
+  fixtureSpans[0] !== undefined && fixtureSpans[0][0] === 0,
+  JSON.stringify(fixtureSpans[0]),
+);
+check(
+  "neighbouring spans touch",
+  fixtureSpans.every((span, i) => i === 0 || span[0] === fixtureSpans[i - 1][1]),
+  JSON.stringify(fixtureSpans.find((span, i) => i > 0 && span[0] !== fixtureSpans[i - 1][1])),
+);
+check(
+  "the last span ends at the code-unit length, not the byte length",
+  fixtureLast !== undefined &&
+    fixtureLast[1] === fixtureSrc.length &&
+    fixtureSrc.length !== Buffer.byteLength(fixtureSrc, "utf8"),
+  `${JSON.stringify(fixtureLast)} units=${fixtureSrc.length}`
+    + ` bytes=${Buffer.byteLength(fixtureSrc, "utf8")}`,
+);
+check(
+  "slicing the shipped fixture by those offsets rebuilds it exactly",
+  fixtureSpans.map(([s, e]) => fixtureSrc.slice(s, e)).join("") === fixtureSrc,
+);
 
 section("independence from the kernel");
 

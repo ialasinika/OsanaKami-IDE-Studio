@@ -254,7 +254,9 @@ prototype:
 - The editor colours text in the encoding the browser uses, which is not the
   encoding Python and C use. `lang.tokenize` returns JS string indices (UTF-16
   code units), which is what makes Chinese prose highlight correctly — the
-  upstream README's "byte offsets" claim was simply wrong. The residue is that
-  an astral character (emoji, rare CJK ext-B) makes `tools/e2e.py`'s tiling
-  check see an offset past `len(text)`, because Python counts code points;
-  latent, and not triggered by any current fixture.
+  upstream README's "byte offsets" claim was simply wrong. `tools/e2e.py`
+  measures its fixtures in the same space (`js_length` counts UTF-16 code units,
+  not Python code points), so its tiling check stays honest even for an astral
+  character; what would drift is any *new* check that compared wire spans to
+  `len(text)`. The shipped fixture is exercised by `node langs/selftest.mjs`,
+  which pins the unit/byte gap and the `0..text.length` tiling.

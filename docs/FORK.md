@@ -216,11 +216,13 @@ node langs/selftest.mjs
 language — including a real parser with a real type system — and delete
 `langs/`. The only constants are the two method shapes and the tiling guarantee
 of `lang.tokenize` (spans cover `0..text.length` exactly once, in order).
-Remember that the wire speaks **JS string indices**, not UTF-8 byte offsets, and
-that the shell's editor consumes them directly: that is exact for ASCII, and an
-astral character is the one case where a client that re-derived offsets in bytes
-would disagree. It is the known papercut listed in `shell/web/main.mjs`'s
-`LIMITATIONS`.
+Remember that the wire speaks **JS string indices** — UTF-16 code units, what
+`text.length` counts — not UTF-8 byte offsets, and that the shell's editor
+consumes them directly. The two readings agree for ASCII only: a client that
+re-derived offsets in bytes already disagrees on the first Chinese character
+(three bytes, one unit), while the client that counts *code points* is the one
+that disagrees on an astral character (two units, one code point). It is the
+known papercut listed in `shell/web/main.mjs`'s `LIMITATIONS`.
 
 **Cost:** ten minutes per language for colouring; weeks if you are building real
 language intelligence, and in that case you are reimplementing the two methods

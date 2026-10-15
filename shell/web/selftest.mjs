@@ -91,9 +91,19 @@ import {
  * the listener-leak and save-reporting fixes be checked here for real instead
  * of through a browser.
  */
-import { saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
+import { saveOutcomeMessage, scrollRoom, wireChoiceStrip } from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
+import {
+  WATCH_GONE,
+  WATCH_OK,
+  WATCH_RELOAD,
+  WATCH_UNKNOWN,
+  WATCH_WARN,
+  watchDecision,
+  watchReport,
+  watchTrimmed,
+} from "./watch.mjs";
 
 /* ------------------------------------------------------------------ */
 /* the smallest useful test harness                                    */
@@ -2013,6 +2023,112 @@ test("history: clear() empties it and a record after that starts over", () => {
   assert.deepEqual(history.current(), document);
 });
 
+/*
+ * The wheel rule the board follows: a card's own scroll region keeps the wheel
+ * while it has room in that direction, and the board pans only when it does not.
+ * Which ancestor is a scroll container needs a browser; this is the arithmetic
+ * that decision rests on.
+ */
+test("wheel: a scroll region has room only where it can still move", () => {
+  assert.equal(scrollRoom(0, 100, 400, 120), 300, "at the top, a downward wheel has the rest to go");
+  assert.equal(scrollRoom(300, 100, 400, 120), 0, "at the bottom, a downward wheel has nowhere to go");
+  assert.equal(scrollRoom(120, 100, 400, -120), 120, "a wheel up has the part already scrolled past");
+  assert.equal(scrollRoom(0, 100, 400, -120), 0, "a wheel up at the top has nowhere to go");
+  assert.equal(scrollRoom(0, 400, 400, 120), 0, "content that already fits does not scroll");
+  assert.equal(scrollRoom(10, 100, 400, 0), 0, "a wheel that moves nothing owns nothing");
+  assert.equal(scrollRoom(NaN, 100, 400, 120), 0, "a broken metric never claims room");
+});
+
+/*
+ * What to do when a file moves under a card. `main.mjs` asks the kernel and
+ * `cards.mjs` obeys; the decision -- reload, warn, or say nothing -- is pure, so
+ * it is pinned here without a browser, a kernel or a clock. The rule that
+ * matters most is the one a naive watcher gets wrong: an unknown revision is
+ * never a licence to reload over someone's typing.
+ */
+
+/** A `file.stat` answer: a file that is on disk, holding `revision`. */
+function stat(revision) {
+  return { exists: true, dir: false, size: 12, mtime: 1, revision };
+}
+
+test("watch: a card that has not read the file yet has nothing to compare", () => {
+  assert.equal(watchDecision({ revision: null, dirty: false }, stat(7)), WATCH_UNKNOWN);
+  assert.equal(watchDecision({ revision: Number.NaN, dirty: false }, stat(7)), WATCH_UNKNOWN);
+  assert.equal(watchDecision({}, stat(7)), WATCH_UNKNOWN, "a missing revision is not revision 0");
+});
+
+test("watch: a transport failure is not a change", () => {
+  assert.equal(watchDecision({ revision: 7 }, null), WATCH_UNKNOWN);
+  assert.equal(watchDecision({ revision: 7 }, undefined), WATCH_UNKNOWN);
+  assert.equal(watchDecision({ revision: 7 }, { error: new Error("blinked") }), WATCH_UNKNOWN);
+});
+
+test("watch: a file that is gone says so, and a directory is gone too", () => {
+  assert.equal(watchDecision({ revision: 7 }, { exists: false, dir: false, revision: 0 }), WATCH_GONE);
+  assert.equal(watchDecision({ revision: 7 }, { exists: true, dir: true, revision: 0 }), WATCH_GONE);
+});
+
+test("watch: cannot-compare warns and never reloads", () => {
+  assert.equal(watchDecision({ revision: 7 }, stat(0)), WATCH_WARN, "revision 0 is `cannot say`");
+  assert.equal(watchDecision({ revision: 0 }, stat(7)), WATCH_WARN, "a card holding 0 cannot compare either");
+  assert.equal(watchDecision({ revision: 0, dirty: false }, stat(9)), WATCH_WARN);
+});
+
+test("watch: an empty file has a real revision, not `cannot compare`", () => {
+  // 2166136261 is what the kernel's FNV-1a hands an empty buffer. Reading it as
+  // 0 would warn about a file that is merely empty, on every poll, forever.
+  assert.equal(watchDecision({ revision: 2166136261 }, stat(2166136261)), WATCH_OK);
+});
+
+test("watch: the same revision is quiet, a new one reloads a clean card", () => {
+  assert.equal(watchDecision({ revision: 7, dirty: false }, stat(7)), WATCH_OK);
+  assert.equal(watchDecision({ revision: 7, dirty: false }, stat(8)), WATCH_RELOAD);
+});
+
+test("watch: unsaved edits are never overwritten by a reload", () => {
+  assert.equal(watchDecision({ revision: 7, dirty: true }, stat(8)), WATCH_WARN);
+});
+
+test("watch: a trimmed kernel is smaller, not broken", () => {
+  assert.equal(watchTrimmed([{ error: { code: -32601 } }]), true);
+  assert.equal(watchTrimmed([{ error: { code: -32601 } }, stat(7)]), true);
+  assert.equal(watchTrimmed([stat(7)]), false, "an answer is not a refusal");
+  assert.equal(watchTrimmed([{ error: { code: -32602 } }]), false, "another code is not METHOD_NOT_FOUND");
+  assert.equal(watchTrimmed([{ error: new Error("offline") }]), false, "a transport error carries no code");
+  assert.equal(watchTrimmed([]), false);
+});
+
+test("watch: one decision per path per revision is news exactly once", () => {
+  const pairs = [{ path: "a.yarn", known: { revision: 7, dirty: false }, stat: stat(8) }];
+  const first = watchReport(pairs, new Map());
+  assert.equal(first.actions.length, 1);
+  assert.equal(first.actions[0].decision, WATCH_RELOAD);
+  const again = watchReport(pairs, first.next);
+  assert.equal(again.actions.length, 0, "the same answer a poll later is not news");
+  const moved = watchReport([{ path: "a.yarn", known: { revision: 7 }, stat: stat(9) }], again.next);
+  assert.equal(moved.actions.length, 1, "a new revision is news again");
+});
+
+test("watch: quiet and unanswerable decisions are not actions", () => {
+  const report = watchReport(
+    [
+      { path: "same.yarn", known: { revision: 7 }, stat: stat(7) },
+      { path: "loading.yarn", known: { revision: null }, stat: stat(9) },
+    ],
+    new Map(),
+  );
+  assert.deepEqual(report.actions, [], "ok and unknown report nothing");
+  assert.equal(report.next.get("same.yarn"), "ok:7");
+  assert.equal(report.next.get("loading.yarn"), "unknown:9");
+});
+
+test("watch: a path that is no longer open is forgotten", () => {
+  const before = new Map([["gone.yarn", "ok:7"]]);
+  const report = watchReport([], before);
+  assert.equal(report.next.size, 0, "a long session does not grow the map forever");
+});
+
 /* ------------------------------------------------------------------ */
 
 const passed = checks - failures.length;
@@ -2020,7 +2136,7 @@ const passed = checks - failures.length;
  * Said on every run, pass or fail, because a green `ok N/N` is easy to read as
  * "the UI works". It does not: this suite has no browser in it.
  */
-const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer and keyboard input are not covered`;
+const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer, keyboard and wheel events are not covered`;
 if (failures.length > 0) {
   for (const { name, err } of failures) {
     console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);

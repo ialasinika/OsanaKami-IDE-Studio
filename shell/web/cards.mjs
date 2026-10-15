@@ -1315,7 +1315,7 @@ function renderEditor(card, ctx) {
 
   /** Load (or reload) the file. Local edits are only discarded after a prompt. */
   async function load(path, options = {}) {
-    const { confirmDiscard = true } = options;
+    const { confirmDiscard = true, status = null } = options;
     if (state.dirty && confirmDiscard && !app.confirmDiscard(state.path)) {
       return false;
     }
@@ -1334,6 +1334,12 @@ function renderEditor(card, ctx) {
         parts.push(`${result.size} bytes`);
       }
       renderStatus(parts.join(" · "));
+      if (status !== null) {
+        // Why this load happened. "loaded · lf · 14 bytes" is the same line
+        // whether the user asked for the file or the watcher re-read it, and
+        // after an external change the difference is the whole story.
+        renderStatus(status);
+      }
       scheduleTokenize();
       return true;
     } catch (err) {
@@ -1440,6 +1446,32 @@ function renderEditor(card, ctx) {
       },
       hasPath(path) {
         return state.path === path;
+      },
+      /**
+       * The revision this card last read (or wrote), or `null` before the first
+       * read answers. `file.stat` is compared against it.
+       */
+      get revision() {
+        return state.baseRevision;
+      },
+      /**
+       * Adopt the file as it is on disk now, discarding the buffer.
+       *
+       * Only a clean card is ever asked: the rule that decides is in
+       * `watch.mjs`, and it warns instead of reloading whenever `dirty` is set.
+       * The guard here is for the race (the user typed between the decision and
+       * this call), not for the normal path.
+       */
+      reload() {
+        if (state.dirty) {
+          return Promise.resolve(false);
+        }
+        return load(state.path, { confirmDiscard: false, status: "reloaded from disk" });
+      },
+      /** The file is gone from disk: say so. The text stays, `^S` writes it back. */
+      onFileGone() {
+        renderStatus("gone from disk — ^S writes it back");
+        app.log("warn", `${state.path} is gone from disk`);
       },
       /** External change: report it, never auto-reload over unsaved edits. */
       onFileChanged(revision) {

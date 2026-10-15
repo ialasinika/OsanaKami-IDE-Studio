@@ -233,13 +233,18 @@ The browser side, `shell/web/`, is module-per-concern:
 | `index.html` | the entire page | nothing loads |
 | `style.css` | layout, card chrome, the editor's two-layer metrics | cards render unstyled |
 | `board.mjs` | the board model: cards, links, viewport, serialise | InfantGod Studio stops being InfantGod Studio; there is nothing to render |
+| `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
+| `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
 | `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
 | `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
 
-`board.mjs` is deliberately UI-free — no `document`, no `window`, no timer — so
-the same object is used by the browser and by `selftest.mjs` under Node.
+`board.mjs`, `history.mjs` and `watch.mjs` are deliberately UI-free — no
+`document`, no `window`, no timer — so the same objects are used by the browser
+and by `selftest.mjs` under Node. `watch.mjs` decides; the polling that feeds it
+lives in `main.mjs`, which is why the decision table can be pinned without a
+browser, a kernel or a clock.
 
 The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
@@ -255,9 +260,12 @@ The Makefile's verification targets, in the order `make test` runs them:
 | --- | --- | --- |
 | `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files, board, exec |
 | `fullcheck` | `python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
+| `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md` still refuses to come back, on a scratch workspace |
+| `version-check` | `python tools/version.py check` | the four copies of the version number still agree with `VERSION` |
+| `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM, then real double-clicks, keys and wheels, then a file rewritten by a real child process while a card holds it |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (approx. 74), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model and token spans (approx. 65 checks), no DOM |
+| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table and token spans (86 checks), no DOM |
 
 ---
 

@@ -745,7 +745,7 @@ class BoardBackup:
                 # ``.infantgod/`` this test created must not be left behind either.
                 # Not guarded on ``self.installed``: the host autosaves a board on
                 # any mutation, so a test that never installed the starter board
-                # (``undo_smoke``, which counts card deltas) still leaves one.
+                # (``input_smoke``, which counts card deltas) still leaves one.
                 if self.path.is_file():
                     self.path.unlink()
                 try:

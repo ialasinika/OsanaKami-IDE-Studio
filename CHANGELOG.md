@@ -27,10 +27,57 @@ tree.
   ring is in memory, so a reload forgets it.  `shell/web/README.md` says all of
   this where a reader will look for it.
 - What it does not reach is now tested as well as what it does:
-  `tools/undo_smoke.py` frames the app in a same-origin wrapper page, makes a
+  `tools/input_smoke.py` frames the app in a same-origin wrapper page, makes a
   real board change with a real double-click, dispatches the real keydowns, and
   checks that `Ctrl+Z` with a text field focused leaves the board alone.
   `make smoke` runs it after `browser_smoke.py`.
+
+### A wheel over a card scrolls the card
+
+- A card's contents — an editor's text, a sheet, a runner's output, the mods
+  list — are a scroll region *inside* the board, and their wheel events bubble up
+  to the board element.  Panning unconditionally meant the board moved and the
+  card never did.  The wheel handler now walks up from the pointer to the nearest
+  container that can still move in the direction the wheel asks, and leaves the
+  event to it; at the end of that container the wheel pans again, the way nested
+  scrolling usually chains.  `Ctrl`+wheel still zooms about the cursor.
+- Neither half of that is taken on faith.  `shell/web/selftest.mjs` proves the
+  arithmetic underneath without a DOM (`scrollRoom`) and `tools/input_smoke.py`
+  proves the wiring in a real browser: it opens a file through the real command
+  line so that a card genuinely can scroll, then dispatches a wheel over that
+  card's own textarea, over bare board, and with `Ctrl` held.
+
+### A file that changes while nobody is looking
+
+- The kernel announces a write **it** made (`file.changed`) and nothing else.  A
+  file rewritten by `git checkout`, by a formatter or by another editor was
+  silently re-overwritten the next time the card was saved, because the card had
+  no way to learn that its revision was stale.  The kernel gains one method for
+  it: `file.stat {path}` → `{path, exists, dir, size, mtime, revision}`, where
+  `revision` is computed by the same function `file.read` uses, so the two can
+  never drift.  It moves no text, so asking is cheap enough to do on a timer.
+- A file that is not there is a **result, not an error** (`exists: false`,
+  `size: 0`, `mtime: -1`, `revision: 0`), and `revision: 0` means *cannot
+  compare* — a directory, a binary, a file over 4 MiB, or a card that has not
+  read the file yet.  An empty file is `2166136261`, not `0`, so "empty" can
+  never be mistaken for "unknown".  `docs/PROTOCOL.md` carries the table.
+- `shell/web/watch.mjs` decides what an answer means and is pure — no DOM, no
+  clock — so `shell/web/selftest.mjs` pins the whole table without a browser.  A
+  clean card reloads; a card with unsaved edits **keeps its text** and is told
+  the file changed; a deletion is reported instead of written back; a revision
+  that cannot be compared warns and is never treated as "unchanged".  A decision
+  is acted on only when it is news, so a card warns once rather than every 1.5 s.
+  `main.mjs` polls; a path held by three cards is one `file.stat`.
+- A trimmed kernel with no `file.stat` is not a failure: the shell recognises
+  `-32601`, stops asking and logs one line, and the board keeps working as it did
+  before the poll existed.
+- `tools/input_smoke.py` proves it end to end, because a unit test cannot: it
+  rewrites a file with a **real child process** (`cmd /c echo`) while an editor
+  card holds it and reads the card's own status back — clean reload, dirty warn,
+  deleted, and never a revision the card did not read.
+- `tools/kernel_probe.py` gains the other half against the real kernel: 9 checks
+  over text, empty, directory, binary, missing, escape, notification-free and
+  agree-with-`file.read`.
 
 ### One version, checked
 
@@ -54,7 +101,7 @@ tree.
   suite created the board and put it back: a test run should not leave a state
   directory nobody asked for.  `make test` in a fresh clone now ends with the
   tree exactly as it started.
-- `tools/undo_smoke.py` imports the host, the browser lookup and the board
+- `tools/input_smoke.py` imports the host, the browser lookup and the board
   backup from `tools/browser_smoke.py` instead of carrying a second copy: one
   place to fix when `serve`'s banner or the board path changes.  The board
   backup's "the clone had no board" branch is no longer guarded on the test
@@ -98,10 +145,14 @@ code would have concluded the code was wrong:
   units), which is what makes Yarn colouring land on Chinese prose; the "byte
   offsets" wording was simply wrong, and the four files that already said so
   (`README.md`, `docs/PROTOCOL.md`, `docs/FORK.md`, `langs/README.md`) were being
-  contradicted by the two that did not.  The one real residue — an astral
-  character counts as two units in JS and one in Python's `len()`, so
-  `tools/e2e.py`'s tiling check can see an offset past the end — is now written
-  down once, in `README.md`, instead of twice with opposite meanings.
+  contradicted by the two that did not.  The "residue" this first described — an
+  astral character counting as two units in JS and one in Python's `len()`, so
+  that `tools/e2e.py`'s tiling check could see an offset past the end — did not
+  exist: `tools/e2e.py` measures its fixtures with `js_length` and judges every
+  span in that same space, so the check is honest to the last unit.  The stale
+  claim was withdrawn from `README.md`, `shell/web/README.md`, `docs/PARADIGM.md`,
+  `docs/FORK.md` and `langs/README.md`, and `langs/selftest.mjs` now pins the gap
+  over a shipped CJK fixture — eleven checks, both numbers measured.
 
 ## v0.1.0-alpha — 2026-10-15
 

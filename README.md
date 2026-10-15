@@ -51,6 +51,11 @@ the containment rules.
   driven by descriptor files in `langs/`.
 - A **frozen JSON-RPC protocol** on stdio, newline-delimited, with a documented
   method list and error-code table.
+- **Edits that do not clobber.** An editor card remembers the revision it read
+  and sends it back on every write, so a race is refused rather than won. A file
+  rewritten by another program — `git checkout`, a formatter, another editor —
+  announces nothing, so the shell polls for it and a card either reloads (if you
+  have no unsaved edits) or keeps your text and tells you the file moved.
 
 ## What InfantGod Studio is not
 
@@ -216,10 +221,11 @@ python tools/e2e.py --kernel build/infantgod.exe     # 9 passed, 0 failed, 3 ski
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
+python tools/input_smoke.py                          # real clicks, keys and wheels; 13 checks, 3 of them a file rewritten under a card
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 82/82 checks passed
-node shell/web/selftest.mjs                    # ok 74/74 (pure JS: no DOM)
+node langs/selftest.mjs                        # 91/91 checks passed
+node shell/web/selftest.mjs                    # ok 86/86 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -387,15 +393,24 @@ Stated plainly, because a fork needs to know what it is inheriting.
   assets can be listed and diagnosed but not read or written by the board.
 - **Language colouring offsets are JS string indices, not bytes.** For Yarn this
   is what makes Chinese prose highlight correctly; the upstream README's
-  "byte offsets" claim was wrong, and `langs/selftest.mjs` pins the Chinese case.
-  An astral character (emoji, rare CJK ext-B) still makes the Python-side tiling
-  check in `tools/e2e.py` see an offset past `len(text)`, because Python counts
-  code points — latent, and not triggered by any current fixture.
+  "byte offsets" claim was wrong, and `langs/selftest.mjs` pins the gap over a
+  shipped CJK fixture by measuring both, so a regression cannot pass unnoticed.
+  The Python side is not a residue: `tools/e2e.py` measures its own fixtures in
+  the same space (`js_length`) and judges every span in that same space, so its
+  tiling check stays honest even for an astral character.  What would drift is
+  any *new* check that compared a wire span to Python's `len(text)`, which
+  counts code points.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
   layout. Undo has the same limit: it takes back board edits, and does not
   reverse a pan, a zoom, or a "raise to front".
 - **The shell is the only client.** There is no second front end, so the protocol
   has exactly one consumer to keep honest.
+- **A file changed outside the app is noticed late, by up to ~1.5 s.** The shell
+  polls `file.stat` for the paths its cards hold; the kernel does not watch the
+  filesystem and the protocol does not promise an event. A card that held a file
+  somebody else rewrote is corrected on the next tick, not at the instant it
+  happens — and a card whose file is too large or binary cannot be compared at
+  all (`revision: 0`), so it warns instead of reloading.
 
 ---
 

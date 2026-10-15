@@ -1,5 +1,6 @@
 /*
- * wksp.c - workspace paths, listings, reads and revision-checked writes.
+ * wksp.c - workspace paths, listings, reads, a stat, and revision-checked
+ * writes.
  *
  * Two properties matter more than speed here:
  *
@@ -519,6 +520,66 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t e
     sde_json_set(out, "mtime", sde_json_int(sde_port_file_mtime(abs)));
 
     sde_buf_free(&buf);
+    free(abs);
+    return out;
+}
+
+sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t errcap)
+{
+    char         *abs = NULL;
+    sde_json     *out;
+    int           is_dir;
+    int           exists;
+    long          size = 0;
+    unsigned long rev = 0;
+
+    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+        return NULL;
+    }
+    is_dir = sde_port_is_dir(abs);
+    exists = is_dir || sde_port_file_exists(abs);
+    if (exists && !is_dir) {
+        size = sde_port_file_size(abs);
+        if (size < 0) {
+            size = 0;
+        }
+        /*
+         * The revision has to be the number `file.read` hands out for the same
+         * bytes, or a client comparing a held revision with this one could
+         * miss a change.  So the same two refusals apply: a file past the read
+         * cap, and a file with a NUL byte in it, have no revision to report.
+         */
+        if (size <= (long) SDE_WKSP_MAX_READ) {
+            if (size == 0) {
+                rev = sde_rev_of("", 0);
+            } else {
+                sde_buf buf;
+
+                sde_buf_init(&buf);
+                if (sde_port_read_file(abs, &buf, NULL, 0) == 0
+                    && buf.data != NULL
+                    && memchr(buf.data, '\0', buf.len) == NULL) {
+                    rev = sde_rev_of(buf.data, buf.len);
+                }
+                sde_buf_free(&buf);
+            }
+        }
+    }
+
+    out = sde_json_obj();
+    if (out == NULL) {
+        set_err(err, errcap, "out of memory");
+        free(abs);
+        return NULL;
+    }
+    sde_json_set(out, "path", sde_json_str(rel));
+    sde_json_set(out, "exists", sde_json_bool(exists));
+    sde_json_set(out, "dir", sde_json_bool(is_dir));
+    sde_json_set(out, "size", sde_json_int(size));
+    sde_json_set(out, "mtime",
+                 sde_json_int(exists ? sde_port_file_mtime(abs) : -1));
+    sde_json_set(out, "revision", sde_json_rev(rev));
+
     free(abs);
     return out;
 }

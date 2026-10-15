@@ -23,6 +23,15 @@ import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import {
+  WATCH_GONE,
+  WATCH_POLL_MS,
+  WATCH_RELOAD,
+  WATCH_WARN,
+  watchDecision,
+  watchReport,
+  watchTrimmed,
+} from "./watch.mjs";
+import {
   COMMAND_HELP,
   describeCard,
   emptySheet,
@@ -91,6 +100,26 @@ export function linkPoints(a, b) {
     p2 = { x: bc.x, y: dy >= 0 ? rb.y : rb.y + rb.h };
   }
   return { p1, p2, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+}
+
+/** The `overflow` values that make an element a scroll container. */
+const SCROLLABLE = new Set(["auto", "scroll", "overlay"]);
+
+/**
+ * How many pixels a scroll container can still move along one axis.
+ *
+ * `delta` is the sign of the wheel's movement (positive scrolls down/right), so
+ * the answer is the room *left in that direction*: 0 means the container is
+ * already at the end the wheel is pushing towards, and a card that is short
+ * enough to fit has no room either way.  Pure arithmetic, exported so the
+ * selftest can prove it without a DOM.
+ */
+export function scrollRoom(scroll, client, total, delta) {
+  if (delta === 0 || !Number.isFinite(scroll) || !Number.isFinite(client) || !Number.isFinite(total)) {
+    return 0;
+  }
+  const room = delta < 0 ? scroll : total - client - scroll;
+  return Math.max(0, Math.floor(room));
 }
 
 /**
@@ -227,7 +256,8 @@ const HINT_SIZE = { w: 380, h: 340 };
 const HINT_TEXT = [
   "Board: no tabs, no tree.",
   "",
-  "Drag empty space to pan · wheel to pan · ^wheel to zoom about the cursor.",
+  "Drag empty space to pan · wheel pans, but a wheel over a card's own contents",
+  "scrolls the card first · ^wheel to zoom about the cursor.",
   "Drag a card title to move it · drag its corner to resize.",
   "Double-click empty space for a note.",
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
@@ -1091,9 +1121,37 @@ function createApp() {
     boardEl.addEventListener("pointerup", endGesture);
     boardEl.addEventListener("pointercancel", endGesture);
 
-    // Wheel: plain scroll pans, ctrl/⌘ or the wheel alone with shift zooms about
-    // the cursor.  Zooming about the cursor is what makes a 2-D board feel solid.
+    // Wheel: a card's own scroll region keeps the wheel while it has somewhere
+    // to go; otherwise plain scroll pans, and ctrl/⌘ (or shift) zooms about the
+    // cursor.  Zooming about the cursor is what makes a 2-D board feel solid.
+    //
+    // A card's contents (an editor's text, a sheet, a runner's output, the mods
+    // list) are a scroll region *inside* the board, and the wheel event bubbles
+    // up to `boardEl` from there -- so panning unconditionally meant the board
+    // moved and the card never did.  The nearest container below the board that
+    // can still move in this direction wins; at its end the wheel pans again,
+    // the way nested scrolling usually chains.
+    function scrollTarget(node, deltaX, deltaY) {
+      for (let el = node instanceof Element ? node : null; el && el !== boardEl; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        // A textarea scrolls even where `overflow` computes to something else.
+        const vertical = SCROLLABLE.has(style.overflowY) || el.tagName === "TEXTAREA";
+        if (vertical && scrollRoom(el.scrollTop, el.clientHeight, el.scrollHeight, deltaY) > 0) {
+          return el;
+        }
+        if (SCROLLABLE.has(style.overflowX) && scrollRoom(el.scrollLeft, el.clientWidth, el.scrollWidth, deltaX) > 0) {
+          return el;
+        }
+      }
+      return null;
+    }
+
     boardEl.addEventListener("wheel", (event) => {
+      const overCard = !event.ctrlKey && !event.metaKey
+        && scrollTarget(event.target, event.deltaX, event.deltaY) !== null;
+      if (overCard) {
+        return; // the card scrolls; the board stays where it is
+      }
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
         const rect = boardEl.getBoundingClientRect();
@@ -1412,11 +1470,15 @@ function createApp() {
   function installEvents() {
     client.on("log", (event) => log(event.level || "info", event.message || "", event.path));
     client.on("file.changed", (event) => {
-      for (const entry of mounted.values()) {
-        if (entry.handle.kind === "editor" && entry.handle.hasPath && entry.handle.hasPath(event.path)) {
-          entry.handle.onFileChanged(event.revision);
-        }
-      }
+      // The kernel announcing one of its own writes. It gets the same answer as
+      // a change the poll finds: the revision is the whole message, so it is
+      // handed to the same rule as a `file.stat` reply.
+      applyFileChange(event.path, {
+        path: event.path,
+        exists: true,
+        dir: false,
+        revision: event.revision,
+      });
     });
     client.on("exec.output", (event) => {
       const cardId = runs.get(event.run_id);
@@ -1447,6 +1509,172 @@ function createApp() {
         (err) => log("error", `board.load failed: ${err.message}`),
       );
     });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* changes nothing announces                                           */
+  /* ------------------------------------------------------------------ */
+
+  /*
+   * `file.changed` only ever says what the kernel did. A file rewritten by git,
+   * by a build, or by any editor that is not this one is invisible to it, and a
+   * card that quietly keeps showing yesterday's bytes is the failure mode that
+   * matters: the user finds out when they save over somebody else's work.
+   *
+   * `file.stat` answers the only question that needs asking -- is this still the
+   * revision I hold? -- and moves no bytes doing it, so the shell asks about the
+   * files on the board on a timer. The rules live in `watch.mjs` (pure, pinned
+   * by `selftest.mjs`); what is here is the asking.
+   */
+  let watchTimer = null;
+  let watchBusy = false;
+  let watchSeen = new Map();
+  /** A kernel without `file.stat` (a trimmed fork): stop asking, say so once. */
+  let watchUnavailable = false;
+
+  /** Every editor card currently holding `path`. */
+  function editorsOn(path) {
+    const out = [];
+    for (const entry of mounted.values()) {
+      const handle = entry.handle;
+      if (handle === undefined || handle === null || handle.kind !== "editor") {
+        continue;
+      }
+      if (typeof handle.hasPath === "function" && handle.hasPath(path)) {
+        out.push(handle);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * One change, one answer -- whether it arrived as a notification or as the
+   * answer to a poll. Each card is judged on its own: two cards on one file can
+   * hold two revisions, and only one of them may have unsaved edits.
+   */
+  function applyFileChange(path, stat) {
+    for (const handle of editorsOn(path)) {
+      const decision = watchDecision(
+        { revision: handle.revision, dirty: handle.dirty === true },
+        stat,
+      );
+      if (decision === WATCH_RELOAD) {
+        handle.reload().then((reloaded) => {
+          if (reloaded) {
+            log("info", `${path} changed on disk -- reloaded`);
+          }
+        }).catch((err) => log("error", `file.read ${path}: ${err.message}`));
+      } else if (decision === WATCH_WARN) {
+        handle.onFileChanged(Number.isFinite(stat.revision) ? stat.revision : null);
+      } else if (decision === WATCH_GONE) {
+        handle.onFileGone();
+      }
+    }
+  }
+
+  /** The files on the board, grouped by path: two cards, one question. */
+  function watchedPaths() {
+    const groups = new Map();
+    for (const entry of mounted.values()) {
+      const handle = entry.handle;
+      if (handle === undefined || handle === null || handle.kind !== "editor") {
+        continue;
+      }
+      const path = String(handle.path || "").replace(/\\/g, "/");
+      if (path === "") {
+        continue;
+      }
+      if (!groups.has(path)) {
+        groups.set(path, []);
+      }
+      groups.get(path).push(handle);
+    }
+    return groups;
+  }
+
+  /**
+   * What the whole group holds: the oldest revision anyone has, and whether
+   * anyone has unsaved edits. A card still loading has no revision to compare,
+   * so the group says "unknown" and the next poll asks again.
+   */
+  function groupKnown(handles) {
+    let revision = null;
+    let loading = false;
+    let dirty = false;
+    for (const handle of handles) {
+      const held = handle.revision;
+      if (!Number.isFinite(held)) {
+        loading = true;
+      } else if (revision === null || held < revision) {
+        revision = held;
+      }
+      if (handle.dirty === true) {
+        dirty = true;
+      }
+    }
+    return { revision: loading ? null : revision, dirty };
+  }
+
+  async function pollForChanges() {
+    const groups = watchedPaths();
+    if (groups.size === 0) {
+      watchSeen = new Map();
+      return;
+    }
+    const paths = [...groups.keys()];
+    const stats = await Promise.all(paths.map(async (path) => {
+      try {
+        return await client.call("file.stat", { path });
+      } catch (err) {
+        return { error: err };
+      }
+    }));
+    if (watchTrimmed(stats)) {
+      // `METHOD_NOT_FOUND`: this kernel was built without the method. Not an
+      // error -- the board simply keeps whatever the kernel last said, which is
+      // exactly what the shell did before this poll existed.
+      watchUnavailable = true;
+      stopWatching();
+      log("warn", "this kernel has no `file.stat`: changes made outside InfantGod Studio will be"
+        + " noticed when the file is opened again, not while it is on the board");
+      return;
+    }
+    const pairs = paths.map((path, index) => ({
+      path,
+      stat: stats[index],
+      known: groupKnown(groups.get(path)),
+    }));
+    const report = watchReport(pairs, watchSeen);
+    watchSeen = report.next;
+    for (const action of report.actions) {
+      applyFileChange(action.path, action.stat);
+    }
+  }
+
+  function startWatching() {
+    if (watchUnavailable || watchTimer !== null) {
+      return;
+    }
+    watchTimer = setInterval(() => {
+      // One question at a time: a kernel that is slow to answer must not build
+      // a queue of polls behind it.
+      if (watchBusy) {
+        return;
+      }
+      watchBusy = true;
+      pollForChanges()
+        .catch((err) => log("warn", `file.stat poll failed: ${err.message}`))
+        .finally(() => {
+          watchBusy = false;
+        });
+    }, WATCH_POLL_MS);
+  }
+
+  function stopWatching() {
+    if (watchTimer !== null) {
+      clearInterval(watchTimer);
+      watchTimer = null;
+    }
   }
 
   async function adoptDiskBoard(reason) {
@@ -1610,6 +1838,12 @@ function createApp() {
     }
     initializing = false;
     renderAll();
+    // The cards exist now, so there is something to watch. A reconnect re-tests
+    // the kernel (it may have been replaced by one without `file.stat`), but the
+    // timer itself is never doubled.
+    watchSeen = new Map();
+    watchUnavailable = false;
+    startWatching();
   }
 
   /* ------------------------------------------------------------------ */

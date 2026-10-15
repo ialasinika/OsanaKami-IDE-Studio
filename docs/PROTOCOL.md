@@ -90,6 +90,7 @@ when `SDE_WITH_EXEC` is 0.
 | `workspace.list` | `path?`, `glob?`, `limit?` | `{files, truncated, count}` |
 | `file.read` | `path` | `{path, text, revision, eol, size, mtime}` (+ `lang` from the shell) |
 | `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
+| `file.stat` | `path` | `{path, exists, dir, size, mtime, revision}` |
 | `board.load` | none | `{path, revision, document}` |
 | `board.save` | `document` or `board`, `base_revision?` | `{path, revision, saved}` |
 | `board.newId` | none | `{id}` |
@@ -212,6 +213,53 @@ Absolute paths and `..` escapes are refused before any of that: `sde_wksp_resolv
 rejects `absolute paths are not allowed: <path>` and
 `path escapes the workspace: <path>`, surfaced as `IO`.
 
+### `file.stat`
+
+Required parameter: `path` (non-empty string, relative to the workspace root).
+
+```json
+{"path":"examples/hello.yarn","exists":true,"dir":false,"size":807,"mtime":1700000000,"revision":1873099737}
+```
+
+`revision` is the same number `file.read` would report for those bytes — it is
+computed by the same function, `sde_wksp_revision()`, over the same buffer, so
+the two can never drift. That is the whole reason the method exists: a client
+holding a revision can ask whether the file on disk is still the one it read, on
+a timer, without carrying the text back and forth every time.
+
+It is not a `stat(2)`. To answer with that revision the kernel still opens the
+file and reads it, up to the same 4 MiB cap `file.read` has. What it saves is the
+trip: no text on the wire, no decoding, one small object per file per poll.
+
+A file that is not there is a **result, not an error** — `exists: false`,
+`size: 0`, `mtime: -1`, `revision: 0`. "Gone" is one of the answers a watcher
+needs, and an error would have to be told apart from a kernel that is merely
+unhappy.
+
+`revision: 0` always means **no revision to compare**, which is not the same as
+"empty":
+
+| the path names | `exists` | `dir` | `size` | `mtime` | `revision` |
+| --- | --- | --- | --- | --- | --- |
+| a text file | `true` | `false` | bytes | seconds | its hash |
+| an empty file | `true` | `false` | `0` | seconds | the hash of no bytes (`2166136261`), not `0` |
+| a directory | `true` | `true` | `0` | seconds | `0` |
+| nothing | `false` | `false` | `0` | `-1` | `0` |
+| a file over 4 MiB, or one holding a NUL byte | `true` | `false` | bytes | seconds | `0` |
+
+A client that finds `revision: 0` where it expected a number must read it as
+"cannot tell", never as "unchanged" or "empty". The shell's watcher warns about
+such a card instead of reloading over it.
+
+Everything else is refused exactly as `file.read` refuses it: a missing `path`
+is `-32602 INVALID_PARAMS`, and an absolute path or a `..` escape is
+`1003 IO`. A missing **file**, again, is not a refusal.
+
+The method emits **no notification**, and it is not the only way to learn that a
+file changed: `file.changed` announces a write *this kernel made*. A file written
+by another program produces no event at all, which is precisely the case this
+method is for.
+
 ### `file.write`
 
 | parameter | type | meaning |
@@ -238,7 +286,7 @@ On success the kernel emits a notification **before** the response is written:
 ### `board.load`
 
 ```json
-{"path":"C:/codes/InfantGod Studio/.infantgod/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
+{"path":"C:/Users/PC/Documents/InfantGodStudio/.infantgod/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
 ```
 
 `document` is a clone, so a client may keep and mutate it freely.
@@ -331,6 +379,17 @@ pass, which keeps a chatty process from starving the others.
 The shell's board UI reacts to `board.changed` by ignoring its own revision echo;
 if the board is dirty it warns, otherwise it re-runs `board.load` to adopt what
 is on disk.
+
+`file.changed` is only ever emitted for a write **this kernel made**. A file
+changed by another program — an editor, a formatter, `git checkout` — produces no
+notification at all, because the kernel is not watching the filesystem. A client
+that wants to know has to ask: poll `file.stat` for the paths it holds, which is
+what the shell's watcher does (`shell/web/watch.mjs`), or watch the directory
+itself and say so. The protocol deliberately does not promise the second one.
+
+The watcher is polled, so it is late by design: a card is told about somebody
+else's write within a second or so, not at the instant it lands. That is the
+trade for a kernel that never walks the workspace on a timer of its own.
 
 ---
 

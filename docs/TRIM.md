@@ -232,11 +232,16 @@ entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
 ### Cutting `wksp` — only the canvas
 
 Delete `core/src/wksp.c`, `core/include/wksp.h`, its `SRC` line, its table entry,
-and the `workspace.info` / `workspace.list` / `file.read` / `file.write` methods
-plus their four table rows in `rpc.c`.
+and the `workspace.info` / `workspace.list` / `file.read` / `file.write` /
+`file.stat` methods plus their five table rows in `rpc.c`.
 
-- Protocol loses those four methods, the `file.changed` notification, and the
+- Protocol loses those five methods, the `file.changed` notification, and the
   `root` / `name` / `file_count` members of `workspace.info`.
+- **Or keep `wksp` and cut only `file.stat`:** the shell is built for that. Its
+  watcher recognises `-32601` (`watchTrimmed` in `shell/web/watch.mjs`), stops
+  asking and logs one line, so a trimmed kernel costs the live-reload behaviour
+  and nothing else. `tools/kernel_probe.py` skips its `file.stat` block the same
+  way.
 - `exec.start`'s `cwd` resolution goes through `sde_wksp_resolve`, so `exec`
   depends on `wksp`; cutting `wksp` means changing `exec.start` too (either
   refusing a relative `cwd` or resolving it against the process's own directory).

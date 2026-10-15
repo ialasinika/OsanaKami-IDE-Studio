@@ -119,12 +119,13 @@ version-check:
 
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM.  Then the same window with a
-# keyboard: --dump-dom drives no pointer and no keys, so undo_smoke.py serves a
-# wrapper page and dispatches Ctrl+Z from inside it.  Both need a browser; both
-# say so and skip (exit 0) when there is none.
+# pointer, a keyboard and a wheel: --dump-dom drives none of them, so
+# input_smoke.py serves a wrapper page and dispatches Ctrl+Z and a wheel from
+# inside it.  Both need a browser; both say so and skip (exit 0) when there is
+# none.
 smoke: $(BIN)
 	$(PYTHON) tools/browser_smoke.py --timeout 90
-	$(PYTHON) tools/undo_smoke.py --timeout 90
+	$(PYTHON) tools/input_smoke.py --timeout 90
 
 # Everything the project can prove about itself without a window: the C JSON
 # codec, the language layer, the browser modules, the mod layer, the fixed bugs,

@@ -10,6 +10,7 @@ style.css     the whole look
 rpc.mjs       POST /rpc + GET /events client (SSE framing, RpcError)
 board.mjs     the board document, viewport, selection and mutations
 history.mjs   the undo ring: document snapshots, coalescing, redo branch
+watch.mjs     what a card should do when the file moves under it (pure)
 cards.mjs     one renderer per card kind + the pure helpers
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
@@ -126,12 +127,14 @@ the trade-off is explicit rather than discovered.
 | `rpc.mjs` | nothing can reach the kernel: the board still renders and pans, but no file is read, nothing is saved, and the status light can never turn green. |
 | `board.mjs` | there is no document model: cards cannot be added, moved, linked or serialised. `import` fails, so the UI does not boot. |
 | `cards.mjs` | the board still pans and zooms, but it has no cards to put on it. |
+| `history.mjs` | `Ctrl+Z` stops existing: every gesture still edits the board, but nothing is remembered, and the undo ring starts empty. |
+| `watch.mjs` | nothing polls for changes made outside the app. Cards still read and write files; a file rewritten by another program is simply not noticed until the card is reopened. |
 | `style.css` | the board still works, but it renders as unstyled white boxes stacked at the origin. The editor's colour layer and text layer stop lining up. |
 | `main.mjs` | `index.html` has nothing to boot: a blank dark page. |
 | `index.html` | nothing is served at `/`; `main.mjs` is still a valid module. |
 | `selftest.mjs` | nothing at runtime. You lose the only check that the protocol plumbing still works. |
 
-`main.mjs` is the only file that imports the other four, which is what keeps
+`main.mjs` is the only file that imports the other five, which is what keeps
 this table honest: every module below it stands on its own.
 
 ---
@@ -160,16 +163,45 @@ The board document is protected the same way: an autosave fires 1.5 s after the
 last layout change, and a `STALE_REVISION` on the board keeps your layout in
 memory and asks you to type `save force`.
 
+### A file that changes outside the app
+
+`STALE_REVISION` only helps if somebody *tries* to write. A file rewritten by
+`git checkout`, by a formatter or by another editor announces nothing, so the
+shell polls `file.stat` every 1.5 s (`WATCH_POLL_MS`) for the paths its cards
+hold, and `watch.mjs` — pure, no DOM, no clock — decides what each answer means:
+
+| the card holds | the file on disk | what happens |
+| --- | --- | --- |
+| a revision | the same revision | nothing |
+| a revision, no unsaved edits | a different revision | the card **reloads** and its status says `reloaded from disk` |
+| a revision, unsaved edits | a different revision | the text **stays**; the status says `changed on disk (rev …) · ^S overwrites` |
+| a revision | nothing (`exists: false`), or a directory | the status says `gone from disk · ^S writes it back`; the text stays |
+| a revision | a revision the kernel cannot give (`0`: binary, or over 4 MiB) | a warn, never a reload — "cannot compare" is not "unchanged" |
+| no revision yet | anything | nothing: a card that has not read the file is a version of nothing |
+
+Two rules keep this from being noise. A decision is acted on only when it is
+**news** (`watchReport` compares a `decision:revision` signature against the
+previous poll, so a card warns once, not every tick), and a path held by three
+cards is **one** `file.stat`, with the decision applied per card — a clean card
+reloading is exactly what leaves a dirty one alone.
+
+This is deliberately polled: the kernel never walks the workspace on a timer of
+its own, and the protocol does not promise a filesystem watcher. A kernel that
+has been **trimmed** and has no `file.stat` at all is answered politely rather
+than fatally — `watchTrimmed` recognises `-32601` and the shell stops asking and
+logs one line, because a smaller kernel is not a broken one.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
 * `lang.tokenize` returns **JS string indices** (UTF-16 code units of the string
   that was sent), not UTF-8 byte offsets. This is what makes Yarn colouring land
   on Chinese prose instead of drifting by one glyph per multi-byte character;
   the upstream README's "byte offsets" claim was wrong, and `langs/selftest.mjs`
-  pins the Chinese case. The residue is one unit mismatch on the Python side:
-  an astral character (emoji, rare CJK ext-B) counts as two units in JS and one
-  in `len()`, so `tools/e2e.py`'s tiling check can see an offset past the end.
-  Latent, and not triggered by any current fixture.
+  pins the gap over a shipped CJK fixture. The Python side is not a residue:
+  `tools/e2e.py` measures its fixtures with `js_length` — UTF-16 code units, the
+  same space as the spans — and judges every span against that, so its tiling
+  check stays honest even for an astral character. What would drift is any *new*
+  check that compared a wire span to `len()`, which counts code points.
 * The colour layer and the text layer must share identical metrics. That is
   enforced from `style.css` (`--code-*`), so a card zoomed far out will scale
   them together, but a browser that substitutes a different font for one layer
