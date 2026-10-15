@@ -3,7 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
+## v0.2.1-alpha.3 — 2026-10-15
 ### Kernel
 
 - A new method, `file.stat`: the revision `file.read` would report, without the
