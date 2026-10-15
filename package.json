@@ -5,11 +5,13 @@
   "private": true,
   "description": "幼神工坊 — a board-shaped mod IDE for 《幼神》",
   "license": "UNLICENSED",
+  "author": "InfantGod Studio",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --x64",
-    "pack": "electron-builder --win --x64 --dir"
+    "cert": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/make_cert.ps1",
+    "pack": "node tools/sign.mjs --win --x64 --dir",
+    "dist": "node tools/sign.mjs --win --x64"
   },
   "devDependencies": {
     "electron": "^44.7.2",
@@ -48,7 +50,8 @@
           ]
         }
       ],
-      "icon": "electron/icon.ico"
+      "icon": "electron/icon.ico",
+      "publisherName": "InfantGod Studio"
     },
     "nsis": {
       "oneClick": false,

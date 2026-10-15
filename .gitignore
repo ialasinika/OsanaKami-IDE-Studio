@@ -57,6 +57,22 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ---------------------------------------------------------------------------
+# signing material.
+#
+# The identity tools/make_cert.ps1 creates lives outside the checkout, in
+# %USERPROFILE%\.infantgod, so these lines should never match anything.  They
+# are here for the case where someone exports a key "just for a second" into the
+# tree: a private key that reaches a commit has to be rotated, and the commit
+# history keeps it forever.
+# ---------------------------------------------------------------------------
+*.pfx
+*.p12
+*.pw
+*.key
+*.cer
+*.crt
+
+# ---------------------------------------------------------------------------
 # editors and IDEs
 # ---------------------------------------------------------------------------
 .vscode/

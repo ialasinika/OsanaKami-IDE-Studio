@@ -200,8 +200,63 @@ create `.infantgod/board.json`, and the board reports
   the packaged app is a Windows app. The wrapper itself is portable.
 - **No terminal.** The runner card executes a command and shows its output; there
   is no pty, so interactive programs will not work here either.
-- **No auto-update, no code signing, no crash reporting.** `npm run dist`
-  produces an unsigned installer; Windows SmartScreen will warn about it.
+- **No auto-update, no crash reporting.**
 - **`node_modules/` is a build-time dependency only.** The shipped files are
-  `electron/`, `shell/`, `langs/`, `core/`, `docs/`, `examples/` and the kernel;
-  Electron's runtime is the only thing npm contributes.
+  `electron/`, `shell/`, `langs/` and the kernel; Electron's runtime is the only
+  thing npm contributes.
+
+## Signing
+
+```sh
+npm run cert     # once per machine: create the identity and trust it here
+npm run dist     # every build from then on is signed
+```
+
+`npm run cert` runs [tools/make_cert.ps1](../tools/make_cert.ps1), which makes a
+self-signed certificate with the Code Signing EKU and exports it to
+`%USERPROFILE%\.infantgod\` — a `.pfx` for the private key, a `.pw` for its
+password, a `.cer` for the public half. Nothing secret enters the checkout, and
+`.gitignore` blocks `*.pfx` / `*.pw` / `*.cer` in case someone exports one there
+anyway: a private key that reaches a commit has to be rotated, and the history
+keeps it forever.
+
+[tools/sign.mjs](../tools/sign.mjs) is what `npm run dist` actually runs. It finds
+that `.pfx`, puts it in `CSC_LINK` / `CSC_KEY_PASSWORD`, and hands control to
+electron-builder. If no identity exists it says so and builds unsigned, so a
+fresh clone still builds. **Anything already in `CSC_LINK` wins** — that is how a
+real certificate, or a CI secret, is used without editing anything.
+
+Four files get signed: the app executable, `resources/elevate.exe`, the NSIS
+uninstaller, and the installer. electron-builder also timestamps them against
+DigiCert's RFC 3161 responder, which is what keeps the signature verifiable after
+the certificate expires in 2029.
+
+```
+> Get-AuthenticodeSignature "dist\InfantGod Studio Setup 0.1.0.exe"
+
+Status  Valid
+Signer  CN=InfantGod Studio
+```
+
+### What a self-signed signature does and does not buy
+
+It buys **integrity**: anyone can tell the artifact has not been altered since it
+was signed, and the thumbprint identifies which build it came from.
+
+It does **not** buy **authenticity, and it does not silence SmartScreen.** No
+certificate authority vouches for the name, so on every machine other than the one
+that ran `npm run cert`, Windows reports "Unknown Publisher" and SmartScreen still
+warns. That is not a bug in this setup; it is the difference between proving a file
+is unchanged and proving who made it, and only a CA-issued certificate gives the
+second one.
+
+To use a real one, export it to the same `.pfx` path and rerun `npm run cert`'s
+sibling step — or skip all of this and set the environment directly:
+
+```sh
+CSC_LINK=C:\path\to\real.pfx CSC_KEY_PASSWORD=... npm run dist
+```
+
+`win.publisherName` in `package.json` is `InfantGod Studio` and must match the
+certificate's subject, or the NSIS installer will refuse to build.
+
