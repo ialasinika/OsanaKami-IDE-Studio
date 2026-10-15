@@ -8,6 +8,13 @@ version number says how usable it is, not how finished.
 First alpha.  Everything below was built after this date's earlier work on the
 prototype, and the whole tree passes `make test` plus `make smoke`.
 
+### Licence
+
+- The code is MIT ([LICENSE](LICENSE)) and the documentation is now
+  **CC BY 4.0** ([LICENSE-DOCS](LICENSE-DOCS), with the scope list, the
+  attribution notice to keep, and the official legal code).  Every Markdown file
+  in the repository is documentation; everything else is code.
+
 ### Board undo and redo
 
 - `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y` too), and the `undo` / `redo` commands,

@@ -1,3 +1,11 @@
+seIDE is MIT-licensed, with one exception: the prose documentation -- every
+Markdown file in this repository (README.md, CHANGELOG.md, docs/*.md,
+langs/README.md, shell/web/README.md, tools/README.md) -- is licensed under
+Creative Commons Attribution 4.0 International.  See LICENSE-DOCS for the scope,
+the attribution notice, and the full legal code.
+
+------------------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2026 seIDE contributors

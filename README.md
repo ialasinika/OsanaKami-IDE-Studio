@@ -256,7 +256,8 @@ build/seide.exe rpc --root . --verbose
 Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
                         test, modules, run, clean, and the JSON test target
 README.md               this file
-LICENSE                 MIT
+LICENSE                 MIT -- the code.  Except the docs: see below
+LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
 CHANGELOG.md            what is in this version, and what is not
 .github/workflows/      CI: the same make targets, on a Windows runner
 .gitignore              build artefacts and workspace-local state
@@ -363,7 +364,10 @@ undo covers the board and not the typing inside a card, there is no portability
 beyond Windows, and there is no plugin loading. See
 [CHANGELOG.md](CHANGELOG.md) for what is in it and what is not.
 
-[MIT](LICENSE) — take it, fork it, rename it.
+The code is [MIT](LICENSE) — take it, fork it, rename it. The documentation
+(the Markdown files, this one included) is [CC BY 4.0](LICENSE-DOCS): quote it,
+translate it, rewrite it for your fork, keep the attribution. Two licences, two
+scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS).
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
