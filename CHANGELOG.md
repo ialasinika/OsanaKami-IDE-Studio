@@ -3,8 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
-
+## v0.2.0-alpha.1 — 2026-10-15
 The release pipeline.  Until now a release was a tag someone remembered to
 create and a bundle someone remembered to zip; there is a tool for it now, and
 it refuses to guess.
