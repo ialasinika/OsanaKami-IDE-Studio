@@ -3,8 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
-
+## v0.2.1-alpha.1 — 2026-10-15
 ### Shell
 
 - A wheel over a card's own contents scrolls the card instead of panning the
