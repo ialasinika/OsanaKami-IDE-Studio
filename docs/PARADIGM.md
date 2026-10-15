@@ -254,6 +254,13 @@ prototype:
   in its status line when it stops. A hit opens its file at its line; there is
   no regex mode, no search-restricted-to-a-selection, and no replace across
   files.
+- A `frame` is a labelled region that moves the cards standing inside it
+  (`group`/`ungroup` on the command line). Membership is *spatial*: the centre
+  of a card is the test, so a card dragged in or out joins or leaves with
+  nothing written down, and a card clipping the border has not joined. Frames do
+  not nest, do not clip what they hold and do not fold; the box is not stored
+  membership, it is geometry, and two overlapping frames both claim a card
+  standing in their overlap.
 - Links carry a label but nothing consumes them.
 - Card kinds are registered with one call (`registerCardKind`) rather than edited
   into a switch, but there is still no plugin system: no loading, no discovery,

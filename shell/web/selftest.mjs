@@ -36,9 +36,11 @@ import {
   MIN_SIZE,
   ZOOM_MAX,
   ZOOM_MIN,
+  cardsInsideRect,
   cardsWithin,
   clampViewport,
   createBoard,
+  frameRect,
   normaliseDocument,
 } from "./board.mjs";
 
@@ -904,6 +906,55 @@ test("board: a group move and a group delete are one change each", () => {
   assert.equal(changes - beforeDelete, 1, "and a no-op is not a change");
 });
 
+test("frame: a frame holds the cards standing in it, not the ones clipping it", () => {
+  const cards = [
+    { id: "inside", kind: "note", x: 100, y: 100, w: 100, h: 100, z: 1 },
+    { id: "clipper", kind: "note", x: 250, y: 250, w: 100, h: 100, z: 2 },
+    { id: "outside", kind: "note", x: 900, y: 900, w: 100, h: 100, z: 3 },
+    { id: "f", kind: "frame", x: 80, y: 80, w: 200, h: 200, z: 4 },
+  ];
+
+  // The frame spans 80..280 in both axes.  `inside` has its centre at
+  // (150,150); `clipper` overlaps the border but its centre is (300,300), so it
+  // has not joined the group.  That one rule is what keeps the contents of a
+  // frame predictable.
+  assert.deepEqual(cardsInsideRect(cards, cards[3], { except: "f" }), ["inside"]);
+  assert.deepEqual(cardsInsideRect(cards, { x: 0, y: 0, w: 1000, h: 1000 }, { except: "f" }),
+    ["inside", "clipper", "outside"]);
+
+  // The frame asks the question about itself, so `except` is what keeps it out
+  // of its own member list -- and document order is what comes back.
+  assert.deepEqual(cardsInsideRect(cards, cards[3]), ["inside", "f"]);
+
+  // A rectangle that cannot be measured holds nothing.
+  assert.deepEqual(cardsInsideRect(cards, { x: Number.NaN, y: 0, w: 10, h: 10 }), []);
+  assert.deepEqual(cardsInsideRect(cards, { x: 0, y: 0 }), []);
+  assert.deepEqual(cardsInsideRect(cards, null), []);
+  assert.deepEqual(cardsInsideRect(null, cards[3]), []);
+});
+
+test("frame: a frame drawn round a selection wraps it with a margin", () => {
+  const cards = [
+    { id: "a", kind: "note", x: 0, y: 0, w: 100, h: 100, z: 1 },
+    { id: "b", kind: "note", x: 300, y: 40, w: 100, h: 60, z: 2 },
+    { id: "f", kind: "frame", x: -50, y: -50, w: 400, h: 300, z: 3 },
+  ];
+
+  assert.deepEqual(frameRect(cards, ["a", "b"], { pad: 10 }),
+    { x: -10, y: -10, w: 420, h: 120 });
+  // The default margin is the one `group` uses.
+  assert.deepEqual(frameRect(cards, ["a"], {}), { x: -26, y: -26, w: 152, h: 152 });
+  // Naming the frame itself wraps the frame, which is how a frame is stretched
+  // to hold what it already holds.
+  assert.deepEqual(frameRect(cards, ["a", "f"], { pad: 0 }), { x: -50, y: -50, w: 400, h: 300 });
+
+  // Ids that name nothing are ignored, and no ids at all has no rectangle.
+  assert.deepEqual(frameRect(cards, ["a", "nope"], { pad: 0 }), { x: 0, y: 0, w: 100, h: 100 });
+  assert.equal(frameRect(cards, [], {}), null);
+  assert.equal(frameRect(cards, ["nope"], {}), null);
+  assert.equal(frameRect(null, ["a"], {}), null);
+});
+
 test("tokens: spans are applied in order, with the gap rendered as plain", () => {
   const text = "++ hello world";
   const tokens = [[0, 2, "command"], [10, 14, "keyword"]];
@@ -1513,7 +1564,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 
 test("hook: the built-in kinds register in a known order", () => {
   assert.deepEqual(knownCardKinds(),
-    ["editor", "runner", "note", "files", "search", "project", "sheet"]);
+    ["editor", "runner", "note", "files", "search", "project", "sheet", "frame"]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
     assert.equal(spec.kind, kind);

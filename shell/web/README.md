@@ -45,6 +45,7 @@ line above it. **seIDE has no dialogs**, so nothing ever covers the board.
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `search` | a literal find across the workspace, with a row per hit | `query`, `glob`, `caseSensitive` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
+| `frame` | a labelled region that moves the cards standing inside it | `title` |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`:
@@ -125,6 +126,8 @@ unlink <linkId>          remove a connection
 zoom <n> | in | out | reset
 focus <id>               select and centre a card
 select <id...> | all | none  replace the selection with these cards
+group [title]            frame the selection (or drop an empty frame)
+ungroup [id...]          remove frames; the cards they held stay
 delete <id>              remove a card (with no id: everything selected)
 save [force]             write .seide/board.json
 undo                     take back the last board edit (Ctrl+Z)
@@ -233,6 +236,29 @@ limits), so `selftest.mjs` pins the line/column arithmetic and the budgets, and
 `tools/input_smoke.py` types `find` into the real command line, waits for real
 rows and checks the caret lands on the line the first row named.
 
+### Frames: a region that moves what stands in it
+
+`group [title]` on the command line draws a `frame` — a labelled, dashed
+rectangle — round the selection, with a margin, and drops an empty one at the
+centre of the view when nothing is selected. `ungroup [id...]` takes frames away
+again. A frame is a card like any other: it moves, resizes and is deleted like
+one, and its title is typed straight into it.
+
+Membership is **spatial, not stored**: every card whose *centre* stands inside
+the frame's rectangle moves when the frame moves, and a card dragged into (or
+out of) that rectangle has joined (or left) without anything being written down.
+The alternative — a frame holding a list of member ids and deriving its own box
+from them — was rejected because the list needs pruning rules to stay honest and
+because a box that always wraps its members can never be dragged apart from
+them. `cardsInsideRect` is the whole rule; `frameRect` is the margin arithmetic
+the command uses, and both are pure and exported, so `selftest.mjs` pins them
+and `tools/input_smoke.py` selects the whole board, groups it, drags the frame
+and checks every card inside moved by one delta.
+
+A frame is pinned below the cards it holds (`z-index: 0`), however often it is
+clicked, because a frame that covered its own contents would hide the work it is
+grouping.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
 * Token offsets are **string indices**, not byte offsets. `lang.tokenize` scans
@@ -264,6 +290,11 @@ rows and checks the caret lands on the line the first row named.
   the workspace for changes: a stale row can point at a line that moved, which is
   why the row carries the file and line it was found at rather than an offset
   into a buffer.
+* A frame's membership is a **guess about geometry**, not a fact stored in the
+  document. A card clipping a frame's border has not joined it (the centre is the
+  test), and a card standing inside two overlapping frames moves with either one.
+  Frames do not nest, they do not clip what they hold, and there is no collapse or
+  fold: a frame moves cards, it does not own them.
 
 ---
 
@@ -306,5 +337,7 @@ with no DOM and no network: chunk-split frame reassembly, `RpcError` mapping,
 round-trips, document repair, viewport clamping, the selection set and
 `cardsWithin` (the rubber band's arithmetic), a group move/delete being one
 change, the search arithmetic (line/column, excerpts, the file order and the
-budgets), and token-span application to a string. It prints `ok N/N` and exits
+budgets), the frame arithmetic (the centre-inside membership test and the
+rectangle drawn round a selection), and token-span application to a string. It
+prints `ok N/N` and exits
 non-zero if anything fails.

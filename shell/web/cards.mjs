@@ -5,8 +5,9 @@
  * seIDE has no plugin system: extending the visual vocabulary means forking this
  * file.  What it does have is a *hook* -- `registerCardKind()` -- so that
  * "adding a kind" is one self-contained object instead of an edit to a switch
- * in three places.  Six kinds are registered at the bottom of this file:
- * `editor`, `runner`, `note`, `files`, `project` and `sheet`.
+ * in three places.  Eight kinds are registered at the bottom of this file:
+ * `editor`, `runner`, `note`, `files`, `search`, `project`, `sheet` and
+ * `frame`.
  *
  * `sheet` is there to make the hook honest rather than theoretical.  It is a
  * structured-data editor -- typed cells in a grid, not a textarea -- and it
@@ -862,6 +863,8 @@ export const COMMAND_HELP = [
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "find <text>              search the workspace (or re-point the search card)",
+  "group [title]            frame the selection (or drop an empty frame)",
+  "ungroup [id...]          remove frames; the cards they held stay",
   "project [glob]           open the project panel (the workspace as one project)",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
@@ -2414,6 +2417,91 @@ function renderNote(card, ctx) {
   };
 }
 
+/* -------------------- frame -------------------- */
+
+/**
+ * A frame is a named rectangle that moves whatever stands in it.
+ *
+ * It is the board's answer to "put these cards in a group".  A group has to
+ * survive a reload, and the only thing the board keeps for good is the layout
+ * itself -- so the group *is* a rectangle and membership is spatial.  There is
+ * no member list to prune and none to drift, and a card joins or leaves the
+ * group the moment it is dragged across the border.
+ *
+ * The cards inside are computed by `main.mjs` (`cardsInsideRect` in board.mjs)
+ * rather than here: this file deliberately imports nothing, and a card is told
+ * everything it knows through `ctx.app`.  A card that merely clips the border
+ * is not inside -- the centre has to stand in the frame -- which is documented
+ * in `shell/web/README.md` along with what overlapping frames do.
+ */
+function renderFrame(card, ctx) {
+  const { app } = ctx;
+  const titleInput = h("input", "frame-title", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "group name",
+      "data-role": "frame-title",
+    },
+  });
+  titleInput.value = typeof card.title === "string" ? card.title : "";
+  const count = h("span", "frame-count", { attrs: { "data-role": "frame-count" } });
+  const status = makeStatus();
+  const body = h("div", "card-body card-body-frame", {
+    children: [titleInput, count, status],
+  });
+  const shell = cardShell(card, body);
+
+  function inside() {
+    return typeof app.frameMembers === "function" ? app.frameMembers(card) : [];
+  }
+
+  function update() {
+    const held = inside().length;
+    count.textContent = held === 1 ? "1 card inside" : `${held} cards inside`;
+    shell.label.textContent = card.title === undefined || card.title === "" ? "(unnamed)" : card.title;
+    status.textContent = held === 0
+      ? "empty — drag a card in to group it"
+      : "drag the frame to move the cards inside it";
+  }
+
+  titleInput.addEventListener("input", () => {
+    card.title = titleInput.value;
+    update();
+    app.boardTouched(true);
+  });
+  titleInput.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  });
+
+  // The count is a function of where the cards are, so it has to follow the
+  // board rather than be recomputed on some other card's edit.
+  const off = typeof app.onBoardChanged === "function" ? app.onBoardChanged(() => update()) : null;
+  update();
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "frame",
+      focus() {
+        titleInput.focus();
+        titleInput.select();
+      },
+      inside,
+      setTitle(text) {
+        card.title = String(text);
+        titleInput.value = card.title;
+        update();
+      },
+    },
+    destroy() {
+      if (typeof off === "function") {
+        off();
+      }
+    },
+  };
+}
+
 /* -------------------- files -------------------- */
 
 function renderFiles(card, ctx) {
@@ -3487,4 +3575,12 @@ registerCardKind({
   describe: (card) => `sheet ${card.title !== "" && card.title !== undefined ? card.title : sheetSummary(card.doc)}`,
   create: () => ({ title: "", doc: emptySheet() }),
   render: renderSheet,
+});
+
+registerCardKind({
+  kind: "frame",
+  title: "Frame",
+  describe: (card) => `frame ${card.title !== "" && card.title !== undefined ? card.title : "(unnamed)"}`,
+  create: () => ({ title: "" }),
+  render: renderFrame,
 });

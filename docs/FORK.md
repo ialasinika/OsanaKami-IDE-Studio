@@ -391,6 +391,11 @@ follows is what is genuinely still missing:)
   the set held in `board.mjs` and a primary member for single-card verbs — but
   the rubber band is the only geometric selector: no lasso over links, no
   "select every card of this kind", no field edit across a selection.
+- **Frames that do more than move.** A `frame` moves the cards whose centre
+  stands inside it (`group`/`ungroup`), which is enough to carry a cluster
+  around the board without storing a membership list. Still on the table: a
+  frame that clips its contents, folds them away, lays them out in a row or a
+  grid, or nests inside another frame.
 - **Links with semantics.** A `from`/`to` pair plus a label is already in the
   document; nothing consumes them. A "run the card this link points at" verb is
   a shell feature over existing methods.

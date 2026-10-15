@@ -675,6 +675,43 @@ body {
 .search-mark { background: #6fb3ff33; color: inherit; }
 
 /* ------------------------------------------------------------------ */
+/* frame card                                                          */
+/* ------------------------------------------------------------------ */
+
+/* A frame is a region, not a panel: it reads as a labelled rectangle drawn
+   round the cards it holds, and it never sits in front of them (the z it
+   renders at is pinned in main.mjs). */
+.card.card-frame {
+  background: #6fb3ff0f;
+  border: 1px dashed var(--accent-dim);
+}
+
+.card.card-frame .card-title {
+  background: transparent;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.card-body-frame {
+  gap: 4px;
+  padding: 2px 8px 8px;
+}
+
+.frame-title {
+  font: 12px/1.4 var(--mono-font);
+  color: var(--fg);
+  background: #14171c;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+  min-width: 0;
+}
+.frame-title:focus { border-color: var(--accent-dim); }
+
+.frame-count { color: var(--fg-faint); font-size: 10px; }
+
+/* ------------------------------------------------------------------ */
 /* project card                                                        */
 /* ------------------------------------------------------------------ */
 

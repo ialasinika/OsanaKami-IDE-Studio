@@ -496,9 +496,94 @@ async function main() {
     say("search-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && editorOk && selectOk && searchOk
-    ? "undo, redo, wheel ownership, the editor keys, multi-select and a workspace search work in a real browser"
-    : "FAILED -- see the counts, wheel, editor, select and search lines above"));
+  /* --- frame: a named rectangle that moves the cards standing in it --- */
+  let frameOk = true;
+  try {
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
+    const mine = () => [...doc.querySelectorAll("#cards [data-card-id]")]
+      .filter((node) => !node.classList.contains("card-frame"));
+    const runLine = (text) => {
+      const box = doc.getElementById("command");
+      box.value = text;
+      box.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    };
+
+    /* Group the whole board: the frame then wraps every card, and every card
+       has its centre inside it, so one drag has to move the lot. */
+    key(win, doc, { key: "a", ctrlKey: true });
+    await sleep(150);
+    const plain = mine().map((node) => node.dataset.cardId);
+    const beforeBoxes = new Map(plain.map((id) => {
+      const box = boxOf(id);
+      return [id, Math.round(box.x) + "," + Math.round(box.y)];
+    }));
+    runLine("group smoke-frame");
+    await sleep(350);
+    const frame = doc.querySelector("#cards .card-frame");
+    const titleInput = frame === null ? null : frame.querySelector('[data-role="frame-title"]');
+    const counted = frame === null ? ""
+      : (frame.querySelector('[data-role="frame-count"]').textContent || "").trim();
+    const held = counted === "" ? 0 : Number((counted.match(/\\d+/) || [0])[0]);
+    /* A frame that covered the cards it groups would hide the work, so it has
+       to render below every card however often it is clicked. */
+    const frameZ = frame === null ? 0 : Number(win.getComputedStyle(frame).zIndex);
+    const behind = frame !== null && mine().length > 0
+      && mine().every((node) => Number(win.getComputedStyle(node).zIndex) > frameZ);
+    say("frame-group: open=" + (frame !== null)
+      + " title=" + JSON.stringify(titleInput === null ? "" : titleInput.value)
+      + " count=" + JSON.stringify(counted) + " cards=" + plain.length + " behind=" + behind);
+
+    /* Drag the frame itself: the frame and every card standing in it move by
+       the same delta, because a frame *is* the group. */
+    const rect = frame.getBoundingClientRect();
+    const from = { clientX: Math.round(rect.left + 6), clientY: Math.round(rect.top + 6) };
+    const to = { clientX: from.clientX + 80, clientY: from.clientY + 60 };
+    press2("pointerdown", frame, from);
+    press2("pointermove", frame, to);
+    press2("pointerup", frame, Object.assign({ buttons: 0 }, to));
+    await Promise.race([
+      new Promise((resolve) => win.requestAnimationFrame(() => resolve())),
+      sleep(300),
+    ]);
+    key(win, doc, { key: "a", ctrlKey: true }); // a synchronous repaint
+    await sleep(250);
+    const moved = mine().map((node) => {
+      const box = boxOf(node.dataset.cardId);
+      const was = beforeBoxes.get(node.dataset.cardId).split(",");
+      return [Math.round(box.x) - Number(was[0]), Math.round(box.y) - Number(was[1])];
+    });
+    const oneDelta = moved.length > 0
+      && moved.every(([dx, dy]) => dx === moved[0][0] && dy === moved[0][1]);
+    const dragged = oneDelta && (moved[0][0] !== 0 || moved[0][1] !== 0);
+    say("frame-move: delta=" + JSON.stringify(moved[0] || [0, 0])
+      + " same-for-all=" + oneDelta + " cards=" + moved.length);
+
+    /* Ungroup takes the region away and leaves the work where it stands. */
+    const stay = new Map(mine().map((node) => {
+      const id = node.dataset.cardId;
+      const box = boxOf(id);
+      return [id, Math.round(box.x) + "," + Math.round(box.y)];
+    }));
+    runLine("ungroup");
+    await sleep(400);
+    const framesLeft = doc.querySelectorAll("#cards .card-frame").length;
+    const stayed = mine().length > 0
+      && mine().every((node) => {
+        const box = boxOf(node.dataset.cardId);
+        return stay.get(node.dataset.cardId) === Math.round(box.x) + "," + Math.round(box.y);
+      });
+    const kept = mine().length === plain.length;
+    say("frame-ungroup: frames=" + framesLeft + " cards=" + mine().length + " stayed=" + stayed);
+
+    frameOk = frame !== null && held >= plain.length && behind && dragged && framesLeft === 0 && stayed && kept;
+  } catch (error) {
+    frameOk = false;
+    say("frame-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && editorOk && selectOk && searchOk && frameOk
+    ? "undo, redo, wheel ownership, the editor keys, multi-select, a workspace search and a frame work in a real browser"
+    : "FAILED -- see the counts, wheel, editor, select, search and frame lines above"));
   document.title = "input smoke done";
 }
 
@@ -517,8 +602,9 @@ def build_parser() -> argparse.ArgumentParser:
             "region and over the board, and drive the editor card's indent, "
             "auto-indent, find and replace keys, then select with Ctrl+A, "
             "ctrl+click and a shift+drag rubber band, drag the group and delete "
-            "it, and finally search the workspace with `find` and open a hit at "
-            "its line. Exit codes: 0 pass or skipped, "
+            "it, and finally search the workspace with `find`, open a hit at "
+            "its line, frame a whole selection with `group` and take the frame "
+            "away again with `ungroup`. Exit codes: 0 pass or skipped, "
             "1 a check failed, 2 could not run, 3 usage."
         ),
     )
@@ -633,6 +719,24 @@ def parse_search(body: str) -> dict:
     return found
 
 
+def parse_frame(body: str) -> dict:
+    """The frame lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    patterns = (
+        ("group", r'frame-group: open=(\w+) title="([^"]*)" count="([^"]*)" cards=(\d+) behind=(\w+)'),
+        ("move", r"frame-move: delta=(\[[^\]]*\]) same-for-all=(\w+) cards=(\d+)"),
+        ("ungroup", r"frame-ungroup: frames=(\d+) cards=(\d+) stayed=(\w+)"),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"frame-error: (.+)", body)
+    if none is not None:
+        found["error"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -648,7 +752,7 @@ def main(argv=None) -> int:
         edge = bs.find_edge(args.edge)
     except bs.DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 23 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 26 skipped (no browser)")
         return 0
 
     backup = bs.BoardBackup(bs.BOARD_PATH)
@@ -831,6 +935,39 @@ def main(argv=None) -> int:
                   bool(opened) and int(opened[3]) >= 0 and opened[2] == opened[3],
                   f"{opened[0]}:{opened[1]} caret={opened[2]} expected={opened[3]}" if opened
                   else search_detail("open"))
+
+    frame = parse_frame(body)
+
+    def frame_detail(key: str) -> str:
+        got = frame.get(key)
+        if got is not None:
+            return " ".join(got)
+        if frame.get("error") is not None:
+            return f"frame-error: {frame['error'][0]}"
+        return f"no frame-{key} line"
+
+    grouped = frame.get("group")
+    held = None
+    if grouped is not None:
+        digits = re.search(r"\d+", grouped[2])
+        held = int(digits.group()) if digits is not None else None
+    results.check("`group` frames the selection and counts the cards standing in it",
+                  bool(grouped) and grouped[0] == "true" and grouped[4] == "true"
+                  and held is not None and held >= int(grouped[3]) >= 2,
+                  f"title={grouped[1]!r} count={grouped[2]!r} cards={grouped[3]} behind={grouped[4]}"
+                  if grouped else frame_detail("group"))
+    movedFrame = frame.get("move")
+    results.check("dragging a frame moves every card inside it by one delta",
+                  bool(movedFrame) and movedFrame[1] == "true" and movedFrame[0] != "[0,0]"
+                  and int(movedFrame[2]) >= 2,
+                  f"delta={movedFrame[0]} same-for-all={movedFrame[1]} cards={movedFrame[2]}"
+                  if movedFrame else frame_detail("move"))
+    goneFrame = frame.get("ungroup")
+    results.check("`ungroup` takes the frame away and leaves the cards where they were",
+                  bool(goneFrame) and goneFrame[0] == "0" and goneFrame[2] == "true"
+                  and int(goneFrame[1]) >= 2,
+                  f"frames={goneFrame[0]} cards={goneFrame[1]} stayed={goneFrame[2]}"
+                  if goneFrame else frame_detail("ungroup"))
 
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")

@@ -20,7 +20,7 @@
  */
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
-import { createBoard, cardsWithin, DEFAULT_SIZE, MIN_SIZE, normaliseRect, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
+import { createBoard, cardsInsideRect, cardsWithin, DEFAULT_SIZE, frameRect, MIN_SIZE, normaliseRect, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import {
   COMMAND_HELP,
@@ -496,7 +496,12 @@ function createApp() {
       node.style.width = `${card.w}px`;
       node.style.height = `${card.h}px`;
       // z-index only orders hit-testing and shadows; positions stay world-space.
-      node.style.zIndex = String(Math.round(card.z) || 0);
+      // A frame is deliberately pinned to the bottom: it is a region *around*
+      // cards, so it must never cover the cards it holds, however often it is
+      // clicked.  Everything else keeps its own z.
+      node.style.zIndex = card.kind === "frame"
+        ? "0"
+        : String(Math.max(1, Math.round(card.z) || 1));
       // One class for "in the selection" and a second for "the one a command
       // with no argument acts on", so a multi-selection still has a leader.
       node.classList.toggle("is-selected", board.isSelected(card.id));
@@ -1039,6 +1044,10 @@ function createApp() {
     // disk is not touched, and unsaved text is named rather than discarded.
     closeCard: deleteCard,
     onBoardChanged,
+    // What a frame holds.  Membership is spatial -- the cards whose centre
+    // stands inside the rectangle -- so there is no list to keep in sync, and
+    // a card that is dragged across the border joins or leaves on its own.
+    frameMembers: (frame) => cardsInsideRect(board.cards, frame, { except: frame.id }),
     workspace() {
       return workspace;
     },
@@ -1066,6 +1075,7 @@ function createApp() {
    *   shift+empty      -> rubber band (ctrl/shift adds to the selection)
    *   card             -> focus + raise, and select it (ctrl/shift = toggle)
    *   card-title       -> move (every selected card moves together)
+   *   frame            -> move the frame *and* the cards standing in it
    *   grip             -> resize
    *
    * Selection is not part of the document, so deciding what is selected is not a
@@ -1156,10 +1166,43 @@ function createApp() {
         // document, so it has to be marked dirty or the HUD says "saved" and
         // the stack order is gone after a reload.  It is not an undo step:
         // nobody means to take back "I clicked that card".
-        board.raiseCard(card.id);
-        boardTouched(true, { record: false });
+        //
+        // A frame is the exception: it is pinned to the bottom of the stack
+        // (see `renderCards`), so clicking one must not rewrite its `z` and
+        // must not mark the board dirty for a click that changed nothing.
+        if (card.kind !== "frame") {
+          board.raiseCard(card.id);
+          boardTouched(true, { record: false });
+        }
         const collapse = !additive && already && board.selectionCount > 1;
-        if (role === "card-title") {
+        if (role === "grip") {
+          const world = screenToWorld(event.clientX, event.clientY);
+          gesture = { kind: "resize", card, dx: world.x - card.x, dy: world.y - card.y };
+        } else if (card.kind === "frame") {
+          // A frame drags as a container: the frame and every card standing in
+          // it, selected or not.  The members are taken once, here, so a drag
+          // that crosses its own members stays stable while it happens.
+          const world = screenToWorld(event.clientX, event.clientY);
+          const start = new Map();
+          start.set(card.id, { x: card.x, y: card.y });
+          for (const id of cardsInsideRect(board.cards, card, { except: card.id })) {
+            const other = board.findCard(id);
+            if (other !== null) {
+              start.set(id, { x: other.x, y: other.y });
+            }
+          }
+          gesture = {
+            kind: "move",
+            card,
+            start,
+            ox: world.x,
+            oy: world.y,
+            collapse,
+            moved: false,
+            px: event.clientX,
+            py: event.clientY,
+          };
+        } else if (role === "card-title") {
           const world = screenToWorld(event.clientX, event.clientY);
           // Where every selected card started, so the whole group can be dragged
           // by whichever one the pointer happens to be on.
@@ -1181,9 +1224,6 @@ function createApp() {
             px: event.clientX,
             py: event.clientY,
           };
-        } else if (role === "grip") {
-          const world = screenToWorld(event.clientX, event.clientY);
-          gesture = { kind: "resize", card, dx: world.x - card.x, dy: world.y - card.y };
         } else {
           gesture = {
             kind: "focus",
@@ -1370,7 +1410,8 @@ function createApp() {
 
   const KNOWN_COMMANDS = [
     "open", "note", "run", "files", "find", "project", "link", "unlink", "zoom",
-    "focus", "select", "delete", "save", "undo", "redo", "help", "clear",
+    "focus", "select", "group", "ungroup", "delete", "save", "undo", "redo",
+    "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1449,6 +1490,56 @@ function createApp() {
           Math.round(centre.y - size.h / 2),
           { query, glob: "**/*", caseSensitive: false },
           size);
+        return;
+      }
+      case "group": {
+        // A frame is a card like any other, so a group is saved, undone and
+        // moved by the machinery that already exists.  With a selection it is
+        // drawn round exactly those cards; with nothing selected it is an empty
+        // frame in the middle of the view, ready to have cards dragged in.
+        const title = tokens.slice(1).join(" ").trim();
+        const selected = board.selection;
+        const box = selected.length > 0 ? frameRect(board.cards, selected, { pad: 30 }) : null;
+        if (box !== null) {
+          const frame = addCard("frame", box.x, box.y, { title },
+            { w: box.w, h: box.h });
+          board.setSelection(frame.id);
+          renderCards();
+          renderHud();
+          log("info", `frame ${frame.id} holds ${selected.length} card(s); drag it to move them`);
+          return;
+        }
+        const centre = centreWorld();
+        const size = DEFAULT_SIZE.frame;
+        const frame = addCard("frame",
+          Math.round(centre.x - size.w / 2),
+          Math.round(centre.y - size.h / 2),
+          { title }, size);
+        board.setSelection(frame.id);
+        renderCards();
+        renderHud();
+        log("info", `empty frame ${frame.id} added — drag a card inside it to group it`);
+        return;
+      }
+      case "ungroup": {
+        // The frame goes, the cards stay: a group is a region, not an owner, so
+        // taking it away must never take the work with it.
+        const named = tokens.slice(1);
+        const wanted = named.length > 0 ? named : board.selection;
+        const frames = wanted
+          .map((id) => board.findCard(id))
+          .filter((card) => card !== null && card.kind === "frame");
+        if (frames.length === 0) {
+          log("warn", "nothing to ungroup (select a frame, or name one)");
+          return;
+        }
+        for (const frame of frames) {
+          log("info", `frame ${frame.id} removed; its ${app.frameMembers(frame).length} card(s) stay`);
+        }
+        board.removeCards(frames.map((frame) => frame.id));
+        renderCards();
+        renderLinks();
+        boardTouched();
         return;
       }
       case "project": {

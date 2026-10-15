@@ -22,15 +22,15 @@
  * fork invents) is stored verbatim, because the kernel stores it verbatim.
  */
 
-/** The four card kinds. Fixed: there is no extension mechanism by design. */
 /**
- * The kinds `cards.mjs` ships renderers for.  Advisory only: this file stores
- * and clones any `kind` string, because the kernel validates a card's *shape*
+ * The card kinds the prototype ships.  Advisory only: this file stores and
+ * clones any `kind` string, because the kernel validates a card's *shape*
  * (id, kind, geometry) and deliberately not its vocabulary.  The authoritative
  * list at runtime is `knownCardKinds()` in cards.mjs, which is what the
- * built-in renderers register themselves into.
+ * built-in renderers register themselves into.  There is no extension
+ * mechanism by design.
  */
-export const CARD_KINDS = ["editor", "runner", "note", "files", "project", "sheet"];
+export const CARD_KINDS = ["editor", "runner", "note", "files", "search", "project", "sheet", "frame"];
 
 export const BOARD_VERSION = 1;
 
@@ -42,6 +42,7 @@ export const DEFAULT_SIZE = {
   files: { w: 300, h: 520 },
   search: { w: 560, h: 460 },
   sheet: { w: 460, h: 320 },
+  frame: { w: 420, h: 300 },
   project: { w: 340, h: 580 },
 };
 
@@ -160,6 +161,87 @@ export function cardsWithin(cards, rect) {
     }
   }
   return out;
+}
+
+/**
+ * The ids of the cards whose *centre* stands inside a rectangle, in document
+ * order.
+ *
+ * Intersection is right for a rubber band and wrong for a frame: a frame holds
+ * the cards standing in it, so a card that merely clips the border has not
+ * joined the group.  `except` names one id to leave out, which is how a frame
+ * asks the question about itself.
+ *
+ * A rectangle with a non-finite edge holds nothing, for the same reason a
+ * malformed band selects nothing.
+ */
+export function cardsInsideRect(cards, rect, options = {}) {
+  const box = isPlainObject(rect) ? rect : {};
+  if (!isFiniteNumber(box.x) || !isFiniteNumber(box.y)
+    || !isFiniteNumber(box.w) || !isFiniteNumber(box.h)) {
+    return [];
+  }
+  const except = isPlainObject(options) && typeof options.except === "string"
+    ? options.except
+    : null;
+  const list = Array.isArray(cards) ? cards : [];
+  const out = [];
+  for (const card of list) {
+    if (!isValidCard(card) || card.id === except) {
+      continue;
+    }
+    const cx = card.x + card.w / 2;
+    const cy = card.y + card.h / 2;
+    if (cx > box.x && cx < box.x + box.w && cy > box.y && cy < box.y + box.h) {
+      out.push(card.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * The rectangle that holds every named card, with a margin: what `group`
+ * draws round a selection.
+ *
+ * Ids that name nothing are ignored.  No ids at all has no rectangle, so the
+ * answer is `null` rather than a frame collapsed at the origin.
+ */
+export function frameRect(cards, ids, options = {}) {
+  const pad = isPlainObject(options) && isFiniteNumber(options.pad)
+    ? Math.max(0, options.pad)
+    : 26;
+  const list = Array.isArray(cards) ? cards : [];
+  const wanted = new Set(Array.isArray(ids) ? ids : []);
+  const box = { x: 0, y: 0, w: 0, h: 0 };
+  let first = true;
+  for (const card of list) {
+    if (!isValidCard(card) || !wanted.has(card.id)) {
+      continue;
+    }
+    if (first) {
+      box.x = card.x;
+      box.y = card.y;
+      box.w = card.w;
+      box.h = card.h;
+      first = false;
+      continue;
+    }
+    const right = Math.max(box.x + box.w, card.x + card.w);
+    const bottom = Math.max(box.y + box.h, card.y + card.h);
+    box.x = Math.min(box.x, card.x);
+    box.y = Math.min(box.y, card.y);
+    box.w = right - box.x;
+    box.h = bottom - box.y;
+  }
+  if (first) {
+    return null;
+  }
+  return {
+    x: Math.round(box.x - pad),
+    y: Math.round(box.y - pad),
+    w: Math.round(box.w + pad * 2),
+    h: Math.round(box.h + pad * 2),
+  };
 }
 
 /** True for a card the kernel would accept. Geometry may be repaired later. */

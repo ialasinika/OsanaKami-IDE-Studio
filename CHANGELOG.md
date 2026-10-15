@@ -19,8 +19,8 @@ version number says how usable it is, not how finished.
   the board.  A group move or delete is one change, one undo step and one save,
   and an edge whose endpoint is deleted goes with it (`1004 INVALID_BOARD`
   otherwise).  The command line gained `select <id...> | all | none`, and `delete`
-  with no argument acts on the selection.  `shell/web/selftest.mjs` is 89 checks
-  and `tools/input_smoke.py` drives the gestures in a real window (23 checks).
+  with no argument acts on the selection.  `shell/web/selftest.mjs` is 91 checks
+  and `tools/input_smoke.py` drives the gestures in a real window (26 checks).
 - The workspace can be searched from the board.  `find <text>` opens a `search`
   card (or re-points the one already there) at the centre of the view; it lists
   the workspace once, then reads the files that may hold the text and shows one
@@ -44,6 +44,20 @@ version number says how usable it is, not how finished.
   `findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits`) and checked
   in `shell/web/selftest.mjs`; `tools/input_smoke.py` presses the keys in a real
   window.
+- The board gained a container kind: a `frame` is a labelled, dashed rectangle
+  that moves the cards standing inside it.  `group [title]` frames the selection
+  (with a margin) or drops an empty frame at the centre of the view, and
+  `ungroup [id...]` removes frames while leaving the cards they held exactly
+  where they are.  Membership is **spatial**, not stored: every card whose centre
+  stands inside the frame's rectangle moves with it, so a card dragged in or out
+  joins or leaves with nothing written to the document — the alternative, a frame
+  holding a member list and deriving its own box, needs pruning rules and can
+  never be dragged apart from what it holds.  A frame renders below the cards it
+  contains however often it is clicked, so it can never hide the work it groups.
+  `cardsInsideRect` and `frameRect` are pure and exported; `shell/web/selftest.mjs`
+  pins the membership and margin arithmetic (91 checks) and `tools/input_smoke.py`
+  groups the whole board in a real window, drags the frame, checks every card
+  inside moved by one delta and ungroups (26 checks).
 
 ### Docs
 
@@ -54,9 +68,12 @@ version number says how usable it is, not how finished.
   with non-ASCII fixtures.  No behaviour changed — the description
   caught up with the code.
 - `shell/web/README.md` documents the editor card's own keys, the multi-select
-  gestures and the search card, `docs/PARADIGM.md` and `docs/FORK.md` no longer
-  list rubber-band selection or finding across the workspace as missing, and the
-  check counts in `README.md` and `docs/ARCHITECTURE.md` follow the three suites.
+  gestures, the search card and the frame kind, `docs/PARADIGM.md` and
+  `docs/FORK.md` no longer list rubber-band selection, finding across the
+  workspace or grouping cards as missing (they say what a frame still cannot do
+  instead), the stale claim in `README.md` that there is "no search across the
+  workspace" is gone, and the check counts in `README.md` and
+  `docs/ARCHITECTURE.md` follow the three suites.
 
 ## v0.2.1-alpha.2 — 2026-10-15
 ### Docs

@@ -36,8 +36,9 @@ without fighting a plugin API, keep reading.
 ## What seIDE is not
 
 - **Not a complete product.** There is no settings UI, no terminal emulator, no
-  debugger, no Git integration, no refactoring, no search across the workspace.
-  Undo takes back a *board* edit; it does not take back typing inside a card.
+  debugger, no Git integration, no refactoring. Undo takes back a *board* edit;
+  typing inside an editor card is the browser textarea's own undo stack, and
+  Ctrl+Z in the board does not reach into it.
 - **Not extensible.** There is no plugin system, by design. Extension means
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
@@ -59,7 +60,7 @@ forkable, and they are what a fork will change first.
 
 The main surface is one persistent 2-D canvas. Everything you work on is a
 **card** placed at a point on that canvas. A card has a `kind` (`editor`,
-`runner`, `note`, `files`, `project`, `search`, `sheet`), a position and size (`x`, `y`, `w`, `h`,
+`runner`, `note`, `files`, `project`, `search`, `sheet`, `frame`), a position and size (`x`, `y`, `w`, `h`,
 `z`), may
 reference a file, and may be connected by links. The board persists to
 `<root>/.seide/board.json`, so **where you put things is part of the project
@@ -94,12 +95,13 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The seven shipped kinds are `editor`, `runner`, `note`, `files`, `project`,
-`search` and `sheet` — `sheet` being a structured-data grid (typed cells, rows,
+The eight shipped kinds are `editor`, `runner`, `note`, `files`, `project`,
+`search`, `sheet` and `frame` — `sheet` being a structured-data grid (typed cells, rows,
 columns, TSV export) that exists to prove nothing downstream assumes text,
 `project` being the workspace as one project: what the project contains, merged
-with what the board has open, and `search` being the workspace-wide find whose
-rows open their file at the line they name. See
+with what the board has open, `search` being the workspace-wide find whose
+rows open their file at the line they name, and `frame` being a labelled
+rectangle that moves the cards standing inside it. See
 [`docs/SURFACES.md`](docs/SURFACES.md) and
 [`docs/PROJECT.md`](docs/PROJECT.md).
 
@@ -180,7 +182,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 23 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
 ```
@@ -192,11 +194,11 @@ python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                    # keys, wheel, the editor, multi-select and a search: 23 passed, 0 failed
+python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search and a frame: 26 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 92/92 checks passed
-node shell/web/selftest.mjs                    # ok 89/89 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 91/91 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `version-check`,
@@ -213,8 +215,11 @@ shift+drag, drags one selected card and checks the whole set moved by one delta,
 runs `select all` on the command line, and deletes the set in one step that one
 Ctrl+Z brings back. Finally it types `find <text>` on the command line, waits for
 the search card to list what it found across the workspace, clicks the first hit
-and checks the editor that opened has its caret on that hit's line
-(`input_smoke.py`, 23 checks). On a clone that has no
+and checks the editor that opened has its caret on that hit's line, then selects
+the whole board again, frames it with `group` on the command line, drags the
+frame and checks every card inside it moved by the same delta, and runs
+`ungroup` to check the frame goes and the cards stay put
+(`input_smoke.py`, 26 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 
