@@ -58,6 +58,8 @@ def run(k):
     print("== the shape of a revision ==")
     r = k.call("file.read", {"path": "examples/hello.bf"})
     rev = r["result"]["revision"]
+    size = r["result"]["size"]
+    eol = r["result"]["eol"]
     check("file.read revision is a non-negative number",
           isinstance(rev, (int, float)) and rev >= 0, repr(rev))
     check("...and is an int on the wire", isinstance(rev, int), repr(rev))
@@ -152,8 +154,13 @@ def run(k):
 
     print("\n== the ordinary paths still work ==")
     r = k.call("file.read", {"path": "examples/hello.bf"})["result"]
-    check("file.read is unchanged", r["size"] == 820 and r["revision"] == rev,
-          f"size={r['size']} rev={r['revision']} eol={r['eol']}")
+    # Compare against what this checkout reported a moment ago, not against a
+    # size written down here: the fixture is read-only for the whole run, and
+    # pinning "820" would make the probe fail on a checkout whose git converted
+    # line endings (see .gitattributes).
+    check("file.read is unchanged",
+          r["size"] == size and r["revision"] == rev and r["eol"] == eol,
+          f"size={r['size']} (was {size}) rev={r['revision']} (was {rev}) eol={r['eol']}")
     check("the board document still round-trips",
           "result" in k.call("board.save", {"document": before["document"]}), "")
 

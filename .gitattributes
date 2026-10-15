@@ -1,0 +1,12 @@
+# The bytes in the repository are the bytes you get.  Git for Windows ships with
+# core.autocrlf=true in its system config, which turns every text file into CRLF
+# on checkout -- that alone made a fresh clone fail the protocol suite, because
+# examples/hello.bf comes back 841 bytes instead of 820 and the fixtures are
+# compared byte for byte.  Pinning LF here makes a clone on any machine
+# identical to the one the tests were written against.
+* text=auto eol=lf
+
+# Not text, whatever the extension suggests: a checkout must not touch these.
+*.png binary
+*.exe binary
+*.ico binary
