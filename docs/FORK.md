@@ -406,6 +406,10 @@ follows is what is genuinely still missing:)
   results while you type.
 - **Search that follows the disk.** The search card reads the workspace when you
   ask; nothing watches it. A stale row can name a line that moved.
-- **A second client.** The protocol has exactly one consumer today. A second one
-  — a CLI, a test harness, an editor plugin — is what would keep the frozen
-  contract honest.
+- **A second client.** Built now, in the cheap direction: `tools/seide_cli.py` is
+  a command-line consumer of `docs/PROTOCOL.md` (read, write, list, run, board)
+  that imports nothing from `shell/`, with its eight checks in `make test` as
+  `cli-check`. What that does *not* cover: it speaks to the kernel endpoint only,
+  so the shell's additions (`lang.*`, HTTP + SSE) still have exactly one
+  consumer — a second client for those, or an editor plugin, remains on the
+  table.

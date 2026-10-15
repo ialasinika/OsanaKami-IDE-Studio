@@ -11,8 +11,9 @@ build, scaffolding, verification and reference tools.
 | [`e2e.py`](e2e.py) | End-to-end protocol driver: spawns an endpoint, speaks newline-delimited JSON-RPC on its stdin/stdout, and asserts the frozen scenario. |
 | [`kernel_probe.py`](kernel_probe.py) | The regression probe for every bug in `docs/BUGS.md`: spawns the kernel against a scratch workspace under `build/` and asserts the safe outcome of each fix. `make probe`. |
 | [`kernel_drive.py`](kernel_drive.py) | The stdio JSON-RPC harness `kernel_probe.py` runs on: starts `<seide> rpc --root DIR`, pumps both pipes on threads, and turns a silent method into `<silence>` instead of a hang. |
+| [`seide_cli.py`](seide_cli.py) | The protocol's **second client**: `hello`, `info`, `ls`, `cat`, `write`, `board`, `new-id`, `run` and `selfcheck`, over the same stdio JSON-RPC, importing nothing from `shell/`. `write` refuses to replace an existing file without `--base-revision` or `--force`; `run` streams `exec.output` and exits with the child's code; `selfcheck` runs eight checks against a scratch workspace under `build/`. `make cli-check`. |
 | [`browser_smoke.py`](browser_smoke.py) | The window, without a human: starts the host, drives the system browser headless (`--dump-dom`), and asserts on the rendered DOM — HUD, workspace root, painted board. Restores the board byte-identically and kills the host by pid; with no board at all (a fresh clone) it installs `examples/board.json` for the run and removes it again. `make smoke`. |
-| [`input_smoke.py`](input_smoke.py) | The input `--dump-dom` cannot drive: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone — then dispatches a wheel over a card's own scroll region (the card must keep it) and over the board (the board must pan). `make smoke`. |
+| [`input_smoke.py`](input_smoke.py) | The input `--dump-dom` cannot drive: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone — then dispatches a wheel over a card's own scroll region (the card must keep it) and over the board (the board must pan). It goes on to drive an editor card's own keys (Tab, Shift+Tab, Enter after an opener, Ctrl+F, next hit, replace-all, Escape, and that the textarea's undo still holds those edits), multi-select (Ctrl+A, ctrl+click, a shift+drag band, a group drag, `select all`, Delete plus one undo), `find <text>` and the hit row that opens its file at its line, and `group`/`ungroup` over a frame (the cards inside it move by the same delta, and stay when the frame goes). 26 checks. `make smoke`. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
 | [`version.py`](version.py) | The one version: `show`, `check`, `set`, `bump`. `VERSION` is the source; the copies in `core/include/seide_cfg.h` and `shell/main.mjs` are written from it, and `check` also requires the top `##` section of `CHANGELOG.md` to be `## Unreleased` or `## v<version>`. Runs inside `make test`. |
 | [`release.py`](release.py) | Cuts a release in five steps — preflight, verify, freeze the changelog, artifacts, tag — and refuses a dirty tree, the wrong branch, a taken tag, or a changelog that does not name this version. `--dry-run` prints the whole plan and writes nothing; `--fork NAME` releases `forks/NAME` instead. Policy in `docs/RELEASING.md`. |
@@ -95,6 +96,22 @@ python tools/release.py --dry-run --fork electron-example     # a fork's plan
 
 Drop `--dry-run` to cut it for real; `docs/RELEASING.md` has the five steps,
 the channel table and every rehearsal flag.
+
+**10. Use a workspace from the shell, without the window** (the second consumer
+of the frozen protocol; it imports nothing from `shell/`, and its own rails are
+the protocol's — `write` wants the revision you last read)
+
+```console
+python tools/seide_cli.py hello
+python tools/seide_cli.py ls "docs/*.md"
+python tools/seide_cli.py cat README.md --meta
+python tools/seide_cli.py board
+python tools/seide_cli.py write notes.txt --text "hello\n"
+python tools/seide_cli.py run "python tools/bf.py examples/hello.bf"
+python tools/seide_cli.py selfcheck           # eight checks, scratch workspace
+```
+
+`make cli-check` runs the last one inside `make test`.
 
 ## Notes
 

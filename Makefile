@@ -110,6 +110,12 @@ fullcheck: $(BIN)
 probe: $(BIN)
 	$(PYTHON) tools/kernel_probe.py
 
+# The second client: `tools/seide_cli.py`, against its own scratch workspace.
+# The board is the protocol's only other consumer, so this is the check that the
+# frozen contract still stands on its own -- no shell code involved.
+cli-check: $(BIN)
+	$(PYTHON) tools/seide_cli.py selfcheck
+
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM -- then presses Ctrl+Z and
 # Ctrl+Shift+Z in it and counts the cards.  Needs a browser; both say so and
@@ -135,9 +141,9 @@ release:
 	$(PYTHON) tools/release.py
 
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, the fixed bugs, the version
-# copies, and both protocol modes.
-test: check fullcheck probe version-check $(JSONTEST)
+# codec, the language layer, the browser modules, the fixed bugs, the second
+# client, the version copies, and both protocol modes.
+test: check fullcheck probe cli-check version-check $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs

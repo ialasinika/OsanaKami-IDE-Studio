@@ -13,6 +13,10 @@ frame format; this document is the frozen reference for both.
 A client that only needs files, boards and processes can target the kernel
 endpoint directly. A client that wants colouring should target the shell.
 
+Two clients exist today: the board in `shell/web/` and the command-line client
+`tools/seide_cli.py`. The second one is there so this document has to stand on
+its own -- see [A second client](#a-second-client).
+
 ---
 
 ## Framing
@@ -331,6 +335,40 @@ pass, which keeps a chatty process from starving the others.
 The shell's board UI reacts to `board.changed` by ignoring its own revision echo;
 if the board is dirty it warns, otherwise it re-runs `board.load` to adopt what
 is on disk.
+
+---
+
+## A second client
+
+A contract with one consumer is a contract nobody has tested, so the repository
+ships a second one: `tools/seide_cli.py`, a command-line client that speaks this
+document and imports nothing from `shell/`.
+
+```sh
+python tools/seide_cli.py hello                     # protocol, kernel version, root, pid
+python tools/seide_cli.py info                      # workspace.info
+python tools/seide_cli.py ls "**/*.py" --limit 20   # workspace.list
+python tools/seide_cli.py cat README.md --meta      # file.read; metadata on stderr
+python tools/seide_cli.py write notes.txt --text "hello\n"   # file.write
+python tools/seide_cli.py board                     # board.load, as a table
+python tools/seide_cli.py new-id                    # board.newId
+python tools/seide_cli.py run "python tools/bf.py examples/hello.bf"
+python tools/seide_cli.py selfcheck                 # the client's own checks
+```
+
+Three things about it are the point:
+
+- It talks to the **kernel** endpoint. `lang.list` is a shell method, so the
+  client's self-check asserts the kernel still answers `-32601
+  METHOD_NOT_FOUND` for it -- the boundary in the first section of this document,
+  machine-checked.
+- It keeps the rails the protocol defines rather than inventing its own: `write`
+  refuses to replace an existing file unless it is given the `base_revision` it
+  last read (`--base-revision`) or told `--force`, and a stale revision comes
+  back as `1001 STALE_REVISION` with the file untouched.
+- Its checks run inside `make test` as `cli-check` (`make cli-check` on its own),
+  against a scratch workspace under `build/`, so the second consumer cannot rot
+  unnoticed.
 
 ---
 

@@ -12,7 +12,7 @@ why the kernel deliberately knows nothing about programming languages.
 | --- | --- | --- | --- |
 | kernel | `core/` | C89 | files, board persistence, child processes, the JSON-RPC method table |
 | shell | `shell/`, `langs/` | JavaScript ESM | the endpoints, the board UI, language colouring |
-| tools | `tools/` | Python 3.12 | build driver, protocol driver, Brainfuck interpreter, descriptor generator |
+| tools | `tools/` | Python 3.12 | build driver, protocol driver, a second protocol client, Brainfuck interpreter, descriptor generator |
 
 The languages are not an accident and not a fashion statement:
 
@@ -267,12 +267,13 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, board, exec |
 | `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
+| `cli-check` | `python tools/seide_cli.py selfcheck` | the protocol's second consumer: eight checks -- hello, a write round-trip, the stale-revision rail, the listing, the starter board through `board.save`, a child's output and exit code, that a shell-only method is still `METHOD_NOT_FOUND`, and that the command line refuses to overwrite a file it was not given a base revision for |
 | `version-check` | `python tools/version.py check` | one version, one changelog section: the copies in `seide_cfg.h` and `shell/main.mjs` |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | 92 descriptor/tokenizer checks, both families, no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | 91 checks of the protocol plumbing, board model (including the selection set, a group move/delete being one change each, and the frame's centre-inside membership and margin arithmetic), token spans, the editor's indent/find/replace arithmetic, the workspace search's line/column, excerpt and budget arithmetic, the undo ring and the wheel rule's arithmetic, no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, multi-select works — Ctrl+A selects every card, ctrl+click toggles one, a shift+drag band paints in world space, dragging one member moves the whole set by one delta, `select all` names the same set on the command line, and Delete plus one Ctrl+Z round-trips it — and `find <text>` lists real hits that open their file at their line |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, multi-select works — Ctrl+A selects every card, ctrl+click toggles one, a shift+drag band paints in world space, dragging one member moves the whole set by one delta, `select all` names the same set on the command line, and Delete plus one Ctrl+Z round-trips it — and `find <text>` lists real hits that open their file at their line, then frames every card with `group`, drags the frame and checks the cards standing in it moved by the same delta, and runs `ungroup` to check the frame goes and the cards stay |
 
 `smoke` runs the last two and needs a browser.  The release pipeline
 (`tools/release.py`) runs `test` for every channel and adds `smoke` from beta

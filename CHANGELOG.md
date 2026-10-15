@@ -74,6 +74,28 @@ version number says how usable it is, not how finished.
   instead), the stale claim in `README.md` that there is "no search across the
   workspace" is gone, and the check counts in `README.md` and
   `docs/ARCHITECTURE.md` follow the three suites.
+- `docs/PROTOCOL.md` gained **A second client**: what `tools/seide_cli.py` is,
+  the commands it speaks, and the two rails it does not invent (a `write` wants
+  the revision it last read; a shell-only method is still `METHOD_NOT_FOUND`).
+  `docs/FORK.md` says what that does and does not settle.
+
+### Tools
+
+- `tools/seide_cli.py` is the protocol's second client: `hello`, `info`, `ls`,
+  `cat`, `write`, `board`, `new-id`, `run` and `selfcheck` over the same
+  newline-delimited JSON-RPC, using `tools/kernel_drive.py` for the transport and
+  importing nothing from `shell/`.  A contract with one consumer is a contract
+  nobody has tested, so this one has to stand on `docs/PROTOCOL.md` alone.  It
+  keeps the protocol's rails rather than inventing its own: `write` refuses to
+  replace an existing file without `--base-revision` or `--force`, `run` streams
+  `exec.output` and exits with the child's code, and a refusal prints the kernel's
+  code and name and becomes the exit code.  `selfcheck` drives eight checks
+  against a scratch workspace under `build/` — hello, a non-ASCII write
+  round-trip, a stale revision leaving the file untouched, the listing, the
+  shipped starter board through `board.save`, a child's output and exit code,
+  that `lang.list` is still the shell's (`-32601`), and that the command line
+  itself refuses to overwrite a file with no `--base-revision`.  `make cli-check`
+  runs them, and they are part of `make test` now.
 
 ## v0.2.1-alpha.2 — 2026-10-15
 ### Docs

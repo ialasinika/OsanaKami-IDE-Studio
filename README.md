@@ -24,8 +24,9 @@ without fighting a plugin API, keep reading.
   - `core/` — the kernel. **C89 only**, zero third-party dependencies.
   - `shell/` — the front end and the HTTP/stdio endpoints. **JavaScript ESM**,
     zero npm dependencies.
-  - `tools/` — build driver, protocol driver, a Brainfuck interpreter, a
-    language-descriptor generator. **Python 3.12 standard library only**.
+  - `tools/` — build driver, protocol driver, a second protocol client, a
+    Brainfuck interpreter, a language-descriptor generator. **Python 3.12
+    standard library only**.
 - A **window** made of the system's Edge/Chromium launched in
   `--app=http://127.0.0.1:PORT` app mode.
 - **Languages** that are actually supported: Brainfuck, plus an SGML family
@@ -184,7 +185,7 @@ C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, cli-check, version-check, the JSON test, both JS self-tests
 ```
 
 The individual pieces, if you want to run them directly:
@@ -193,6 +194,7 @@ The individual pieces, if you want to run them directly:
 python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
+python tools/seide_cli.py selfcheck            # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
 python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search and a frame: 26 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
@@ -201,9 +203,13 @@ node langs/selftest.mjs                        # 92/92 checks passed
 node shell/web/selftest.mjs                    # ok 91/91 (pure JS: no DOM)
 ```
 
-`make test` runs `check`, then `fullcheck`, then `probe`, then `version-check`,
-then the JSON test and both JavaScript self-tests **in that order**, so a
-`fullcheck` failure would stop the run before the self-tests are reached.
+`make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
+`version-check`, then the JSON test and both JavaScript self-tests **in that
+order**, so a `fullcheck` failure would stop the run before the self-tests are
+reached. `cli-check` is the second consumer of the protocol: `tools/seide_cli.py`
+does its own eight checks against a scratch workspace with no shell code
+involved, which is what keeps the frozen contract honest (see
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a
 browser: it renders the board (`browser_smoke.py`, 5 checks) and then drives it
 by hand -- Ctrl+Z and Ctrl+Shift+Z, a wheel over a card's own contents, and the
@@ -316,6 +322,7 @@ shell/                  the front end and the endpoints
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
   e2e.py                drives the protocol end to end over stdio
+  seide_cli.py          the second client: read, write, list, run, board
   demo.py               installs examples/board.json as this workspace's board
   bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
   newlang.py            writes a conforming .lang descriptor (flat or sgml)
