@@ -1,0 +1,8 @@
+{
+  "name": "electron-example",
+  "title": "Electron window",
+  "kind": "source overlay",
+  "summary": "the same shell in an Electron window: the server and the kernel are the base ones, only the window is Electron, and the dependency lives in this fork's own package.json",
+  "packages": ["electron"],
+  "status": "written, never installed or launched here -- the repository has no dependencies and no network"
+}

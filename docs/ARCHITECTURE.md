@@ -266,21 +266,32 @@ The Makefile's verification targets, in the order `make test` runs them:
 | --- | --- | --- |
 | `check` | `python tools/e2e.py --seide build/seide.exe` | the kernel alone: protocol, files, board, exec |
 | `fullcheck` | `python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
+| `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
+| `version-check` | `python tools/version.py check` | one version, one changelog section: the copies in `seide_cfg.h` and `shell/main.mjs` |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | 87 descriptor/tokenizer checks, both families, no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | 69 checks of the protocol plumbing, board model, token spans and the undo ring, no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
 | — | `python tools/undo_smoke.py` | the board's undo really is wired to the keys: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back |
 
+`smoke` runs the last two and needs a browser.  The release pipeline
+(`tools/release.py`) runs `test` for every channel and adds `smoke` from beta
+up; `docs/RELEASING.md` is the policy.
+
 ---
 
 ## Rejected alternatives, with reasons
 
-- **Electron.** Rejected because it means bundling a browser: hundreds of
-  megabytes, a download in the build, and a Node-and-Chromium process tree. The
-  prototype uses the system's Edge/Chromium in `--app=` mode with a throwaway
-  profile instead. This is a prototype tradeoff, not a product answer; the
-  product answer is WRY/Tauri (`docs/FORK.md`).
+- **Electron.** Rejected **in the base** because it means bundling a browser:
+  hundreds of megabytes, a download in the build, and a Node-and-Chromium
+  process tree. The prototype uses the system's Edge/Chromium in `--app=` mode
+  with a throwaway profile instead. This is a prototype tradeoff, not a product
+  answer; the product answer is WRY/Tauri (`docs/FORK.md`). A fork is a
+  different question, and the answer there may be yes:
+  `forks/electron-example/` wraps the same shell in an Electron window, with
+  Electron in the fork's own `package.json` and nothing Electron-shaped in the
+  kernel or the base shell. That is what keeping the dependency out of `main`
+  means -- it is not a rule against anyone else using it.
 - **A Rust kernel.** Dropped because a dependency's build script needed a C
   compiler, which breaks constraint 4 (fully offline, no configure step). C89
   has no build script and no dependency graph to resolve.

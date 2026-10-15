@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  seide.wxs: WiX v4 source for the seIDE Windows installer.
+
+  This file is a TEMPLATE, not a finished source: it carries exactly one
+  placeholder marker (search for @@FILES@@) which tools/msi/build.py replaces
+  with one <Component> per payload file harvested from a release bundle.  The
+  marker sits inside a <ComponentGroup>; the closing ComponentRefs are added by
+  the same substitution.  Everything else is hand-written and static.
+
+  Build it with (this is the exact command tools/msi/build.py runs):
+
+      wix build -arch x64 -ext WixToolset.UI.wixext ^
+                -d Version=<numeric-version> -d Manufacturer=seIDE contributors ^
+                -d UiName=seIDE ^
+                -o seide-<version>-win64.msi build\msi\seide-<version>.wxs
+
+  The -ext argument is required because this source uses the built-in WiX UI
+  (the xmlns:ui namespace below): WiX 4/5 ships that as a separate extension,
+  and the same extension must be present when the MSI is built.  It must be
+  available to the WiX installation, not merely named on the command line:
+  "wix extension add WixToolset.UI.wixext" once, if the installer did not
+  already provide it.  A silent-only (/qn) build does not need it at all.
+
+  Preprocessor / bind variables: all three are supplied by build.py as
+  "wix build -d NAME=VALUE", and WiX resolves them at preprocess time:
+    $(var.Version)       MSI ProductVersion.  MUST be numeric "X.Y.Z" (or
+                         "X.Y.Z.N"); build.py derives it from the release
+                         version and documents the mapping in its docstring.
+    $(var.Manufacturer)  Package/@Manufacturer and the ARP publisher.
+    $(var.UiName)        ARP display name and the Start Menu shortcut name.
+  Nothing is hard-coded that a release engineer would want to override, except
+  the UpgradeCode: see the comment on it.
+
+  Scope: per-machine, Program Files only.  No PATH edit, no writes outside
+  [ProgramFiles64Folder]seIDE\ and the standard Installer/ARP keys, and no
+  touching of the user's board state (%USERPROFILE%\.seide\), which lives
+  outside the install directory and is therefore never enumerated here.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <!--
+    The identity of "the seIDE product family".  This GUID is deliberately
+    hard-coded and must NEVER change: Windows Installer matches upgrades by
+    UpgradeCode + ProductVersion, so a new GUID here would install a second,
+    parallel seIDE instead of replacing the old one.  It is generated once
+    (uuidgen) and frozen for the lifetime of the product.
+  -->
+  <Package
+      Name="$(var.UiName)"
+      Manufacturer="$(var.Manufacturer)"
+      Version="$(var.Version)"
+      UpgradeCode="a1f4c1f2-59a7-4f9c-9e01-7b0d2f3c8d64"
+      Language="1033"
+      Scope="perMachine"
+      Compressed="yes">
+
+    <!--
+      MajorUpgrade: a newer MSI removes the previous version first, in one
+      transaction, and ARP shows a single entry afterwards.  AllowSameVersion-
+      Upgrades="yes" lets a rebuilt MSI of the same version be reinstalled
+      rather than refused, which is what a release engineer expects when they
+      re-run build.py.  The default DowngradeErrorMessage already refuses an
+      older MSI over a newer install.
+    -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" />
+
+    <!-- Payload, the Start Menu shortcut, the launcher shim. -->
+    <Feature Id="Main" Title="seIDE" Level="1">
+      <ComponentGroupRef Id="@@FRAGMENT_ID@@" />
+    </Feature>
+
+    <!--
+      No <MediaTemplate EmbedCab="yes">: in v4 that is the documented default
+      (a single embedded cabinet), so stating it would only be noise.
+
+      Deliberately absent:
+        * Environment/PATH: installing or editing PATH is a machine-wide
+          side effect the project has always refused to take.
+        * A bundled Node or Electron runtime: the window is
+          "node shell/main.mjs serve", so Node 24 is a prerequisite the user
+          installs, not something this MSI ships.
+        * Any per-user file under %USERPROFILE%: uninstall must remove
+          exactly what was installed and must never delete the board state in
+          %USERPROFILE%\.seide\.
+        * Custom actions: nothing here needs to run code at install time,
+          and custom actions are the usual source of uninstall surprises.
+    -->
+
+    <!--
+      Built-in silent and basic UI.  WixUI_InstallDir is used (rather than
+      WixUI_Minimal) only so the user can see and change the install folder;
+      /qn silent installs skip all of this and need no UI at all.
+    -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+  </Package>
+
+  <Fragment>
+    <!--
+      The one directory tree the MSI owns.  ProgramFiles64Folder (not
+      ProgramFilesFolder) because the payload is a native x64 kernel: -arch x64
+      selects the 64-bit folder, and this property keeps the two in step.
+      INSTALLFOLDER is also what WixUI_InstallDir edits.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="seIDE" />
+    </StandardDirectory>
+
+    <!--
+      The Start Menu shortcut lives in the per-machine ("all users") menu
+      because the package is perMachine.  It points at the shim installed
+      beside the payload, never at node.exe directly: the shim fixes the
+      working directory and carries the Node 24 note.
+    -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuSeideFolder" Name="$(var.UiName)" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="@@FRAGMENT_ID@@">
+
+      <!--
+        The launcher shim.  It is not part of the release bundle (it exists
+        only for the MSI), so it is written by hand here and its source path is
+        relative to this .wxs file: build.py expands the template into
+        build\msi\, mydir resolves to build\msi\, and therefore
+        ..\..\tools\msi\seide-window.cmd is the checked-in shim.  That relative
+        path is why the expanded .wxs must stay in build\msi\.
+      -->
+      <Component Id="ShimCmd" Directory="INSTALLFOLDER" Guid="f0b7d4a5-3c21-4a6e-9d5f-6b1e8c2a7d33">
+        <File Id="seide-window.cmd" Name="seide-window.cmd"
+              Source="..\..\tools\msi\seide-window.cmd" KeyPath="yes" />
+      </Component>
+
+      <!--
+        The Start Menu shortcut, in its own component with its own GUID so
+        that its lifetime is independent of the shim's.  KeyPath="yes" makes
+        the .lnk the key path; a shortcut may be a key path and needs no
+        registry trick.  WiX sets the shortcut's target to the shim and its
+        working directory to INSTALLFOLDER (the shim's %~dp0 does the rest).
+      -->
+      <Component Id="StartMenuShortcut" Directory="ProgramMenuSeideFolder"
+                 Guid="c3e9a2b6-7d48-4f10-8f2b-5a6c9e0d1b77">
+        <Shortcut Id="SeideStartMenuShortcut"
+                  Name="$(var.UiName)"
+                  Target="[INSTALLFOLDER]seide-window.cmd"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Description="seIDE: the window (requires Node 24)" />
+        <!-- RemoveFolder is required for a valid per-machine component: it
+             tells the Installer the (possibly empty) menu folder is ours to
+             clean up at uninstall.  It removes the folder only when empty, so
+             a user's own Start Menu entries are never touched. -->
+        <RemoveFolder Id="RemoveProgramMenuSeideFolder" On="uninstall" />
+      </Component>
+
+      <!-- The refs for the two static components above.  Everything in the
+           group must be referenced from this feature, so build.py only has to
+           supply the payload refs. -->
+      <ComponentRef Id="ShimCmd" />
+      <ComponentRef Id="StartMenuShortcut" />
+
+      <!--
+        @@FILES@@: build.py replaces this single marker line with one
+        <Component> per file of the release bundle (correct <Directory>
+        nesting, Guid="*", KeyPath="yes" on the <File>), followed by one
+        <ComponentRef> per component.  Do not list payload files by hand.
+      -->
+        <!-- @@FILES@@ -->
+    </ComponentGroup>
+  </Fragment>
+</Wix>

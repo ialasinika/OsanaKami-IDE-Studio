@@ -50,7 +50,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck probe smoke test run clean modules
+.PHONY: all check fullcheck probe smoke test run clean modules version-check release release-dry
 
 all: $(BIN)
 
@@ -106,10 +106,26 @@ smoke: $(BIN)
 	$(PYTHON) tools/browser_smoke.py --timeout 90
 	$(PYTHON) tools/undo_smoke.py --timeout 180
 
+# The version is decided in VERSION; every copy of it is checked here so the
+# binary cannot drift from the number a release will be tagged with.
+version-check:
+	$(PYTHON) tools/version.py check
+
+# What a release would do, without doing it: the whole plan, and nothing
+# written.  This is the one target that needs only Python.
+release-dry:
+	$(PYTHON) tools/release.py --dry-run
+
+# Cut the release VERSION names: verify, freeze the changelog, write the
+# artifacts, tag.  Refuses a dirty tree, the wrong branch, a taken tag, or a
+# changelog that does not name this version.
+release:
+	$(PYTHON) tools/release.py
+
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, the fixed bugs, and both
-# protocol modes.
-test: check fullcheck probe $(JSONTEST)
+# codec, the language layer, the browser modules, the fixed bugs, the version
+# copies, and both protocol modes.
+test: check fullcheck probe version-check $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs

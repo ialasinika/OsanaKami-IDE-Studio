@@ -9,6 +9,11 @@
  * `seide modules` prints the trim manifest below.  That table, plus the SRC
  * list in the Makefile and the method table in rpc.c, is the complete list of
  * places a fork touches to remove a subsystem.
+ *
+ * The version string is not here: it comes from seide_cfg.h, which this file
+ * includes first, and `tools/version.py` keeps that one copy in step with
+ * VERSION and the shell.  A second define of SDE_VERSION in a .c file is a
+ * check failure, not a convenience.
  */
 #include "seide_cfg.h"
 
@@ -24,8 +29,6 @@
 #include "port.h"
 #include "rpc.h"
 #include "serve.h"
-
-#define SDE_VERSION "0.1.0"
 
 /* ---------------------------------------------------------------------- */
 /* trim manifest                                                          */

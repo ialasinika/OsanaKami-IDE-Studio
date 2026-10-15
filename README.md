@@ -70,7 +70,12 @@ See `docs/PARADIGM.md`.
 
 The window is the system's Edge/Chromium launched in
 `--app=http://127.0.0.1:PORT` app mode, with a throwaway profile. There is no
-Electron, no bundled Chromium and nothing to download.
+Electron, no bundled Chromium and nothing to download. **This constrains the
+base, not a fork:** Electron never enters the kernel or `shell/`, but a fork may
+wrap the same shell in it, with the dependency in the fork's own `package.json`
+— [`forks/electron-example/`](forks/electron-example/README.md) is that fork,
+and it is why this repository can stay dependency-free while someone who wants
+Electron still gets it.
 **For a real product, the replacement path is WRY/Tauri** — currently nothing in
 this repository uses either; the WRY path is described in `docs/FORK.md` and is
 future work, not present work.
@@ -174,7 +179,8 @@ C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 6 checks, 0 failed
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, the JSON test, both JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # the copies agree: 0.2.0-alpha.1
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
 ```
 
 The individual pieces, if you want to run them directly:
@@ -185,14 +191,16 @@ python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
 python tools/undo_smoke.py                     # presses Ctrl+Z in it: 6 passed, 0 failed
+python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 87/87 checks passed
 node shell/web/selftest.mjs                    # ok 69/69 (pure JS: no DOM)
 ```
 
-`make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
-both JavaScript self-tests **in that order**, so a `fullcheck` failure would stop
-the run before the self-tests are reached. `smoke` is separate because it needs a
+`make test` runs `check`, then `fullcheck`, then `probe`, then `version-check`,
+then the JSON test and both JavaScript self-tests **in that order**, so a
+`fullcheck` failure would stop the run before the self-tests are reached.
+ `smoke` is separate because it needs a
 browser: it renders the board (`browser_smoke.py`, 5 checks) and then presses
 Ctrl+Z and Ctrl+Shift+Z in it (`undo_smoke.py`, 6 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
@@ -254,13 +262,15 @@ build/seide.exe rpc --root . --verbose
 
 ```
 Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
-                        test, modules, run, clean, and the JSON test target
+                        test, modules, run, clean, version-check, release-dry,
+                        release, and the JSON test target
 README.md               this file
+VERSION                 the one line that decides the version: 0.2.0-alpha.1
 LICENSE                 MIT -- the code.  Except the docs: see below
 LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
 CHANGELOG.md            what is in this version, and what is not
 .github/workflows/      CI: the same make targets, on a Windows runner
-.gitignore              build artefacts and workspace-local state
+.gitignore              build artefacts, workspace-local state and dist/
 .gitattributes          the checkout is the repository's bytes: LF everywhere
 
 core/                   the kernel -- C89, no dependencies
@@ -292,13 +302,19 @@ tools/                  Python 3.12, standard library only
   demo.py               installs examples/board.json as this workspace's board
   bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
   newlang.py            writes a conforming .lang descriptor (flat or sgml)
+  version.py            the one version: show / check / set / bump
+  release.py            cuts a release: preflight, verify, freeze, artifacts, tag
+  msi/                  the WiX v4 installer for 1.x (never built here: no WiX)
   README.md             what each tool is for
+
+forks/                  worked forks the release pipeline knows about
+  electron-example/     the same shell in an Electron window (fork.json + files/)
 
 examples/               hello.bf and shadow.bf (Brainfuck), page.html (every
                         SGML token kind), hello.xml, notes.svg, and board.json --
                         the starter board `tools/demo.py` installs
 docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
-                        PROJECT.md, TRIM.md, FORK.md, BUGS.md
+                        PROJECT.md, TRIM.md, FORK.md, BUGS.md, RELEASING.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
@@ -347,7 +363,10 @@ layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
 [`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
 [`docs/PROJECT.md`](docs/PROJECT.md) — the workspace as one project;
 [`docs/TRIM.md`](docs/TRIM.md) — how to cut a module out;
-[`docs/FORK.md`](docs/FORK.md) — the fork playbook;
+[`docs/FORK.md`](docs/FORK.md) — the fork playbook, and
+[`forks/electron-example/`](forks/electron-example/README.md) — a fork that is
+only a window; [`docs/RELEASING.md`](docs/RELEASING.md) — channels, branches and
+what a release has to prove;
 [`docs/BUGS.md`](docs/BUGS.md) — every defect probing found, with its root cause
 and fix, so a fork knows what was already tried.
 
@@ -359,10 +378,19 @@ and fix, so a fork knows what was already tried.
 
 ## Version, licence, CI
 
-This is **v0.1.0-alpha**: the constraint set holds and the suites are green, but
-undo covers the board and not the typing inside a card, there is no portability
-beyond Windows, and there is no plugin loading. See
-[CHANGELOG.md](CHANGELOG.md) for what is in it and what is not.
+The version is one line in [`VERSION`](VERSION) — currently **`0.2.0-alpha.1`** —
+and two files must copy it, because C89 and JavaScript cannot read a file at
+build time: `core/include/seide_cfg.h` and `shell/main.mjs`. `tools/version.py`
+writes and checks them (`make version-check`, which runs inside `make test`), so
+the binary, the shell and the changelog cannot drift apart. The last tagged
+release is **`v0.1.0-alpha`**. Cutting the next one is `make release-dry` — the
+whole plan, nothing written — and `make release`; [`docs/RELEASING.md`](docs/RELEASING.md)
+is the policy: the channels, the branches, what each one ships, how a fork joins
+in, and what the pipeline does not claim.
+
+What this version is **not**: undo covers the board and not the typing inside a
+card, there is no portability beyond Windows, and there is no plugin loading.
+See [CHANGELOG.md](CHANGELOG.md) for what is in it and what is not.
 
 The code is [MIT](LICENSE) — take it, fork it, rename it. The documentation
 (the Markdown files, this one included) is [CC BY 4.0](LICENSE-DOCS): quote it,

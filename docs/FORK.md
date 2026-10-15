@@ -317,6 +317,12 @@ network fetch into CI. If constraint 4 matters to you more than the window
 chrome does, this is the step you skip; if the window is the product, this is
 the step you do first and the rest of the prototype becomes your backend.
 
+**A cheaper window, if not a native one:** [`forks/electron-example/`](../forks/electron-example/README.md)
+is the smallest version of this move.  The shell runs unmodified, Electron draws
+the window, `contextIsolation` and `sandbox` stay on, and the dependency lives in
+the fork's own `package.json` -- so the base repository stays dependency-free and
+the fork still ships a real window.
+
 ---
 
 ## Which of these cost what
@@ -330,6 +336,42 @@ the step you do first and the rest of the prototype becomes your backend.
 | 5. Add a language | `langs/<id>.lang` | 10 minutes | very low | yes |
 | 6. Move the transport | `core/src/serve.c` or `shell/main.mjs` | hours | low if framing and single-writer are preserved | yes |
 | 7. WRY/Tauri window | `shell/main.mjs` + a new Rust host | days | high | **no** — adds a dependency graph and a fetch |
+
+---
+
+## What a fork may put in a release
+
+Everything above changes the source you build.  A fork that wants to be *shipped*
+-- shipped by this repository's own machinery, under its own name and its own
+tag -- adds two things and nothing else:
+
+```
+forks/<name>/fork.json      {"name": "...", "title": "...", "summary": "..."}
+forks/<name>/files/...      copied over the bundle root, file for file
+```
+
+```sh
+python tools/release.py --fork <name> --dry-run    # the plan
+python tools/release.py --fork <name>              # a 1.x channel, in practice
+```
+
+The fork then gets `<name>-v<version>` as its tag, its own release directory, a
+bundle with `files/` laid over the bundle root, and `<name>-fork.zip` -- the
+fork's whole delta plus an `APPLY.md`.  `fork.json` can set
+`"no_fork_zip": true` for a fork that only exists as an overlay.
+
+Two rules make this work.  **The overlay is `files/`**: a fork does not patch
+base files in place through the pipeline, it replaces them, so what a fork has
+changed is always a short list.  **The dependency belongs to the fork**: if a
+fork needs Electron, a Rust host, a UI framework or a package manager, it says
+so in its own `package.json` (or its own `Cargo.toml`), never in the base tree.
+That is what keeps constraint 4 true for everyone who does not want the fork.
+
+[`forks/electron-example/`](../forks/electron-example/README.md) is the worked
+example: an Electron window around the same shell, with Electron in the fork's
+own `package.json` and no Electron anywhere in `main`.  It has never been built
+in this checkout -- no network, no dependencies -- and says so itself.
+[`docs/RELEASING.md`](RELEASING.md) is the release policy the pipeline follows.
 
 ---
 

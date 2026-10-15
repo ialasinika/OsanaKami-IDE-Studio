@@ -14,6 +14,9 @@ build, scaffolding, verification and reference tools.
 | [`browser_smoke.py`](browser_smoke.py) | The window, without a human: starts the host, drives the system browser headless (`--dump-dom`), and asserts on the rendered DOM — HUD, workspace root, painted board. Restores the board byte-identically and kills the host by pid; with no board at all (a fresh clone) it installs `examples/board.json` for the run and removes it again. `make smoke`. |
 | [`undo_smoke.py`](undo_smoke.py) | The keystroke `--dump-dom` cannot press: frames the real app in a temporary same-origin wrapper, double-clicks empty space to add a card, then sends Ctrl+Z and Ctrl+Shift+Z and counts the cards — including that Ctrl+Z with a text field focused leaves the board alone. `make smoke`. |
 | [`build.py`](build.py) | Thin wrapper around the repository `Makefile` (it never invents compiler flags); locates `mingw32-make`/`gcc` and reports them. |
+| [`version.py`](version.py) | The one version: `show`, `check`, `set`, `bump`. `VERSION` is the source; the copies in `core/include/seide_cfg.h` and `shell/main.mjs` are written from it, and `check` also requires the top `##` section of `CHANGELOG.md` to be `## Unreleased` or `## v<version>`. Runs inside `make test`. |
+| [`release.py`](release.py) | Cuts a release in five steps — preflight, verify, freeze the changelog, artifacts, tag — and refuses a dirty tree, the wrong branch, a taken tag, or a changelog that does not name this version. `--dry-run` prints the whole plan and writes nothing; `--fork NAME` releases `forks/NAME` instead. Policy in `docs/RELEASING.md`. |
+| [`msi/build.py`](msi/build.py) | Expands the WiX v4 source for a staged bundle and calls `wix` to bind a per-machine installer. Deliberately not a build dependency: no WiX means one sentence and exit 2, never a fake `.msi`. 1.x only; never built here. |
 | [`demo.py`](demo.py) | Installs `examples/board.json` — the five-card board in the README's screenshots — as this workspace's `.seide/board.json`. `.seide/` is gitignored, so a fresh clone otherwise opens an empty canvas, and every screenshot and bug report in the docs would be unreproducible. Refuses to overwrite an existing board without `--force`; `--print` shows the board and changes nothing. |
 
 ## Examples
@@ -65,7 +68,7 @@ python tools/undo_smoke.py --keep      # leave the wrapper page for a look
 
 `make smoke` runs both.
 
-**6. Verify a build end to end** (`--seide-cmd` takes the whole command line, so
+**7. Verify a build end to end** (`--seide-cmd` takes the whole command line, so
 the shell multiplexer can be driven too; the default `--seide` is the
 kernel-only path and skips the `lang.*` checks)
 
@@ -75,13 +78,33 @@ python tools/e2e.py --seide build/seide.exe --fixture examples/hello.bf
 python tools/e2e.py --seide-cmd "node shell/main.mjs rpc --workspace ." --fixture examples/hello.bf
 ```
 
+**8. Move the version, and prove every copy moved with it**
+
+```console
+python tools/version.py show            # 0.2.0-alpha.1, channel alpha
+python tools/version.py bump            # alpha.1 -> alpha.2, in VERSION and both copies
+python tools/version.py check           # exit 1 if a copy or the changelog disagrees
+```
+
+**9. See what the next release would do** (nothing is written, no suite runs)
+
+```console
+python tools/release.py --dry-run
+python tools/release.py --dry-run --fork electron-example     # a fork's plan
+```
+
+Drop `--dry-run` to cut it for real; `docs/RELEASING.md` has the five steps,
+the channel table and every rehearsal flag.
+
 ## Notes
 
 * Exit codes are consistent across the tools: `0` success, `1` a check or the
   build failed, `2` a driver or environment error (endpoint not found,
   conflicting endpoints, protocol failure, file that cannot be written) and `3`
   a malformed command line. `bf.py` uses `2` for a program or parse error and
-  `3` for a usage error.
+  `3` for a usage error. `version.py` and `release.py` keep the same ladder:
+  `2` is a missing tool or a `VERSION` file that cannot be read, `3` a usage
+  error, and `1` is what a release gate returns when it says no.
 * `e2e.py` runs in **kernel mode** with `--seide` (spawns `<seide> rpc`; the
   kernel serves no `lang.*`, so those checks are reported as skipped) and in
   **full mode** with `--seide-cmd` (the command line is spawned verbatim, e.g.

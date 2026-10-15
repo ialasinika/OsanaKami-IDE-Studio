@@ -9,6 +9,15 @@
 build/
 
 # ---------------------------------------------------------------------------
+# release output (tools/release.py: dist/<version>/ holds the archives, the
+# checksums, RELEASE-NOTES.md and manifest.json)
+#
+# The release notes and the manifest are generated from the tree at the tag,
+# so committing them would only invite them to disagree with it.
+# ---------------------------------------------------------------------------
+dist/
+
+# ---------------------------------------------------------------------------
 # workspace-local state (the board document lives at <root>/.seide/board.json)
 #
 # The board is where you put things, so it is project state.  Ignoring all of
