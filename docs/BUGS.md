@@ -10,7 +10,8 @@ shipped is the proof, and it is runnable:
 
 ```console
 python tools/kernel_probe.py     # or: make probe -- every entry below, on a
-                                 # scratch workspace under build/ (46 checks)
+                                 # scratch workspace under build/ (46 checks,
+                                 # nine of them the shapes file.stat promises)
 python tools/e2e.py --seide build/seide.exe    # the protocol, both modes
 node langs/selftest.mjs && node shell/web/selftest.mjs
 ```

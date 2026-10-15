@@ -183,7 +183,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 30 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, cli-check, version-check, the JSON test, both JS self-tests
 ```
@@ -196,11 +196,11 @@ python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck            # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search and a frame: 26 passed, 0 failed
+python tools/input_smoke.py                    # keys, wheel, the editor, multi-select, a search, a frame and a watched file: 30 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 92/92 checks passed
-node shell/web/selftest.mjs                    # ok 91/91 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 103/103 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
@@ -224,10 +224,27 @@ the search card to list what it found across the workspace, clicks the first hit
 and checks the editor that opened has its caret on that hit's line, then selects
 the whole board again, frames it with `group` on the command line, drags the
 frame and checks every card inside it moved by the same delta, and runs
-`ungroup` to check the frame goes and the cards stay put
-(`input_smoke.py`, 26 checks). On a clone that has no
+`ungroup` to check the frame goes and the cards stay put. Last it opens a file
+from outside the app — the test writes it with a plain file write, then again
+with different bytes — and checks the card notices on its own and reloads, that
+a card with unsaved edits is warned instead of overwritten, and that deleting
+the file under a card is reported with the text still in the card
+(`input_smoke.py`, 30 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
+
+**A file changed behind the app's back is noticed, on a timer.** The kernel emits
+`file.changed` for the writes it made itself and for nothing else, so a file
+touched by another program produces no notification at all. The shell therefore
+polls `file.stat` — one call per open editor card every 1.5 s, carrying no file
+text — and compares the revision it gets with the one the card read. A card with
+nothing unsaved reloads and says `reloaded from disk`; a card with unsaved edits
+keeps its text and says `changed on disk (rev N) — ^S overwrites`; a file that
+has gone says `gone from disk — ^S writes it back`. The decision table is pure
+and lives in `shell/web/watch.mjs`, so `node shell/web/selftest.mjs` covers it
+with no DOM. A fork that trims `file.stat` out of its kernel does not break the
+app: the watcher turns itself off with one log line
+([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
 
 **The protocol suite used to write to your board, and no longer does.** The
 board checks drive `board.save` against the workspace they were given, but they
@@ -317,7 +334,8 @@ langs/                  language support, deliberately OUTSIDE the kernel
 shell/                  the front end and the endpoints
   main.mjs              `seide rpc` (stdio) and `seide serve` (HTTP + SSE + browser)
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
-                        history.mjs, rpc.mjs, main.mjs, selftest.mjs, README.md
+                        history.mjs, rpc.mjs, watch.mjs, main.mjs, selftest.mjs,
+                        README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

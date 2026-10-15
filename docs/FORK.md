@@ -74,6 +74,14 @@ The cuts a fork usually makes first, in ascending order of pain:
 **Cost:** proportional to what you cut; the reverse — adding a module back — is
 always harder than leaving it in. Cut last, not first.
 
+One **method** can go without cutting a module: `file.stat` is one handler
+(`h_file_stat`) plus one row in `sde_methods[]`, and the app's only consumer is
+the shell's watcher, which stops polling on the first `-32601 METHOD_NOT_FOUND`
+and logs that once rather than asking a question the kernel cannot answer. The
+shipped tests still measure the kernel this repository ships, so `make probe`
+(and the watch checks in `make smoke`) will say so — which is the point of
+having them.
+
 ---
 
 ## 3. Replace the platform layer to leave Win32
@@ -404,8 +412,15 @@ follows is what is genuinely still missing:)
   What is still on the table here: regex mode, a search narrowed to a selection
   or to a glob the card cannot express, replace across files, and incremental
   results while you type.
-- **Search that follows the disk.** The search card reads the workspace when you
-  ask; nothing watches it. A stale row can name a line that moved.
+- **A workspace that follows the disk.** Built now, in the narrow direction: the
+  files open in `editor` cards are polled through `file.stat` (`shell/web/watch.mjs`,
+  once every 1.5 s) so a clean card reloads, a card with unsaved edits is warned
+  instead of overwritten, and a deleted file is reported. Still on the table:
+  watching the **workspace** — so that `search`, `files` and `project` cards could
+  refresh themselves and a stale search row would stop naming a line that moved —
+  and having the *kernel* watch (`ReadDirectoryChangesW`, `inotify`) instead of
+  the shell asking on a timer, which is a promise `docs/PROTOCOL.md` deliberately
+  does not make.
 - **A second client.** Built now, in the cheap direction: `tools/seide_cli.py` is
   a command-line consumer of `docs/PROTOCOL.md` (read, write, list, run, board)
   that imports nothing from `shell/`, with its eight checks in `make test` as

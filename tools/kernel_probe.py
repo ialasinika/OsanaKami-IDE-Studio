@@ -73,6 +73,12 @@ def prepare_workspace():
     os.makedirs(os.path.join(root, ".seide"))
     shutil.copyfile(fixture, os.path.join(root, "examples", "hello.bf"))
     shutil.copyfile(starter, os.path.join(root, ".seide", "board.json"))
+    # A file the kernel will not read as text, written here rather than through
+    # `file.write` (which refuses U+0000 on purpose).  `file.stat` must call it
+    # "exists, but no revision to compare", which is what tells a client to warn
+    # about it rather than reload over it.
+    with open(os.path.join(root, "scratch", "binary.bin"), "wb") as handle:
+        handle.write(b"\x00\x01\x02\xff")
     return root
 
 
@@ -173,6 +179,45 @@ def run(k):
     check("limit: 3 still returns 3 entries", len(r["files"]) == 3, str(len(r["files"])))
     r = k.call("workspace.list", {"limit": None})["result"]
     check("limit: null still means 'no limit'", r["truncated"] is False, json.dumps(r)[:80])
+
+    print("\n== file.stat: ask about a file without reading it ==")
+    # The reason the method exists: a client holding a revision can ask "is this
+    # still what I read?" without moving the bytes.  If the two ever disagreed,
+    # every comparison built on them would be wrong.
+    read = k.call("file.read", {"path": "examples/hello.bf"})["result"]
+    stat = k.call("file.stat", {"path": "examples/hello.bf"})["result"]
+    check("file.stat agrees with file.read on the revision",
+          stat["revision"] == read["revision"],
+          f"stat={stat['revision']} read={read['revision']}")
+    check("...and on the size", stat["size"] == read["size"],
+          f"stat={stat['size']} read={read['size']}")
+    check("a plain file exists and is not a directory",
+          stat["exists"] is True and stat["dir"] is False, json.dumps(stat)[:140])
+    check("mtime is a positive number", isinstance(stat["mtime"], int) and stat["mtime"] > 0,
+          repr(stat["mtime"]))
+
+    absent = k.call("file.stat", {"path": "scratch/absent.txt"})
+    check("a file that is not there is an answer, not an error",
+          "result" in absent and absent["result"]["exists"] is False,
+          json.dumps(absent)[:140])
+    check("...with no revision to compare (0), no size and no mtime",
+          absent["result"]["revision"] == 0 and absent["result"]["size"] == 0
+          and absent["result"]["mtime"] == -1,
+          json.dumps(absent["result"])[:140])
+
+    directory = k.call("file.stat", {"path": "examples"})["result"]
+    check("a directory says it is one",
+          directory["exists"] is True and directory["dir"] is True,
+          json.dumps(directory)[:140])
+
+    binary = k.call("file.stat", {"path": "scratch/binary.bin"})["result"]
+    check("a file the kernel will not read as text has no revision (0)",
+          binary["exists"] is True and binary["revision"] == 0,
+          json.dumps(binary)[:140])
+
+    escape = k.call("file.stat", {"path": "../outside.txt"})
+    check("file.stat refuses a path that escapes the workspace",
+          escape.get("error", {}).get("name") == "IO", json.dumps(escape)[:140])
 
     print("\n== the binary is the one the sources describe ==")
     stamp = build_stamp()

@@ -315,6 +315,30 @@ static void h_file_write(sde_call *c)
     c->owned = res;
 }
 
+/*
+ * The cheap half of `file.read`: what a watcher needs to ask "did this change?"
+ * without paying for the text.  A missing file is not an error here -- it is
+ * the answer -- so only a path that cannot be resolved at all fails.
+ */
+static void h_file_stat(sde_call *c)
+{
+    char        err[256];
+    const char *path = NULL;
+    sde_json   *res;
+
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
+    err[0] = '\0';
+    res = sde_wksp_stat(c->app, path, err, sizeof(err));
+    if (res == NULL) {
+        fail_path(c, path, err);
+        return;
+    }
+    c->owned = res;
+}
+
 /* ---------------------------------------------------------------------- */
 /* handlers: the board                                                    */
 /* ---------------------------------------------------------------------- */
@@ -558,6 +582,7 @@ static const sde_method sde_methods[] = {
     { "workspace.list", h_workspace_list },
     { "file.read",      h_file_read },
     { "file.write",     h_file_write },
+    { "file.stat",      h_file_stat },
 #if SDE_WITH_BOARD
     { "board.load",     h_board_load },
     { "board.save",     h_board_save },

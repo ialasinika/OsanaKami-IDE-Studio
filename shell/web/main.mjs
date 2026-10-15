@@ -23,6 +23,15 @@ import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { createBoard, cardsInsideRect, cardsWithin, DEFAULT_SIZE, frameRect, MIN_SIZE, normaliseRect, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import {
+  WATCH_GONE,
+  WATCH_POLL_MS,
+  WATCH_RELOAD,
+  WATCH_WARN,
+  watchDecision,
+  watchReport,
+  watchTrimmed,
+} from "./watch.mjs";
+import {
   COMMAND_HELP,
   describeCard,
   emptySheet,
@@ -1760,11 +1769,15 @@ function createApp() {
   function installEvents() {
     client.on("log", (event) => log(event.level || "info", event.message || "", event.path));
     client.on("file.changed", (event) => {
-      for (const entry of mounted.values()) {
-        if (entry.handle.kind === "editor" && entry.handle.hasPath && entry.handle.hasPath(event.path)) {
-          entry.handle.onFileChanged(event.revision);
-        }
-      }
+      // The kernel announcing one of its own writes. It gets the same answer as
+      // a change the poll finds: the revision is the whole message, so it is
+      // handed to the same rule as a `file.stat` reply.
+      applyFileChange(event.path, {
+        path: event.path,
+        exists: true,
+        dir: false,
+        revision: event.revision,
+      });
     });
     client.on("exec.output", (event) => {
       const cardId = runs.get(event.run_id);
@@ -1795,6 +1808,172 @@ function createApp() {
         (err) => log("error", `board.load failed: ${err.message}`),
       );
     });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* changes nothing announces                                           */
+  /* ------------------------------------------------------------------ */
+
+  /*
+   * `file.changed` only ever says what the kernel did. A file rewritten by git,
+   * by a build, or by any editor that is not this one is invisible to it, and a
+   * card that quietly keeps showing yesterday's bytes is the failure mode that
+   * matters: the user finds out when they save over somebody else's work.
+   *
+   * `file.stat` answers the only question that needs asking -- is this still the
+   * revision I hold? -- and moves no bytes doing it, so the shell asks about the
+   * files on the board on a timer. The rules live in `watch.mjs` (pure, pinned
+   * by `selftest.mjs`); what is here is the asking.
+   */
+  let watchTimer = null;
+  let watchBusy = false;
+  let watchSeen = new Map();
+  /** A kernel without `file.stat` (a trimmed fork): stop asking, say so once. */
+  let watchUnavailable = false;
+
+  /** Every editor card currently holding `path`. */
+  function editorsOn(path) {
+    const out = [];
+    for (const entry of mounted.values()) {
+      const handle = entry.handle;
+      if (handle === undefined || handle === null || handle.kind !== "editor") {
+        continue;
+      }
+      if (typeof handle.hasPath === "function" && handle.hasPath(path)) {
+        out.push(handle);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * One change, one answer -- whether it arrived as a notification or as the
+   * answer to a poll. Each card is judged on its own: two cards on one file can
+   * hold two revisions, and only one of them may have unsaved edits.
+   */
+  function applyFileChange(path, stat) {
+    for (const handle of editorsOn(path)) {
+      const decision = watchDecision(
+        { revision: handle.revision, dirty: handle.dirty === true },
+        stat,
+      );
+      if (decision === WATCH_RELOAD) {
+        handle.reload().then((reloaded) => {
+          if (reloaded) {
+            log("info", `${path} changed on disk -- reloaded`);
+          }
+        }).catch((err) => log("error", `file.read ${path}: ${err.message}`));
+      } else if (decision === WATCH_WARN) {
+        handle.onFileChanged(Number.isFinite(stat.revision) ? stat.revision : null);
+      } else if (decision === WATCH_GONE) {
+        handle.onFileGone();
+      }
+    }
+  }
+
+  /** The files on the board, grouped by path: two cards, one question. */
+  function watchedPaths() {
+    const groups = new Map();
+    for (const entry of mounted.values()) {
+      const handle = entry.handle;
+      if (handle === undefined || handle === null || handle.kind !== "editor") {
+        continue;
+      }
+      const path = String(handle.path || "").replace(/\\/g, "/");
+      if (path === "") {
+        continue;
+      }
+      if (!groups.has(path)) {
+        groups.set(path, []);
+      }
+      groups.get(path).push(handle);
+    }
+    return groups;
+  }
+
+  /**
+   * What the whole group holds: the oldest revision anyone has, and whether
+   * anyone has unsaved edits. A card still loading has no revision to compare,
+   * so the group says "unknown" and the next poll asks again.
+   */
+  function groupKnown(handles) {
+    let revision = null;
+    let loading = false;
+    let dirty = false;
+    for (const handle of handles) {
+      const held = handle.revision;
+      if (!Number.isFinite(held)) {
+        loading = true;
+      } else if (revision === null || held < revision) {
+        revision = held;
+      }
+      if (handle.dirty === true) {
+        dirty = true;
+      }
+    }
+    return { revision: loading ? null : revision, dirty };
+  }
+
+  async function pollForChanges() {
+    const groups = watchedPaths();
+    if (groups.size === 0) {
+      watchSeen = new Map();
+      return;
+    }
+    const paths = [...groups.keys()];
+    const stats = await Promise.all(paths.map(async (path) => {
+      try {
+        return await client.call("file.stat", { path });
+      } catch (err) {
+        return { error: err };
+      }
+    }));
+    if (watchTrimmed(stats)) {
+      // `METHOD_NOT_FOUND`: this kernel was built without the method. Not an
+      // error -- the board simply keeps whatever the kernel last said, which is
+      // exactly what the shell did before this poll existed.
+      watchUnavailable = true;
+      stopWatching();
+      log("warn", "this kernel has no `file.stat`: changes made outside seIDE will be noticed"
+        + " when the file is opened again, not while it is on the board");
+      return;
+    }
+    const pairs = paths.map((path, index) => ({
+      path,
+      stat: stats[index],
+      known: groupKnown(groups.get(path)),
+    }));
+    const report = watchReport(pairs, watchSeen);
+    watchSeen = report.next;
+    for (const action of report.actions) {
+      applyFileChange(action.path, action.stat);
+    }
+  }
+
+  function startWatching() {
+    if (watchUnavailable || watchTimer !== null) {
+      return;
+    }
+    watchTimer = setInterval(() => {
+      // One question at a time: a kernel that is slow to answer must not build
+      // a queue of polls behind it.
+      if (watchBusy) {
+        return;
+      }
+      watchBusy = true;
+      pollForChanges()
+        .catch((err) => log("warn", `file.stat poll failed: ${err.message}`))
+        .finally(() => {
+          watchBusy = false;
+        });
+    }, WATCH_POLL_MS);
+  }
+
+  function stopWatching() {
+    if (watchTimer !== null) {
+      clearInterval(watchTimer);
+      watchTimer = null;
+    }
   }
 
   async function adoptDiskBoard(reason) {
@@ -1958,6 +2137,12 @@ function createApp() {
     }
     initializing = false;
     renderAll();
+    // The cards exist now, so there is something to watch. A reconnect re-tests
+    // the kernel (it may have been replaced by one without `file.stat`), but the
+    // timer itself is never doubled.
+    watchSeen = new Map();
+    watchUnavailable = false;
+    startWatching();
   }
 
   /* ------------------------------------------------------------------ */

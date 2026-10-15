@@ -151,13 +151,15 @@ the trade-off is explicit rather than discovered.
 | `rpc.mjs` | nothing can reach the kernel: the board still renders and pans, but no file is read, nothing is saved, and the status light can never turn green. |
 | `board.mjs` | there is no document model: cards cannot be added, moved, linked or serialised. `import` fails, so the UI does not boot. |
 | `cards.mjs` | the board still pans and zooms, but it has no cards to put on it. |
+| `watch.mjs` | the board works, but a file changed behind your back is not noticed: no reload of a clean card, no warning on a dirty one, no `gone from disk`. |
 | `style.css` | the board still works, but it renders as unstyled white boxes stacked at the origin. The editor's colour layer and text layer stop lining up. |
 | `main.mjs` | `index.html` has nothing to boot: a blank dark page. |
 | `index.html` | nothing is served at `/`; `main.mjs` is still a valid module. |
 | `selftest.mjs` | nothing at runtime. You lose the only check that the protocol plumbing still works. |
 
-`main.mjs` is the only file that imports the other four, which is what keeps
-this table honest: every module below it stands on its own.
+`main.mjs` is the only module that imports the others, and every module in this
+table stands on its own; `selftest.mjs` is the exception that imports several,
+because pinning them is its whole job.
 
 ---
 
@@ -184,6 +186,36 @@ first.
 The board document is protected the same way: an autosave fires 1.5 s after the
 last layout change, and a `STALE_REVISION` on the board keeps your layout in
 memory and asks you to type `save force`.
+
+### A file changed by something else
+
+`file.changed` arrives only for writes the kernel itself made. `git checkout`, a
+formatter, or another editor leaves no trace at all, so the shell asks instead:
+every open `editor` card is polled through `file.stat` — once every 1.5 s, one
+small call per card, no file text on the wire — and the revision it reports is
+compared with the one the card read. What the comparison means is a pure
+function, `watchDecision(known, stat)`, in `watch.mjs`:
+
+| the card | the answer from disk | what happens |
+| --- | --- | --- |
+| has nothing unsaved | a different revision | the card reloads the bytes and says `reloaded from disk` |
+| has unsaved edits | a different revision | the text stays, the status says `changed on disk (rev N) — ^S overwrites`, and the log warns |
+| anything | `revision: 0` (too big, binary, or never read) | a warning, **never** a reload: "cannot compare" is not "unchanged" |
+| anything | gone (or a directory now) | `gone from disk — ^S writes it back`; the text stays and `^S` recreates the file |
+| anything | the revision the card holds | nothing: a stat is not news |
+
+One rule is applied twice: `watchReport(pairs, previous)` decides per *path*
+whether the answer is news at all, so a 1.5 s poll that keeps seeing the same
+revision logs once, and per *card* what that card deserves. Both functions are
+exported for `selftest.mjs` — along with `watchTrimmed(responses)`, the rule
+below — and `tools/input_smoke.py` drives the real thing with a plain out-of-band
+file write, an out-of-band edit over a dirty card, and a delete.
+
+If the kernel was built without `file.stat` (a fork may take the method away),
+the first refusal is `-32601 METHOD_NOT_FOUND`: `watchTrimmed` says so, and the
+watcher stops polling and says it once in the log, instead of asking a question
+the kernel cannot answer 80 times a minute. A transport failure is not that
+answer, so it stays a warning and the poll goes on.
 
 ### The keys inside an editor card
 
@@ -287,14 +319,20 @@ grouping.
   no "select by kind"; the rubber band is the only geometric selector.
 * Search is literal and on demand. There is no regex mode, no search narrowed to
   a selection or to the selected cards, no replace across files, and no watching
-  the workspace for changes: a stale row can point at a line that moved, which is
-  why the row carries the file and line it was found at rather than an offset
-  into a buffer.
+  the workspace itself (the files an open editor card holds are watched — see
+  above — but a search row is not): a stale row can point at a line that moved,
+  which is why the row carries the file and line it was found at rather than an
+  offset into a buffer.
 * A frame's membership is a **guess about geometry**, not a fact stored in the
   document. A card clipping a frame's border has not joined it (the centre is the
   test), and a card standing inside two overlapping frames moves with either one.
   Frames do not nest, they do not clip what they hold, and there is no collapse or
   fold: a frame moves cards, it does not own them.
+* The watcher is a **poll, not a filesystem notification**. It asks every 1.5 s,
+  so a change is noticed up to 1.5 s late, and only for files open editor cards
+  hold. `inotify` or `ReadDirectoryChangesW` would let the kernel announce an
+  outside write, but that is a promise this protocol does not make: the kernel
+  speaks when it is asked, and says nothing about the filesystem underneath it.
 
 ---
 
@@ -338,6 +376,8 @@ round-trips, document repair, viewport clamping, the selection set and
 `cardsWithin` (the rubber band's arithmetic), a group move/delete being one
 change, the search arithmetic (line/column, excerpts, the file order and the
 budgets), the frame arithmetic (the centre-inside membership test and the
-rectangle drawn round a selection), and token-span application to a string. It
-prints `ok N/N` and exits
+rectangle drawn round a selection), the watcher's decision table (a clean card
+adopts new bytes, a dirty one is only warned, a revision that cannot be compared
+is never a reload, and one piece of news is reported once), and token-span
+application to a string. It prints `ok N/N` and exits
 non-zero if anything fails.

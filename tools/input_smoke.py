@@ -1,5 +1,6 @@
 """input_smoke.py -- drive the real window: the undo keys, the editor keys, who
-owns a wheel, selecting more than one card, and searching the workspace.
+owns a wheel, selecting more than one card, searching the workspace, and a file
+that changes on disk under the card holding it.
 
 ``browser_smoke.py`` fetches the page with ``--dump-dom``, which drives no
 pointer, no keyboard and no wheel, so the *input paths* were the part of the
@@ -8,8 +9,9 @@ board no shipped suite could reach: ``selftest.mjs`` proves the undo ring
 search arithmetic with no DOM at all, and this proves the wiring on top of them
 -- including that a wheel over a card's own scroll region belongs to the card,
 that the keys a person actually presses reach the editor card, that a drag can
-carry a set of cards and that a hit in a search card opens its file at its line,
-which are rules only a real event can test.
+carry a set of cards, that a hit in a search card opens its file at its line and
+that a write from *another process* reaches the card holding that file, which
+are rules only a real event can test.
 
 How, without a web driver or CDP: the shell serves every file under
 ``shell/web/``, so this test writes one small wrapper page there for the length
@@ -34,9 +36,14 @@ reach into the iframe and do what a person does:
    drag and a group Delete with one Ctrl+Z -- and read the counts and the
    positions back out;
 9. type ``find <text>`` on the command line, wait for the search card to list
-   hits, click the first one and read the caret of the editor that opened.
+   hits, click the first one and read the caret of the editor that opened;
+10. open a scratch file, rewrite it from a *separate process* (``cmd /c echo``,
+    which the kernel cannot announce), and read what the card says: a clean card
+    reloads, a card with unsaved edits keeps them and warns, and a file that
+    disappears is reported rather than written back.
 
-The board is backed up and restored byte-for-byte, and the host is killed by pid.
+The board is backed up and restored byte-for-byte, that scratch file is deleted
+by the test, and the host is killed by pid.
 
     python tools/input_smoke.py [--edge PATH] [--port N] [--timeout S] [--keep]
 
@@ -57,6 +64,10 @@ import browser_smoke as bs  # noqa: E402  (needs the sys.path line above)
 
 WRAPPER_NAME = "__input_smoke.html"
 WRAPPER = bs.REPO_ROOT / "shell" / "web" / WRAPPER_NAME
+#: The file the watch section rewrites from a second process.  It lives under
+#: build/ (gitignored, and next to the kernel the run already built) and the
+#: test deletes it whether or not the checks got as far as doing so.
+SCRATCH = bs.REPO_ROOT / "build" / "__watch_smoke.txt"
 RESULT_RE = re.compile(r'<pre id="result">(.*?)</pre>', re.S)
 BUDGET_MS = 45000
 
@@ -581,9 +592,137 @@ async function main() {
     say("frame-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && editorOk && selectOk && searchOk && frameOk
-    ? "undo, redo, wheel ownership, the editor keys, multi-select, a workspace search and a frame work in a real browser"
-    : "FAILED -- see the counts, wheel, editor, select, search and frame lines above"));
+  /* --- watch: a change made on disk that nobody announced ---
+     The kernel announces its own writes; a file rewritten by another program is
+     the case no announcement covers.  So this rewrites one with a real child
+     process -- `cmd /c echo` -- and reads back what the card holding it says. */
+  let watchOk = true;
+  try {
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
+    const scratch = "build/__watch_smoke.txt";
+    // cmd.exe wants backslashes; make one without typing one.
+    const nativePath = scratch.split("/").join(String.fromCharCode(92));
+    let nextId = 0;
+    const rpc = async (method, params) => {
+      const answer = await fetch("/rpc", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++nextId, method, params }),
+      });
+      const body = await answer.json();
+      if (body.error) throw new Error(method + ": " + body.error.message);
+      return body.result;
+    };
+    const outside = (text) => rpc("exec.start", {
+      cmd: 'cmd /c echo ' + text + '> "' + nativePath + '"',
+      card_id: "",
+    });
+    /* Waiting for that child is a *real* wait: every probe is a round trip to
+       the host, and virtual time stands still while a request is in flight. */
+    const readBack = async (want) => {
+      let last = "";
+      for (let i = 0; i < 60; i++) {
+        try {
+          const result = await rpc("file.read", { path: scratch });
+          if (typeof result.text === "string" && result.text.indexOf(want) !== -1) return result;
+        } catch (error) {
+          last = error.message;
+        }
+        await sleep(250);
+      }
+      say("watch-note: never read " + JSON.stringify(want) + " back: " + last);
+      return null;
+    };
+    const vanished = async () => {
+      for (let i = 0; i < 60; i++) {
+        try {
+          const answer = await rpc("file.stat", { path: scratch });
+          if (answer.exists !== true) return answer;
+        } catch (error) {
+          return null;
+        }
+        await sleep(250);
+      }
+      return null;
+    };
+    const editorHolding = () => {
+      for (const node of doc.querySelectorAll("#cards [data-card-id]")) {
+        const area = node.querySelector("textarea.ed-input");
+        const label = node.querySelector(".card-label");
+        if (area !== null && label !== null && label.textContent.indexOf("__watch_smoke") !== -1) {
+          return { node, area };
+        }
+      }
+      return null;
+    };
+    const statusOf = (held) => {
+      const node = held === null ? null : held.node.querySelector('[data-role="card-status"]');
+      return node === null ? "" : (node.textContent || "").trim();
+    };
+    const runLine = (text) => {
+      const box = doc.getElementById("command");
+      box.value = text;
+      box.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    };
+
+    /* The file first exists before any card holds it -- nothing to tell. */
+    await outside("one");
+    const first = await readBack("one");
+    runLine("open " + scratch);
+    await waitUntil(() => editorHolding() !== null, 60, 250);
+    const held = editorHolding();
+    /* Wait for the read to answer: a card that has been made but has not read
+       the file yet holds no revision, which is the one thing this section is
+       about. */
+    await waitUntil(() => held !== null && held.area.value.indexOf("one") === 0, 60, 250);
+    say("watch-open: open=" + (held !== null)
+      + " text=" + JSON.stringify(held === null ? "" : held.area.value)
+      + " status=" + JSON.stringify(statusOf(held)));
+
+    /* A second writer rewrites it.  A clean card takes the bytes. */
+    await outside("two");
+    await readBack("two");
+    const reloaded = await waitUntil(() => statusOf(held).indexOf("reloaded from disk") !== -1, 60, 250);
+    say("watch-reload: reloaded=" + reloaded
+      + " text=" + JSON.stringify(held === null ? "" : held.area.value)
+      + " status=" + JSON.stringify(statusOf(held)));
+
+    /* The same write, but this card has unsaved edits: it is told, and the text
+       stays.  An editor that silently overwrites typing is worse than one that
+       never reloads at all. */
+    const kept = "mine, unsaved\\n";
+    if (held !== null) {
+      held.area.focus();
+      held.area.value = kept;
+      held.area.dispatchEvent(new win.Event("input", { bubbles: true }));
+    }
+    await sleep(80);
+    await outside("three");
+    await readBack("three");
+    const warned = await waitUntil(() => statusOf(held).indexOf("changed on disk") !== -1, 60, 250);
+    say("watch-warn: warned=" + warned
+      + " kept=" + (held !== null && held.area.value === kept)
+      + " status=" + JSON.stringify(statusOf(held)));
+
+    /* The file disappears under the card.  Said, not silently written back. */
+    await rpc("exec.start", { cmd: 'cmd /c del "' + nativePath + '"', card_id: "" });
+    const gone = await vanished();
+    const reported = gone !== null
+      && await waitUntil(() => statusOf(held).indexOf("gone from disk") !== -1, 60, 250);
+    say("watch-gone: gone=" + reported
+      + " kept=" + (held !== null && held.area.value === kept)
+      + " status=" + JSON.stringify(statusOf(held)));
+
+    watchOk = first !== null && held !== null && reloaded && warned && reported
+      && held.area.value === kept;
+  } catch (error) {
+    watchOk = false;
+    say("watch-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && editorOk && selectOk && searchOk && frameOk && watchOk
+    ? "undo, redo, wheel ownership, the editor keys, multi-select, a workspace search, a frame and a watched file work in a real browser"
+    : "FAILED -- see the counts, wheel, editor, select, search, frame and watch lines above"));
   document.title = "input smoke done";
 }
 
@@ -737,6 +876,25 @@ def parse_frame(body: str) -> dict:
     return found
 
 
+def parse_watch(body: str) -> dict:
+    """The watched-file lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    patterns = (
+        ("open", r'watch-open: open=(\w+) text="([^"]*)" status="([^"]*)"'),
+        ("reload", r'watch-reload: reloaded=(\w+) text="([^"]*)" status="([^"]*)"'),
+        ("warn", r'watch-warn: warned=(\w+) kept=(\w+) status="([^"]*)"'),
+        ("gone", r'watch-gone: gone=(\w+) kept=(\w+) status="([^"]*)"'),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"watch-(?:error|note): (.+)", body)
+    if none is not None:
+        found["error"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -752,7 +910,7 @@ def main(argv=None) -> int:
         edge = bs.find_edge(args.edge)
     except bs.DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 26 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 30 skipped (no browser)")
         return 0
 
     backup = bs.BoardBackup(bs.BOARD_PATH)
@@ -801,6 +959,7 @@ def main(argv=None) -> int:
     finally:
         if not args.keep:
             WRAPPER.unlink(missing_ok=True)
+        SCRATCH.unlink(missing_ok=True)
         alive = host.proc is not None and host.proc.poll() is None
         if alive:
             bs.terminate(host.proc)
@@ -968,6 +1127,41 @@ def main(argv=None) -> int:
                   and int(goneFrame[1]) >= 2,
                   f"frames={goneFrame[0]} cards={goneFrame[1]} stayed={goneFrame[2]}"
                   if goneFrame else frame_detail("ungroup"))
+
+    watch = parse_watch(body)
+
+    def watch_detail(key: str) -> str:
+        got = watch.get(key)
+        if got is not None:
+            return " ".join(got)
+        if watch.get("error") is not None:
+            return f"watch: {watch['error'][0]}"
+        return f"no watch-{key} line"
+
+    held_rev = watch.get("open")
+    results.check("an editor card on a file reports the revision it read",
+                  bool(held_rev) and held_rev[0] == "true" and held_rev[1].startswith("one")
+                  and "rev " in held_rev[2] and "loaded" in held_rev[2],
+                  f"text={held_rev[1]!r} status={held_rev[2]!r}" if held_rev
+                  else watch_detail("open"))
+    reloaded = watch.get("reload")
+    results.check("a write from another process reaches a clean card, which reloads it",
+                  bool(reloaded) and reloaded[0] == "true" and reloaded[1].startswith("two")
+                  and "reloaded from disk" in reloaded[2],
+                  f"reloaded={reloaded[0]} text={reloaded[1]!r} status={reloaded[2]!r}"
+                  if reloaded else watch_detail("reload"))
+    warned = watch.get("warn")
+    results.check("a card with unsaved edits keeps them and says the file changed",
+                  bool(warned) and warned[0] == "true" and warned[1] == "true"
+                  and "changed on disk" in warned[2] and "modified" in warned[2],
+                  f"warned={warned[0]} kept={warned[1]} status={warned[2]!r}"
+                  if warned else watch_detail("warn"))
+    deleted = watch.get("gone")
+    results.check("a file deleted under a card is reported and the text stays",
+                  bool(deleted) and deleted[0] == "true" and deleted[1] == "true"
+                  and "gone from disk" in deleted[2],
+                  f"gone={deleted[0]} kept={deleted[1]} status={deleted[2]!r}"
+                  if deleted else watch_detail("gone"))
 
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")

@@ -4,8 +4,40 @@ What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
 ## Unreleased
+### Kernel
+
+- A new method, `file.stat`: the revision `file.read` would report, without the
+  text.  It exists so a client can ask "is the file on disk still the one I read?"
+  on a timer without moving bytes every second, and it is what lets the shell
+  notice a write it did not make.  A file that is not there is a **result**, not
+  an error (`exists: false`, `mtime: -1`, `revision: 0`), because "gone" is one of
+  the answers a watcher needs; `revision: 0` always means "no revision to
+  compare" — a directory, a file over the 4 MiB cap, a file with a NUL byte in it
+  — and never "empty", because an empty file hashes to a real revision.  The
+  escape rules and parameter checking are `file.read`'s own, so an absolute path
+  or a `..` escape is still `1003 IO`.  `make probe` covers the shape in nine
+  checks: the shell's watcher is its only consumer inside the app, so the rails
+  are pinned by the probe — which is nobody's client — rather than by
+  `tools/seide_cli.py`, whose verbs are the ones a person types.
+
 ### Shell
 
+- A file changed by **another program** is noticed, on a timer.  The kernel emits
+  `file.changed` only for writes it made itself, so the shell polls `file.stat`
+  every 1.5 s for each open `editor` card and compares the revision it reports
+  with the one the card read.  A card with nothing unsaved reloads and says
+  `reloaded from disk`; a card with unsaved edits keeps its text and says
+  `changed on disk (rev N) — ^S overwrites`; a file that has gone says `gone from
+  disk — ^S writes it back`; and a revision that cannot be compared (`0`) is a
+  warning and never a reload, because "cannot compare" is not "unchanged".  The
+  decision table is pure (`watchDecision`, `watchReport`, `watchTrimmed`,
+  `WATCH_POLL_MS` in `shell/web/watch.mjs`; the polling is in `main.mjs`), so
+  `shell/web/selftest.mjs` pins it with no DOM (12 new checks, 103 in all) and
+  `tools/input_smoke.py` drives the real thing with out-of-band writes (4 new
+  checks: the revision a
+  freshly opened card holds, a clean reload, a dirty warning, and a delete).  If
+  the kernel has no `file.stat` — a fork may trim the method — the watcher stops
+  polling on the first `-32601 METHOD_NOT_FOUND` and says so once in the log.
 - The board can select more than one card.  `Ctrl+A` selects every card,
   ctrl/⌘-click (and shift-click) add or remove one, `Shift`+drag on empty space
   draws a rubber band that selects everything it touches, dragging any selected
@@ -19,8 +51,8 @@ version number says how usable it is, not how finished.
   the board.  A group move or delete is one change, one undo step and one save,
   and an edge whose endpoint is deleted goes with it (`1004 INVALID_BOARD`
   otherwise).  The command line gained `select <id...> | all | none`, and `delete`
-  with no argument acts on the selection.  `shell/web/selftest.mjs` is 91 checks
-  and `tools/input_smoke.py` drives the gestures in a real window (26 checks).
+  with no argument acts on the selection.  `shell/web/selftest.mjs` is 103 checks
+  and `tools/input_smoke.py` drives the gestures in a real window (30 checks).
 - The workspace can be searched from the board.  `find <text>` opens a `search`
   card (or re-points the one already there) at the centre of the view; it lists
   the workspace once, then reads the files that may hold the text and shows one
@@ -55,9 +87,9 @@ version number says how usable it is, not how finished.
   never be dragged apart from what it holds.  A frame renders below the cards it
   contains however often it is clicked, so it can never hide the work it groups.
   `cardsInsideRect` and `frameRect` are pure and exported; `shell/web/selftest.mjs`
-  pins the membership and margin arithmetic (91 checks) and `tools/input_smoke.py`
+  pins the membership and margin arithmetic (103 checks) and `tools/input_smoke.py`
   groups the whole board in a real window, drags the frame, checks every card
-  inside moved by one delta and ungroups (26 checks).
+  inside moved by one delta and ungroups (30 checks).
 
 ### Docs
 
@@ -78,6 +110,16 @@ version number says how usable it is, not how finished.
   the commands it speaks, and the two rails it does not invent (a `write` wants
   the revision it last read; a shell-only method is still `METHOD_NOT_FOUND`).
   `docs/FORK.md` says what that does and does not settle.
+- `docs/PROTOCOL.md` documents `file.stat` — its row in the method table, the
+  shapes it can take (`revision: 0` is "cannot compare", never "empty"), and the
+  honest note that `file.changed` is only ever emitted for a write **this kernel
+  made**, so a client that cares about `git checkout` has to ask.  A new section
+  in `shell/web/README.md` describes a file changed by something else — the
+  decision table, what the card says in each case, and what a fork loses by
+  deleting `watch.mjs` — `docs/PARADIGM.md` and `docs/FORK.md` say what the
+  watcher cannot do (it polls, it only covers files open cards hold, and the
+  kernel watches nothing), and the check counts in `README.md`,
+  `tools/README.md` and `docs/ARCHITECTURE.md` follow the suites.
 
 ### Tools
 

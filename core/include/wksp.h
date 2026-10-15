@@ -69,6 +69,17 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel,
                         char *err, size_t errcap);
 
 /*
+ * {"path","exists","dir","size","mtime","revision"} -- facts about a file
+ * without its text, for a client that wants to notice a change made behind its
+ * back.  `revision` is the hash `sde_wksp_read()` would report, and 0 when
+ * there is nothing to hash (absent, a directory, larger than the read cap, or
+ * not text): a caller must read 0 as "cannot compare", not as "empty", because
+ * a file that exists and is empty hashes to a real revision.
+ */
+sde_json *sde_wksp_stat(const sde_app *app, const char *rel,
+                        char *err, size_t errcap);
+
+/*
  * Writes `len` bytes of `text`.  When `has_base` is set, the write fails with
  * SDE_WKSP_STALE unless the file's current revision equals `base`; `*cur_rev`
  * then reports what the file actually holds.

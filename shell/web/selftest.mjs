@@ -104,6 +104,17 @@ import { saveOutcomeMessage, scrollRoom, wireChoiceStrip } from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
 
+import {
+  WATCH_GONE,
+  WATCH_OK,
+  WATCH_RELOAD,
+  WATCH_UNKNOWN,
+  WATCH_WARN,
+  watchDecision,
+  watchReport,
+  watchTrimmed,
+} from "./watch.mjs";
+
 /* ------------------------------------------------------------------ */
 /* the smallest useful test harness                                    */
 /* ------------------------------------------------------------------ */
@@ -2327,6 +2338,111 @@ test("search: one huge file cannot crowd out the rest, and says it was capped", 
     ["a.txt", "a.txt", "a.txt", "a.txt", "b.txt"]);
   assert.equal(outcome.truncated, false, "the search budget was not reached");
   assert.equal(outcome.perFileCapped, true, "but a file did hit its own cap");
+});
+
+/* ------------------------------------------------------------------ */
+/* external changes --- */
+/*
+ * The poll in `main.mjs` cannot be tested here (no browser, no timers, no
+ * kernel), but the rule it follows can: what a card holding revision N should do
+ * when `file.stat` comes back. Getting this wrong is the difference between an
+ * editor that follows the disk and one that silently eats a file.
+ */
+/* ------------------------------------------------------------------ */
+
+const statOf = (revision, extras = {}) => ({ path: "a.txt", exists: true, dir: false, revision, ...extras });
+
+test("watch: a clean card follows a file that moved on", () => {
+  assert.equal(watchDecision({ revision: 11, dirty: false }, statOf(12)), WATCH_RELOAD);
+});
+
+test("watch: a card with unsaved edits is told, never overwritten", () => {
+  assert.equal(watchDecision({ revision: 11, dirty: true }, statOf(12)), WATCH_WARN,
+    "reloading over a dirty buffer would throw away typing the user cannot get back");
+});
+
+test("watch: the revision the card holds is not news", () => {
+  assert.equal(watchDecision({ revision: 11, dirty: false }, statOf(11)), WATCH_OK);
+  assert.equal(watchDecision({ revision: 11, dirty: true }, statOf(11)), WATCH_OK,
+    "an unsaved card on the revision it read is the normal state, not a warning");
+});
+
+test("watch: a card that has not read the file yet is told nothing", () => {
+  assert.equal(watchDecision({ revision: null, dirty: false }, statOf(12)), WATCH_UNKNOWN);
+  assert.equal(watchDecision({}, statOf(12)), WATCH_UNKNOWN);
+  assert.equal(watchDecision(null, statOf(12)), WATCH_UNKNOWN);
+});
+
+test("watch: no answer is not a change", () => {
+  assert.equal(watchDecision({ revision: 11 }, null), WATCH_UNKNOWN,
+    "a failed stat must not read as `changed on disk`");
+  assert.equal(watchDecision({ revision: 11 }, { error: new Error("kernel gone") }), WATCH_UNKNOWN);
+});
+
+test("watch: a file that is gone is gone, not changed", () => {
+  const missing = { path: "a.txt", exists: false, dir: false, size: 0, mtime: -1, revision: 0 };
+  assert.equal(watchDecision({ revision: 11, dirty: false }, missing), WATCH_GONE);
+  assert.equal(watchDecision({ revision: 11, dirty: true }, missing), WATCH_GONE,
+    "a deleted file is worth saying even when the card has unsaved edits");
+  assert.equal(watchDecision({ revision: 11 }, statOf(0, { dir: true })), WATCH_GONE,
+    "a directory where the file was is not a file that changed");
+});
+
+test("watch: a revision that cannot be compared warns instead of reloading", () => {
+  assert.equal(watchDecision({ revision: 11, dirty: false }, statOf(0)), WATCH_WARN,
+    "0 is the kernel saying `no revision to compare` (binary or unreadable)");
+  assert.equal(watchDecision({ revision: 0, dirty: false }, statOf(11)), WATCH_WARN,
+    "the card side can be the one that has nothing to compare");
+  assert.equal(watchDecision({ revision: 11 }, statOf(undefined)), WATCH_WARN);
+});
+
+test("watch: each piece of news is reported once", () => {
+  const pairs = [{ path: "a.txt", known: { revision: 11, dirty: false }, stat: statOf(12) }];
+  const first = watchReport(pairs, new Map());
+  assert.deepEqual(first.actions.map((action) => `${action.path}:${action.decision}:${action.revision}`),
+    ["a.txt:reload:12"]);
+  const again = watchReport(pairs, first.next);
+  assert.deepEqual(again.actions, [], "a poll runs every 1.5s; a warning every tick is noise");
+  assert.deepEqual([...again.next.keys()], ["a.txt"]);
+});
+
+test("watch: a quiet file is not news, and a later revision is news again", () => {
+  const quiet = watchReport([{ path: "a.txt", known: { revision: 11 }, stat: statOf(11) }], new Map());
+  assert.deepEqual(quiet.actions, []);
+  assert.deepEqual([...quiet.next.values()], ["ok:11"]);
+  const moved = watchReport([{ path: "a.txt", known: { revision: 12 }, stat: statOf(13) }], quiet.next);
+  assert.deepEqual(moved.actions.map((action) => action.decision), ["reload"],
+    "the same decision on a new revision is still news");
+});
+
+test("watch: a kernel that does not have the method is trimmed, not broken", () => {
+  assert.equal(watchTrimmed([statOf(12), { error: { code: -32601, name: "METHOD_NOT_FOUND" } }]), true,
+    "a fork may cut `file.stat`; the shell stops asking instead of warning forever");
+  assert.equal(watchTrimmed([statOf(12)]), false);
+  assert.equal(watchTrimmed([]), false);
+  assert.equal(watchTrimmed([null, { error: new Error("socket closed") }]), false,
+    "a transport failure is not a trimmed kernel -- that one is worth reporting");
+});
+
+test("watch: a path that is no longer open is forgotten, not carried forever", () => {
+  const one = watchReport([
+    { path: "a.txt", known: { revision: 11 }, stat: statOf(12) },
+    { path: "b.txt", known: { revision: 2 }, stat: statOf(2) },
+  ], new Map());
+  assert.equal(one.next.size, 2);
+  const fewer = watchReport([{ path: "b.txt", known: { revision: 2 }, stat: statOf(2) }], one.next);
+  assert.deepEqual([...fewer.next.keys()], ["b.txt"]);
+});
+
+test("watch: one poll answers for every path it was given", () => {
+  const report = watchReport([
+    { path: "dirty.txt", known: { revision: 1, dirty: true }, stat: statOf(2) },
+    { path: "gone.txt", known: { revision: 1, dirty: false }, stat: { exists: false, revision: 0 } },
+    { path: "loading.txt", known: { revision: null }, stat: statOf(9) },
+  ], new Map());
+  assert.deepEqual(report.actions.map((action) => `${action.path}:${action.decision}`),
+    ["dirty.txt:warn", "gone.txt:gone"],
+    "a card still loading produces no action, and never suppresses the others");
 });
 
 /* ------------------------------------------------------------------ */

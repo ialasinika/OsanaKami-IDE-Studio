@@ -232,11 +232,15 @@ entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
 ### Cutting `wksp` — only the canvas
 
 Delete `core/src/wksp.c`, `core/include/wksp.h`, its `SRC` line, its table entry,
-and the `workspace.info` / `workspace.list` / `file.read` / `file.write` methods
-plus their four table rows in `rpc.c`.
+and the `workspace.info` / `workspace.list` / `file.read` / `file.write` /
+`file.stat` methods plus their five table rows in `rpc.c`.
 
-- Protocol loses those four methods, the `file.changed` notification, and the
+- Protocol loses those five methods, the `file.changed` notification, and the
   `root` / `name` / `file_count` members of `workspace.info`.
+- The shell's watcher polls `file.stat`, so cutting `wksp` takes its subject with
+  it: the watcher notices the first `-32601 METHOD_NOT_FOUND` and stops asking.
+  Cutting *only* `file.stat` — one handler plus one table row — is possible without
+  touching the module at all; `docs/FORK.md` describes that smaller cut.
 - `exec.start`'s `cwd` resolution goes through `sde_wksp_resolve`, so `exec`
   depends on `wksp`; cutting `wksp` means changing `exec.start` too (either
   refusing a relative `cwd` or resolving it against the process's own directory).

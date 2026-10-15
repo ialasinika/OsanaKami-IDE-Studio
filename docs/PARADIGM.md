@@ -254,6 +254,13 @@ prototype:
   in its status line when it stops. A hit opens its file at its line; there is
   no regex mode, no search-restricted-to-a-selection, and no replace across
   files.
+- An open `editor` card notices a file changed by another program, but by
+  **asking** rather than being told: `file.stat` is polled once every 1.5 s for
+  each open card, so the news can be that old, and only files a card already
+  holds are watched. A clean card reloads; a card with unsaved edits keeps its
+  text and is warned, because silently overwriting typing would be worse than
+  being stale. The kernel watches nothing — it speaks when asked — so the
+  protocol promises nothing about a change it did not make.
 - A `frame` is a labelled region that moves the cards standing inside it
   (`group`/`ungroup` on the command line). Membership is *spatial*: the centre
   of a card is the test, so a card dragged in or out joins or leaves with
