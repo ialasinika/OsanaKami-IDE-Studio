@@ -179,7 +179,7 @@ C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 9 checks, 0 failed
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # the copies agree: 0.2.0-alpha.1
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
 ```
 
