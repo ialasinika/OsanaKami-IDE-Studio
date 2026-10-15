@@ -869,8 +869,13 @@ def define_checks(h: Harness) -> list:
         if state["existed"]:
             client.call("board.save", {"document": state["document"]})
         elif state["path"] and os.path.basename(state["path"]) == "board.json":
-            # No board before the run, none after it either.
+            # No board before the run, none after it either -- and no empty
+            # state directory left behind where the board used to be.
             os.remove(state["path"])
+            try:
+                os.rmdir(os.path.dirname(state["path"]))
+            except OSError:
+                pass  # something else lives there, or it was never created
 
     def board_roundtrip():
         state = board_state()

@@ -3,6 +3,15 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
+## Unreleased
+
+### Tools
+
+- `tools/e2e.py` removes the empty `.seide/` directory left behind when the
+  suite created the board and put it back: a test run should not leave a state
+  directory nobody asked for.  `make test` in a fresh clone now ends with the
+  tree exactly as it started.
+
 ## v0.2.0-alpha.3 — 2026-10-15
 What the 1.0.0 rehearsal turned up.
 
