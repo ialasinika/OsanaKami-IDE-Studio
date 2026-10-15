@@ -178,7 +178,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 9 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 15 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, both JS self-tests
 ```
@@ -190,11 +190,11 @@ python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
 python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
 python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                    # keys and wheel in it: 9 passed, 0 failed
+python tools/input_smoke.py                    # keys, wheel and the editor keys in it: 15 passed, 0 failed
 python tools/version.py check                  # every copy of the version, and the changelog section
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 87/87 checks passed
-node shell/web/selftest.mjs                    # ok 70/70 (pure JS: no DOM)
+node langs/selftest.mjs                        # 92/92 checks passed
+node shell/web/selftest.mjs                    # ok 80/80 (pure JS: no DOM)
 ```
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `version-check`,
@@ -202,8 +202,10 @@ then the JSON test and both JavaScript self-tests **in that order**, so a
 `fullcheck` failure would stop the run before the self-tests are reached.
  `smoke` is separate because it needs a
 browser: it renders the board (`browser_smoke.py`, 5 checks) and then drives it
-by hand -- Ctrl+Z and Ctrl+Shift+Z, and a wheel over a card's own contents
-(`input_smoke.py`, 9 checks). On a clone that has no
+by hand -- Ctrl+Z and Ctrl+Shift+Z, a wheel over a card's own contents, and the
+editor card's own keys: Tab and Shift+Tab, Enter after an opener, Ctrl+F, the
+find bar's next-match button, replace-all, Escape, and that the textarea's own
+undo still holds those edits (`input_smoke.py`, 15 checks). On a clone that has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 
@@ -332,9 +334,13 @@ Stated plainly, because a fork needs to know what it is inheriting.
   `lang` member (the detected language id, or `null`); the kernel does not,
   because it has no language layer. `docs/PROTOCOL.md` marks which members come
   from which layer.
-- **Language colouring is ASCII-only.** `lang.tokenize` returns byte offsets and
-  the shell treats them as string indices; those are the same thing only for
-  ASCII. See `shell/web/main.mjs`'s exported `LIMITATIONS`.
+- **Token offsets are string indices, not byte offsets.** `lang.tokenize` scans
+  the string it was given, so its offsets count in that string's own unit —
+  UTF-16 code units in JavaScript, which is what `text.length` counts — and
+  non-ASCII text colours correctly. A client that counts *bytes* (anything not
+  running JavaScript) must convert. This bullet used to claim the opposite; the
+  implementation was measured (`langs/selftest.mjs` and `shell/web/selftest.mjs`
+  both pin it now) and the old claim was wrong.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
   layout.
 - **The shell is the only client.** There is no second front end, so the protocol

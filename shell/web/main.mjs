@@ -1730,8 +1730,8 @@ if (app !== null) {
 export const LIMITATIONS = [
   "Token colours are painted on a <pre> under a transparent <textarea>; the two share",
   "fixed metrics, so a font with different line heights would shear them apart.",
-  "Byte offsets from lang.tokenize are treated as string indices, which is only the",
-  "same thing for ASCII. Non-ASCII in a card can shift a colour by a few glyphs.",
+  "Token offsets from lang.tokenize are string indices (UTF-16 code units), so",
+  "non-ASCII colours correctly; a client that counts bytes has to convert.",
   "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and links are straight",
   "lines -- there is no router and no automatic layout.",
   "Undo is board-level and in memory: Ctrl+Z takes back board edits in this window,",

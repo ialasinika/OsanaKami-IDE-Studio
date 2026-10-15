@@ -161,14 +161,37 @@ The board document is protected the same way: an autosave fires 1.5 s after the
 last layout change, and a `STALE_REVISION` on the board keeps your layout in
 memory and asks you to type `save force`.
 
+### The keys inside an editor card
+
+The card is a text editor, so it answers the keys a text editor answers, with no
+dialog anywhere:
+
+| key | what happens |
+| --- | --- |
+| `Tab` | indent the lines the selection touches by one step (4 spaces); a bare caret gets one step in place |
+| `Shift+Tab` | take one step back off those lines: one tab, or up to four spaces |
+| `Enter` | keep the line's indentation, and step in one more after a line ending in `{`, `(` or `[` |
+| `Ctrl+F` | open the card's find bar: find, next/previous hit, replace, replace-all |
+| `Ctrl+S` | write the file — the board's own shortcuts never fire while you type |
+| `Esc` | close the find bar |
+
+Every hit is painted in the colour layer as well as selected in the textarea, so
+matches stay visible while the caret is in the find bar. The indent, auto-indent
+and replace edits are inserted through the browser's own insert command instead
+of assigning `.value`, because a direct write throws the textarea's undo stack
+away: after a `Tab`, `Ctrl+Z` still takes that `Tab` back. The pure parts
+(`indentSelection`, `indentAfterEnter`, `findMatches`, `replaceMatchAt`,
+`replaceAllMatches`, `markHits`) are exported for `selftest.mjs`; the wiring is
+pressed for real by `tools/input_smoke.py`.
+
 ### Known limitations (deliberate, documented rather than hidden)
 
-* `lang.tokenize` returns **byte offsets**, which are treated as string indices.
-  Those are the same thing only for ASCII. A file with non-ASCII characters can
-  have its colours drift by one glyph per multi-byte character. Fixing it
-  properly means mapping byte offsets to UTF-16 indices; for a C89 kernel and a
-  JavaScript shell — whose sources are ASCII — the drift
-  never appears, so it was not worth the complexity here.
+* Token offsets are **string indices**, not byte offsets. `lang.tokenize` scans
+  the JavaScript string it was handed, so its spans tile `0..text.length` in the
+  same unit `text.length` counts (UTF-16 code units) and non-ASCII text colours
+  correctly — `langs/selftest.mjs` and this directory's `selftest.mjs` both pin
+  that with non-ASCII fixtures. A tokenizer written in another language, or a
+  client that counts bytes, has to convert.
 * The colour layer and the text layer must share identical metrics. That is
   enforced from `style.css` (`--code-*`), so a card zoomed far out will scale
   them together, but a browser that substitutes a different font for one layer
@@ -179,7 +202,9 @@ memory and asks you to type `save force`.
   lines); the head is dropped and the card says how much went.
 * Undo covers the **board**, not the text inside a card. `Ctrl+Z` (or `undo`)
   takes back the last card or link change; a textarea keeps its own undo stack,
-  so typing in a note or an editor is the browser's business. The steps live in
+  so typing in a note or an editor is the browser's business — including the
+  edits the editor card makes itself, which go in as browser edits so `Ctrl+Z`
+  still takes them back. The steps live in
   memory (`history.mjs`) and a reload forgets them.
 
 ---

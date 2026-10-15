@@ -1,11 +1,14 @@
-"""input_smoke.py -- drive the real window: the undo keys, and who owns a wheel.
+"""input_smoke.py -- drive the real window: the undo keys, the editor keys, and
+who owns a wheel.
 
 ``browser_smoke.py`` fetches the page with ``--dump-dom``, which drives no
 pointer, no keyboard and no wheel, so the *input paths* were the part of the
 board no shipped suite could reach: ``selftest.mjs`` proves the undo ring
-(documents, coalescing, the redo branch) with no DOM at all, and this proves the
-wiring on top of it -- including that a wheel over a card's own scroll region
-belongs to the card, which is a rule only a real event can test.
+(documents, coalescing, the redo branch) and the editor's text operations with
+no DOM at all, and this proves the wiring on top of them -- including that a
+wheel over a card's own scroll region belongs to the card, and that the keys a
+person actually presses reach the editor card, which are rules only a real
+event can test.
 
 How, without a web driver or CDP: the shell serves every file under
 ``shell/web/``, so this test writes one small wrapper page there for the length
@@ -22,7 +25,10 @@ reach into the iframe and do what a person does:
 6. dispatch ``wheel`` over a card's own scroll region and over the board, and
    check which one the app lets through: the card's wheel must not be
    ``preventDefault``-ed and must not move the viewport, the board's must pan,
-   and ctrl+wheel over the card must still zoom.
+   and ctrl+wheel over the card must still zoom;
+7. drive the editor card's own keys -- Tab and shift+Tab on the file, Enter
+   after an opener, Ctrl+F and the find bar, replace-all and Escape -- and read
+   the buffer and the painted hits back out of the DOM.
 
 The board is backed up and restored byte-for-byte, and the host is killed by pid.
 
@@ -212,9 +218,90 @@ async function main() {
     say("wheel-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk
-    ? "undo, redo and wheel ownership work in a real browser"
-    : "FAILED -- see the counts and the wheel lines above"));
+  /* --- the editor's own keys: indent, auto-indent, find and replace --- */
+  let editorOk = true;
+  try {
+    const area = doc.querySelector('[data-card-id="c1"] textarea.ed-input');
+    const press = (key, extra) => area.dispatchEvent(new win.KeyboardEvent("keydown", Object.assign(
+      { bubbles: true, cancelable: true, key }, extra || {})));
+    if (area === null) {
+      editorOk = false;
+      say("editor: none -- the sample board has no editor card");
+    } else {
+      const original = area.value;
+      area.focus();
+      area.setSelectionRange(0, 0);
+      press("Tab");
+      const tab = area.value.slice(0, 4);
+      const caret = area.selectionStart;
+      press("Tab", { shiftKey: true });
+      const restores = area.value === original;
+      editorOk = editorOk && tab === "    " && caret === 4 && restores;
+      say("editor-indent: tab=" + JSON.stringify(tab) + " caret=" + caret
+        + " shift-tab-restores=" + restores);
+
+      /* Auto-indent: a line opening a block gets one more step for the next. */
+      area.value = "foo {\\nbar";
+      area.dispatchEvent(new win.Event("input", { bubbles: true }));
+      area.setSelectionRange(5, 5);
+      press("Enter");
+      const auto = area.value === "foo {\\n    \\nbar" && area.selectionStart === 10;
+      editorOk = editorOk && auto;
+      say("editor-enter: " + JSON.stringify(area.value) + " caret=" + area.selectionStart);
+
+      /* Find: the bar opens on Ctrl+F and every hit is painted below. */
+      press("f", { ctrlKey: true });
+      const bar = doc.querySelector('[data-card-id="c1"] [data-role="find-bar"]');
+      const query = doc.querySelector('[data-card-id="c1"] [data-role="find-query"]');
+      const count = doc.querySelector('[data-card-id="c1"] [data-role="find-count"]');
+      const open = bar !== null && bar.hidden === false;
+      query.value = "o";
+      query.dispatchEvent(new win.Event("input", { bubbles: true }));
+      const marks = doc.querySelectorAll('[data-card-id="c1"] .ed-view mark[data-role="find-hit"]');
+      const counted = count ? (count.textContent || "").trim() : "";
+      const firstOk = open && marks.length === 2 && counted === "1/2";
+      editorOk = editorOk && firstOk;
+      say("editor-find: open=" + open + " hits=" + marks.length + " count=" + JSON.stringify(counted));
+
+      /* Next steps to the second hit, and only that one is current. */
+      const next = doc.querySelector('[data-card-id="c1"] [data-role="find-next"]');
+      if (next) next.click();
+      const second = count ? (count.textContent || "").trim() : "";
+      const current = doc.querySelectorAll('[data-card-id="c1"] .ed-view mark.is-current').length;
+      editorOk = editorOk && second === "2/2" && current === 1;
+      say("editor-find-next: count=" + JSON.stringify(second) + " current=" + current);
+
+      /* Replace all, and Escape closes the bar. */
+      const replacement = doc.querySelector('[data-card-id="c1"] [data-role="replace-text"]');
+      const replaceAll = doc.querySelector('[data-card-id="c1"] [data-role="replace-all"]');
+      replacement.value = "zz";
+      if (replaceAll) replaceAll.click();
+      const replaced = area.value === "fzzzz {\\n    \\nbar";
+      press("Escape");
+      const closed = bar !== null && bar.hidden === true;
+      editorOk = editorOk && replaced && closed;
+      say("editor-replace: " + JSON.stringify(area.value) + " closed=" + closed);
+
+      /* The card puts its own edits in through the browser's insert command, so
+         the textarea's undo stack still holds them.  Undo the last one. */
+      area.focus();
+      area.setSelectionRange(0, 0);
+      const beforeUndo = area.value;
+      press("Tab");
+      const typed = area.value !== beforeUndo;
+      const undid = typeof doc.execCommand === "function" ? doc.execCommand("undo") : false;
+      const restoredByUndo = area.value === beforeUndo;
+      editorOk = editorOk && typed && undid === true && restoredByUndo;
+      say("editor-undo: typed=" + typed + " command=" + undid + " restored=" + restoredByUndo);
+    }
+  } catch (error) {
+    editorOk = false;
+    say("editor-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && editorOk
+    ? "undo, redo, wheel ownership and the editor keys work in a real browser"
+    : "FAILED -- see the counts, wheel and editor lines above"));
   document.title = "input smoke done";
 }
 
@@ -229,9 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="input_smoke.py",
         description=(
             "Boot the real app in the system browser, make a board change, press "
-            "Ctrl+Z and Ctrl+Shift+Z, and dispatch a wheel over a card's own scroll "
-            "region and over the board. Exit codes: 0 pass or skipped, 1 a check "
-            "failed, 2 could not run, 3 usage."
+            "Ctrl+Z and Ctrl+Shift+Z, dispatch a wheel over a card's own scroll "
+            "region and over the board, and drive the editor card's indent, "
+            "auto-indent, find and replace keys. Exit codes: 0 pass or skipped, "
+            "1 a check failed, 2 could not run, 3 usage."
         ),
     )
     parser.add_argument("--edge", help="path to msedge.exe (default: the usual two places)")
@@ -286,6 +374,27 @@ def parse_wheel(body: str) -> dict:
     return found
 
 
+def parse_editor(body: str) -> dict:
+    """The editor lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    patterns = (
+        ("indent", r'editor-indent: tab="([^"]*)" caret=(\d+) shift-tab-restores=(\w+)'),
+        ("enter", r'editor-enter: "([^"]*)" caret=(\d+)'),
+        ("find", r'editor-find: open=(\w+) hits=(\d+) count="([^"]*)"'),
+        ("next", r'editor-find-next: count="([^"]*)" current=(\d+)'),
+        ("replace", r'editor-replace: "([^"]*)" closed=(\w+)'),
+        ("undo", r"editor-undo: typed=(\w+) command=(\w+) restored=(\w+)"),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"editor: none -- (.+)", body)
+    if none is not None:
+        found["none"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -301,7 +410,7 @@ def main(argv=None) -> int:
         edge = bs.find_edge(args.edge)
     except bs.DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 9 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 15 skipped (no browser)")
         return 0
 
     backup = bs.BoardBackup(bs.BOARD_PATH)
@@ -400,6 +509,32 @@ def main(argv=None) -> int:
     results.check("ctrl+wheel over a card is still a zoom",
                   bool(ctrl_wheel) and ctrl_wheel[0] != ctrl_wheel[1],
                   f"zoom {ctrl_wheel[0]} -> {ctrl_wheel[1]}" if ctrl_wheel else "no wheel-ctrl line")
+
+    editor = parse_editor(body)
+    editor_expected = (
+        ("Tab indents the editor's file and shift+Tab puts it back", "indent",
+         ("    ", "4", "true")),
+        ("Enter keeps the indentation and steps in after an opener", "enter",
+         ("foo {\\n    \\nbar", "10")),
+        ("Ctrl+F opens the find bar and paints every hit", "find",
+         ("true", "2", "1/2")),
+        ("the next-match button walks the hits and marks the current one", "next",
+         ("2/2", "1")),
+        ("replace-all rewrites every hit and Escape closes the bar", "replace",
+         ("fzzzz {\\n    \\nbar", "true")),
+        ("the card's own edits stay in the textarea's undo stack", "undo",
+         ("true", "true", "true")),
+    )
+    for name, key, want in editor_expected:
+        got = editor.get(key)
+        if got is not None:
+            detail = " ".join(got)
+        elif editor.get("none") is not None:
+            detail = editor["none"][0]
+        else:
+            detail = f"no editor-{key} line"
+        results.check(name, got == want, detail)
+
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")
     code = results.report(attempts)

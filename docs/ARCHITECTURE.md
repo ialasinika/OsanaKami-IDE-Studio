@@ -269,10 +269,10 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
 | `version-check` | `python tools/version.py check` | one version, one changelog section: the copies in `seide_cfg.h` and `shell/main.mjs` |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | 87 descriptor/tokenizer checks, both families, no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | 70 checks of the protocol plumbing, board model, token spans, the undo ring and the wheel rule's arithmetic, no DOM |
+| — | `node langs/selftest.mjs` | 92 descriptor/tokenizer checks, both families, no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | 80 checks of the protocol plumbing, board model, token spans, the editor's indent/find/replace arithmetic, the undo ring and the wheel rule's arithmetic, no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, and a wheel over a card's own contents is left to the card while the board's own wheel still pans |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, and the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave |
 
 `smoke` runs the last two and needs a browser.  The release pipeline
 (`tools/release.py`) runs `test` for every channel and adds `smoke` from beta

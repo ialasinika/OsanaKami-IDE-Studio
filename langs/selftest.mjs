@@ -198,6 +198,40 @@ check(
 );
 check("a trailing newline does not invent a line", lines[2].length === 0, JSON.stringify(lines[2]));
 
+section("offsets are string indices, not bytes");
+
+// The docs used to call these byte offsets.  The tokenizer scans a JavaScript
+// string, so they are code units; these are the fixtures where the two numbers
+// differ, which is what makes the claim testable rather than asserted.
+const wideBf = "+++ \u4E2D\u6587 \u{1F600}\n# \u6CE8\u91CA\n>+<.";
+const wideSpans = tokenize(bf, wideBf);
+check("non-ASCII text tiles", assertTiles(wideBf, wideSpans) === null, assertTiles(wideBf, wideSpans));
+check(
+  "the tiling ends at text.length, not at the byte length",
+  wideSpans[wideSpans.length - 1][1] === wideBf.length &&
+    wideBf.length !== Buffer.byteLength(wideBf, "utf8"),
+  `last=${wideSpans[wideSpans.length - 1][1]} units=${wideBf.length}`
+    + ` bytes=${Buffer.byteLength(wideBf, "utf8")}`,
+);
+check(
+  "slicing by those offsets rebuilds the exact text",
+  wideSpans.map(([s, e]) => wideBf.slice(s, e)).join("") === wideBf,
+);
+const wideComment = wideSpans.find((s) => s[2] === "comment");
+check(
+  "a comment holding non-ASCII keeps its own text whole",
+  wideComment !== undefined && wideBf.slice(wideComment[0], wideComment[1]) === "# \u6CE8\u91CA",
+  JSON.stringify(wideComment),
+);
+const wideHtml = '<p title="\u4E2D\u6587">\u4F60\u597D \u{1F600}</p>';
+const wideHtmlSpans = tokenize(registry.byId("html"), wideHtml);
+check(
+  "the SGML family tiles non-ASCII the same way",
+  assertTiles(wideHtml, wideHtmlSpans) === null &&
+    wideHtmlSpans[wideHtmlSpans.length - 1][1] === wideHtml.length,
+  assertTiles(wideHtml, wideHtmlSpans),
+);
+
 section("the SGML family");
 
 const html = registry.byId("html");

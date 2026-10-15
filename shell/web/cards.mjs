@@ -1112,18 +1112,32 @@ function cardShell(card, body, options = {}) {
   return { el, title, label, tools };
 }
 
-/** Fill a `<pre>` with one text node or `<span>` per segment. */
-function paintTokens(pre, text, tokens) {
-  const segments = applyTokenSpans(text, tokens);
+/**
+ * Fill a `<pre>` with one text node or `<span>` per segment.
+ *
+ * `hits` (from `findMatches`) widen each segment with a flag, and every matched
+ * piece is wrapped in a `<mark>` so it shows through the transparent textarea
+ * above.  `current` is the match the find bar is standing on.
+ */
+function paintTokens(pre, text, tokens, hits = [], current = -1) {
+  const segments = markHits(applyTokenSpans(text, tokens), hits, current);
   pre.textContent = "";
   const frag = document.createDocumentFragment();
   for (const seg of segments) {
     const chunk = text.slice(seg.start, seg.end);
+    let node;
     if (seg.kind === "plain") {
-      frag.append(document.createTextNode(chunk));
+      node = document.createTextNode(chunk);
     } else {
-      frag.append(h("span", `tok-${seg.kind}`, { text: chunk }));
+      node = h("span", `tok-${seg.kind}`, { text: chunk });
     }
+    if (seg.hit) {
+      node = h("mark", seg.current ? "ed-hit is-current" : "ed-hit", {
+        attrs: { "data-role": "find-hit" },
+        children: [node],
+      });
+    }
+    frag.append(node);
   }
   pre.append(frag);
   return segments.length;
@@ -1207,6 +1221,186 @@ function renderUnknown(card) {
   };
 }
 
+/* -------------------- editing text -------------------- */
+
+/** One indent step: four spaces, the step the tree's C and JS already use. */
+export const INDENT_UNIT = "    ";
+
+/** A line ending in one of these opens a block, so the next line steps in. */
+const BLOCK_OPENERS = "{([";
+
+/** Clamp to a real position in `text`, and never return an inverted range. */
+function clampRange(text, start, end) {
+  const limit = text.length;
+  const from = Math.max(0, Math.min(limit, Number.isFinite(start) ? Math.trunc(start) : 0));
+  const to = Math.max(from, Math.min(limit, Number.isFinite(end) ? Math.trunc(end) : from));
+  return { from, to };
+}
+
+/**
+ * Indent or outdent the lines the selection touches, and say what to select
+ * afterwards.
+ *
+ * Pure, so `selftest.mjs` can check every branch without a browser.  A caret
+ * with nothing selected gets one step inserted in place; anything else is
+ * line-wise, which is what makes Tab repeatable while a region stays selected.
+ * Outdenting removes one tab or up to one step of leading spaces, never a
+ * character that was not indentation.
+ *
+ * @param {string} text
+ * @param {number} start  selection start (a string index, not a byte offset)
+ * @param {number} end    selection end
+ * @param {{unit?: string, outdent?: boolean}} [options]
+ * @returns {{text: string, selectionStart: number, selectionEnd: number}}
+ */
+export function indentSelection(text, start, end, options = {}) {
+  const { unit = INDENT_UNIT, outdent = false } = options;
+  const { from, to } = clampRange(text, start, end);
+  if (!outdent && from === to) {
+    return {
+      text: text.slice(0, from) + unit + text.slice(from),
+      selectionStart: from + unit.length,
+      selectionEnd: from + unit.length,
+    };
+  }
+  const regionStart = text.lastIndexOf("\n", from - 1) + 1;
+  // A selection that stops just past a newline does not reach into the next
+  // line, so that line is left alone.
+  const tail = to > from && text[to - 1] === "\n" ? to - 1 : to;
+  const newline = text.indexOf("\n", tail);
+  const regionEnd = newline === -1 ? text.length : newline;
+  const lines = text.slice(regionStart, regionEnd).split("\n").map((line) => {
+    if (!outdent) {
+      return unit + line;
+    }
+    if (line.startsWith("\t")) {
+      return line.slice(1);
+    }
+    let cut = 0;
+    while (cut < unit.length && line[cut] === " ") {
+      cut += 1;
+    }
+    return line.slice(cut);
+  });
+  const body = lines.join("\n");
+  return {
+    text: text.slice(0, regionStart) + body + text.slice(regionEnd),
+    selectionStart: regionStart,
+    selectionEnd: regionStart + body.length,
+  };
+}
+
+/**
+ * What to insert after a newline: the line's own indentation, plus one step
+ * when that line opens a block.  `lineBefore` is the text between the start of
+ * the line and the caret.
+ *
+ * Deliberately one-way: a closing brace does not step back out, because the
+ * guess would be wrong as often as it is right.
+ */
+export function indentAfterEnter(lineBefore, options = {}) {
+  const { unit = INDENT_UNIT } = options;
+  const match = /^[ \t]*/.exec(lineBefore);
+  const indent = match === null ? "" : match[0];
+  const trimmed = lineBefore.replace(/\s+$/, "");
+  if (trimmed === "" || !BLOCK_OPENERS.includes(trimmed.slice(-1))) {
+    return indent;
+  }
+  return indent + unit;
+}
+
+/**
+ * Every literal occurrence of `query`, left to right, never overlapping.
+ *
+ * Case-insensitive unless asked otherwise -- and case-sensitive anyway when
+ * folding would change the string's length, because the offsets this returns
+ * index the original text and must stay valid.
+ *
+ * @returns {Array<{start: number, end: number}>}
+ */
+export function findMatches(text, query, options = {}) {
+  const { caseSensitive = false } = options;
+  if (typeof query !== "string" || query === "" || typeof text !== "string") {
+    return [];
+  }
+  const folded = text.toLowerCase();
+  const foldable = folded.length === text.length && query.toLowerCase().length === query.length;
+  const useCase = caseSensitive || !foldable;
+  const haystack = useCase ? text : folded;
+  const needle = useCase ? query : query.toLowerCase();
+  const hits = [];
+  let at = haystack.indexOf(needle);
+  while (at !== -1) {
+    hits.push({ start: at, end: at + needle.length });
+    at = haystack.indexOf(needle, at + needle.length);
+  }
+  return hits;
+}
+
+/** Replace one match in place; `hit` comes from `findMatches`. */
+export function replaceMatchAt(text, hit, replacement) {
+  if (hit === null || hit === undefined || hit.start < 0 || hit.end > text.length) {
+    return text;
+  }
+  return text.slice(0, hit.start) + replacement + text.slice(hit.end);
+}
+
+/** Replace every match at once, and report how many there were. */
+export function replaceAllMatches(text, query, replacement, options = {}) {
+  const hits = findMatches(text, query, options);
+  if (hits.length === 0) {
+    return { text, count: 0 };
+  }
+  let out = "";
+  let at = 0;
+  for (const hit of hits) {
+    out += text.slice(at, hit.start) + replacement;
+    at = hit.end;
+  }
+  return { text: out + text.slice(at), count: hits.length };
+}
+
+/**
+ * Split coloured segments so each piece carries its own find-hit flag, which is
+ * how a match stays visible behind the transparent textarea while the caret is
+ * somewhere else entirely.
+ *
+ * `hits` must be ascending and non-overlapping, as `findMatches` returns them.
+ * Pure, so the selftest can check the seam cases.
+ *
+ * @param {Array<{start: number, end: number, kind: string}>} segments
+ * @param {Array<{start: number, end: number}>} hits
+ * @param {number} [current]  index into `hits` of the match being visited
+ * @returns {Array<{start: number, end: number, kind: string, hit: boolean, current: boolean}>}
+ */
+export function markHits(segments, hits, current = -1) {
+  const marks = Array.isArray(hits) ? hits : [];
+  const out = [];
+  for (const seg of segments) {
+    let at = seg.start;
+    for (let index = 0; index < marks.length; index += 1) {
+      const hit = marks[index];
+      if (hit.end <= at) {
+        continue;
+      }
+      if (hit.start >= seg.end) {
+        break;
+      }
+      const from = Math.max(hit.start, at);
+      const to = Math.min(hit.end, seg.end);
+      if (from > at) {
+        out.push({ start: at, end: from, kind: seg.kind, hit: false, current: false });
+      }
+      out.push({ start: from, end: to, kind: seg.kind, hit: true, current: index === current });
+      at = to;
+    }
+    if (at < seg.end) {
+      out.push({ start: at, end: seg.end, kind: seg.kind, hit: false, current: false });
+    }
+  }
+  return out;
+}
+
 /* -------------------- editor -------------------- */
 
 function renderEditor(card, ctx) {
@@ -1218,8 +1412,54 @@ function renderEditor(card, ctx) {
   });
   const scroller = h("div", "ed-scroll", { children: [pre] });
   const surface = h("div", "ed-surface", { children: [scroller, area] });
+
+  /* The find bar.  It is part of the card, not a browser dialog: everything
+     here has to keep working offline, and a modal would swallow the caret. */
+  const findQuery = h("input", "ed-find-input", {
+    attrs: {
+      type: "text", placeholder: "find", spellcheck: "false", autocomplete: "off",
+      "data-role": "find-query", "aria-label": "find in this file",
+    },
+  });
+  const findCount = h("span", "ed-find-count", {
+    attrs: { "data-role": "find-count", "aria-live": "polite" },
+  });
+  const findPrev = h("button", "ed-find-btn", {
+    text: "\u2191",
+    attrs: { type: "button", title: "previous match (shift+enter)", "data-role": "find-prev" },
+  });
+  const findNext = h("button", "ed-find-btn", {
+    text: "\u2193",
+    attrs: { type: "button", title: "next match (enter)", "data-role": "find-next" },
+  });
+  const findClose = h("button", "ed-find-btn", {
+    text: "\u00d7",
+    attrs: { type: "button", title: "close the find bar (esc)", "data-role": "find-close" },
+  });
+  const replaceText = h("input", "ed-find-input", {
+    attrs: {
+      type: "text", placeholder: "replace with", spellcheck: "false", autocomplete: "off",
+      "data-role": "replace-text", "aria-label": "replace with",
+    },
+  });
+  const replaceOne = h("button", "ed-find-btn ed-find-wide", {
+    text: "replace",
+    attrs: { type: "button", title: "replace this match", "data-role": "replace-one" },
+  });
+  const replaceAll = h("button", "ed-find-btn ed-find-wide", {
+    text: "all",
+    attrs: { type: "button", title: "replace every match", "data-role": "replace-all" },
+  });
+  const findBar = h("div", "ed-find", {
+    attrs: { hidden: "", "data-role": "find-bar" },
+    children: [
+      h("div", "ed-find-row", { children: [findQuery, findCount, findPrev, findNext, findClose] }),
+      h("div", "ed-find-row", { children: [replaceText, replaceOne, replaceAll] }),
+    ],
+  });
+
   const status = makeStatus();
-  const body = h("div", "card-body card-body-editor", { children: [surface, status] });
+  const body = h("div", "card-body card-body-editor", { children: [findBar, surface, status] });
 
   const state = {
     path: typeof card.file === "string" ? card.file : "",
@@ -1229,6 +1469,9 @@ function renderEditor(card, ctx) {
     tokens: [],
     timer: null,
     tokenSeq: 0,
+    findOpen: false,
+    hits: [],
+    hitIndex: -1,
   };
 
   const shell = cardShell(card, body);
@@ -1257,8 +1500,65 @@ function renderEditor(card, ctx) {
   }
 
   function repaint() {
-    paintTokens(pre, area.value, state.tokens);
+    paintTokens(pre, area.value, state.tokens, state.hits, state.hitIndex);
     syncScroll();
+  }
+
+  /**
+   * Bookkeeping for the edits this card makes itself (indent, auto-indent,
+   * replace): the same work the `input` event does, plus the selection the
+   * operation asked to restore.
+   */
+  function edited(message, selectionStart, selectionEnd) {
+    if (selectionStart !== undefined) {
+      area.setSelectionRange(selectionStart, selectionEnd === undefined ? selectionStart : selectionEnd);
+    }
+    state.dirty = true;
+    renderStatus(message);
+    scheduleTokenize();
+    app.boardTouched(true);
+    syncFind({ reveal: false });
+  }
+
+  /**
+   * Insert text through the browser's own editing command, if it will.
+   *
+   * Writing `.value` directly throws the textarea's undo stack away, which
+   * would mean that one press of Tab costs the user every earlier Ctrl+Z in
+   * that card.  `document.execCommand("insertText")` is deprecated, but it is
+   * the only remaining way to make the edit an undoable user edit, and this
+   * window only ever runs on Chromium.  Returns false when the command is
+   * missing or refused, so the caller can fall back to a plain write.
+   */
+  function typeIn(text) {
+    try {
+      if (typeof document.execCommand === "function") {
+        return document.execCommand("insertText", false, text) === true;
+      }
+    } catch {
+      // Nothing to do here: the fallback below keeps the buffer correct.
+    }
+    return false;
+  }
+
+  /**
+   * Replace the whole buffer and restore the selection the operation asked for.
+   * The text goes in as one user edit when the browser cooperates, so a single
+   * Ctrl+Z takes the whole operation back rather than clearing the undo stack.
+   *
+   * @returns {boolean} whether the browser's own insert path was used
+   */
+  function rewrite(nextText, selectionStart, selectionEnd, message) {
+    let typed = false;
+    if (nextText !== area.value) {
+      area.select();
+      typed = typeIn(nextText);
+      if (!typed) {
+        area.value = nextText;
+      }
+    }
+    edited(message, selectionStart, selectionEnd);
+    return typed;
   }
 
   function syncScroll() {
@@ -1267,6 +1567,223 @@ function renderEditor(card, ctx) {
   }
 
   area.addEventListener("scroll", syncScroll);
+
+  /* ---- find and replace ---- */
+
+  function showCount() {
+    if (!state.findOpen) {
+      findCount.textContent = "";
+      return;
+    }
+    if (findQuery.value === "") {
+      findCount.textContent = "";
+    } else if (state.hits.length === 0) {
+      findCount.textContent = "no match";
+    } else {
+      findCount.textContent = `${state.hitIndex + 1}/${state.hits.length}`;
+    }
+  }
+
+  /** Start from the first match at or after the caret, else from the top. */
+  function seedIndex() {
+    if (state.hits.length === 0) {
+      state.hitIndex = -1;
+      return;
+    }
+    const caret = area.selectionStart;
+    const found = state.hits.findIndex((hit) => hit.start >= caret);
+    state.hitIndex = found === -1 ? 0 : found;
+  }
+
+  /**
+   * Recompute the matches and repaint.  `reveal` scrolls the current one into
+   * view; `seed` picks a new current match rather than keeping the old index.
+   */
+  function syncFind(options = {}) {
+    const { reveal = true, seed = false } = options;
+    state.hits = state.findOpen ? findMatches(area.value, findQuery.value) : [];
+    if (state.hits.length === 0) {
+      state.hitIndex = -1;
+    } else if (seed) {
+      seedIndex();
+    } else if (state.hitIndex >= state.hits.length) {
+      state.hitIndex = state.hits.length - 1;
+    } else if (state.hitIndex < 0) {
+      state.hitIndex = 0;
+    }
+    showCount();
+    repaint();
+    if (reveal && state.hitIndex >= 0) {
+      standOnHit();
+    }
+  }
+
+  /** The text node holding a string index, and the offset inside it. */
+  function pointAt(target) {
+    let seen = 0;
+    function walk(node) {
+      for (const child of node.childNodes) {
+        if (child.nodeType === 3) {
+          const length = child.data.length;
+          if (target <= seen + length) {
+            return { node: child, offset: target - seen };
+          }
+          seen += length;
+        } else {
+          const found = walk(child);
+          if (found !== null) {
+            return found;
+          }
+        }
+      }
+      return null;
+    }
+    return walk(pre);
+  }
+
+  /**
+   * Scroll the current match into view.
+   *
+   * The measurement is taken from the same text in the `<pre>`, which shares
+   * the textarea's metrics; the delta is then applied to the textarea's own
+   * scroll position, which `syncScroll` mirrors back onto the `<pre>`.
+   */
+  function revealHit(hit) {
+    const first = pointAt(hit.start);
+    const last = pointAt(hit.end);
+    if (first === null || last === null) {
+      return;
+    }
+    const range = document.createRange();
+    range.setStart(first.node, first.offset);
+    range.setEnd(last.node, last.offset);
+    const box = range.getBoundingClientRect();
+    if (box.width === 0 && box.height === 0) {
+      return;
+    }
+    const frame = surface.getBoundingClientRect();
+    let dy = 0;
+    let dx = 0;
+    if (box.top < frame.top) {
+      dy = box.top - frame.top - 6;
+    } else if (box.bottom > frame.bottom) {
+      dy = box.bottom - frame.bottom + 6;
+    }
+    if (box.left < frame.left) {
+      dx = box.left - frame.left - 6;
+    } else if (box.right > frame.right) {
+      dx = box.right - frame.right + 6;
+    }
+    if (dy !== 0) {
+      area.scrollTop += dy;
+    }
+    if (dx !== 0) {
+      area.scrollLeft += dx;
+    }
+    syncScroll();
+  }
+
+  /** Stand on the current match: select it and bring it into view. */
+  function standOnHit() {
+    const hit = state.hits[state.hitIndex];
+    if (hit === undefined) {
+      return;
+    }
+    area.setSelectionRange(hit.start, hit.end);
+    revealHit(hit);
+  }
+
+  /** Move to the next (or previous) match, wrapping around. */
+  function stepHit(delta) {
+    const count = state.hits.length;
+    if (count === 0) {
+      syncFind({ reveal: false, seed: true });
+      return;
+    }
+    const base = state.hitIndex < 0 ? (delta > 0 ? -1 : 0) : state.hitIndex;
+    state.hitIndex = ((base + delta) % count + count) % count;
+    showCount();
+    repaint();
+    standOnHit();
+  }
+
+  function openFind() {
+    const selected = area.value.slice(area.selectionStart, area.selectionEnd);
+    if (!state.findOpen && selected !== "" && !selected.includes("\n")) {
+      findQuery.value = selected;
+    }
+    state.findOpen = true;
+    findBar.hidden = false;
+    syncFind({ reveal: true, seed: true });
+    findQuery.focus();
+    findQuery.select();
+  }
+
+  function closeFind() {
+    state.findOpen = false;
+    findBar.hidden = true;
+    state.hits = [];
+    state.hitIndex = -1;
+    showCount();
+    repaint();
+    area.focus();
+  }
+
+  function replaceCurrent() {
+    const hit = state.hits[state.hitIndex];
+    if (hit === undefined) {
+      openFind();
+      return;
+    }
+    const replacement = replaceText.value;
+    const caret = hit.start + replacement.length;
+    rewrite(replaceMatchAt(area.value, hit, replacement), caret, undefined, "replaced 1");
+  }
+
+  function replaceEvery() {
+    const query = findQuery.value;
+    const hits = findMatches(area.value, query);
+    if (hits.length === 0) {
+      renderStatus("nothing to replace");
+      return;
+    }
+    const replacement = replaceText.value;
+    const caret = hits[0].start + replacement.length;
+    rewrite(replaceAllMatches(area.value, query, replacement).text, caret, undefined,
+      `replaced ${hits.length}`);
+  }
+
+  findQuery.addEventListener("input", () => {
+    syncFind({ reveal: true, seed: true });
+  });
+  findQuery.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      stepHit(event.shiftKey ? -1 : 1);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeFind();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      openFind();
+    }
+  });
+  replaceText.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      replaceCurrent();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeFind();
+    }
+  });
+  findPrev.addEventListener("click", () => stepHit(-1));
+  findNext.addEventListener("click", () => stepHit(1));
+  findClose.addEventListener("click", closeFind);
+  replaceOne.addEventListener("click", replaceCurrent);
+  replaceAll.addEventListener("click", replaceEvery);
 
   /**
    * Re-tokenise and repaint.
@@ -1401,13 +1918,53 @@ function renderEditor(card, ctx) {
     renderStatus();
     scheduleTokenize();
     app.boardTouched(true);
+    if (state.findOpen) {
+      syncFind({ reveal: false });
+    }
   });
 
   area.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && event.key.toLowerCase() === "s") {
       event.preventDefault();
       save();
       return;
+    }
+    if (mod && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      openFind();
+      return;
+    }
+    if (event.key === "Escape" && state.findOpen) {
+      event.preventDefault();
+      closeFind();
+      return;
+    }
+    // Tab indents: this is a text editor, and Tab is how text is indented.
+    // Shift+Tab takes one step back off the lines the selection touches.
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const result = indentSelection(area.value, area.selectionStart, area.selectionEnd, {
+        outdent: event.shiftKey,
+      });
+      if (result.text !== area.value) {
+        rewrite(result.text, result.selectionStart, result.selectionEnd);
+      }
+      return;
+    }
+    // Enter keeps the line's indentation (plus one step after an opener).  A
+    // top-level line is left to the browser, and the lines we do handle go in
+    // through the browser's own insert command, so Ctrl+Z still has them.
+    if (event.key === "Enter" && !mod && !event.altKey && !event.shiftKey
+      && area.selectionStart === area.selectionEnd) {
+      const before = area.value.slice(0, area.selectionStart);
+      const indent = indentAfterEnter(before.slice(before.lastIndexOf("\n") + 1));
+      if (indent !== "") {
+        event.preventDefault();
+        const at = area.selectionStart;
+        rewrite(`${before}\n${indent}${area.value.slice(at)}`, at + 1 + indent.length);
+        return;
+      }
     }
     // Card-level shortcuts must not fire while typing.
     event.stopPropagation();
@@ -1437,6 +1994,11 @@ function renderEditor(card, ctx) {
       },
       hasPath(path) {
         return state.path === path;
+      },
+      /** Open the find bar (the smoke test drives it through real keys too). */
+      find() {
+        openFind();
+        return { query: findQuery.value, hits: state.hits.length, index: state.hitIndex };
       },
       /** External change: report it, never auto-reload over unsaved edits. */
       onFileChanged(revision) {

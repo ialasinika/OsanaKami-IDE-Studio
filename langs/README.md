@@ -157,9 +157,9 @@ files instead, because one broken descriptor must not take colouring down.
 node langs/selftest.mjs
 ```
 
-87 checks covering descriptor parsing, rejection of malformed descriptors
+92 checks covering descriptor parsing, rejection of malformed descriptors
 (including the family rules), registry lookup, tiling, comment/string/number
-classification, line grouping, and the SGML scanner: tags, attributes, entities,
-CDATA, doctypes, processing instructions, raw element bodies, and the fixtures
-under `examples/` (`page.html`, `hello.xml`, `notes.svg`). It needs no kernel, no
-shell and no network.
+classification, line grouping, non-ASCII offsets, and the SGML scanner: tags,
+attributes, entities, CDATA, doctypes, processing instructions, raw element
+bodies, and the fixtures under `examples/` (`page.html`, `hello.xml`,
+`notes.svg`). It needs no kernel, no shell and no network.

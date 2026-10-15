@@ -226,9 +226,11 @@ node langs/selftest.mjs
 language — including a real parser with a real type system — and delete
 `langs/`. The only constants are the two method shapes and the tiling guarantee
 of `lang.tokenize` (spans cover `0..text.length` exactly once, in order).
-Remember that the wire speaks **byte offsets**, and that the shell's editor
-treats them as string indices: that is only correct for ASCII, and it is the
-known papercut listed in `shell/web/main.mjs`'s `LIMITATIONS`.
+`text.length` is a JavaScript string length, so the wire speaks **string
+indices** (UTF-16 code units), not byte offsets: `langs/tokenize.mjs` scans a
+JavaScript string and returns indices into it, and both selftests pin that with
+non-ASCII fixtures. A replacement tokenizer written in another language has to
+convert if it counts bytes or code points.
 
 **Cost:** ten minutes per language for colouring; weeks if you are building real
 language intelligence, and in that case you are reimplementing the two methods

@@ -252,7 +252,8 @@ prototype:
   framework: no formulas, no sorting, no selection ranges, and its column types
   are fixed at four. A cell edit is a board edit, so the board's undo takes it
   back like any other change.
-- The editor is ASCII-clean only for colouring purposes: `lang.tokenize`
-  returns **byte** offsets and the shell treats them as string indices, which is
-  the same thing only for ASCII. The shell exports this as `LIMITATIONS` in
-  `shell/web/main.mjs` rather than hiding it.
+- Token offsets are **string indices**, not byte offsets: `lang.tokenize` scans a
+  JavaScript string, so non-ASCII text colours correctly, and only a client that
+  counts bytes has to convert. This file used to claim the opposite for the
+  editor; the implementation was measured. The remaining papercuts are exported
+  as `LIMITATIONS` in `shell/web/main.mjs` rather than hidden.

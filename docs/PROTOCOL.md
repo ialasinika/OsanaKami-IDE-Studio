@@ -508,8 +508,11 @@ When `langs/` has been deleted, the shell's fallback answers `{"langs":[]}`.
 {"tokens":[[0,2,"command"],[2,3,"punct"],[3,4,"command"]],"lang":"brainfuck"}
 ```
 
-`tokens` is an array of `[start, end, kind]` triples over **byte offsets**.
-`lang` is the resolved language id, or `null` when nothing matched.
+`tokens` is an array of `[start, end, kind]` triples over **string indices**:
+UTF-16 code units, the unit `text.length` counts in. They are *not* byte offsets
+— a client that counts bytes must convert, and so must one that counts code
+points (an astral character is two code units). `lang` is the resolved language
+id, or `null` when nothing matched.
 
 Guarantees:
 

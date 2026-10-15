@@ -3,6 +3,33 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
+## Unreleased
+### Shell
+
+- The editor card gained the keys a text editor needs.  `Tab` and `Shift+Tab`
+  indent and outdent the lines the selection touches, `Enter` keeps the line's
+  indentation and steps in one more after `{`, `(` or `[`, and `Ctrl+F` opens a
+  find bar with next/previous hit, replace and replace-all (`Esc` closes it).
+  Every hit is painted in the colour layer as well as selected in the textarea,
+  so matches stay visible while the caret is in the find bar.  The indent,
+  auto-indent and replace edits go in through the browser's own insert command
+  rather than by assigning `.value`, so `Ctrl+Z` still takes back a `Tab`.  The
+  arithmetic is pure and exported (`indentSelection`, `indentAfterEnter`,
+  `findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits`) and checked
+  in `shell/web/selftest.mjs` (80 checks now); `tools/input_smoke.py` presses the
+  keys in a real window and now runs 15 checks.
+
+### Docs
+
+- Token offsets are documented as **string indices**, which is what
+  `lang.tokenize` always returned: six places said byte offsets, and a client
+  that believed them would slice non-ASCII text in the wrong unit.  The claim is
+  now pinned by `langs/selftest.mjs` (92 checks) and `shell/web/selftest.mjs`
+  (80 checks) with non-ASCII fixtures.  No behaviour changed — the description
+  caught up with the code.
+- `shell/web/README.md` documents the editor card's own keys, and the check
+  counts in `README.md` follow the three suites.
+
 ## v0.2.1-alpha.2 — 2026-10-15
 ### Docs
 
