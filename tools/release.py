@@ -585,8 +585,8 @@ def release_notes(context: dict) -> str:
     lines.append("")
     lines.append(
         "The same checks run from a clone with `make test` (and `make smoke` for beta and "
-        "above).  Every number above is the tail of the real command, not a summary someone "
-        "typed."
+        "above).  Every line above is copied out of the real command's own output, not a "
+        "summary someone typed."
     )
     lines.append("")
 
