@@ -3,8 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
-
+## v0.2.0-alpha.3 — 2026-10-15
 What the 1.0.0 rehearsal turned up.
 
 ### Releases
