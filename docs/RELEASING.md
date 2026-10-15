@@ -75,7 +75,11 @@ a binary nobody can rebuild is not a release this project knows how to make.
 Two things are 1.x ideas, and the 0.x line does not have them.  There is no
 `lts/` branch and no MSI before `1.0.0`; `tools/release.py` says so rather
 than pretending.  `--with-msi` tries the installer step below 1.x anyway, for
-the day it is needed.
+the day it is needed, and `--no-msi` goes the other way: a 1.x final or LTS cut
+that deliberately ships without the installer, which the notes and the manifest
+then say out loud.  That flag exists for the machine this project is developed
+on, which has no WiX -- it rehearses the rest of the GA path for real instead of
+faking the piece it cannot build.
 
 **Branch model.**  `main` integrates.  The first beta cuts
 `release/<major>.<minor>` (so `release/0.2`), and every later pre-release and
@@ -141,6 +145,7 @@ visible in the artifact, not just in the log.
 | `--skip-tests` | runs no suite | `nothing: --skip-tests was used, so this release claims nothing was run.` |
 | `--tests smoke` | overrides the suite list (repeatable; `test`, `smoke`) | exactly those suites, with the real command and exit code |
 | `--with-msi` | tries the installer step below 1.x; only LTS/final require it | the MSI's name and hash, or the reason there is none |
+| `--no-msi` | skips the installer a 1.x final or LTS requires | `The installer was not built (--no-msi)`, and `manifest.json` keeps `msi: null` with that sentence in `msi_note` |
 | `--allow-branch` | rehearses on a branch the channel does not own | `The branch rule was waived (--allow-branch)`, naming both branches |
 | `--dist DIR` | writes the release directory somewhere else | *(the notes do not name the directory; the manifest records the artifacts)* |
 

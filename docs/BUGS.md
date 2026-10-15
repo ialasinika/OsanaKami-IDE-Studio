@@ -10,7 +10,7 @@ shipped is the proof, and it is runnable:
 
 ```console
 python tools/kernel_probe.py     # or: make probe -- every entry below, on a
-                                 # scratch workspace under build/ (43 checks)
+                                 # scratch workspace under build/ (46 checks)
 python tools/e2e.py --seide build/seide.exe    # the protocol, both modes
 node langs/selftest.mjs && node shell/web/selftest.mjs
 ```
@@ -31,6 +31,7 @@ Severity is what the bug costs a *fork*, which is the point of this codebase.
 | D | Wrong-typed `limit` was ignored instead of reported | medium |
 | E | Wrong-typed `base_revision` was ignored instead of reported | medium |
 | F | Revisions above 2^31 saturated and broke optimistic locking | critical |
+| G | A header-only change shipped a binary that reported two versions | critical |
 
 ---
 
@@ -142,6 +143,47 @@ happens to work on x86.)
   `file.changed`, `workspace.info`, `board.load`, `board.save`,
   `board.changed`, and both `current_revision` payloads -- now uses it, so a
   revision is always a plain positive integer on the wire.
+
+## G. A header-only change left a binary that reported two versions
+
+**Symptom.** One `build/seide.exe` answered two questions with two versions:
+
+```console
+$ build/seide.exe version
+seide 0.2.0-alpha.1 protocol seide/1
+$ python tools/kernel_drive.py
+hello: {"jsonrpc": "2.0", "id": 1, "result": {..., "kernel_version": "0.1.0", ...}}
+```
+
+`version` read the number from `main.o`, which had been recompiled; `hello` read
+it from `rpc.o`, which had not.  The `VERSION` file said a third thing.
+
+**Root cause.** The Makefile's pattern rules named only the `.c` file
+(`$(OBJDIR)/%.o: core/src/%.c`), and make cannot see an `#include`.  Editing
+`core/include/seide_cfg.h` therefore rebuilt nothing -- `mingw32-make: Nothing to
+be done for 'all'` -- and only the `.c` that had been edited by hand was
+recompiled.  A version bump is exactly a header-only change: `tools/version.py`
+writes `VERSION`, `core/include/seide_cfg.h` and `shell/main.mjs`, so a binary
+channel that built its bundle from an existing tree shipped the *previous*
+kernel while the release notes named the new one.
+
+**Fix.** Two halves:
+
+- The `Makefile` gives every object a prerequisite on every header
+  (`HEADERS = $(wildcard core/include/*.h)`, then `$(OBJ): $(HEADERS) VERSION`),
+  so a header-only change recompiles all twelve sources.  Coarse on purpose:
+  that costs nothing here, and unlike `-include *.d` it has no first-build gap,
+  where an object built before the rule existed would still have no `.d` file
+  and stay stale.
+- `tools/kernel_probe.py` compares the **binary's** own answer with the files on
+  disk: `hello`'s `kernel_version` against `VERSION`, and its protocol name and
+  number against `core/include/seide_cfg.h`.  `version.py check` compares the
+  sources, which is why it never saw this.
+
+**Verified.** With the stale binary the new check fails and the probe exits 1
+(`hello says '0.1.0', VERSION says '0.2.0-alpha.9'`); after the Makefile change
+the same bump recompiles every object and `version`, `hello` and `VERSION` agree
+again.
 
 ---
 

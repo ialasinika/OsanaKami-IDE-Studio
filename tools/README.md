@@ -43,7 +43,7 @@ python tools/demo.py --force         # replace a board you already have
 python tools/demo.py --print         # print it, change nothing
 ```
 
-**4. Prove the fixed bugs are still fixed** (43 checks, on its own scratch
+**4. Prove the fixed bugs are still fixed** (46 checks, on its own scratch
 workspace — it cannot touch your board)
 
 ```console

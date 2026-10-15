@@ -18,6 +18,7 @@ must leave the file as it was.
 """
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -31,6 +32,27 @@ def check(label, ok, detail=""):
     print(f"{'ok  ' if ok else 'FAIL'} {label}" + (f": {detail}" if detail else ""))
     if not ok:
         FAILURES.append(label)
+
+
+def build_stamp():
+    """What the sources say this binary is, read from the files on disk.
+
+    The probe compares the *binary's* self-report against these, because the
+    two can disagree: before the Makefile named the headers, a header-only
+    version bump rebuilt nothing, and `hello` answered with the version from a
+    stale rpc.o while `seide version` answered with the new one.
+    """
+    with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as handle:
+        version = handle.read().strip()
+    with open(os.path.join(ROOT, "core", "include", "seide_cfg.h"), encoding="utf-8") as handle:
+        header = handle.read()
+    name = re.search(r'#define\s+SDE_PROTOCOL\s+"([^"]*)"', header)
+    number = re.search(r"#define\s+SDE_PROTOCOL_VERSION\s+(\d+)", header)
+    return {
+        "version": version,
+        "protocol_name": name.group(1) if name else None,
+        "protocol": int(number.group(1)) if number else None,
+    }
 
 
 def prepare_workspace():
@@ -151,6 +173,21 @@ def run(k):
     check("limit: 3 still returns 3 entries", len(r["files"]) == 3, str(len(r["files"])))
     r = k.call("workspace.list", {"limit": None})["result"]
     check("limit: null still means 'no limit'", r["truncated"] is False, json.dumps(r)[:80])
+
+    print("\n== the binary is the one the sources describe ==")
+    stamp = build_stamp()
+    hello = k.call("hello").get("result", {})
+    reported = hello.get("kernel_version")
+    check("hello reports the version VERSION names",
+          reported == stamp["version"],
+          f"hello says {reported!r}, VERSION says {stamp['version']!r}"
+          + ("" if reported == stamp["version"] else " -- a stale build says the old one; run: make clean"))
+    check("hello reports the protocol name seide_cfg.h declares",
+          hello.get("protocol_name") == stamp["protocol_name"],
+          f"hello says {hello.get('protocol_name')!r}, the header says {stamp['protocol_name']!r}")
+    check("hello reports the protocol number seide_cfg.h declares",
+          hello.get("protocol") == stamp["protocol"],
+          f"hello says {hello.get('protocol')!r}, the header says {stamp['protocol']!r}")
 
     print("\n== the ordinary paths still work ==")
     r = k.call("file.read", {"path": "examples/hello.bf"})["result"]

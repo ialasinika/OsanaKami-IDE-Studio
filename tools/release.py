@@ -566,8 +566,18 @@ def release_notes(context: dict) -> str:
             "win64 bundle."
         )
     if channel in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR:
-        lines.append("The MSI installer and, for every fork named on this release, the fork's "
-                     "own bundle and its delta.")
+        if context["no_msi"]:
+            lines.append(
+                "No MSI installer (`--no-msi`, so this release is not what 1.x GA claims to be), "
+                "and for every fork named on it, the fork's own bundle and its delta."
+            )
+        else:
+            lines.append(
+                "The MSI installer and, for every fork named on this release, the fork's own "
+                "bundle and its delta."
+            )
+    elif fork:
+        lines.append("The fork's own bundle and the delta that builds it.")
     lines.append("")
     lines.append("| artifact | bytes | sha256 |")
     lines.append("| --- | ---: | --- |")
@@ -674,6 +684,7 @@ def manifest(context: dict) -> str:
         "tests": context["tests"],
         "tested": bool(context["tests"]),
         "msi": context["msi"],
+        "msi_note": context["msi_note"],
         "toolchain": context["toolchain"],
         "remotes": context["remotes"],
         "reproduce": context["reproduce"],
@@ -709,6 +720,8 @@ def plan(args, info: dict, channel: str) -> dict:
             "and after (docs/RELEASING.md) -- --dry-run plans it anyway",
             3,
         )
+    if args.no_msi and args.with_msi:
+        raise ReleaseError("--no-msi and --with-msi say opposite things", 3)
     branch = expected_branch(channel, info)
     tag = tag_name(fork, info["version"])
     dist = Path(args.dist) if args.dist else DIST_ROOT / info["version"]
@@ -718,7 +731,7 @@ def plan(args, info: dict, channel: str) -> dict:
         dist = dist / fork
     stem = f"seide-{fork}" if fork else "seide"
     artifact_kinds = list(CHANNELS[channel]["artifacts"])
-    wants_msi = channel in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR
+    wants_msi = channel in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR and not args.no_msi
     return {
         "args": args,
         "info": info,
@@ -732,6 +745,7 @@ def plan(args, info: dict, channel: str) -> dict:
         "artifact_kinds": artifact_kinds,
         "wants_msi": wants_msi,
         "with_msi": bool(args.with_msi),
+        "no_msi": bool(args.no_msi),
         "test_targets": tuple(args.tests) if args.tests else CHANNELS[channel]["tests"],
         # Filled in by the step that decides each, so the notes can never claim
         # a step ran when it did not.
@@ -1025,7 +1039,12 @@ def cut(args) -> int:
             "tests": [],
             "artifacts": [],
             "msi": None,
-            "msi_note": "",
+            "msi_note": (
+                "The installer was not built (`--no-msi`): this release claims the source, the "
+                "bundle and the fork, not an MSI."
+                if args.no_msi and context["channel"] in ("final", "lts") and info["major"] >= MSI_MIN_MAJOR
+                else ""
+            ),
             "skipped_smoke": False,
             "tagged": False,
             "remotes": [],
@@ -1074,6 +1093,8 @@ def reproduce_commands(context: dict) -> list:
         commands[0] += " --no-tag"
     if args.no_freeze:
         commands[0] += " --no-freeze"
+    if args.no_msi:
+        commands[0] += " --no-msi"
     lines += commands
     lines.append("python -c \"import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())\" <artifact>")
     return lines
@@ -1097,6 +1118,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-freeze", action="store_true", help="do not date the changelog section")
     parser.add_argument("--skip-tests", action="store_true", help="do not run the suites (the notes will say so)")
     parser.add_argument("--with-msi", action="store_true", help="try the MSI step even below 1.x")
+    parser.add_argument(
+        "--no-msi",
+        action="store_true",
+        help="skip the MSI step a 1.x final or LTS release would require, and say so in the notes",
+    )
     parser.add_argument("--push", action="store_true", help="push the branch and the tag to origin")
     parser.add_argument("--allow-branch", action="store_true", help="rehearse on a branch this channel does not own")
     parser.add_argument(

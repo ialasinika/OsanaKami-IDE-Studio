@@ -41,6 +41,14 @@ SRC += core/port/sys_win32.c core/port/proc_win32.c
 
 OBJ = $(addprefix $(OBJDIR)/,$(notdir $(SRC:.c=.o)))
 
+# Every object depends on every header, because make cannot see an #include.
+# Without this line a header-only change -- a version bump is exactly that --
+# rebuilt nothing, and the binary ended up reporting two versions at once:
+# `seide version` from the .c that happened to be edited, `hello` from a stale
+# rpc.o.  Coarse on purpose: eleven sources cost nothing to recompile, and a
+# wildcard rule has no first-build gap the way `-include *.d` has.
+HEADERS = $(wildcard core/include/*.h)
+
 # Release is the default; the flag is honoured because tools/build.py passes it.
 ifdef RELEASE
 CFLAGS += -O2
@@ -72,6 +80,10 @@ $(OBJDIR):
 	$(PYTHON) -c "import os;os.makedirs(r'$(OBJDIR)',exist_ok=True)"
 
 $(OBJ): | $(OBJDIR)
+
+# The file that says which version this is, and every header it reaches: see
+# HEADERS above for why the headers are named at all.
+$(OBJ): $(HEADERS) VERSION
 
 $(OBJDIR)/%.o: core/src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@

@@ -3,6 +3,38 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
+## Unreleased
+
+The build stopped contradicting itself about its own version, and the release
+pipeline can now rehearse a GA on a machine that has no Windows installer
+toolchain.
+
+### Build
+
+- Every object file depends on `VERSION` and on the headers in `core/include/`,
+  so a version change rebuilds the kernel.  `tools/version.py set` writes the
+  number into a header, and make used to see only `.c` files: the objects that
+  included `seide_cfg.h` kept the previous version, and one binary reported two
+  different numbers -- `seide version` the new one, `hello` the old one.
+- `docs/BUGS.md` entry **G** records the symptom, the cause and both halves of
+  the fix, and `tools/kernel_probe.py` grew the three checks that would have
+  caught it: the binary is asked which version and protocol it was built with,
+  and the answers are compared with `VERSION` and `core/include/seide_cfg.h`
+  (43 -> 46 checks).  A kernel built from older headers now fails `make probe`
+  instead of shipping.
+
+### Releases
+
+- `tools/release.py --no-msi` skips the installer that a 1.x final or LTS
+  release requires, and says so in the notes and in `manifest.json`
+  (`msi: null` plus the reason).  WiX is not installed on the machine the
+  `1.0.0` path is rehearsed on, so the rest of that release -- the bundle, the
+  fork, the notes, the tag -- can be exercised for real instead of faked.
+
+Verified in this tree: `make test` exit 0 (13 served checks, 13 full checks,
+`make probe` 46 checks all ok including the three new ones, the C JSON test
+`all good`, `langs/selftest.mjs` 87/87, `shell/web/selftest.mjs` 69/69).
+
 ## v0.2.0-alpha.1 — 2026-10-15
 The release pipeline.  Until now a release was a tag someone remembered to
 create and a bundle someone remembered to zip; there is a tool for it now, and
