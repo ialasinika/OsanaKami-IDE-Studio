@@ -3,7 +3,7 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-## Unreleased
+## v0.3.0-alpha.1 — 2026-10-15
 ### Kernel
 
 - The kernel no longer knows what a view **is**.  `board.load`, `board.save` and
