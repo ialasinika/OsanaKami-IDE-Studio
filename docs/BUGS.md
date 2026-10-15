@@ -4,10 +4,22 @@ This file records defects found by probing the finished prototype rather than
 by reading it, in the order they were confirmed.  Each entry states what a user
 would have seen, the root cause with a line reference, and what changed.
 
-The probe scripts live in `build/probes/` (git-ignored, like the rest of
-`build/`).  `python build/probes/kernel/probe_fixes.py` is the regression probe:
-every fix below has a check there, and it re-runs against a freshly built
-`build/seide.exe`.
+The probe scripts used during the hunt live in `build/probes/` (git-ignored,
+like the rest of `build/`), so they are **not** part of a clone.  What is
+shipped is the proof, and it is runnable:
+
+```console
+python tools/kernel_probe.py     # or: make probe -- every entry below, on a
+                                 # scratch workspace under build/ (43 checks)
+python tools/e2e.py --seide build/seide.exe    # the protocol, both modes
+node langs/selftest.mjs && node shell/web/selftest.mjs
+```
+
+`tools/kernel_probe.py` is the direct descendant of the ad-hoc
+`build/probes/kernel/probe_fixes.py`: same checks, but it sets up its own
+throwaway workspace instead of assuming yours, so it can be run by anyone who
+clones this repository.  The rest of the ledger is pinned by the self-tests
+listed above, which is why those suites grew as the bugs were fixed.
 
 Severity is what the bug costs a *fork*, which is the point of this codebase.
 

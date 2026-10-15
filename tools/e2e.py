@@ -17,8 +17,8 @@ including when a check fails.
 
 The scenario asserted here is the frozen protocol exercised in order: hello,
 workspace.info, lang.list, lang.tokenize (plus its tiling property),
-file.read / file.write / stale write, path containment, board round-trip, and a
-real ``exec.start`` run whose stdout must contain the Brainfuck program's
+file.read / file.write / stale write, path containment, board round-trip, the
+shipped starter board, and a real ``exec.start`` run whose stdout must contain the Brainfuck program's
 output.  The two write checks have to edit the fixture to move its revision
 (a revision is a content hash) and write the original bytes back afterwards, so
 a completed run leaves the file byte-identical.
@@ -29,7 +29,7 @@ Endpoint modes
 
     * **kernel mode** (default, ``--seide build/seide.exe``): the driver spawns
       ``<seide> rpc``.  The kernel does not serve ``lang.*``, so those checks
-      (three, counting the tiling assertion) are reported as
+      (four, counting the tiling assertion and the SGML file) are reported as
       *skipped (kernel mode)* and ``workspace.info`` is not required to carry
       ``langs``.
     * **full mode** (``--seide-cmd "node shell/main.mjs rpc --workspace ."``):
@@ -841,37 +841,39 @@ def define_checks(h: Harness) -> list:
             )
         return f"absolute and relative escapes both refused with 1003 (e.g. {outside})"
 
-    def board_roundtrip():
-        # The board is project state, not test scratch space.  Snapshot the
-        # layout that is already there and put it back afterwards -- even when a
-        # check below fails -- because a suite that silently discards where the
-        # developer put everything would be testing the wrong product.
-        snapshot = None
-        snapshot_path = None
-        existed_before = False
-        try:
-            loaded = client.call("board.load", {})
-            if isinstance(loaded, dict):
-                snapshot_path = loaded.get("path")
-            if isinstance(snapshot_path, str) and snapshot_path:
-                existed_before = os.path.exists(snapshot_path)
-            document = loaded.get("document") if isinstance(loaded, dict) else None
-            if isinstance(document, dict):
-                # Keep the whole document, not just the two arrays this suite
-                # happens to know about.  Rebuilding it by hand is exactly how
-                # the viewport -- where the developer put the camera -- got
-                # reset on every run, silently and with exit 0.
-                snapshot = json.loads(json.dumps(document))
-            else:
-                cards, links = board_arrays(loaded)
-                snapshot = {
-                    "version": 1,
-                    "cards": cards if isinstance(cards, list) else [],
-                    "links": links if isinstance(links, list) else [],
-                }
-        except Exception:
-            snapshot = None
+    def board_state():
+        """Read the live board so a check that saves one can put it back.
 
+        The board is project state, not test scratch space: a suite that
+        silently discards where the developer put everything is testing the
+        wrong product.  The **whole** document is kept, not just the two arrays
+        this suite happens to know about -- rebuilding it by hand is exactly how
+        the viewport (where the developer put the camera) got reset on every
+        run, silently and with exit 0.
+        """
+        loaded = client.call("board.load", {})
+        document = loaded.get("document") if isinstance(loaded, dict) else None
+        path = loaded.get("path") if isinstance(loaded, dict) else None
+        return {
+            "document": (
+                json.loads(json.dumps(document)) if isinstance(document, dict) else None
+            ),
+            "path": path if isinstance(path, str) and path else None,
+            "existed": bool(isinstance(path, str) and path and os.path.exists(path)),
+        }
+
+    def board_restore(state):
+        """Put the board back, or remove the one the suite created."""
+        if state["document"] is None:
+            return
+        if state["existed"]:
+            client.call("board.save", {"document": state["document"]})
+        elif state["path"] and os.path.basename(state["path"]) == "board.json":
+            # No board before the run, none after it either.
+            os.remove(state["path"])
+
+    def board_roundtrip():
+        state = board_state()
         try:
             board = build_board(ctx)
             saved = client.call("board.save", {"board": board})
@@ -893,17 +895,68 @@ def define_checks(h: Harness) -> list:
                 f"(revision {saved['revision']})"
             )
         finally:
-            if snapshot is not None:
-                try:
-                    if existed_before:
-                        client.call("board.save", {"board": snapshot})
-                    elif snapshot_path and os.path.basename(snapshot_path) == "board.json":
-                        # No board before the run, none after it either.
-                        os.remove(snapshot_path)
-                except Exception:
-                    pass
+            try:
+                board_restore(state)
+            except Exception:
+                pass
 
         return detail
+
+    def starter_board():
+        """The board shipped for a fresh clone must be one the kernel accepts.
+
+        `examples/board.json` is what `tools/demo.py` installs into a new
+        workspace, and it is the board the README's screenshots show.  Nothing
+        else in the suite reads it, so a hand-edit the kernel would reject -- a
+        card with no id, a link pointing at nothing, a viewport that is not a
+        viewport -- would first be discovered by a new user, on the day they are
+        deciding whether any of this works.
+        """
+        path = REPO_ROOT / "examples" / "board.json"
+        require(path.is_file(), f"{path} is missing")
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        try:
+            document = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            require(False, f"{path} is not UTF-8 JSON: {exc}")
+        require(isinstance(document, dict), f"{path} is not an object")
+        cards = document.get("cards")
+        links = document.get("links")
+        require(isinstance(cards, list) and cards, f"{path} carries no cards")
+        require(isinstance(links, list), f"{path} carries no links array")
+
+        state = board_state()
+        try:
+            saved = client.call("board.save", {"document": document})
+            require(isinstance(saved, dict), "the starter board was not accepted")
+            require(saved.get("saved") is True, "the starter board was not saved")
+            loaded = client.call("board.load", {})
+            got_cards, got_links = board_arrays(loaded)
+            require(
+                got_cards == cards,
+                f"starter cards did not round-trip: sent {len(cards)}, got {_short(got_cards)}",
+            )
+            require(
+                got_links == links,
+                f"starter links did not round-trip: sent {len(links)}, got {_short(got_links)}",
+            )
+            kept = loaded.get("document") if isinstance(loaded, dict) else {}
+            viewport = kept.get("viewport") if isinstance(kept, dict) else None
+            require(
+                viewport == document.get("viewport"),
+                f"the starter viewport did not survive: sent {document.get('viewport')!r} "
+                f"got {viewport!r}",
+            )
+        finally:
+            try:
+                board_restore(state)
+            except Exception:
+                pass
+        return (
+            f"{len(cards)} cards and {len(links)} links from {len(raw)} shipped bytes "
+            "accepted and stored exactly"
+        )
 
     def exec_run():
         result = client.call(
@@ -987,6 +1040,7 @@ def define_checks(h: Harness) -> list:
         ("file.write stale revision", file_write_stale, None),
         ("file.read path containment", path_containment, None),
         ("board.save/board.load round-trip", board_roundtrip, None),
+        ("starter board", starter_board, None),
         ("exec.start run", exec_run, None),
     ]
 

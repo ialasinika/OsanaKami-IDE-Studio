@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  },
+  "cards": [
+    {
+      "id": "c1",
+      "kind": "editor",
+      "x": 40,
+      "y": 60,
+      "w": 640,
+      "h": 420,
+      "z": 1,
+      "title": "examples/hello.bf",
+      "file": "examples/hello.bf"
+    },
+    {
+      "id": "c2",
+      "kind": "note",
+      "x": 720,
+      "y": 80,
+      "w": 300,
+      "h": 220,
+      "z": 2,
+      "title": "The board is the project state.",
+      "text": "The board is the project state. Cards remember where you put them, not what you opened last. Pan by dragging empty space, zoom with the wheel; the layout is saved to .seide/board.json."
+    },
+    {
+      "id": "c3",
+      "kind": "runner",
+      "x": 720,
+      "y": 340,
+      "w": 420,
+      "h": 200,
+      "z": 3,
+      "title": "runner",
+      "cmd": "python tools/bf.py examples/hello.bf",
+      "cwd": "."
+    },
+    {
+      "id": "c4",
+      "kind": "files",
+      "x": -320,
+      "y": 40,
+      "w": 320,
+      "h": 520,
+      "z": 0,
+      "title": "files",
+      "filter": "**/*"
+    },
+    {
+      "id": "c5",
+      "kind": "sheet",
+      "x": 40,
+      "y": 540,
+      "w": 640,
+      "h": 300,
+      "z": 5,
+      "title": "bf ops used by hello.bf",
+      "doc": {
+        "columns": [
+          {
+            "id": "op",
+            "title": "op",
+            "type": "text"
+          },
+          {
+            "id": "meaning",
+            "title": "meaning",
+            "type": "text"
+          },
+          {
+            "id": "used",
+            "title": "used",
+            "type": "number"
+          },
+          {
+            "id": "wraps",
+            "title": "wraps",
+            "type": "bool"
+          }
+        ],
+        "rows": [
+          {
+            "id": "r1",
+            "cells": {
+              "op": "+",
+              "meaning": "increment cell",
+              "used": 214,
+              "wraps": true
+            }
+          },
+          {
+            "id": "r2",
+            "cells": {
+              "op": "-",
+              "meaning": "decrement cell",
+              "used": 5,
+              "wraps": true
+            }
+          },
+          {
+            "id": "r3",
+            "cells": {
+              "op": ">",
+              "meaning": "move pointer right",
+              "used": 28,
+              "wraps": false
+            }
+          },
+          {
+            "id": "r4",
+            "cells": {
+              "op": ".",
+              "meaning": "write byte",
+              "used": 12,
+              "wraps": false
+            }
+          },
+          {
+            "id": "r5",
+            "cells": {
+              "op": "[",
+              "meaning": "jump if zero",
+              "used": 2,
+              "wraps": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "l1",
+      "from": "c1",
+      "to": "c3",
+      "label": "runs"
+    },
+    {
+      "id": "l2",
+      "from": "c1",
+      "to": "c2",
+      "label": "notes"
+    },
+    {
+      "id": "l3",
+      "from": "c1",
+      "to": "c5",
+      "label": "analysis"
+    }
+  ]
+}

@@ -170,37 +170,48 @@ python tools/build.py             # build (pass --release / --clean / targets)
 Run the checks:
 
 ```sh
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 8 passed, 0 failed, 4 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, the JSON test, both JS self-tests
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 4 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 13 passed, 0 failed, 0 skipped
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 passed, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, the JSON test, both JS self-tests
 ```
 
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --seide build/seide.exe    # 8 passed, 0 failed, 4 skipped
+python tools/e2e.py --seide build/seide.exe    # 9 passed, 0 failed, 4 skipped
 python tools/e2e.py --seide build/seide.exe --keep-going
+python tools/kernel_probe.py                   # the fixed bugs: summary: all ok
+python tools/browser_smoke.py                  # renders the real window; SKIP (exit 0) with no browser
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 87/87 checks passed
 node shell/web/selftest.mjs                    # ok 60/60 (pure JS: no DOM)
 ```
 
-`make test` runs `check`, then `fullcheck`, then the JSON test and both
-JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
-run before the self-tests are reached. As of this writing nothing fails.
+`make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
+both JavaScript self-tests **in that order**, so a `fullcheck` failure would stop
+the run before the self-tests are reached. `smoke` is separate because it needs a
+browser. As of this writing nothing fails.
 
 **The protocol suite used to write to your board, and no longer does.** The
-board round-trip check still drives `board.save` against the workspace it was
-given, but it snapshots the document that was already there and restores it
-before the check returns — including when the check fails. A run against `.`
-leaves `./.seide/board.json` semantically identical (the kernel does re-serialise
-it, so the bytes and key order will differ; the cards, links and viewport will
-not). If there was no board before a run, there is none after it either.
+board checks drive `board.save` against the workspace they were given, but they
+snapshot the whole document that was already there and restore it before the
+check returns — including when the check fails. A run against `.` leaves
+`./.seide/board.json` semantically identical; with the shipped starter board it
+comes back byte-identical too (3107 bytes, byte-for-byte, because the kernel
+writes every board and re-serialises the same way). If there was no board before
+a run, there is none after it either.
+
+**The board shipped for a fresh clone is verified, not assumed.** The
+`starter board` check saves `examples/board.json` through the real validator and
+requires cards, links and viewport to come back exactly, so a hand-edit the
+kernel would reject fails here rather than on a new user's first launch.
 
 **Current state of the protocol suite:** both modes are green. Kernel mode
-(`check`) reports 8 passed, 0 failed, 4 skipped — the skips are the four
+(`check`) reports 9 passed, 0 failed, 4 skipped — the skips are the four
 language checks, which the kernel does not serve. Full mode (`fullcheck`, the
-endpoint that adds `langs/`) reports 12 passed, 0 failed, 0 skipped. See
+endpoint that adds `langs/`) reports 13 passed, 0 failed, 0 skipped. See
 [Known rough edges](#known-rough-edges) for what is still genuinely unfinished.
 
 Note `make test` uses `fullcheck`, which needs `node shell/main.mjs`; there is no
@@ -209,10 +220,19 @@ make target that runs only the JavaScript self-tests.
 Start the app (builds the window from the system browser):
 
 ```sh
+python tools/demo.py                                 # install the starter board first
 node shell/main.mjs serve --workspace .
 node shell/main.mjs serve --workspace . --no-open    # just serve, print the URL
 node shell/main.mjs rpc --workspace .                # stdio endpoint, no browser
 ```
+
+`.seide/` is gitignored, so a fresh clone opens an **empty canvas** — the layout
+is per-checkout project state, deliberately not committed. `tools/demo.py`
+copies `examples/board.json`, the five-card board in every screenshot here, into
+`.seide/board.json`. It refuses to overwrite a board you already have unless you
+pass `--force`, and `--print` shows it without touching anything. Opening an
+empty board is fine too: the canvas tells you the commands, and `project` on the
+command line gives you the workspace.
 
 The kernel is usable with no UI at all:
 
@@ -232,6 +252,9 @@ build/seide.exe rpc --root . --verbose
 Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
                         test, modules, run, clean, and the JSON test target
 README.md               this file
+LICENSE                 MIT
+CHANGELOG.md            what is in this version, and what is not
+.github/workflows/      CI: the same make targets, on a Windows runner
 .gitignore              build artefacts and workspace-local state
 
 core/                   the kernel -- C89, no dependencies
@@ -260,19 +283,21 @@ shell/                  the front end and the endpoints
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
   e2e.py                drives the protocol end to end over stdio
+  demo.py               installs examples/board.json as this workspace's board
   bf.py                 a Brainfuck interpreter (runs examples/hello.bf)
   newlang.py            writes a conforming .lang descriptor (flat or sgml)
   README.md             what each tool is for
 
 examples/               hello.bf and shadow.bf (Brainfuck), page.html (every
-                        SGML token kind), hello.xml, notes.svg
+                        SGML token kind), hello.xml, notes.svg, and board.json --
+                        the starter board `tools/demo.py` installs
 docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
                         PROJECT.md, TRIM.md, FORK.md, BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.seide/`) are ignored by
-Git. `examples/` is **not** ignored: the `.bf`, `.html` and `.xml` sources are
-part of the project.
+Git. `examples/` is **not** ignored: the `.bf`, `.html`, `.xml` and `.json`
+sources are part of the project.
 
 ---
 
@@ -323,3 +348,19 @@ and fix, so a fork knows what was already tried.
 > Rejected alternative: **a Rust kernel**. It was dropped because a dependency's
 > build script needed a C compiler, which broke constraint 4 (fully offline,
 > no configure step). C89 has no build script and no dependency graph.
+
+---
+
+## Version, licence, CI
+
+This is **v0.1.0-alpha**: the constraint set holds and the suites are green, but
+there is no undo, no portability beyond Windows, and no plugin loading. See
+[CHANGELOG.md](CHANGELOG.md) for what is in it and what is not.
+
+[MIT](LICENSE) — take it, fork it, rename it.
+
+CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
+the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
+board headless. It is written but has never run on a GitHub runner (it was
+authored on a machine with none), so treat it as unproven until the first green
+run; the commands inside it are exactly the ones in [Run the checks](#run-the-checks).

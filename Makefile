@@ -50,7 +50,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck test run clean modules
+.PHONY: all check fullcheck probe smoke test run clean modules
 
 all: $(BIN)
 
@@ -92,9 +92,22 @@ check: $(BIN)
 fullcheck: $(BIN)
 	$(PYTHON) tools/e2e.py --seide-cmd "$(NODE) shell/main.mjs rpc --workspace ."
 
+# The kernel regression probe: every bug in docs/BUGS.md, checked after the fix.
+# It drives the kernel against a scratch workspace under build/, so it cannot
+# touch your board or your files.
+probe: $(BIN)
+	$(PYTHON) tools/kernel_probe.py
+
+# The window, without a human: starts the host, drives the system browser
+# headless, and asserts on the rendered DOM.  Needs a browser; says so and
+# skips (exit 0) when there is none.
+smoke: $(BIN)
+	$(PYTHON) tools/browser_smoke.py --timeout 90
+
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, and both protocol modes.
-test: check fullcheck $(JSONTEST)
+# codec, the language layer, the browser modules, the fixed bugs, and both
+# protocol modes.
+test: check fullcheck probe $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs
