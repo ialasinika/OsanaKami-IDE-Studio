@@ -18,6 +18,7 @@ modview.mjs   the same cards as a package tree, editor and problems (pure)
 story.mjs     a Yarn story: nodes, lines, speakers, tags and `#line:` ids (pure)
 storycsv.mjs  the translation tables the game keeps beside a story (pure)
 ysls.mjs      the game's own command schema, and where `<<name` is typed (pure)
+pixelpng.mjs  a PNG reader and writer that needs nothing but itself (pure)
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
 ```
@@ -135,6 +136,7 @@ note <text>              drop a note card
 sheet [title]            drop a structured-data card (typed cells, not text)
 story <path> [table.csv] [commands.json]
                          edit a story beside its translations, with completion
+pixel <path.png> [w] [h] draw a PNG: the pixels are the file, not the board
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)

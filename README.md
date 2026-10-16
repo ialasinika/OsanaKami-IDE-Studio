@@ -69,10 +69,15 @@ the containment rules.
   lines, writes it back line for line, completes `<<commands>>` from the mod's own
   compiled schema, and sets the translation tables beside it,
   but nothing here runs, type-checks or compiles a story.
-- **Not an image editor.** The kernel reads and writes bytes
-  (`file.read_bytes`/`file.write_bytes`) and can hand out a revision for any
-  file, but no card draws a `.png` yet: nothing here encodes, decodes or scales
-  one, and there is no palette model.
+- **Not a paint program.** The `pixel` card decodes and encodes the PNGs this
+  game's art actually is — 8-bit RGBA and 8-bit RGB, not interlaced — and draws
+  one of them with a pencil, an eraser, a flood fill and an eyedropper over a
+  1×–32× canvas; the pixels are the file, saved through
+  `file.read_bytes`/`file.write_bytes`, and the board document only remembers
+  which file, how big and which colours. There are no layers, no selection, no
+  text, no resize and no rotation, and a PNG in any other shape is refused by
+  name rather than half-decoded into an image that looks right until the game
+  opens it.
 - **Not portable yet.** The kernel's platform layer is Win32.
 
 ---
@@ -250,7 +255,7 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 195/195 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 208/208 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -440,7 +445,8 @@ shell/                  the front end and the endpoints
     selftest.mjs        node shell/mods/selftest.mjs -- 84 checks, no kernel
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
                         history.mjs, rpc.mjs, watch.mjs, classic.mjs, main.mjs,
-                        story.mjs, storycsv.mjs, ysls.mjs, selftest.mjs, README.md
+                        story.mjs, storycsv.mjs, ysls.mjs, pixelpng.mjs,
+                        selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

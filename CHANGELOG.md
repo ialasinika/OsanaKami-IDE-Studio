@@ -243,6 +243,56 @@ tree.
   is refused rather than read as an empty schema that would complete nothing for
   the rest of the session.
 
+### A pixel canvas, and the file it draws
+
+- The shell draws **pixels**.  `shell/web/pixelpng.mjs` is a PNG reader and
+  writer with no imports at all — it runs in a browser page, so it carries its
+  own inflate, its own CRC-32 and its own Adler-32 rather than reaching for
+  `node:zlib` — and it reads what this game's art actually is: 8-bit RGBA
+  (colour type 6) and 8-bit RGB (colour type 2), not interlaced, in stored,
+  fixed-Huffman and dynamic-Huffman blocks, through all five row filters.  Of
+  the 374 PNGs under `Mods`, 365 are the first kind and 9 the second; anything
+  else is refused **by name** (`unsupported PNG: colour type 3, only 6 (RGBA)
+  and 2 (RGB) are read`) rather than half-decoded into a wrong image, because
+  the failure mode of guessing at an image is a file that looks right until it
+  is opened in the game.  `encodePng` writes the same shape back, so a round
+  trip reproduces width, height and every byte of every pixel.  The kernel's
+  byte verbs are what make any of this possible: `file.read` refuses a file
+  holding a NUL byte and `file.write` can only carry a JSON string, so before
+  `file.read_bytes` / `file.write_bytes` an image had no way in or out of a
+  workspace at all.
+- A `pixel <path.png> [width] [height]` card is a drawing surface over one PNG.
+  Pencil, eraser, flood fill, eyedropper and a hand that pans; the wheel or the
+  zoom buttons scale from 1× to 32×; the palette is sixteen `#rrggbb` swatches
+  plus a colour field that takes any `#rrggbb` or `#rgb`.  What the card puts in
+  the board document is `{file, width, height, palette}` and **nothing else**:
+  the pixels are the file, not the document, so a board save stays a small JSON
+  document and an undo of a card *move* cannot resurrect a drawing that was never
+  saved.  A file that is not there yet opens blank at its declared size — 96×96,
+  or the size on the command line — showing a checkerboard through its alpha, and
+  the first save creates it.  One file is one card: a second `pixel` command for
+  the same path focuses the card that already has it, because two cards on one
+  path are two buffers that save over each other and both look right until one
+  does.
+- Which is a problem the board's undo ring cannot solve.  The ring snapshots
+  *documents*, and the artwork deliberately is not one, so Ctrl+Z over a stroke
+  would either do nothing or move the board underneath — the one thing worse than
+  doing nothing.  `Ctrl+Z`, `Ctrl+Shift+Z`, `undo` and `redo` therefore offer the
+  step to the **selected card** first (`main.mjs`'s `cardUndoOrRing`) and fall
+  through to the board's ring only when the card answers that it did not take it.
+  The card's own ring holds 64 gestures and stores, per gesture, only the pixels
+  the gesture changed — not a copy of the image, so a 1024×1024 drawing does not
+  cost four megabytes a stroke.
+- D006 — the one diagnostic whose *subject* is another file: the JSON is fine,
+  the sprite it names is not there — now has somewhere to go.  The row used to
+  open the declaring JSON; the sprite path is the diagnostic's `actual` (which
+  never carries the `#json/pointer` that `path` does), so the row now opens a
+  pixel card on the sprite, and the declaring file stays one click away on the
+  row's meta line rather than being replaced.  What the defines do not carry is a
+  size: no sprite in this tree declares one, and `shell/mods/knowledge.json` has
+  no width or height anywhere in its schemas, so the card declares 96×96 and the
+  person changes it if the art insists.
+
 ### Undo and redo on the board
 
 - `Ctrl+Z` takes back the last board edit and `Ctrl+Shift+Z` puts it back; both
@@ -254,7 +304,11 @@ tree.
   `sheet` cell.  It does **not** cover the typing inside a card (the textarea
   keeps the browser's own undo), a pan, a zoom, or a "raise to front", and the
   ring is in memory, so a reload forgets it.  `shell/web/README.md` says all of
-  this where a reader will look for it.
+  this where a reader will look for it.  A pixel card is the one place where a
+  step exists that the ring *cannot* hold — the pixels are not in the document —
+  so the keystroke is offered to the selected card first and the ring only moves
+  when the card declines; see the pixel section above for why that order is the
+  safe one.
 - What it does not reach is now tested as well as what it does:
   `tools/input_smoke.py` frames the app in a same-origin wrapper page, makes a
   real board change with a real double-click, dispatches the real keydowns, and
@@ -417,7 +471,7 @@ tree.
 ### Checks
 
 - `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 195/195, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
+  selftest 208/208, mods 84/84) and `make smoke` (browser smoke 5, input smoke 34)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
@@ -474,7 +528,35 @@ tree.
   `build/storycard.probe.mjs` for the card, and both files were restored
   byte-identical.  The corpus is the second half of the bar: 211 real `.yarn` files
   parse and re-serialise byte for byte, and the story card's own probe opens a
-  real story with its real `NewProject_EN.csv` and edits through the card.
+  real story with its real `NewProject_EN.csv` and edits through the card.  The pixel
+  work was held to the same bar, and to the corpus.  `build/sabotage_pixelpng.py`
+  broke the codec twelve ways — Paeth read as Up, a row's filter byte not consumed, a
+  chunk length read little-endian, the zlib check bits ignored, the check bits taken
+  from the wrong byte, RGB gaining an alpha byte, the Adler-32 ignored, a 4-bit depth
+  accepted, an interlaced image read as if it were not, a back-reference allowed to
+  reach before the start of the image, colour type 2 accepted while the writer emitted
+  RGBA, and one pixel painted a column to the right — and all twelve were caught by
+  `build/pixelpng_check.mjs`, which walks the 374 real PNGs under `Mods` (28,332,585
+  pixels), decodes, re-encodes and decodes every one of them back to the same pixels,
+  checks the encoder's own stream against a bit pusher written from RFC 1951 and the
+  reader against `zlib`, and refuses a PNG it does not understand by name;
+  `shell/web/pixelpng.mjs` was restored by `sha256` after each case.  Ten more were
+  aimed at the card (`build/sabotage_pixel_card.py`): a palette thrown away, `#rgb` not
+  read as a colour, a byte of the eyedropper readout left unpadded, a new card seeded
+  without its palette, a missing sprite declared at some other size, the eraser painting
+  instead of clearing, a save that does not say which revision it read, a D006 row
+  opening the declaring JSON instead of the sprite, and Ctrl+Z and Ctrl+Shift+Z moving
+  the board even when the card took the step — all ten were caught, by
+  `shell/web/selftest.mjs` and by `build/pixelcard.probe.mjs` (141 checks over the
+  card's pixels and the pixel under a zoomed, panned cursor, its own undo ring and the
+  app's route to it, a gesture released off the card, the bytes a save writes under the
+  revision it read, and the D006 row), and `shell/web/cards.mjs` was restored
+  byte-identical each time.  `tools/input_smoke.py` is what proves it in a real window:
+  it draws a pencil drag and decodes the PNG the card wrote, takes a painted pixel back
+  to transparent with the eraser, fills a blank image and reads all 64 of its pixels
+  opaque out of the file, checks that Ctrl+Z over the canvas returns the pixel while the
+  board's geometry, stage transform and HUD zoom stay identical, and clicks a real D006
+  row to open and draw on a sprite that is not on disk — 34 checks in all.
 
 ### Licence
 

@@ -1580,3 +1580,170 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ------------------------------------------------------------------ */
+/* pixel card: a toolbar over a canvas that is always one blit         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The card is a column: the tool strip, the surface, the size/zoom strip and
+ * the status line.  The surface is the only thing that grows, so the canvas
+ * gets whatever is left over after the two strips have their height.
+ */
+.card-body-pixel {
+  padding: 0;
+  background: #1a1d22;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pixel-tools,
+.pixel-groups {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.pixel-groups { border-bottom: 0; border-top: 1px solid var(--line-soft); }
+
+.pixel-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pixel-group + .pixel-group { margin-left: 10px; }
+
+/* The five tools: a current one is unmistakable, because a pixel card that
+   draws with the wrong tool is a card that ruins an image. */
+.pixel-tool {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.pixel-tool:hover { color: var(--fg); border-color: var(--accent-dim); }
+.pixel-tool.is-on {
+  color: var(--bg-deep);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.pixel-button {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.pixel-button:hover { color: var(--fg); border-color: var(--accent-dim); }
+.pixel-button.is-primary { color: var(--fg); border-color: var(--accent-dim); }
+.pixel-button.is-primary:hover { color: var(--accent); }
+
+.pixel-colour {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--card-hi);
+  cursor: pointer;
+}
+
+.pixel-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 200px;
+}
+
+/* The palette is `card.palette`, so it is part of the board document. */
+.pixel-swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pixel-swatch.is-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.pixel-size {
+  width: 52px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 4px;
+}
+
+.pixel-times { color: var(--fg-faint); }
+
+.pixel-zoom-label {
+  min-width: 30px;
+  color: var(--fg-faint);
+  font: 10.5px/1 var(--mono-font);
+}
+
+/* The surface: a scroll-less viewport the card pans itself, so the canvas is
+   exactly the blit target and never a scroll container that can disagree with
+   `panX`/`panY`. */
+.pixel-surface {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  /* Transparency has to be visible: a checkerboard drawn in two greys, so a
+     transparent pixel reads as transparent rather than as the card's colour. */
+  background-color: #22262d;
+  background-image:
+    linear-gradient(45deg, #2b3039 25%, transparent 25%, transparent 75%, #2b3039 75%),
+    linear-gradient(45deg, #2b3039 25%, transparent 25%, transparent 75%, #2b3039 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+.pixel-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+  image-rendering: pixelated;
+  outline: none;
+}
+
+.pixel-canvas.is-hand { cursor: grab; }
+.pixel-canvas.is-panning { cursor: grabbing; }
+
+/* The one extra control a diagnostic row can carry (a D006 row points at two
+   files: the missing sprite and the JSON that asks for it). */
+.mod-row-extra {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--accent-dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+.mod-row-extra:hover { color: var(--accent); border-color: var(--accent); }
+

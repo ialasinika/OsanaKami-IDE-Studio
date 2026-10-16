@@ -54,6 +54,7 @@ import {
 } from "./watch.mjs";
 import {
   COMMAND_HELP,
+  PIXEL_NEW_SIZE,
   describeCard,
   emptySheet,
   parseCommandLine,
@@ -1317,6 +1318,105 @@ function createApp() {
     return false;
   }
 
+  /**
+   * Undo, focused card first.
+   *
+   * The board ring holds *documents* -- which cards exist, where they sit --
+   * and pixels are deliberately not in them, because the pixels are the file
+   * and not the board.  So a drawing that could not take its own step back
+   * would make Ctrl+Z over it either do nothing or silently move the board
+   * underneath, which is the one thing worse than doing nothing.  The rule:
+   * ask the selected card's handle first; `true` means it took the step and
+   * the board ring must stay put.
+   */
+  function cardUndoOrRing() {
+    const entry = board.selectedId === null ? undefined : mounted.get(board.selectedId);
+    const handle = entry === undefined ? null : entry.handle;
+    if (handle !== null && typeof handle.undo === "function" && handle.undo() === true) {
+      return true;
+    }
+    undoBoard();
+    return false;
+  }
+
+  /** Redo, the same way round: the card's ring first, then the board's. */
+  function cardRedoOrRing() {
+    const entry = board.selectedId === null ? undefined : mounted.get(board.selectedId);
+    const handle = entry === undefined ? null : entry.handle;
+    if (handle !== null && typeof handle.redo === "function" && handle.redo() === true) {
+      return true;
+    }
+    redoBoard();
+    return false;
+  }
+
+  /**
+   * The pixel card holding a file, if there is one.
+   *
+   * One file, one card: two pixel cards on the same path are two buffers that
+   * save over each other, and both look right until one does.  `path` must be
+   * normalised the way the command line normalises it.
+   */
+  function pixelCardFor(path) {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind !== "pixel" || typeof entry.handle.hasPath !== "function") {
+        continue;
+      }
+      if (entry.handle.hasPath(path)) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put a pixel card on the board for one `.png`, declaring a size when the
+   * file is not there yet.  The pixels are never in the document: the card
+   * carries `{file, width, height, palette}` and the bytes stay on disk, so
+   * this is the entry point both the `pixel` command and a D006 row use.
+   *
+   * `options.width`/`options.height` are the size the card declares for a file
+   * that does not exist.  Omit them and the game's 96x96 sprite convention is
+   * used -- the number `create()` seeds and the usable size the D006 row needs
+   * for a sprite the mod does not carry.
+   */
+  function openPixelCard(path, options = {}) {
+    if (typeof path !== "string" || path.trim() === "") {
+      log("warn", "pixel: give a workspace-relative .png path");
+      return null;
+    }
+    const wanted = path.trim().replace(/\\/g, "/");
+    const existing = pixelCardFor(wanted);
+    if (existing !== null) {
+      // A second command for the same file focuses the card it already has.
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      log("info", `pixel card focused (${wanted}) — pixels are the file, not the board`);
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.pixel;
+    const centre = centreWorld();
+    /*
+     * `board.addCard` copies the fields it is handed and never consults the
+     * kind's `create()`, so the declared size has to be written here: a row
+     * that names no size at all -- the D006 row -- would otherwise leave the
+     * card with no `width`/`height` and whatever the last command said.
+     */
+    const fields = {
+      file: wanted,
+      width: Number.isFinite(options.width) && options.width > 0
+        ? Math.floor(options.width)
+        : PIXEL_NEW_SIZE,
+      height: Number.isFinite(options.height) && options.height > 0
+        ? Math.floor(options.height)
+        : PIXEL_NEW_SIZE,
+    };
+    const card = addCard("pixel", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), fields, size);
+    log("info",
+      `pixel card added (${wanted}) — a drawing surface; the pixels are the file, not the board`);
+    return card;
+  }
+
   const app = {
     log,
     boardTouched,
@@ -1326,6 +1426,18 @@ function createApp() {
     openFile,
     openEditors,
     revealCard,
+    openPixelCard,
+    // The board's undo ring snapshots *documents*, and a pixel card's artwork
+    // deliberately is not one -- the pixels are the file.  So undo asks the
+    // selected card first: a handle that answers `true` took the step itself
+    // (given back a pencil stroke, say) and the ring must not move as well.
+    // A `false` -- or a card with no opinion -- falls through to the ring.
+    undo() {
+      return cardUndoOrRing();
+    },
+    redo() {
+      return cardRedoOrRing();
+    },
     // Same behaviour as `delete <id>`: the card leaves the board, the file on
     // disk is not touched, and unsaved text is named rather than discarded.
     closeCard: deleteCard,
@@ -1655,6 +1767,38 @@ function createApp() {
           `story card added (${wanted}) \u2014 nodes, lines and translations, not the raw file`);
         return;
       }
+      case "pixel": {
+        /* `pixel <path.png> [width] [height]`.  A path with a space in it is a
+           path, so the numbers are only read off the end. */
+        const rest = line.replace(/^\s*pixel\s*/i, "").trim();
+        if (rest === "") {
+          log("warn", "usage: pixel <path.png> [width] [height]");
+          return;
+        }
+        const words = rest.split(/\s+/);
+        let height = null;
+        let width = null;
+        if (words.length > 2 && /^\d+$/.test(words[words.length - 1]) && /^\d+$/.test(words[words.length - 2])) {
+          height = Number(words.pop());
+          width = Number(words.pop());
+        } else if (words.length > 1 && /^\d+$/.test(words[words.length - 1])) {
+          width = Number(words.pop());
+        }
+        const wanted = words.join(" ").replace(/\\/g, "/");
+        if (wanted === "") {
+          log("warn", "usage: pixel <path.png> [width] [height]");
+          return;
+        }
+        const options = {};
+        if (width !== null) {
+          options.width = width;
+        }
+        if (height !== null) {
+          options.height = height;
+        }
+        openPixelCard(wanted, options);
+        return;
+      }
       case "run": {
         const cmd = line.replace(/^\s*run\s*/i, "").trim();
         if (cmd === "") {
@@ -1796,11 +1940,13 @@ function createApp() {
         return;
       }
       case "undo": {
-        undoBoard();
+        // The selected card first, exactly as Ctrl+Z does: `undo` in the
+        // command line is the same request as the keystroke.
+        cardUndoOrRing();
         return;
       }
       case "redo": {
-        redoBoard();
+        cardRedoOrRing();
         return;
       }
       case "help": {
@@ -2395,6 +2541,13 @@ function createApp() {
        * this only fires when the keystroke did not land in one.  The editor and
        * note textareas stop propagation anyway; this is the belt to that
        * braces, and it also covers inputs that do not.
+       *
+       * The card gets first refusal, and that is load-bearing for the pixel
+       * card: its pixels are not in the board document, so the board's ring
+       * cannot give a pencil stroke back.  `cardUndoOrRing` asks the selected
+       * card's handle, and only moves the ring when the card answered `false`.
+       * A pixel canvas also handles Ctrl+Z itself and stops propagation, so
+       * the keystroke never reaches here while the canvas has focus.
        */
       const typing = event.target instanceof HTMLInputElement
         || event.target instanceof HTMLTextAreaElement
@@ -2402,9 +2555,9 @@ function createApp() {
       if ((event.ctrlKey || event.metaKey) && !typing && (key === "z" || key === "y")) {
         event.preventDefault();
         if (key === "y" || event.shiftKey) {
-          redoBoard();
+          cardRedoOrRing();
         } else {
-          undoBoard();
+          cardUndoOrRing();
         }
         return;
       }

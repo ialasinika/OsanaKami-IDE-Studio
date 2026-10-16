@@ -75,6 +75,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -83,6 +84,7 @@ from browser_smoke import (  # noqa: E402  (the import needs the path above)
     BOARD_PATH,
     EDGE_FLAGS,
     REPO_ROOT,
+    SHELL_MAIN,
     BoardBackup,
     DriverError,
     Host,
@@ -104,6 +106,24 @@ SCRATCH = REPO_ROOT / "build" / "__watch_smoke.txt"
 #: The file the wheel half opens.  Any file taller than a card's own box would
 #: do; this one is in the repository, so the run cannot depend on the workspace.
 SCROLL_FILE = "core/src/main.c"
+
+#: The pixel half opens one card per stroke, on paths that do not exist yet and
+#: live under ``build/``: the first save creates the file, so the repository's own
+#: art is never written to.  The .png each save leaves behind is what the checks
+#: decode, and all of them are removed in the same ``finally`` as the wrapper.
+PIXEL_STROKES = (
+    ("pencil", "build/__input_smoke_pixel.png"),
+    ("eraser", "build/__input_smoke_eraser.png"),
+    ("fill", "build/__input_smoke_fill.png"),
+)
+PIXEL_PNGS = tuple(REPO_ROOT / relative for _, relative in PIXEL_STROKES)
+
+#: The mod beside the repository whose PROBLEMS card carries the D006 rows
+#: ("Sprite file not found") the pixel card's click-through is for.  ``serve``
+#: resolves every ``mod.*`` root under ``--mods-root`` (default: the workspace),
+#: so this directory goes on the host's command line.
+MODS_ROOT = REPO_ROOT.parent / "Mods"
+MOD_NAME = "SODefines"
 
 #: Gives the page as much virtual time as it needs for five settled steps plus
 #: the wheel half; the real limit is ``--timeout`` on the browser process.
@@ -716,9 +736,324 @@ async function main() {
     say("classic-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk
-    ? "undo, redo, wheel ownership, a watched file, the editor keys and the classic view all work in a real browser"
-    : "FAILED -- see the counts, the wheel, the watch, the editor and the classic lines above"));
+  /* --- pixel cards: one file, one card, and the pixels are the file --------------
+     The board document keeps a pixel card's path and size; the pixels are the .png
+     on disk, and Ctrl+Z over the canvas is the card's own ring (main.mjs's
+     cardUndoOrRing) before it can ever be the board's.  This half presses, drags
+     and releases on the canvas with the events a real mouse sends, reads the image
+     back with the card's own eyedropper -- the card's own report of what is under
+     the pointer -- and then saves, so the Python side can decode the file the card
+     really wrote.  Every path is fresh under build/, so no file in the repository
+     is ever touched, and the cards are deleted again at the end. */
+  let pixelOk = false;
+  try {
+    const pixelPaths = { pencil: "@@PIXEL@@", eraser: "@@PIXEL2@@", fill: "@@PIXEL3@@" };
+    const cardsNow = () => Array.from(doc.querySelectorAll("#cards [data-card-id]"));
+    const find = (node, selector) => node.querySelector(selector);
+    const textOf = (node, selector) => {
+      const el = find(node, selector);
+      return el === null ? "" : (el.textContent || "").trim();
+    };
+    const valueOf = (node, selector) => {
+      const el = find(node, selector);
+      return el === null ? "" : String(el.value || "").trim();
+    };
+    const runLine = (text) => {
+      const box = doc.getElementById("command");
+      box.value = text;
+      box.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    };
+    const pixelsNow = () => cardsNow().filter((node) => node.dataset.kind === "pixel");
+    const cardOf = (label) => pixelsNow().find((node) => textOf(node, ".card-label") === label) || null;
+    const statusOf = (node) => textOf(node, '[data-role="card-status"]');
+    /* The DOM order of the cards is not the document's, so compare the same cards
+       rather than the same list. */
+    const geometry = () => cardsNow()
+      .map((node) => node.dataset.cardId + "@" + node.style.transform).sort().join(" | ");
+    const zoomOf = (node) => Math.max(1,
+      Number(textOf(node, '[data-role="pixel-zoom"]').replace(/[^0-9]/g, "")) || 8);
+    /* The card's own arithmetic: a pointer at the centre of image pixel (x, y) is
+       `zoom` canvas pixels from the canvas' corner, less the pan.  Nothing is
+       panned here, and the click has to follow the card's mapping (not the bitmap,
+       which is 1:1 with the box today) or it would edit a pixel the card
+       disagrees about.  A client coordinate is an integer and the canvas' corner
+       is not, so aim at the pixel's first column and row: rounding a centre
+       crossed into the next pixel whenever the zoom was 1. */
+    const pointAt = (node, x, y) => {
+      const rect = find(node, '[data-role="pixel-canvas"]').getBoundingClientRect();
+      const zoom = zoomOf(node);
+      return {
+        clientX: Math.ceil(rect.left + x * zoom),
+        clientY: Math.ceil(rect.top + y * zoom),
+      };
+    };
+    const pointer = (node, target, type, x, y, buttons) => {
+      const at = pointAt(node, x, y);
+      target.dispatchEvent(new win.PointerEvent(type, Object.assign({
+        bubbles: true, cancelable: true, button: 0, buttons: buttons,
+        pointerId: 1, pointerType: "mouse", isPrimary: true,
+      }, at)));
+    };
+    /* Press, drag across the pixels in between, release: the canvas hears the
+       press, the surface hears the moves and the release. */
+    const dragTo = async (node, from, to) => {
+      const canvas = find(node, '[data-role="pixel-canvas"]');
+      const surface = find(node, '[data-role="pixel-surface"]');
+      pointer(node, canvas, "pointerdown", from[0], from[1], 1);
+      await sleep(40);
+      for (let step = 1; step <= 6; step++) {
+        const x = Math.round(from[0] + (to[0] - from[0]) * step / 6);
+        const y = Math.round(from[1] + (to[1] - from[1]) * step / 6);
+        pointer(node, surface, "pointermove", x, y, 1);
+        await sleep(10);
+      }
+      pointer(node, surface, "pointerup", to[0], to[1], 0);
+      await sleep(80);
+    };
+    const press = async (node, x, y) => {
+      pointer(node, find(node, '[data-role="pixel-canvas"]'), "pointerdown", x, y, 1);
+      await sleep(40);
+      pointer(node, find(node, '[data-role="pixel-surface"]'), "pointerup", x, y, 0);
+      await sleep(80);
+    };
+    const pickTool = (node, tool) => { find(node, '[data-role="pixel-tool-' + tool + '"]').click(); };
+    /* A swatch that is not the one already in hand: the palette is the card's. */
+    const pickSwatch = (node, not) => {
+      const swatch = Array.from(node.querySelectorAll('[data-role="pixel-swatch"]'))
+        .find((button) => button.dataset.colour && button.dataset.colour !== not) || null;
+      if (swatch === null) return "";
+      swatch.click();
+      return swatch.dataset.colour;
+    };
+    const saveNow = async (node) => {
+      find(node, '[data-role="pixel-save"]').click();
+      await waitUntil(() => /saved |not saving|nothing to save/.test(statusOf(node)), 40, 250);
+      return statusOf(node);
+    };
+    /* What is under the pointer, in the card's own words: the eyedropper reads the
+       live image and the status line then ends with that pixel's ink. */
+    const inkAt = async (node, x, y) => {
+      pickTool(node, "eyedropper");
+      await press(node, x, y);
+      const found = statusOf(node).match(/#[0-9a-fA-F]{6}|transparent/g);
+      return found === null ? "" : found[found.length - 1];
+    };
+    /* Both the card and this half map a pointer through getBoundingClientRect, so
+       press only once the canvas has a laid-out box -- and the box is not enough:
+       CSS sizes the canvas from the moment the card exists, while the image only
+       arrives with the file the card reads.  A press before that is dropped (the
+       card has nothing to draw on) and the stroke leaves no trace at all, so wait
+       for the status line to carry the image's WxH, which the card only prints
+       once it has one.  A re-render replaces the node, so this returns the card as
+       it is now, not the one that was handed in. */
+    const settle = async (label) => {
+      await waitUntil(() => {
+        const node = cardOf(label);
+        if (node === null) return false;
+        const canvas = find(node, '[data-role="pixel-canvas"]');
+        const box = canvas === null ? null : canvas.getBoundingClientRect();
+        return box !== null && box.width > 0 && box.height > 0
+          && /[0-9]+×[0-9]+/.test(statusOf(node));
+      }, 60, 100);
+      return cardOf(label);
+    };
+    /* A fresh 8x8 card on a path that does not exist yet: the first save creates
+       the file, so nothing in the repository is overwritten. */
+    const openCard = async (label, width, height) => {
+      runLine("pixel " + label + " " + width + " " + height);
+      await waitUntil(() => cardOf(label) !== null, 40, 100);
+      return await settle(label);
+    };
+    const startedWith = cardsNow().map((node) => node.dataset.cardId);
+
+    /* 1. the pencil: press at one pixel, drag across four, release, save -- and
+       then let the card itself say what its image holds. */
+    let pencilOk = false;
+    let pencilLine = "pixel-pencil: the card never opened";
+    const pencilCard = await openCard(pixelPaths.pencil, 8, 8);
+    if (pencilCard !== null) {
+      pickTool(pencilCard, "pencil");
+      const drew = pickSwatch(pencilCard, "#000000");
+      await dragTo(pencilCard, [1, 1], [4, 1]);
+      const saved = await saveNow(pencilCard);
+      const inPress = await inkAt(pencilCard, 1, 1);
+      const pastIt = await inkAt(pencilCard, 5, 5);
+      pencilOk = drew !== "" && inPress === drew && saved.indexOf("saved ") === 0;
+      pencilLine = "pixel-pencil: file=" + JSON.stringify(pixelPaths.pencil)
+        + " drew=" + JSON.stringify(drew) + " press=" + JSON.stringify(inPress)
+        + " far=" + JSON.stringify(pastIt) + " zoom=" + zoomOf(pencilCard)
+        + " saved=" + JSON.stringify(saved);
+    }
+    say(pencilLine);
+
+    /* 2. the eraser over the pixel the pencil left, and the file that says it is
+       gone: a second card, so the pencil's own file above is still there. */
+    let eraserOk = false;
+    let eraserLine = "pixel-eraser: the card never opened";
+    const eraserCard = await openCard(pixelPaths.eraser, 8, 8);
+    if (eraserCard !== null) {
+      pickTool(eraserCard, "pencil");
+      const drew = pickSwatch(eraserCard, "#000000");
+      await dragTo(eraserCard, [1, 1], [2, 1]);
+      const painted = await inkAt(eraserCard, 1, 1);
+      pickTool(eraserCard, "eraser");
+      await dragTo(eraserCard, [1, 1], [2, 1]);
+      const cleared = await inkAt(eraserCard, 1, 1);
+      const saved = await saveNow(eraserCard);
+      eraserOk = drew !== "" && painted === drew && cleared === "transparent"
+        && saved.indexOf("saved ") === 0;
+      eraserLine = "pixel-eraser: file=" + JSON.stringify(pixelPaths.eraser)
+        + " before=" + JSON.stringify(painted) + " after=" + JSON.stringify(cleared)
+        + " saved=" + JSON.stringify(saved);
+    }
+    say(eraserLine);
+
+    /* 3. the fill on an empty region: a third card, blank from top to bottom, so
+       the region under the pointer is the whole image and one press is enough. */
+    let fillOk = false;
+    let fillLine = "pixel-fill: the card never opened";
+    const fillCard = await openCard(pixelPaths.fill, 8, 8);
+    let filledWith = "";
+    if (fillCard !== null) {
+      pickTool(fillCard, "fill");
+      filledWith = pickSwatch(fillCard, "#000000");
+      await press(fillCard, 0, 0);
+      const saved = await saveNow(fillCard);
+      const inPress = await inkAt(fillCard, 0, 0);
+      const far = await inkAt(fillCard, 7, 7);
+      fillOk = filledWith !== "" && inPress === filledWith && far === filledWith
+        && saved.indexOf("saved ") === 0;
+      fillLine = "pixel-fill: file=" + JSON.stringify(pixelPaths.fill)
+        + " filled=" + JSON.stringify(filledWith) + " press=" + JSON.stringify(inPress)
+        + " far=" + JSON.stringify(far) + " saved=" + JSON.stringify(saved);
+    }
+    say(fillLine);
+
+    /* 4. Ctrl+Z over the focused canvas: the card's own ring has to take the
+       stroke back, and the board -- the document that says which cards exist and
+       where they sit -- must not move.  That is what cardUndoOrRing is for. */
+    let undoOk = false;
+    let redoOk = false;
+    let undoLine = "pixel-undo: no card to draw on";
+    let redoLine = "pixel-redo: no card to draw on";
+    if (fillCard !== null) {
+      const second = pickSwatch(fillCard, filledWith);
+      pickTool(fillCard, "pencil");
+      await press(fillCard, 7, 7);
+      const afterStroke = await inkAt(fillCard, 7, 7);
+      runLine("focus " + fillCard.dataset.cardId);
+      await sleep(200);
+      const focused = await settle(pixelPaths.fill);
+      const canvas = focused === null ? null : find(focused, '[data-role="pixel-canvas"]');
+      const hasFocus = canvas !== null && doc.activeElement === canvas;
+      const placed = geometry();
+      const viewport = stageTransform() + " / " + hudZoom();
+      key(win, canvas, { key: "z", ctrlKey: true });
+      await sleep(250);
+      const afterUndo = await inkAt(focused, 7, 7);
+      const undoStatus = statusOf(focused);
+      const kept = geometry() === placed;
+      const still = stageTransform() + " / " + hudZoom() === viewport;
+      key(win, canvas, { key: "z", ctrlKey: true, shiftKey: true });
+      await sleep(250);
+      const afterRedo = await inkAt(focused, 7, 7);
+      undoOk = hasFocus && afterStroke === second && afterUndo === filledWith
+        && afterUndo !== afterStroke && kept && still;
+      redoOk = afterRedo === second;
+      undoLine = "pixel-undo: focused=" + hasFocus + " stroke=" + JSON.stringify(afterStroke)
+        + " after-ctrl+z=" + JSON.stringify(afterUndo) + " board-document=" + kept
+        + " viewport=" + still + " status=" + JSON.stringify(undoStatus);
+      redoLine = "pixel-redo: after-ctrl+shift+z=" + JSON.stringify(afterRedo)
+        + " status=" + JSON.stringify(statusOf(focused));
+    }
+    say(undoLine);
+    say(redoLine);
+
+    /* 5. the PROBLEMS card's D006 row: it names a sprite file that is not on
+       disk, and clicking it has to open a pixel card on that sprite -- not on the
+       define JSON that declared it, which stays one row-extra away. */
+    let d006Ok = false;
+    let sizeOk = false;
+    let d006Line = "pixel-d006: no D006 row";
+    const modName = "@@MOD@@";
+    const problemsCard = () => cardsNow()
+      .find((node) => node.dataset.kind === "problems" && textOf(node, ".card-label") === modName) || null;
+    const rowsOf = (node) => Array.from(node.querySelectorAll(".problems-rows .mod-row"));
+    const isD006 = (row) => textOf(row, ".mod-row-name").indexOf("D006") === 0;
+    const d006Row = () => {
+      const host = problemsCard();
+      return host === null ? null : rowsOf(host).find(isD006) || null;
+    };
+    runLine("problems " + modName);
+    await waitUntil(() => d006Row() !== null, 120, 250);
+    const row = d006Row();
+    if (row === null) {
+      const host = problemsCard();
+      d006Line = "pixel-d006: no D006 row in " + JSON.stringify(modName)
+        + " -- " + JSON.stringify(host === null ? "no problems card" : statusOf(host));
+    } else {
+      const host = problemsCard();
+      const extra = find(row, '[data-role="mod-row-extra"]');
+      const extraText = extra === null ? "" : (extra.textContent || "").trim();
+      const declaredIn = extraText.indexOf("declared in ") === 0
+        ? extraText.slice("declared in ".length).trim() : "";
+      /* The row's own message names the sprite: `...不存在：<sprite>（在 Mod ...` */
+      const named = (textOf(row, ".mod-row-name").match(/：([^（]+)（/) || [null, ""])[1];
+      const rows = rowsOf(host).length;
+      const d006Rows = rowsOf(host).filter(isD006).length;
+      const before = pixelsNow().map((node) => textOf(node, ".card-label"));
+      row.click();
+      await waitUntil(() => pixelsNow().some((node) => before.indexOf(textOf(node, ".card-label")) < 0), 40, 100);
+      const opened = pixelsNow().find((node) => before.indexOf(textOf(node, ".card-label")) < 0) || null;
+      const sprite = opened === null ? null : await settle(textOf(opened, ".card-label"));
+      if (sprite === null) {
+        d006Line = "pixel-d006: rows=" + rows + " d006=" + d006Rows
+          + " clicked=" + JSON.stringify(named) + " but no pixel card: " + JSON.stringify(statusOf(host));
+      } else {
+        const spriteLabel = textOf(sprite, ".card-label");
+        const size = valueOf(sprite, '[data-role="pixel-width"]') + "x"
+          + valueOf(sprite, '[data-role="pixel-height"]');
+        const box = find(sprite, '[data-role="pixel-canvas"]').getBoundingClientRect();
+        pickTool(sprite, "pencil");
+        const drew = pickSwatch(sprite, "#000000");
+        await dragTo(sprite, [6, 2], [14, 2]);
+        const inPress = await inkAt(sprite, 6, 2);
+        const far = await inkAt(sprite, 12, 12);
+        d006Ok = rows > 0 && d006Rows > 0 && declaredIn !== "" && named !== ""
+          && spriteLabel === modName + "/" + named && spriteLabel !== declaredIn
+          && spriteLabel.indexOf(modName + "/") === 0 && /[.]png$/.test(spriteLabel)
+          && /[.]json$/.test(declaredIn);
+        sizeOk = size === "96x96" && drew !== "" && inPress === drew && far === "transparent";
+        d006Line = "pixel-d006: rows=" + rows + " d006=" + d006Rows
+          + " declared=" + (declaredIn !== "") + " named=" + JSON.stringify(named)
+          + " sprite=" + JSON.stringify(spriteLabel) + " json=" + JSON.stringify(declaredIn)
+          + " size=" + JSON.stringify(size) + " zoom=" + zoomOf(sprite)
+          + " box=" + Math.round(box.width) + "x" + Math.round(box.height)
+          + " drew=" + JSON.stringify(drew)
+          + " press=" + JSON.stringify(inPress) + " far=" + JSON.stringify(far);
+      }
+    }
+    say(d006Line);
+
+    /* 6. and nothing is left behind: the cards this half opened, not the ones the
+       workspace came with.  The sprite card was never saved, so no file was
+       created for it either. */
+    const added = cardsNow().map((node) => node.dataset.cardId)
+      .filter((id) => startedWith.indexOf(id) < 0);
+    for (const id of added) runLine("delete " + id);
+    await sleep(300);
+    const left = added.filter((id) => cardsNow().some((node) => node.dataset.cardId === id)).length;
+    const others = pixelsNow().map((node) => textOf(node, ".card-label")).sort().join(",");
+    say("pixel-cards: added=" + added.length + " left=" + left + " others=" + JSON.stringify(others));
+    pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk && left === 0;
+  } catch (error) {
+    pixelOk = false;
+    say("pixel-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk && pixelOk
+    ? "undo, redo, wheel ownership, a watched file, the editor keys, the classic view and the pixel cards all work in a real browser"
+    : "FAILED -- see the counts, the wheel, the watch, the editor, the classic and the pixel lines above"));
   document.title = "input smoke done";
 }
 
@@ -731,6 +1066,12 @@ main();
 PAGE = PAGE.replace("@@FILE@@", SCROLL_FILE)
 #: ...and "@@SCRATCH@@", the file the watch half rewrites from a second process.
 PAGE = PAGE.replace("@@SCRATCH@@", SCRATCH_REL)
+#: ...and the three fresh .png paths the pixel half draws on.
+PAGE = PAGE.replace("@@PIXEL@@", PIXEL_STROKES[0][1])
+PAGE = PAGE.replace("@@PIXEL2@@", PIXEL_STROKES[1][1])
+PAGE = PAGE.replace("@@PIXEL3@@", PIXEL_STROKES[2][1])
+#: ...and the mod whose D006 rows its problems card has to offer.
+PAGE = PAGE.replace("@@MOD@@", MOD_NAME)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -868,6 +1209,117 @@ def parse_classic(body: str) -> dict:
     return found
 
 
+#: Each pixel-card line the wrapper writes, as ``name -> pattern``.
+PIXEL_RES = (
+    ("pencil", r'pixel-pencil: file="([^"]*)" drew="([^"]*)" press="([^"]*)" far="([^"]*)"'),
+    ("eraser", r'pixel-eraser: file="([^"]*)" before="([^"]*)" after="([^"]*)"'),
+    ("fill", r'pixel-fill: file="([^"]*)" filled="([^"]*)" press="([^"]*)" far="([^"]*)"'),
+    ("undo", r'pixel-undo: focused=(\w+) stroke="([^"]*)" after-ctrl\+z="([^"]*)"'
+             r' board-document=(\w+) viewport=(\w+)'),
+    ("redo", r'pixel-redo: after-ctrl\+shift\+z="([^"]*)"'),
+    ("d006", r'pixel-d006: rows=(\d+) d006=(\d+) declared=(\w+) named="([^"]*)"'
+             r' sprite="([^"]*)" json="([^"]*)" size="([^"]*)"'
+             r'(?: zoom=\d+ box=[0-9x]+)? drew="([^"]*)"'
+             r' press="([^"]*)" far="([^"]*)"'),
+    ("cards", r'pixel-cards: added=(\d+) left=(\d+) others="([^"]*)"'),
+)
+
+
+def parse_pixel(body: str) -> dict:
+    """The pixel-card lines the wrapper wrote, as tuples of raw strings."""
+    found = {}
+    for key, pattern in PIXEL_RES:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    # A pixel line that starts with `pixel-error` is the half's own report of a
+    # throwaway failure; the detail of a check whose line is missing quotes it.
+    none = re.search(r"pixel-error: (.+)", body)
+    if none is not None:
+        found.setdefault("note", (none.group(1),))
+    return found
+
+
+def decode_rgba(path: Path):
+    """``(width, height, rows)`` for a .png, rows as raw RGBA bytes.
+
+    The pixel card writes 8-bit RGBA colour type 6, non-interlaced, one IDAT and
+    no ancillary chunks, so unfiltering a few scanlines of ``zlib.decompress`` is
+    the whole decoder -- and the check then reads the file the card really wrote
+    rather than what the card says about it.  All five filter types are honoured
+    in case the encoder grows a better one.
+    """
+    raw = path.read_bytes()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path.name} does not start with a png signature")
+    width = height = None
+    packed = bytearray()
+    at = 8
+    while at + 8 <= len(raw):
+        length = int.from_bytes(raw[at:at + 4], "big")
+        kind = raw[at + 4:at + 8]
+        body = raw[at + 8:at + 8 + length]
+        at += 12 + length
+        if kind == b"IHDR":
+            width = int.from_bytes(body[0:4], "big")
+            height = int.from_bytes(body[4:8], "big")
+            if body[8] != 8 or body[9] != 6:
+                raise ValueError(f"{path.name}: bit depth {body[8]}, colour type {body[9]}, want 8/6")
+        elif kind == b"IDAT":
+            packed += body
+        elif kind == b"IEND":
+            break
+    if width is None or height is None:
+        raise ValueError(f"{path.name}: no IHDR")
+    data = zlib.decompress(bytes(packed))
+    stride = width * 4
+    rows = []
+    previous = bytearray(stride)
+    at = 0
+    for _ in range(height):
+        kind = data[at]
+        line = bytearray(data[at + 1:at + 1 + stride])
+        at += 1 + stride
+        for i in range(stride):
+            left = line[i - 4] if i >= 4 else 0
+            up = previous[i]
+            corner = previous[i - 4] if i >= 4 else 0
+            if kind == 1:
+                line[i] = (line[i] + left) & 0xFF
+            elif kind == 2:
+                line[i] = (line[i] + up) & 0xFF
+            elif kind == 3:
+                line[i] = (line[i] + (left + up) // 2) & 0xFF
+            elif kind == 4:
+                span = left + up - corner
+                near = min(abs(span - left), abs(span - up), abs(span - corner))
+                guess = left if near == abs(span - left) else up if near == abs(span - up) else corner
+                line[i] = (line[i] + guess) & 0xFF
+            elif kind != 0:
+                raise ValueError(f"{path.name}: filter type {kind} on row {len(rows)}")
+        rows.append(bytes(line))
+        previous = line
+    return width, height, rows
+
+
+def rgba_at(rows, x: int, y: int):
+    row = rows[y]
+    return tuple(row[x * 4:x * 4 + 4])
+
+
+def opaque_count(rows) -> int:
+    return sum(1 for row in rows for i in range(0, len(row), 4) if row[i + 3] != 0)
+
+
+def ink_of(text: str):
+    """The card's own names for a pixel: ``#rrggbb`` opaque, ``transparent`` clear."""
+    if text == "transparent":
+        return (0, 0, 0, 0)
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+        return tuple(int(text[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
+    return None
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -899,7 +1351,17 @@ def main(argv=None) -> int:
     print("-" * 68)
     profile = Path(tempfile.mkdtemp(prefix="infantgod-input-smoke-"))
     WRAPPER.write_text(PAGE, encoding="utf-8", newline="\n")
-    host = Host(args.port or free_port())
+    # ``serve`` resolves every ``mod.*`` root under ``--mods-root``, which
+    # defaults to the workspace; the mod whose D006 rows the pixel check opens
+    # sits beside the repository, so the host is browser_smoke's default command
+    # plus that one flag.  Without it the problems card answers
+    # "路径越界，已被拒绝: SODefines" and there is no row to click.
+    port = args.port or free_port()
+    host_argv = None
+    if MODS_ROOT.is_dir():
+        host_argv = ["node", str(SHELL_MAIN), "serve", "--workspace", str(REPO_ROOT),
+                     "--mods-root", str(MODS_ROOT), "--port", str(port), "--no-open"]
+    host = Host(port, host_argv)
     results = Results()
     attempts = 0
     body = ""
@@ -933,6 +1395,9 @@ def main(argv=None) -> int:
         # The watch half writes this with a real child process; take it away
         # whether or not the checks got that far.
         SCRATCH.unlink(missing_ok=True)
+        # The pixel half's cards create their .png on the first save and the
+        # checks below decode them, so those files outlive this block and are
+        # taken away after the last check.
         alive = host.proc is not None and host.proc.poll() is None
         if alive:
             terminate(host.proc)
@@ -1113,10 +1578,141 @@ def main(argv=None) -> int:
                   bool(back) and back[0] == "true" and back[1] == "false",
                   f"restored={back[0]} classic={back[1]}" if back else classic_detail("back"))
 
+    pixel = parse_pixel(body)
+
+    def pixel_detail(key: str) -> str:
+        got = pixel.get(key)
+        if got is not None:
+            return " ".join(got)
+        if pixel.get("note") is not None:
+            return f"pixel: {pixel['note'][0]}"
+        return f"no pixel-{key} line"
+
+    def saved_image(relative: str):
+        """The .png one of the pixel cards saved, or ``(None, why)`` if it cannot
+        be read -- the reason goes into the check's detail, because a file the
+        card says it saved and this half cannot decode is the whole point."""
+        path = REPO_ROOT / relative
+        try:
+            width, height, rows = decode_rgba(path)
+        except (OSError, ValueError, zlib.error) as exc:
+            size = path.stat().st_size if path.exists() else 0
+            return None, f"{type(exc).__name__}: {exc} (exists={path.exists()} size={size})"
+        return {"width": width, "height": height, "rows": rows}, ""
+
+    # The pencil: the card's own eyedropper says which pixel it painted, and the
+    # file the card saved says the same pixel is opaque in the .png on disk.  The
+    # drag is (1,1) to (4,1); which of the pixels between them change is the
+    # card's business, but the pixel it was pressed on is not.
+    pencil = pixel.get("pencil")
+    pencil_image, pencil_why = saved_image(pencil[0]) if pencil else (None, "no pixel-pencil line")
+    pencil_ink = ink_of(pencil[1]) if pencil else None
+    painted = ([(x, 1) for x in range(1, 5)
+                if rgba_at(pencil_image["rows"], x, 1)[3] != 0] if pencil_image else [])
+    press_pixel = rgba_at(pencil_image["rows"], 1, 1) if pencil_image else None
+    results.check("a pencil stroke reaches the pixels the card saves",
+                  pencil_image is not None and pencil_image["width"] == 8
+                  and pencil_image["height"] == 8
+                  and pencil_ink is not None and pencil_ink[3] == 255
+                  and press_pixel is not None and press_pixel[:3] == pencil_ink[:3]
+                  and len(painted) >= 1
+                  and all(rgba_at(pencil_image["rows"], x, y)[:3] == pencil_ink[:3]
+                          for x, y in painted)
+                  and ink_of(pencil[2]) == pencil_ink and ink_of(pencil[3]) == (0, 0, 0, 0),
+                  f"file={pencil[0]} drew={pencil[1]} press={pencil[2]} far={pencil[3]} "
+                  f"painted={[f'{x},{y}' for x, y in painted]} press_pixel={press_pixel} "
+                  f"image={pencil_why or 'read'}"
+                  if pencil else pixel_detail("pencil"))
+
+    # The eraser: the same pixel the pencil painted reads transparent through the
+    # eyedropper and is transparent in the saved file, so it is not the pencil.
+    eraser = pixel.get("eraser")
+    eraser_image, eraser_why = saved_image(eraser[0]) if eraser else (None, "no pixel-eraser line")
+    eraser_before = ink_of(eraser[1]) if eraser else None
+    eraser_after = ink_of(eraser[2]) if eraser else None
+    cleared = (eraser_image is not None
+               and rgba_at(eraser_image["rows"], 1, 1)[3] == 0
+               and rgba_at(eraser_image["rows"], 2, 1)[3] == 0)
+    results.check("the eraser takes a painted pixel back to transparent",
+                  eraser_image is not None and eraser_before is not None
+                  and eraser_before[3] == 255 and eraser_after == (0, 0, 0, 0) and cleared,
+                  f"file={eraser[0]} before={eraser[1]} after={eraser[2]} clear={cleared} "
+                  f"image={eraser_why or 'read'}"
+                  if eraser else pixel_detail("eraser"))
+
+    # The fill: one press on a blank 8x8 image, and the whole image is that
+    # colour -- through the eyedropper at the press, through the eyedropper in the
+    # far corner, and through every pixel of the file the card saved.
+    fill = pixel.get("fill")
+    fill_image, fill_why = saved_image(fill[0]) if fill else (None, "no pixel-fill line")
+    fill_ink = ink_of(fill[1]) if fill else None
+    filled_pixels = opaque_count(fill_image["rows"]) if fill_image else 0
+    results.check("a fill on an empty image changes more than the pixel under the pointer",
+                  fill_image is not None and fill_ink is not None and filled_pixels == 64
+                  and all(rgba_at(fill_image["rows"], x, y)[:3] == fill_ink[:3]
+                          for x, y in ((0, 0), (7, 7), (3, 5)))
+                  and ink_of(fill[2]) == fill_ink and ink_of(fill[3]) == fill_ink,
+                  f"file={fill[0]} filled={fill[1]} press={fill[2]} far={fill[3]} "
+                  f"opaque={filled_pixels}/64 image={fill_why or 'read'}"
+                  if fill else pixel_detail("fill"))
+
+    # Ctrl+Z and Ctrl+Shift+Z over the focused canvas: the card's own ring has to
+    # answer first (main.mjs's cardUndoOrRing), and the board -- the document that
+    # says which cards exist and where they sit -- must not move while it does.
+    undo = pixel.get("undo")
+    stroke_ink = ink_of(undo[1]) if undo else None
+    undone_ink = ink_of(undo[2]) if undo else None
+    results.check("Ctrl+Z over the canvas takes the stroke back and the board does not move",
+                  bool(undo) and undo[0] == "true" and stroke_ink is not None
+                  and stroke_ink[3] == 255 and undone_ink is not None
+                  and undone_ink != stroke_ink and undone_ink == fill_ink
+                  and undo[3] == "true" and undo[4] == "true",
+                  f"focused={undo[0]} stroke={undo[1]} after={undo[2]} "
+                  f"board-document={undo[3]} viewport={undo[4]}"
+                  if undo else pixel_detail("undo"))
+    redo = pixel.get("redo")
+    redone_ink = ink_of(redo[0]) if redo else None
+    results.check("Ctrl+Shift+Z puts the stroke back",
+                  redone_ink is not None and redone_ink == stroke_ink,
+                  f"after={redo[0]}" if redo else pixel_detail("redo"))
+
+    # The D006 row: its button opens a pixel card on the *sprite* the diagnostic
+    # named, not on the define JSON that declared it (which is the row's extra),
+    # and a card whose file does not exist yet is usable at its declared size.
+    d006 = pixel.get("d006")
+    sprite_ok = (bool(d006) and int(d006[0]) > 0 and int(d006[1]) > 0
+                 and d006[2] == "true" and d006[3] != ""
+                 and d006[4] == f"{MOD_NAME}/{d006[3]}"
+                 and d006[4] != d006[5] and d006[4].lower().endswith(".png")
+                 and d006[5].lower().endswith(".json"))
+    results.check("a D006 row opens the pixel card for the sprite it named, not the define JSON",
+                  sprite_ok,
+                  f"rows={d006[0]} d006={d006[1]} declared={d006[2]} named={d006[3]!r} "
+                  f"sprite={d006[4]!r} json={d006[5]!r}"
+                  if d006 else pixel_detail("d006"))
+    size_ok = (bool(d006) and d006[6] == "96x96" and ink_of(d006[7]) is not None
+               and ink_of(d006[7]) == ink_of(d006[8]) and ink_of(d006[9]) == (0, 0, 0, 0))
+    results.check("a pixel card on a missing sprite is usable at its declared size",
+                  size_ok,
+                  f"size={d006[6]} drew={d006[7]} press={d006[8]} far={d006[9]}"
+                  if d006 else pixel_detail("d006"))
+
+    # And the cards this half opened are gone again; the sprite card was never
+    # saved, so no file was created for it either.
+    cards = pixel.get("cards")
+    results.check("the pixel cards this run opened are closed again",
+                  bool(cards) and int(cards[0]) >= 5 and cards[1] == "0",
+                  f"added={cards[0]} left={cards[1]} others={cards[2]}"
+                  if cards else pixel_detail("cards"))
+
     results.check("the board is back as it was found", restored,
                   "byte-identical" if backup.existed else "absent again")
     if not host_gone:
         results.check("the host is gone", False, "still running -- kill it by hand")
+    # Every check that reads a .png the pixel cards wrote has had its look; the
+    # cards made these files and nothing else this run survives it.
+    for png in PIXEL_PNGS:
+        png.unlink(missing_ok=True)
     code = results.report(attempts)
     if args.keep and WRAPPER.exists():
         print(f"wrapper kept: {WRAPPER}")

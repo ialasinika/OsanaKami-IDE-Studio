@@ -242,14 +242,15 @@ The browser side, `shell/web/`, is module-per-concern:
 | `story.mjs` | a Yarn story read as nodes, lines, speakers, tags and `#line:` ids, and written back line for line (pure) | the story card has no model to draw, and the mod's 211 `.yarn` files can only be edited as raw text |
 | `storycsv.mjs` | the translation tables the game keeps beside a story: CSV in and out, `lock` = the first four bytes of SHA-256 of the source text, and each row's state (pure) | a translation cannot be shown beside the line it belongs to, and nothing can tell a fresh translation from one the source has moved under |
 | `ysls.mjs` | the game's own command schema read as two ordered lists, and where a `<<name` is being typed in a line (pure) | completion would have to be a hand-kept list in the shell, which is wrong the day the mod's commands change |
+| `pixelpng.mjs` | a PNG reader and writer that carries its own inflate, CRC-32 and Adler-32, and reads the two shapes this game's art is (pure) | a `.png` could only travel as base64 and nothing could show or change a pixel |
 | `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
 
 `board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs`,
-`views.mjs`, `story.mjs`, `storycsv.mjs` and `ysls.mjs` are deliberately
-UI-free — no `document`, no `window`, no timer — so the same objects are used by
-the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
+`views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs` and `pixelpng.mjs` are
+deliberately UI-free — no `document`, no `window`, no timer — so the same objects
+are used by the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
 that feeds it lives in `main.mjs`, which is why the decision table can be pinned
 without a browser, a kernel or a clock. `classic.mjs` and `modview.mjs` are the
 same kind of arithmetic: they compute the role and the tile for the cards a
@@ -276,7 +277,7 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures (195 checks), no DOM |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip (208 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
 | — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and `mode classic` is measured as drawn -- the tile, the tab click that moves the code area, and `mode board` restoring every card, size, pan and zoom -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and a window is checked to open on the classic tile with `mode board` still reachable behind it -- which is why the board's own steps say `mode board` out loud before they drag anything (26 checks) |
 
