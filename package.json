@@ -58,7 +58,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "license": "EULA.txt"
     }
   }
 }

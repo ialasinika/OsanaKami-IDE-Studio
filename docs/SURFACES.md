@@ -1,6 +1,6 @@
 # Surfaces — non-text editing, and the hook that makes it cheap
 
-A card on the board is called a **surface**: a rectangle in the canvas that owns
+A card in the board document is called a **surface**: a thing that owns
 some state and knows how to edit it. Nothing in InfantGod Studio assumes that state is a
 string of source text.
 
@@ -18,11 +18,12 @@ text. A fork that wants to edit a *shader graph*, a *level layout*, an *audio
 envelope*, a *database row set* or a *build matrix* spends its first month
 fighting the host instead of building the product.
 
-InfantGod Studio makes the opposite bet. The board is a canvas of surfaces; a text editor
+InfantGod Studio makes the opposite bet. The board document is a set of surfaces; a text editor
 is just one surface kind among several. The toolkit ships:
 
 - a kernel that stores a card's payload **verbatim** and validates only its
-  *shape* (`id`, `kind`, `x`, `y`, `w`, `h`),
+  *shape* (`id`, `kind`, `x`, `y`, `w`, `h` — the geometry is kept because it is
+  in the schema, not because a view reads it),
 - a protocol whose card payload is arbitrary nested JSON, not a string,
 - a board model that deep-clones payloads without inspecting them,
 - one registration function that turns "a new kind" into a self-contained
@@ -160,7 +161,7 @@ kind can depend on *both* the filesystem and the board without changing either.
 | command line | `focus`, `delete`, `link` work on any card id regardless of kind | `shell/web/main.mjs` |
 
 The last two matter: add a kind to a `board.json` and open it in a build that
-does not have the renderer, and you get a placeholder card that still pans,
+does not have the renderer, and you get a placeholder card that is still listed,
 still links, still saves. Nothing is lost. That is what makes it safe for a fork
 to invent kinds.
 

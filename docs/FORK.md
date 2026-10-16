@@ -71,7 +71,7 @@ The cuts a fork usually makes first, in ascending order of pain:
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
 | `exec` | 4 edits + `app.c` | `runner` cards and the `exec.*` methods — and with them the `exec.start` check in `tools/e2e.py` |
 | `view` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — and with it the ability to keep any document at all |
-| `wksp` | 4 edits + the file-facing card kinds (`editor`, `files`, `project`, `runner`) | files; the canvas alone remains |
+| `wksp` | 4 edits + the file-facing card kinds (`editor`, `files`, `project`, `runner`) | files; the views can still draw the cards already in the document |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
 
 **Cost:** proportional to what you cut; the reverse — adding a module back — is
@@ -362,8 +362,10 @@ Not implemented, not promised, and each cheap enough to be tempting:
   sidebar you drag to resize, a per-tab close (a card has no close), tab
   reordering, remembering the mode in `board.json`, and a `files`/`project`
   sidebar that behaves like a tree rather than like the card it is.
-- **A minimap or "fit board to window".** The viewport is three numbers; the
-  cards are a flat list with geometry. This is a shell-only feature.
+- **A minimap or a way to see every card at once.** There is no plane to
+  minimise any more, so this is now a *view*: the document is a flat list of cards
+  with geometry, and a third projection could draw all of them. A shell-only
+  feature, and a larger one than it was.
 - **Multi-select.** Gestures are per-card in `installGestures()`; a
   rubber-band selection is a new gesture and a set instead of a scalar
   `selectedId`.

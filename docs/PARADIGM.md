@@ -1,17 +1,27 @@
 # The board paradigm
 
 This document explains the one design decision that makes InfantGod Studio unlike every
-IDE you have used: **the main surface is a persistent 2-D canvas, not a set of
-tabs over a file tree.**
+IDE you have used: **the cards are a persistent document, and every arrangement
+you look at is a projection of it.**
 
 Everything else follows from that. If you disagree with this document, fork the
 project and change it — but change it knowingly, because several other decisions
 (card kinds, the command line, the board file) only make sense in this frame.
 
-This is the paradigm of **one view**, and it is the shell's, not the kernel's:
-the kernel defines that a view document exists and how it is stored, and nothing
-about what is in it. If you want a different main surface, you are replacing this
-document rather than fighting the core — see [`VIEWS.md`](VIEWS.md).
+This is the paradigm of **one document, two tiled views**, and it is the
+shell's, not the kernel's: the kernel defines that a view document exists and how
+it is stored, and nothing about what is in it. If you want a different main
+surface, you are replacing this document rather than fighting the core — see
+[`VIEWS.md`](VIEWS.md).
+
+A card in this document is still placed at a point with a size (`x`, `y`, `w`,
+`h`), and links still connect cards to each other. The shipped shell no longer
+has a canvas you can pan, zoom or drag a card across: it ships two tiled views —
+`classic` (a code area, a tab strip and a sidebar) and `mod` (a package tree, the
+editor and a problems report), and a window opens on `classic`. The canvas was
+the first arrangement on top of the document, not the document itself, and it is
+the one this product no longer draws. What the document buys you is the thing
+below: what is open, and what is linked to what, survives a view.
 
 ---
 
@@ -19,27 +29,28 @@ document rather than fighting the core — see [`VIEWS.md`](VIEWS.md).
 
 ### No tabs
 
-A tab strip is a **stack**: it has an order, it runs out of room, and it holds
-exactly one document in focus at a time. The moment you open the fifth file you
-begin managing the tab strip instead of the code. Closed tabs are gone; the
-only way back is the file tree and your memory of the path.
+A tab strip is a **view**: it has an order, it runs out of room, and it holds
+exactly one document in focus at a time. When the strip *is* the model, the
+moment you open the fifth file you begin managing the tab strip instead of the
+code. Closed tabs are gone; the only way back is the file tree and your memory of
+the path.
 
-In InfantGod Studio, opening a file creates a **card at a point on the canvas**. Nothing
-closes when you open something else. The card you opened yesterday is still
-where you left it, next to the note where you wrote down why you opened it.
+In InfantGod Studio, opening a file creates a **card in the board document**.
+Nothing closes when you open something else, and the card you opened yesterday is
+still in the document, next to the note where you wrote down why you opened it.
 
-The shell *does* draw a tab strip, and a window opens on it: `mode classic` is
-the view a new window starts in, and it puts the open editor cards in a row above
-a code area and the project card in a sidebar column. That exists because the
-request for it was explicit and because an arrangement of a document is not a
-second document — but it is a **projection**, not the paradigm. The tabs *are* the
-editor cards, in board order: there is no tab that is not a card, nothing is
-evicted when the sixth file opens, the strip is rebuilt from the board on every
-render, and switching views writes nothing. `mode board` — still a command, no
-longer one of the HUD's view buttons — puts every card back at the pixels the
-document gives it. If the tabs ever start deciding what is open, if a card can be
-closed from a tab or a tab can exist without one, this project has become the
-thing it was written not to be.
+Both shipped views do draw a tab strip, and a window opens on one of them:
+`mode classic` (the default) puts the open editor cards in a row above a code
+area, with a sidebar column beside them, and `mode mod` puts the same cards
+around a package tree and a validation report. That exists because the request
+for it was explicit and because an arrangement of a document is not a second
+document — but it is a **projection**, not the paradigm. The tabs *are* the
+editor cards, in document order: there is no tab that is not a card, nothing is
+evicted when the sixth file opens, and the strip is rebuilt from the document on
+every render. There is no other view to switch back to: `mode classic` and
+`mode mod` are the two arrangements this product draws. If the tabs ever start
+deciding what is open, if a card can be closed from a tab or a tab can exist
+without one, this project has become the thing it was written not to be.
 
 ### No file tree
 
@@ -48,36 +59,45 @@ answer "which files am I working on, and what is the relationship between
 them?" — that question is answered by the filesystem's directory layout, which
 is an accident of history.
 
-InfantGod Studio replaces the tree with the `files` card: a filterable listing you place
-where you want it, and `workspace.list` underneath. The listing is a card like
-any other, so you can open three of them with different filters
-(`core/**/*.c`, `langs/**/*`, `examples/*.yarn`) and leave them open.
+InfantGod Studio puts the tree in a card, not in the frame: the `files` card is a
+filterable listing you can open (and the `project` card answers the same question
+with what is already open merged in), and `workspace.list` is underneath. Neither
+view's column is the repository: it is the first `project`/`files`/`mod` card the
+document happens to hold, so the tree is something the document says rather than
+something the window assumes. The listing is a card like any other, so you can
+open three of them with different filters (`core/**/*.c`, `langs/**/*`,
+`examples/*.yarn`) and leave them open without either view needing to change.
 
 ---
 
-## The board
+## The board document
 
-The board is an unbounded plane. It is not a grid you snap to and not a fixed
-workspace; it is a plane with coordinates, and the visible rectangle over it is
-the **viewport**.
+The board is a document, not a mode. It is one JSON value: the cards, the
+geometry each card carries, and the links between them. It has no grid you snap
+to and no fixed window: the numbers live on the cards, and the views are what
+turn them into rectangles on a screen.
 
-A viewport is three numbers:
+A card's geometry is world units, and the document still carries a `viewport`
+descriptor:
 
 ```json
 { "x": 0, "y": 0, "zoom": 1 }
 ```
 
-`x`/`y` are the world coordinates of the top-left corner of the visible
-rectangle. `zoom` is the scale factor, clamped to `[0.2, 4]` by the shell
-(`ZOOM_MIN` / `ZOOM_MAX` in `shell/web/board.mjs`) and to a pan limit of
-100000 world units. Panning changes `x`/`y`; zooming about the cursor changes
-`zoom` while keeping the world point under the cursor fixed.
+`x`/`y` were the world coordinates of the top-left corner of the visible
+rectangle and `zoom` was the scale factor, clamped to `[0.2, 4]` by the shell
+(`ZOOM_MIN` / `ZOOM_MAX` in `shell/web/board.mjs`) with a pan limit of 100000
+world units. No shipped view reads those three numbers any more: the tiled views
+measure the window, not the document, and `mode board` — the view that drew the
+document at its own coordinates, and the only thing that ever moved the viewport
+— is gone. The field is still written and still accepted, so a `board.json` from
+a build that had the board view loads unchanged, and a card's `x`/`y`/`w`/`h`
+still round-trip byte for byte.
 
-The implementation detail that makes this cheap: `#stage` in
-`shell/web/index.html` carries **one** CSS transform,
-`translate(tx,ty) scale(zoom)`. Panning and zooming therefore never touch a
-card's own coordinates, and the SVG link overlay — which is written in world
-units — stays aligned for free.
+If you want the plane back it is a view away: the geometry is in the document,
+`shell/web/classic.mjs` is the model of a pure projection, and
+[`VIEWS.md`](VIEWS.md) is the seam. Adding it back is a rendering, not a
+protocol change.
 
 ### Cards
 
@@ -138,12 +158,14 @@ A link is a named connection between two cards:
 
 Both `from` and `to` must name an existing card; the board model refuses to
 serialise a document where they do not, and the file then stays as it was. Links
-have **no semantics** in the prototype — nothing is
-executed along them, nothing is inferred from them. They are drawn as a
-straight line between the midpoints of the two facing edges of the connected
-cards (`linkPoints` in `shell/web/main.mjs`), which is deliberately not a
-router: a straight line is enough to read a board and it never crosses the
-cards it connects.
+have **no semantics** — nothing is executed along them, nothing is inferred from
+them, and no shipped view draws them any more. They are still first-class in the
+document: they are what records *why* two cards belong together, they survive a
+view switch and a save, and the next view is free to draw them (the board view
+drew them as a straight line between the midpoints of the two facing edges of the
+connected cards, `linkPoints` in `shell/web/main.mjs`, which is deliberately not
+a router: a straight line is enough to read a board and it never crosses the
+cards it connects).
 
 Deleting a card drops every link that touched it, in `board.mjs`'s
 `removeCard`. Links pointing at a dead card
@@ -171,11 +193,13 @@ serialised document, and it is the token the optimistic-concurrency checks use.
 The path and the shape are the shell's conventions -- `docs/VIEWS.md` -- and the
 kernel's part of this is only the atomic replace and the revision.
 
-This file is why **where you put things is part of the project state**. Two
-developers with different board files are working on different projects in a
-way no `.gitignore`d editor state can express. Commit it or ignore it — but
-decide on purpose, because InfantGod Studio's `.gitignore` ignores all of `.infantgod/` and you
-may want your fork to keep `board.json`.
+This file is why **the layout is part of the project state**. The document
+remembers which cards are open, where the reader put them and what is linked to
+what; the views are recomputed from it and never written back into it. Two
+developers with different board files are working on different projects in a way
+no `.gitignore`d editor state can express. Commit it or ignore it — but decide on
+purpose, because InfantGod Studio's `.gitignore` ignores all of `.infantgod/` and
+you may want your fork to keep `board.json`.
 
 ---
 
@@ -187,54 +211,60 @@ palette that steals focus and it is not a menu; it is a place to type a verb.
 - Press `:` anywhere outside a text field to focus it. `Escape` clears and
   blurs it. `Tab` completes a command name. `ArrowUp` shows the last non-error
   log line as a hint. Typing a known verb shows its usage.
-- Verbs are `open`, `note`, `run`, `files`, `project`, `link`, `unlink`, `zoom`,
+- Verbs are `open`, `note`, `run`, `files`, `project`, `link`, `unlink`,
   `focus`, `delete`, `save`, `help`, `clear` (`KNOWN_COMMANDS` in
   `shell/web/main.mjs`).
 - `delete` with no argument acts on the **focused card**. That is the only
   place the command line reaches for the selection, and it is the intended
   pattern: the command line acts on what you are looking at.
-- `note`, `files` and `project` create cards at the centre of the current
-  viewport, so a new card appears where you are looking rather than at the
-  origin.
+- `note`, `files` and `project` create a card in the document, and the view is
+  what decides where that card appears: neither tiled view reads `x`/`y`, so a
+  new card is not placed at the origin and is not placed where a viewport
+  happened to be either.
 
 The authoritative help text lives in `COMMAND_HELP` in `shell/web/cards.mjs`,
 kept there (per its own comment) so the README and the UI agree.
 
-The command line is the same surface at every zoom level and with nothing
-selected. That is the point: it does not care what is in front of it, so it
-never becomes unusable because the thing you need is buried.
+The command line is the same surface whatever the window is showing and with
+nothing selected. That is the point: it does not care what is in front of it, so
+it never becomes unusable because the thing you need is buried.
 
 ---
 
 ## What this buys
 
-- **Spatial memory becomes real.** You stop navigating to a file and start
-  knowing where it is. Related work sits together because you put it together.
+- **The layout is the document.** You stop navigating to a file and start
+  having it in the document: what is open survives a view switch, a reload and a
+  save, and it is the same list in both views.
 - **No context destruction.** Opening a fifth file does not evict the fourth.
-  There is no stack to exhaust.
+  The tab strip is drawn from the document, so it cannot decide what is open.
 - **Relationships are first-class.** A link between a Yarn script card and the
-  `mod` card for the package it ships in is visible without a build-system file
-  saying so.
-- **One surface, no modes.** Panning, zooming, moving, resizing and editing all
-  work with the same pointer gestures and the same transform.
+  `mod` card for the package it ships in is stored in the document, so a view
+  that draws it needs no build-system file to say so.
+- **One document, two views.** `classic` and `mod` are projections of the same
+  cards; switching is a rendering, and neither can lose an edit.
 - **The state is a file.** The layout is data, so it can be diffed, reviewed,
   merged and generated.
 
 ## What it costs
 
-- **You can lose a card.** A card pushed far off-screen is invisible until you
-  zoom out and find it or type `focus <id>` — which requires knowing its id.
-  There is no minimap and no "projekt overview" panel to save you.
-- **No automatic layout.** Nothing tiles, snaps, aligns or prevents overlap.
-  With twenty cards, a board becomes a mess that only its author can read.
-- **Undo stops at the board.** `Ctrl+Z` takes back card and link edits, not the
-  typing inside a card (the textarea keeps its own stack), and not a pan, a zoom
-  or a "raise to front". The ring is in memory, so a reload forgets it.
+- **A card can be off the screen and stay there.** The views draw the cards that
+  have a role in the tile; every other card is hidden, not closed, and the only
+  way to reach it is the command line (`focus <id>`, which requires its id) or
+  the view that does give it a place. There is no overview panel to save you.
+- **The arrangement is the view's, not yours.** Nothing lets you drag a card
+  somewhere and have it stay: both views compute the rectangles, and the
+  document's own `x`/`y` are carried but not drawn. If you want the plane back,
+  it is a view to write.
+- **Undo stops at the document.** `Ctrl+Z` takes back card and link edits, not
+  the typing inside a card (the textarea keeps its own stack). The ring is in
+  memory, so a reload forgets it.
 - **Keyboard-only navigation is weak.** The command line is a single line with
   a single focus model; there is no chord language, no keyboard card
-  switching, and no search across the board.
-- **Small screens suffer.** A board wants area. On a laptop display you zoom out
-  until text is unreadable or pan a lot.
+  switching, and no search across the document.
+- **Small screens suffer.** A tiled view wants width for the column and height
+  for the code; the mod view's report panel drops out below `MOD_AREA_MIN`,
+  and the code area is what is left.
 - **Collaboration is worse, not better.** One board file means one layout, and
   two people editing it concurrently get `STALE_REVISION`, not a merge.
 
@@ -244,18 +274,19 @@ never becomes unusable because the thing you need is buried.
 
 | concern | mainstream IDE | InfantGod Studio |
 | --- | --- | --- |
-| Where is my file? | in the tree, at its path | wherever you put the card; the tree is a `files` card |
-| Which files am I working on? | the open tabs | the cards on the visible part of the board |
+| Where is my file? | in the tree, at its path | in the document; the tree is a `files` card, and both views' columns are a `project`/`files`/`mod` card |
+| Which files am I working on? | the open tabs | the cards in the document; the tab strip is those cards, drawn |
 | What happens when I open one more? | a tab; something may be evicted | a card; nothing is ever evicted |
-| How do I relate two files? | a symbol, an import, a comment | a link you draw between two cards |
-| How do I run something? | a run configuration dialog | a `runner` card next to the source, or `run <cmd>` |
+| How do I relate two files? | a symbol, an import, a comment | a link stored between two cards |
+| How do I run something? | a run configuration dialog | a `runner` card, or `run <cmd>` |
 | Where do scratch notes go? | nowhere; a comment or an external app | a `note` card in the board document |
 | What does the layout express? | nothing | which pieces belong together |
 | How do I extend it? | write a plugin against an API | fork the repository and edit the source |
-| What is persisted? | editor settings, open-tab session | the whole layout, as `board.json` |
+| What is persisted? | editor settings, open-tab session | the whole document, as `board.json` |
 
 The comparison that matters: in a tabbed IDE, the layout is a **transient view**
-of the filesystem. In InfantGod Studio, the layout is **part of the work**.
+of the filesystem. In InfantGod Studio, the layout is **part of the work** — the
+document is the thing that persists, and both views are drawn from it.
 
 ---
 
@@ -264,7 +295,8 @@ of the filesystem. In InfantGod Studio, the layout is **part of the work**.
 Honesty is part of the paradigm, not a disclaimer bolted on. As of this
 prototype:
 
-- There is no minimap, no overview mode, no "fit board to window".
+- There is no canvas view to pan, no zoom, no "fit board to window" and no
+  minimap: the geometry is in the document, and neither shipped view draws it.
 - There is no rubber-band multi-select and no multi-card operations.
 - The watcher is a **poll, not a filesystem notification**: the kernel emits
   `file.changed` only for writes it made itself, so the shell asks `file.stat`
@@ -272,7 +304,7 @@ prototype:
   noticed up to 1.5 s late, and never for a file no open card holds;
   `shell/web/watch.mjs` is the pure decision table and
   [`shell/web/README.md`](../shell/web/README.md) says what each answer means.
-- Links carry a label but nothing consumes them.
+- Links carry a label but nothing consumes them, and no shipped view draws them.
 - Card kinds are registered with one call (`registerCardKind`) rather than edited
   into a switch, but there is still no plugin system: no loading, no discovery,
   no manifest, no sandbox (constraint 3). Registering happens while the shell's

@@ -15,6 +15,34 @@ tree.
 
 ## Unreleased
 
+### One document, two views -- the canvas is gone
+
+- There were three ways to look at a board document; there are **two**.  `classic`
+  (a sidebar, a tab strip and a code area) and `mod` (the same tile pointed at a
+  mod package) are the whole registry, `mode board` is refused with the two names
+  that work, and the page has no `#stage`, no `#links` and no `#hud-zoom`.  The
+  dot grid, the grab cursor, the world transform, the pan and zoom arithmetic, the
+  drawn link layer, the click-drag move and resize and the double-click note drop
+  all went with them.  What did *not* go is the **document**: `.infantgod/board.json`
+  still carries cards, links and `viewport`, `load`/`save` is still the identity on
+  a file written before this change, and `#board` is still the element a tile
+  measures and a click lands on -- the board is a document and a file, not a way of
+  looking at them.
+- A card's place is the tile's business alone.  `centreWorld()` -- the answer to
+  "where does a new card go" -- used to read the viewport; it now walks a fixed
+  cascade, so a new note still lands somewhere visible and two notes never land on
+  the same pixel.  Selecting a card, raising it on top, clearing the selection by
+  clicking empty space, and the `link`/`unlink` document verbs all survive; what is
+  gone is moving a card by dragging it, which was the canvas's gesture.  Notes now
+  come from `note <text>` alone.
+- `#cards` carries `z-index: 0` in `style.css` as a deliberate substitution: the
+  deleted stage opened a stacking context by carrying a transform, and without it a
+  raised card could cover the tab strip or the hint.  The words are the other half
+  of the change: `docs/VIEWS.md` defines *board* as the document (never a view),
+  `docs/PARADIGM.md` keeps the paradigm without a canvas, and `docs/BUGS.md` notes
+  that the older entries below use "canvas", "pan" and "zoom" because that was the
+  shell then.
+
 ### Kernel
 
 - The kernel no longer knows what a view **is**.  `board.load`, `board.save` and
@@ -513,8 +541,8 @@ tree.
 ### Checks
 
 - `make test` (e2e 22, kernel probe, cli-check, version-check, JSON, blob 130/130,
-  langs 91/91, selftest 223/223, mods 84/84) and `make smoke` (browser smoke 5,
-  input smoke 35) are green.  The blob layer was held to the same bar rather than
+  langs 91/91, selftest 225/225, mods 84/84) and `make smoke` (browser smoke 5,
+  input smoke 38) are green.  The blob layer was held to the same bar rather than
   to "it compiles": ten breaks in `build/sabotage_blob.py` — a stale base not
   compared, a session table that answers to any id, an idle reaper that closes
   live sessions, a read cap and an append cap not enforced, an append at the wrong
@@ -620,8 +648,17 @@ tree.
   it draws a pencil drag and decodes the PNG the card wrote, takes a painted pixel back
   to transparent with the eraser, fills a blank image and reads all 64 of its pixels
   opaque out of the file, checks that Ctrl+Z over the canvas returns the pixel while the
-  board's geometry, stage transform and HUD zoom stay identical, and clicks a real D006
-  row to open and draw on a sprite that is not on disk — 34 checks in all.
+  document stays identical, and clicks a real D006 row to open and draw on a sprite that
+  is not on disk.  The board view's removal was held to the same bar
+  (`build/sabotage_no_canvas.py`): the word put back on the registry, every word treated
+  as a tile, an unknown view falling back to the classic tile instead of being refused,
+  the zoom readout, the zoom arithmetic and the drawn link layer each put back — six
+  breaks, each caught by a failing check (three source-level checks and the real command
+  line in `shell/web/selftest.mjs`), with `main.mjs`, `views.mjs` and `index.html`
+  restored byte-identical after every case.  What no DOM-less suite can see — that the
+  window really has no canvas, no `#links` and no `#hud-zoom`, that `mode board` is
+  refused and that the tile does not move — is read out of a real browser by
+  `tools/input_smoke.py`, whose count went from 34 to 38.
 
 ### Licence
 
@@ -629,6 +666,18 @@ tree.
   becomes **CC BY 4.0** ([LICENSE-DOCS](LICENSE-DOCS)): every Markdown file in
   the repository is documentation, everything else is code.  The fork is a
   derivative of MIT code, so this is the licence it was always allowed to carry.
+- New `EULA.txt`, and the installer now shows it: `nsis.license` in
+  `package.json` puts an early-version notice on the setup's licence page instead
+  of the MIT file.  It is deliberately *not* a restrictive agreement — the project
+  is free (code MIT, prose CC BY 4.0), the notice says so itself, defers to
+  `LICENSE`/`LICENSE-DOCS`, and promises to narrow nothing.  What it does say is
+  the one thing a licence page is good for: this build is early, it is not stable,
+  it may have bugs, it writes the files under your Mods directory, back them up.
+  It also says how the program was made — AI-authored throughout, corrected by hand
+  in DSH sessions, backed by self-tests and by the rule that a key promise needs a
+  sabotage run that turns a check red — which is part of judging an early build
+  rather than a footnote to it.  Plain text with a UTF-8 BOM, because NSIS's licence
+  page is not Markdown and does not guess an encoding.
 
 ### Tools and CI a clone can run
 

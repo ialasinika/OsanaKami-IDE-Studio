@@ -8,13 +8,15 @@
  * plumbing, the board model, the undo ring and the token-span logic are checked
  * exactly as the browser will use them.
  *
- * What that means: there is no browser here. Canvas layout, pointer gestures
- * (drag, resize, drawing a link), focus, keyboard handling and every CSS rule
- * are never exercised. One check calls `renderCard` against a stub element that
- * records structure and nothing else, purely to prove that a malformed board
- * entry produces a placeholder instead of an exception. The `note:` line at the
- * end of every run says the same thing, so a green run is never read as "the
- * browser was tested".
+ * What that means: there is no browser here. The tiles' pixels, pointer
+ * handling, focus, keyboard handling and every CSS rule are never exercised.
+ * One check calls `renderCard` against a stub element that records structure
+ * and nothing else, purely to prove that a malformed board entry produces a
+ * placeholder instead of an exception; one more builds the whole shell against
+ * an element stub and types at the real `mode` switch, because refusing a view
+ * that no longer exists is a promise made in `createApp`, not in the registry.
+ * The `note:` line at the end of every run says the same thing, so a green run
+ * is never read as "the browser was tested".
  *
  * Exit code is 0 only when every check passes; the summary is `ok N/N`.
  */
@@ -82,7 +84,6 @@ import {
   normaliseSheet,
   normaliseTokenKind,
   parseCommandLine,
-  parseZoomArgument,
   pixelColourOf,
   pixelInkOf,
   pixelPaletteOf,
@@ -125,11 +126,13 @@ import {
 
 /*
  * `main.mjs` is importable under Node on purpose (it only builds the app when
- * there is a `document`), which is what lets the two DOM-free helpers behind
- * the listener-leak and save-reporting fixes be checked here for real instead
- * of through a browser.
+ * there is a `document`), which is what lets the DOM-free helpers behind the
+ * listener-leak and save-reporting fixes be checked here for real instead of
+ * through a browser -- and what lets `createApp` itself be built under the
+ * element stub further down, so a typed command can be driven through the real
+ * `mode` switch rather than through a copy of its rules.
  */
-import { saveOutcomeMessage, scrollRoom, wireChoiceStrip } from "./main.mjs";
+import { createApp, saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
 import {
@@ -161,7 +164,6 @@ import {
   VIEW_TITLES,
   tiledView,
   viewAbout,
-  viewHud,
   viewName,
   viewNote,
 } from "./views.mjs";
@@ -403,6 +405,227 @@ function stubDom() {
         delete globalThis.document;
       } else {
         globalThis.document = previous;
+      }
+    },
+  };
+}
+
+/*
+ * A whole document, just enough to build the app.
+ *
+ * `stubDom` above is a fragment recorder with no ids; this is the other
+ * extreme.  Every id `createApp` reaches for answers with an element, so the
+ * shell's own construction path runs under Node and a typed command can be
+ * handed to the *real* `mode` switch instead of to a paraphrase of its rules.
+ * It is still not a browser: no layout, no measurement, no focus, no wheel and
+ * no selection, which is what the closing `note:` line admits.
+ *
+ * Elements remember the classes the shell toggles, because that is how a switch
+ * of view shows up without pixels: the shell paints the current view onto
+ * `<body>`/`#board`, and `viewClasses()` reads it back.
+ */
+function stubAppDom() {
+  const WIDTH = 1200;
+  const HEIGHT = 800;
+
+  const element = (tag) => {
+    const classes = new Set();
+    const stub = {
+      tagName: String(tag).toUpperCase(),
+      children: [],
+      attrs: {},
+      dataset: {},
+      style: {},
+      className: "",
+      textContent: "",
+      title: "",
+      type: "",
+      value: "",
+      id: "",
+      hidden: false,
+      scrollTop: 0,
+      scrollHeight: 0,
+      offsetWidth: WIDTH,
+      offsetHeight: HEIGHT,
+      childElementCount: 0,
+      firstElementChild: null,
+      queries: new Map(),
+      classes,
+      classList: {
+        add: (name) => {
+          classes.add(String(name));
+        },
+        remove: (name) => {
+          classes.delete(String(name));
+        },
+        contains: (name) => classes.has(String(name)),
+        toggle(name, on) {
+          const wanted = on === undefined ? !classes.has(String(name)) : Boolean(on);
+          if (wanted) {
+            classes.add(String(name));
+          } else {
+            classes.delete(String(name));
+          }
+          return wanted;
+        },
+      },
+      append(...children) {
+        for (const child of children) {
+          if (child !== null && child !== undefined) {
+            this.children.push(child);
+          }
+        }
+        this.childElementCount = this.children.length;
+        this.firstElementChild = this.children[0] || null;
+      },
+      appendChild(child) {
+        this.append(child);
+        return child;
+      },
+      removeChild(child) {
+        this.children = this.children.filter((one) => one !== child);
+        this.childElementCount = this.children.length;
+        this.firstElementChild = this.children[0] || null;
+        return child;
+      },
+      replaceChildren(...children) {
+        this.children = [];
+        this.append(...children);
+      },
+      remove() {
+        this.removed = true;
+      },
+      setAttribute(key, value) {
+        this.attrs[key] = String(value);
+        if (key === "id") {
+          this.id = String(value);
+        }
+      },
+      getAttribute(key) {
+        return Object.prototype.hasOwnProperty.call(this.attrs, key) ? this.attrs[key] : null;
+      },
+      addEventListener() {},
+      removeEventListener() {},
+      focus() {},
+      blur() {},
+      select() {},
+      setSelectionRange() {},
+      getBoundingClientRect() {
+        return { x: 0, y: 0, top: 0, left: 0, right: WIDTH, bottom: HEIGHT, width: WIDTH, height: HEIGHT };
+      },
+      querySelector(selector) {
+        if (!this.queries.has(selector)) {
+          const found = element("div");
+          found.setAttribute("class", String(selector).replace(/^[.#]/, ""));
+          this.queries.set(selector, found);
+        }
+        return this.queries.get(selector);
+      },
+      querySelectorAll() {
+        return [];
+      },
+      closest() {
+        return null;
+      },
+      contains() {
+        return false;
+      },
+    };
+    // The shell empties panels with `innerHTML = ""`; there is nothing to parse
+    // and never will be here, because nothing here is a browser.
+    Object.defineProperty(stub, "innerHTML", {
+      get() {
+        return "";
+      },
+      set() {
+        this.children = [];
+        this.childElementCount = 0;
+        this.firstElementChild = null;
+      },
+    });
+    return stub;
+  };
+
+  const byId = new Map();
+  const elementFor = (id) => {
+    if (!byId.has(id)) {
+      byId.set(id, element("div"));
+    }
+    return byId.get(id);
+  };
+
+  const body = element("body");
+  elementFor("board");
+
+  const previous = new Map();
+  const swap = (name, value) => {
+    previous.set(name, Object.prototype.hasOwnProperty.call(globalThis, name) ? globalThis[name] : undefined);
+    globalThis[name] = value;
+  };
+  const media = { matches: false, addEventListener() {}, removeEventListener() {} };
+  const style = { getPropertyValue: () => "" };
+
+  swap("document", {
+    body,
+    documentElement: element("html"),
+    activeElement: null,
+    getElementById: (id) => (id === null || id === undefined ? null : elementFor(String(id))),
+    createElement: (tag) => element(tag),
+    createElementNS: (namespace, tag) => element(tag),
+    createTextNode: (text) => ({ textContent: String(text), children: [] }),
+    createDocumentFragment: () => element("#fragment"),
+    querySelector: (selector) => elementFor(`query:${selector}`),
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+  });
+  swap("window", {
+    addEventListener() {},
+    removeEventListener() {},
+    matchMedia: () => media,
+    getComputedStyle: () => style,
+    devicePixelRatio: 1,
+    innerWidth: WIDTH,
+    innerHeight: HEIGHT,
+  });
+  swap("requestAnimationFrame", (fn) => setTimeout(fn, 0));
+  swap("cancelAnimationFrame", (handle) => clearTimeout(handle));
+  swap("getComputedStyle", () => style);
+  swap("matchMedia", () => media);
+  swap("HTMLElement", class {});
+  swap("HTMLInputElement", class {});
+  swap("HTMLTextAreaElement", class {});
+  swap("Element", class {});
+
+  return {
+    /** The `<body>` the current view is painted onto. */
+    body,
+    /** The stub behind an id, for reading what the shell did with it. */
+    element: (id) => elementFor(String(id)),
+    /** The lines currently in `#log`, oldest first. */
+    logLines() {
+      return elementFor("log").children;
+    },
+    /** The view the shell painted, by class, sorted. */
+    viewClasses() {
+      return [...body.classes].sort();
+    },
+    /** Flatten every text node under a stub element. */
+    text(el) {
+      if (el === null || el === undefined) {
+        return "";
+      }
+      const own = typeof el.textContent === "string" ? el.textContent : "";
+      const kids = Array.isArray(el.children) ? el.children.map((child) => this.text(child)).join("") : "";
+      return own + kids;
+    },
+    restore() {
+      for (const [name, value] of previous) {
+        if (value === undefined) {
+          delete globalThis[name];
+        } else {
+          globalThis[name] = value;
+        }
       }
     },
   };
@@ -1277,21 +1500,13 @@ test("runner: exit codes read as words, not numbers", () => {
   assert.equal(formatExit(undefined), "running");
 });
 
-test("command line: quoting, zoom words and card descriptions", () => {
+test("command line: quoting and card descriptions", () => {
   assert.deepEqual(parseCommandLine("open examples/hello.yarn"), ["open", "examples/hello.yarn"]);
   assert.deepEqual(parseCommandLine('  run  "python tools/e2e.py" "a b.yarn" '), ["run", "python tools/e2e.py", "a b.yarn"]);
   assert.deepEqual(parseCommandLine('link c1 c2 "runs the file"'), ["link", "c1", "c2", "runs the file"]);
   assert.deepEqual(parseCommandLine("note hello world"), ["note", "hello", "world"]);
   assert.deepEqual(parseCommandLine("   "), []);
   assert.deepEqual(parseCommandLine(""), []);
-
-  assert.equal(parseZoomArgument("in", 1), 1.25);
-  assert.equal(parseZoomArgument("out", 1), 0.8);
-  assert.equal(parseZoomArgument("reset", 3), 1);
-  assert.equal(parseZoomArgument("2"), 2);
-  assert.equal(parseZoomArgument("50%"), 0.5);
-  assert.equal(parseZoomArgument("banana"), null);
-  assert.equal(parseZoomArgument(""), null);
 
   assert.equal(describeCard({ kind: "editor", file: "a.yarn" }), "editor a.yarn");
   assert.equal(describeCard({ kind: "runner", cmd: "ls" }), "runner ls");
@@ -1818,7 +2033,7 @@ test("cards: renderCard renders a placeholder for null, undefined and unknown ki
   const dom = stubDom();
   try {
     // board.json is user-editable, so one malformed entry must not take the
-    // whole canvas down: every one of these used to throw, and a throw inside
+    // whole tile down: every one of these used to throw, and a throw inside
     // the render loop left the rest of the board unpainted.
     for (const entry of [null, undefined, 42, ["not", "a", "card"], { kind: "nope", id: "c1" }, { id: "c2" }]) {
       let card = null;
@@ -2242,20 +2457,10 @@ test("history: clear() empties it and a record after that starts over", () => {
 });
 
 /*
- * The wheel rule the board follows: a card's own scroll region keeps the wheel
- * while it has room in that direction, and the board pans only when it does not.
- * Which ancestor is a scroll container needs a browser; this is the arithmetic
- * that decision rests on.
+ * There is no wheel rule left to pin here: the canvas that panned is gone, and
+ * in a tiled view a wheel over a card belongs to the card.  Whether an ancestor
+ * is a scroll container needs a browser either way.
  */
-test("wheel: a scroll region has room only where it can still move", () => {
-  assert.equal(scrollRoom(0, 100, 400, 120), 300, "at the top, a downward wheel has the rest to go");
-  assert.equal(scrollRoom(300, 100, 400, 120), 0, "at the bottom, a downward wheel has nowhere to go");
-  assert.equal(scrollRoom(120, 100, 400, -120), 120, "a wheel up has the part already scrolled past");
-  assert.equal(scrollRoom(0, 100, 400, -120), 0, "a wheel up at the top has nowhere to go");
-  assert.equal(scrollRoom(0, 400, 400, 120), 0, "content that already fits does not scroll");
-  assert.equal(scrollRoom(10, 100, 400, 0), 0, "a wheel that moves nothing owns nothing");
-  assert.equal(scrollRoom(NaN, 100, 400, 120), 0, "a broken metric never claims room");
-});
 
 /*
  * What to do when a file moves under a card. `main.mjs` asks the kernel and
@@ -2348,13 +2553,13 @@ test("watch: a path that is no longer open is forgotten", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* the classic view --- */
+/* the two tiled views, and the board they are views of                 */
 /*
- * The second way to look at the same board.  What is pinned here is the two
- * promises that make it a *view* rather than a second layout engine: nothing it
- * computes is written back to a card (so `mode board` is exactly the board
- * again), and every card either has one place in the tile or is hidden -- never
- * drawn at 0,0 and never moved.
+ * The two ways to look at the same board document.  What is pinned here is
+ * what makes each one a *view* rather than a second layout engine: nothing it
+ * computes is written back to a card (so a switch loses no edit and a save
+ * writes the document back untouched), and every card either has one place in
+ * the tile or is hidden -- never drawn at 0,0 and never moved.
  *
  * The pixels themselves are checked as arithmetic: the tile's pieces have to
  * add up at any window size, which is the part a browser would otherwise be the
@@ -2444,37 +2649,40 @@ test("classic: a tab is the last segment of the path, either slash", () => {
   assert.equal(classicTabLabel(undefined), "");
 });
 
-test("views: the mode a command names is one of three, and an unknown one is refused", () => {
-  assert.deepEqual(VIEWS, ["board", "classic", "mod"]);
-  assert.deepEqual(VIEW_LABELS, { board: "Board", classic: "Classic", mod: "Mod" });
+/*
+ * `views.mjs` is the whole vocabulary of the `mode` command, so what it holds
+ * is pinned here: two tiled views, and no third word the shell has to keep
+ * alive.  Whether `mode board` *runs* is a different question, asked further
+ * down through the real command line, where the warning it must print lives.
+ */
+test("views: the two tiles are the whole registry, and any other name is refused", () => {
+  assert.deepEqual(VIEWS, ["classic", "mod"], "the canvas view is gone from the list");
   assert.equal(viewName("classic"), "classic");
   assert.equal(viewName("  Mod "), "mod", "the command line is not case-sensitive");
+  assert.equal(viewName("board"), null, "the word that named the canvas view names no view now");
+  assert.equal(viewName("Board"), null, "and not in another case either");
+  assert.equal(viewName("  board  "), null, "nor with the whitespace a person might type");
   assert.equal(viewName("tabs"), null, "an unknown word must warn, not fall back silently");
   assert.equal(viewName(""), null);
   assert.equal(viewName(undefined), null);
   assert.equal(viewName(3), null);
 });
 
-test("views: the HUD quotes no zoom a tile cannot honour", () => {
-  assert.deepEqual(viewHud("classic"), { view: "classic", zoom: "no zoom" });
-  assert.deepEqual(viewHud("mod"), { view: "mod", zoom: "no zoom" });
-  assert.deepEqual(viewHud("board"), { view: "board", zoom: null });
-  assert.deepEqual(viewHud("sideways"), viewHud("board"), "anything else is the board");
-  assert.equal(tiledView("board"), false);
-  assert.equal(tiledView("classic"), true);
-  assert.equal(tiledView("mod"), true);
+test("views: every view is a tile, and nothing else is one", () => {
+  for (const view of VIEWS) {
+    assert.equal(tiledView(view), true, `${view}: every view there is draws a tile`);
+  }
+  assert.equal(tiledView("board"), false, "the canvas is not a tile, because it is not a view any more");
   assert.equal(tiledView("sideways"), false, "an unknown view is not a tile, so it cannot be drawn");
 });
 
-test("views: the window opens on the tile, and the board is a mode rather than a button", () => {
+test("views: the window opens on a tile, and the switch offers every view there is", () => {
   assert.equal(DEFAULT_VIEW, "classic", "a window opens where a mod author works, not on a canvas");
-  assert.ok(VIEWS.indexOf(DEFAULT_VIEW) !== -1, "the default has to be a name `mode` accepts");
-  assert.deepEqual(SWITCH_VIEWS, ["classic", "mod"]);
-  assert.equal(SWITCH_VIEWS.indexOf("board"), -1, "the board is reachable by name and offered to nobody");
-  assert.ok(SWITCH_VIEWS.indexOf(DEFAULT_VIEW) !== -1, "the view a window opens in must be one you can leave");
-  for (const view of SWITCH_VIEWS) {
-    assert.ok(VIEWS.indexOf(view) !== -1, `${view}: the switch cannot offer a name \`mode\` would refuse`);
-  }
+  assert.equal(VIEWS.indexOf(DEFAULT_VIEW) !== -1, true, "the default has to be a name `mode` accepts");
+  assert.deepEqual(SWITCH_VIEWS, VIEWS, "every view is on the switch, and no switch offers a name `mode` refuses");
+  assert.equal(SWITCH_VIEWS.indexOf(DEFAULT_VIEW) !== -1, true, "the view a window opens in must be one you can leave");
+  assert.equal(VIEWS.indexOf("board"), -1, "the board is a document and a file, not a way to look at them");
+  assert.equal(SWITCH_VIEWS.indexOf("board"), -1);
 });
 
 test("views: a switch button has a label and a tooltip whichever view is on it", () => {
@@ -2487,6 +2695,11 @@ test("views: a switch button has a label and a tooltip whichever view is on it",
     Object.keys(VIEW_TITLES).sort(),
     [...VIEWS].sort(),
     "and nothing besides the views: a title for no view is dead weight",
+  );
+  assert.deepEqual(
+    Object.keys(VIEW_LABELS).sort(),
+    [...VIEWS].sort(),
+    "a label for a view that is gone is dead weight too",
   );
 });
 
@@ -2501,8 +2714,80 @@ test("views: every view names the ways out of it and says what it is", () => {
     }
     assert.ok(viewAbout(view).length > 20, `${view}: it has a sentence of its own`);
   }
-  assert.notEqual(viewAbout("board"), viewAbout("mod"), "the mod view is not described as the board");
-  assert.equal(viewAbout("sideways"), viewAbout("board"), "an unknown view is the board");
+  assert.notEqual(viewAbout("mod"), viewAbout("classic"), "the two tiles are described differently");
+  assert.equal(viewAbout("board"), viewAbout(DEFAULT_VIEW), "a word naming no view falls back to the one a window opens in");
+  assert.equal(viewNote("board"), viewNote(DEFAULT_VIEW), "the note does too, so a stray word cannot leave a blank line");
+});
+
+/*
+ * The document did not go away with the view that drew every card whole.  A
+ * `.infantgod/board.json` still carries cards, links and a viewport, and a
+ * load/save pair still has to be the identity on it -- opening a file written
+ * before the canvas went must not rewrite it.
+ */
+test("views: the board document still round-trips, viewport and links included", () => {
+  const doc = {
+    version: 1,
+    viewport: { x: -140, y: 60, zoom: 0.75 },
+    cards: [
+      { id: "a", kind: "note", x: 12, y: -34, w: 260, h: 180, z: 1, text: "hello" },
+      { id: "b", kind: "editor", x: -40, y: 8, w: 420, h: 300, z: 2, file: "src/a.yarn" },
+    ],
+    links: [{ id: "l1", from: "a", to: "b", label: "runs" }],
+  };
+  const board = createBoard(JSON.parse(JSON.stringify(doc)));
+  assert.deepEqual(board.serialize(), doc, "load and save are the identity on a document that needs no repair");
+  assert.deepEqual(board.serialize().viewport, doc.viewport, "the pan and the zoom are fields a save still keeps");
+  const reloaded = normaliseDocument(JSON.parse(JSON.stringify(doc)));
+  assert.deepEqual(reloaded.document, doc, "and the repair pass has nothing to repair in an old file");
+});
+
+/*
+ * The registry cannot say whether `mode board` *runs*; only `createApp` can,
+ * because the warning lives inside its `mode` branch.  So the whole shell is
+ * built under the element stub above, a real command is typed at it, and the
+ * view it paints onto `<body>` is read back: `mode mod` has to move it, and
+ * `mode board` has to leave it exactly where it was while saying why.
+ */
+await testAsync("views: `mode board` is refused by the real command line, and moves nothing", async () => {
+  const unknownView = 'unknown view "board". Try `mode classic`, `mode mod`.';
+  const dom = stubAppDom();
+  try {
+    const app = createApp();
+    assert.deepEqual(dom.viewClasses(), ["is-classic"], "a window opens in the default view");
+    await app.runCommand("mode mod");
+    assert.deepEqual(dom.viewClasses(), ["is-mod"], "`mode mod` moves the view, so the next check says something");
+    await app.runCommand("mode board");
+    assert.deepEqual(dom.viewClasses(), ["is-mod"], "`mode board` cannot move a view that no longer exists");
+    const lines = dom.logLines();
+    const last = lines[lines.length - 1];
+    assert.ok(last !== undefined, "the command answered");
+    assert.match(String(last.className), /log-warn/, "an unknown view is a warning, not a silent no-op");
+    assert.ok(
+      dom.text(last).endsWith(unknownView),
+      `the warning names the two views there are, got: ${dom.text(last)}`,
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+/*
+ * The three files that used to carry the canvas cannot be trusted to have let
+ * go of it just because the registry did.  Read as text, so a leftover is a
+ * failure here rather than a surprise in a browser nobody has open.
+ */
+test("views: no source still carries the canvas view, its zoom or its link layer", () => {
+  const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+  const views = readFileSync(new URL("./views.mjs", import.meta.url), "utf8");
+  const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(main, /zoomAbout/, "the zoom arithmetic went with the canvas");
+  assert.doesNotMatch(main, /viewportTouched/, "so did the flag that said the viewport had been panned");
+  assert.doesNotMatch(main, /"hud-zoom"/, "and the HUD readout that showed it");
+  assert.doesNotMatch(views, /viewHud/, "the registry no longer answers a question only a canvas had");
+  assert.doesNotMatch(html, /id="hud-zoom"/, "the readout's element left the page with it");
+  assert.doesNotMatch(html, /id="links"/, "the drawn link layer went too: links are document data, not lines");
+  assert.match(html, /id="board"/, "the board host itself stays: it is the document's one element");
 });
 
 test("mod: the package is the sidebar, the report is the panel, both before their fallbacks", () => {
@@ -2613,7 +2898,7 @@ test("mod: the layout is a projection -- it never writes to a card", () => {
   const out = modLayout(board, { width: 1200, height: 800 }, { activeId: "e1", top: 30 });
   assert.notEqual(out.boxes.get("e1").x, 700, "the code area is somewhere else on screen");
   assert.notEqual(out.boxes.get("x").y, out.boxes.get("e1").y, "the report is under the code, not on it");
-  assert.deepEqual(board, before, "but the document is untouched -- `mode board` must be the board again");
+  assert.deepEqual(board, before, "but the document is untouched -- a switch to the other tile has to lose no card");
 });
 
 test("mod: a panel kind and a sidebar kind are disjoint by rule, not by accident", () => {
@@ -2635,7 +2920,7 @@ test("classic: the layout is a projection -- it never writes to a card", () => {
   const before = JSON.parse(JSON.stringify(board));
   const out = classicLayout(board, { width: 1200, height: 800 }, { activeId: "e1", top: 30 });
   assert.notEqual(out.boxes.get("e1").x, 700, "the code area is somewhere else on screen");
-  assert.deepEqual(board, before, "but the document is untouched -- `mode board` must be the board again");
+  assert.deepEqual(board, before, "but the document is untouched -- a switch to the other tile has to lose no card");
 });
 
 /* ------------------------------------------------------------------ */
@@ -4496,7 +4781,7 @@ const passed = checks - failures.length;
  * Said on every run, pass or fail, because a green `ok N/N` is easy to read as
  * "the UI works". It does not: this suite has no browser in it.
  */
-const note = `note: ${checks} checks, no DOM -- canvas layout, focus, pointer, keyboard and wheel events are not covered`;
+const note = `note: ${checks} checks, no DOM -- the tiles' pixels, focus, pointer, keyboard and wheel events are not covered`;
 if (failures.length > 0) {
   for (const { name, err } of failures) {
     console.error(`FAIL ${name}\n     ${err && err.message ? err.message : err}`);

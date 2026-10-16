@@ -84,7 +84,7 @@ the kernel's job.
 | word | means |
 | --- | --- |
 | **view** | the kernel's abstract thing: a path, a JSON value, a revision |
-| **board** | the reference shell's view: a spatial canvas of cards and links |
+| **board** | the *document* the shell's two tiled views are computed from: the JSON value in `.infantgod/board.json`, a set of cards and links — not an arrangement |
 | **card** | the shell's unit inside that board (editor, runner, note, mod, ...) |
 | **document** | the JSON value itself, wire-level: `view.*`'s `document` member |
 
@@ -115,11 +115,12 @@ You do not touch `core/`. You have two configurations, both already supported:
   is showing.
 
   A window opens in `classic` (`views.mjs`'s `DEFAULT_VIEW`), and the HUD switch
-  offers the two tilings (`SWITCH_VIEWS`). The board is still a mode -- `mode
-  board` draws every card exactly where the document put it, and none of it was
-  removed -- but it is not a button. Its arrangement is only meaningful once you
-  have dragged cards into it, and a product that opens on the tiling and never
-  asks anyone to learn the board should not offer it as the third thing to click.
+  offers the two tilings (`SWITCH_VIEWS`). There is no third one: the spatial
+  plane the `x`/`y` of a card once described was never a view anybody could
+  choose, so it is gone along with its pan and zoom, and `mode board` is no
+  longer a name the command line answers. The document is untouched by all of
+  it -- every card keeps its `x`/`y` on disk, and nothing was removed from the
+  schema.
 
 A view that shares the *file* with another view is the interesting case: two
 clients, the same `path`, one `base_revision` rail between them.
@@ -133,6 +134,6 @@ hears about the second.
 | --- | --- |
 | the kernel side of the seam | `core/include/view.h`, `core/src/view.c` |
 | the wire | `docs/PROTOCOL.md` (`view.load`, `view.save`, `view.changed`) |
-| the reference view | `shell/web/board.mjs`, `shell/web/main.mjs`, `docs/PARADIGM.md` |
+| the reference views | `shell/web/board.mjs`, `shell/web/classic.mjs`, `shell/web/modview.mjs`, `shell/web/main.mjs`, `docs/PARADIGM.md` |
 | what a fork may replace | `docs/FORK.md`, `docs/TRIM.md` |
 | the bugs this closed | `docs/BUGS.md`, entries A, N8, N10 |

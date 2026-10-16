@@ -118,7 +118,7 @@ builds and runs without it.
 | `json` | JSON parse/serialise; the protocol's value type | nothing builds | no |
 | `base64` | base64 for the byte verbs and for blob chunks | binary files can no longer cross the wire, in either direction | no |
 | `port` | the platform boundary: files, paths, threads, processes | nothing builds; this is the layer a fork replaces to leave Win32 | no |
-| `wksp` | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; only the canvas remains | yes |
+| `wksp` | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; the client is left with what it holds | yes |
 | `blob` | large files as chunked sessions, published atomically on commit | a file over 4 MiB can only be read or written whole, if at all | no |
 | `view` | the client's view document: opaque JSON, atomic persistence, revisions | no document survives a restart; the client is left with what it holds | yes |
 | `exec` | child processes for `runner` cards, with streamed output | cards can no longer run anything | yes |
@@ -285,13 +285,13 @@ The browser side, `shell/web/`, is module-per-concern:
 | --- | --- | --- |
 | `index.html` | the entire page | nothing loads |
 | `style.css` | layout, card chrome, the editor's two-layer metrics | cards render unstyled |
-| `board.mjs` | the board model: cards, links, viewport, serialise | InfantGod Studio stops being InfantGod Studio; there is nothing to render |
+| `board.mjs` | the board model: cards, links, serialise | InfantGod Studio stops being InfantGod Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
-| `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
-| `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
-| `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the board works, but `mode classic` has no tiling to draw |
-| `modview.mjs` | the same cards arranged as a mod workbench: a package column, a code area and a report panel (pure) | the board works, but `mode mod` has no tiling to draw |
+| `cards.mjs` | one renderer and behaviour set per card kind | no card has anything to draw with |
+| `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
+| `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the app has no tiling to open in -- `DEFAULT_VIEW` would name a view nobody draws |
+| `modview.mjs` | the same cards arranged as a mod workbench: a package column, a code area and a report panel (pure) | the app has no second tiling to switch to |
 | `story.mjs` | a Yarn story read as nodes, lines, speakers, tags and `#line:` ids, and written back line for line (pure) | the story card has no model to draw, and the mod's 211 `.yarn` files can only be edited as raw text |
 | `storycsv.mjs` | the translation tables the game keeps beside a story: CSV in and out, `lock` = the first four bytes of SHA-256 of the source text, and each row's state (pure) | a translation cannot be shown beside the line it belongs to, and nothing can tell a fresh translation from one the source has moved under |
 | `ysls.mjs` | the game's own command schema read as two ordered lists, and where a `<<name` is being typed in a line (pure) | completion would have to be a hand-kept list in the shell, which is wrong the day the mod's commands change |
@@ -333,7 +333,7 @@ The Makefile's verification targets, in the order `make test` runs them:
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip (208 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and `mode classic` is measured as drawn -- the tile, the tab click that moves the code area, and `mode board` restoring every card, size, pan and zoom -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and a window is checked to open on the classic tile with `mode board` still reachable behind it -- which is why the board's own steps say `mode board` out loud before they drag anything (26 checks) |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and a window is checked to open on the classic tile -- the only view there is -- which is why the spatial steps say so out loud before they place a card (26 checks) |
 
 `smoke` runs the last two and needs a browser.
 

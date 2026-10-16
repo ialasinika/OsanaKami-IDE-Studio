@@ -1,6 +1,6 @@
 """input_smoke.py -- drive the real window: the undo keys, the editor keys, who
-owns a wheel, a file that changes while nobody is looking, and the classic view
-that tiles the same board into a sidebar, a tab strip and a code area.
+owns a wheel, a file that changes while nobody is looking, and the two tiled
+views -- classic's sidebar, tab strip and code area, and mod's package view.
 
 The board's *input paths* were the one part of the app that no shipped suite
 could reach: ``selftest.mjs`` proves the undo ring (documents, coalescing, the
@@ -16,22 +16,27 @@ already taken.  The wrapper is same-origin with the app it frames, so it can
 reach into the iframe and do what a person does:
 
 1. wait for the app to reach "kernel ready", and read which view the window
-   opened on: every step below is the board's -- the empty-space double-click,
-   the pan, the zoom, the wheel over bare board -- so the wrapper says `mode
-   board` and reports both, rather than inheriting whatever the product happens
-   to open on;
-2. double-click empty space -- a real board change through the real gesture;
+   opened on: the canvas view is gone, so the only view a window can open on is
+   the classic tile, and what the wrapper reports is the HUD switch's own
+   ``aria-pressed``, the body's class, and the absence of the canvas's layers
+   (its ``#hud-zoom`` readout, its ``#links`` SVG and the stage's transform);
+2. add a card with the ``note`` command -- the same line a person would type --
+   and then type the ``mode board`` a person might: it has to be refused as an
+   unknown view, with a warning in the message strip, and leave the classic tile
+   exactly where it was;
 3. dispatch ``keydown`` with ``ctrlKey`` for ``z``, then for ``shift+z``;
 4. count the card elements in the iframe's DOM after each step;
 5. press Ctrl+Z while a text field has the keystroke, and check that the board
    did not move: text undo belongs to the textarea;
 6. open a file so that one card has content taller than its own box, then
-   dispatch ``wheel`` over that card's scroll region and over bare board, and
-   ask which of them acted: the card's wheel must scroll the card and leave the
-   viewport where it was, the board's wheel must pan it, and ctrl+wheel over the
-   card must still zoom.  Nothing forces the issue by looking for a scrollable
-   card and giving up: the run *makes* one, through the same ``open`` command a
-   person would type, so the check either proves the behaviour or fails;
+   dispatch ``wheel`` over that card's scroll region and ask who acted: the
+   card's wheel must be left to the card.  The two checks that measured what the
+   board's own wheel did next to it -- the pan and the ctrl+wheel zoom -- are
+   gone with the viewport they moved: there is no canvas under the tile for
+   either gesture to act on.  Nothing forces the issue by looking for a
+   scrollable card and giving up: the run *makes* one, through the same ``open``
+   command a person would type, so the check either proves the behaviour or
+   fails;
 7. rewrite a file **with a real child process** (``cmd /c echo``) while an editor
    card holds it, and read the card's status back through ``file.read``: a clean
    card reloads, a card with unsaved edits keeps its text and says the file
@@ -50,8 +55,9 @@ reach into the iframe and do what a person does:
    strip under the HUD, the code area filling the right column down to the bottom
    edge, the sidebar on the left, every other card hidden; click a tab and check
    the code area moved to that file; wheel the code area and the strip and check
-   the viewport did not move; then ``mode board`` and check every card, every
-   size and the pan and zoom came back exactly.
+   every card is exactly where it was -- the tile has no viewport to move; then
+   ``mode mod`` and back to ``mode classic``, and check both views render and
+   the classic tile comes back on the same pixels.
 
 The board is backed up and restored byte-for-byte, and the host is killed by pid.
 The file step 7 rewrites lives at ``build/__watch_smoke.txt`` and is removed in
@@ -203,7 +209,15 @@ def plant_story_table(real: dict) -> str:
 
 #: Gives the page as much virtual time as it needs for five settled steps plus
 #: the wheel half; the real limit is ``--timeout`` on the browser process.
-BUDGET_MS = 45000
+#:
+#: Virtual time is not real time: this is the page's own clock, and the run
+#: reached 17s of it in 6s of wall clock, so the whole suite fits well inside
+#: ``make smoke``'s ``--timeout 90``.  It was 45s, which cut the run off inside
+#: the pixel half -- the page stopped between two `say` calls and every later
+#: check reported a missing line as if the shell had stayed silent; the run now
+#: prints `phase: <name> t=<ms>` lines and says when it was cut off, so the next
+#: value is chosen from evidence rather than from a guess.
+BUDGET_MS = 150000
 
 
 PAGE = """<!doctype html>
@@ -233,13 +247,41 @@ const logTail = () => {
   return (el ? el.textContent : "").replace(/\\s+/g, " ").trim().slice(-140);
 };
 const key = (win, doc, init) => doc.dispatchEvent(new win.KeyboardEvent("keydown", Object.assign({ bubbles: true, cancelable: true }, init)));
-const stageTransform = () => {
-  const el = frame.contentDocument.getElementById("stage");
-  return el ? el.style.transform : "";
+/* The HUD's view switch: which buttons it offers and which one it says is the
+   current view.  `aria-pressed` is what main.mjs sets and what a screen reader
+   reads, so it is the product's own report of the mode, and the button's own
+   `data-view` is the name views.mjs answers to. */
+const hudButtons = () => Array.from(frame.contentDocument.querySelectorAll("#mode-switch [data-view]"));
+const hudPressed = (name) => {
+  const found = hudButtons().find((node) => node.dataset.view === name);
+  return found === undefined ? "" : String(found.getAttribute("aria-pressed"));
 };
-const hudZoom = () => {
-  const el = frame.contentDocument.getElementById("hud-zoom");
-  return el ? (el.textContent || "").trim() : "";
+/* The *name* of the view the HUD says is on: exactly one button carries
+   `aria-pressed="true"` and its `data-view` is the name views.mjs answers to.
+   `hudPressed` above is the boolean a check about one named button wants, and
+   the two are not interchangeable -- reading the attribute where a name is due
+   is what made three checks see `hud="true"`. */
+const hudView = () => {
+  const pressed = hudButtons().filter((node) => node.getAttribute("aria-pressed") === "true");
+  return pressed.length === 1 ? pressed[0].dataset.view
+    : pressed.map((node) => node.dataset.view).join(",");
+};
+/* Elapsed virtual milliseconds, from the page's own clock: the run is bounded by
+   Edge's `--virtual-time-budget`, so a phase that stops running should be
+   obvious rather than looking like a check that merely had no line. */
+const t0 = performance.now();
+const elapsed = () => Math.round(performance.now() - t0);
+/* What the canvas view left behind: its zoom readout, its link layer and the
+   stage's own transform.  All three are the canvas's, and none of them may be
+   in the document any more. */
+const canvasGone = () => {
+  const d = frame.contentDocument;
+  const stage = d.getElementById("stage");
+  return {
+    zoom: d.getElementById("hud-zoom") === null,
+    links: d.getElementById("links") === null,
+    stage: stage === null ? true : !stage.style.transform,
+  };
 };
 /* What the pointer actually lands on, and the nearest box below it that can
    scroll the way this wheel asks: a textarea scrolls by UA style, an editor's
@@ -316,13 +358,20 @@ async function main() {
   const doc = frame.contentDocument, win = frame.contentWindow;
   await sleep(400);
 
-  /* This window opens on the classic tile.  The steps below are about the board
-     -- the double-click that drops a note, the pan, the zoom, the wheel over
-     bare board -- so this says which one is being measured rather than inheriting
-     whatever the product opens on.  The default is reported first: it is a claim
-     the product makes (views.mjs's DEFAULT_VIEW), and this is the only suite that
-     can see a running window make it. */
+  /* This window opens on the classic tile, and every step below is about the
+     document rather than a particular view: the card `note` adds, the Ctrl+Z
+     ring, the card's own wheel.  What the view itself has to answer for is
+     reported first -- the default (views.mjs's DEFAULT_VIEW) is a claim the
+     product makes and this is the only suite that can see a running window make
+     it, the HUD switch has to offer exactly the two tiled views, the canvas's
+     own layers and its zoom readout have to be gone, and `mode board` has to be
+     refused as the unknown view it now is. */
   say("view-default: classic=" + doc.body.classList.contains("is-classic"));
+  say("view-hud: classic=" + hudPressed("classic") + " mod=" + hudPressed("mod")
+    + " buttons=" + hudButtons().length);
+  const gone = canvasGone();
+  say("canvas-gone: zoom=" + gone.zoom + " links=" + gone.links
+    + " stage-transform=" + gone.stage);
 
   /* The message strip is the app's only voice and it starts folded: a window
      that opened with it open is the regression this measures.  The two clicks
@@ -339,21 +388,31 @@ async function main() {
   say("log-boot: hidden=" + logAtBoot + " open=" + logWhenOpened + " shut=" + logWhenShut
     + ' button="' + (logToggleEl.textContent || "").trim() + '"');
 
+  /* `mode board` is the view that is gone.  A person who still has it in their
+     fingers gets the app's own refusal -- an unknown-view warning in the message
+     strip -- and, because a refused switch must not half-switch, the classic
+     tile has to be exactly where it was: the body class, the HUD's pressed
+     button and the cards. */
   const commandEl = doc.getElementById("command");
   commandEl.value = "mode board";
   commandEl.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
   await sleep(500);
-  say("view-board: classic=" + doc.body.classList.contains("is-classic")
-    + " mod=" + doc.body.classList.contains("is-mod"));
+  const refused = /unknown view "board"/.test(logEl.textContent || "");
+  say("view-board: warned=" + refused + " classic=" + doc.body.classList.contains("is-classic")
+    + " mod=" + doc.body.classList.contains("is-mod")
+    + " hud-classic=" + hudPressed("classic")
+    + "  | log: " + logTail());
 
   const before = cardCount();
   say("cards at boot: " + before);
 
-  const board = doc.getElementById("board");
-  board.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: 600, clientY: 500 }));
+  /* One card, through the command a person would type: the double-click that
+     used to drop a note here was the canvas's gesture, and the canvas is gone. */
+  commandEl.value = "note input smoke undo";
+  commandEl.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
   await sleep(600);
   const added = cardCount();
-  say("cards after a double-click on empty space: " + added + "  | log: " + logTail());
+  say("cards after a `note` command: " + added + "  | log: " + logTail());
 
   key(win, doc, { key: "z", ctrlKey: true });
   await sleep(600);
@@ -375,8 +434,15 @@ async function main() {
   const ok = added === before + 1 && undone === before && redone === added && inField === redone;
   say("counts: boot=" + before + " added=" + added + " undone=" + undone
     + " redone=" + redone + " in-field=" + inField);
+  say("phase: boot t=" + elapsed() + "ms");
 
-  /* --- who owns a wheel event --- */
+  /* --- who owns a wheel event ---
+     There is no viewport under the tile any more: the pan and the ctrl+wheel
+     zoom were the canvas's, and the canvas is gone.  What is left is the card's
+     own claim -- a wheel that lands on a card whose box can scroll is the
+     card's, and the page must not take it away from the card by calling
+     preventDefault.  (Whether a synthetic wheel actually scrolls the box is the
+     browser's business and is reported, not asserted.) */
   const cmd = doc.getElementById("command");
   cmd.focus();
   cmd.value = "open @@FILE@@";
@@ -395,25 +461,13 @@ async function main() {
         + region.notes.join(" | ") + "]");
     } else {
       const at = { clientX: region.x, clientY: region.y };
-      const view = stageTransform();
+      const scrollWas = region.el.scrollTop;
       const overCard = wheel(win, region.el, Object.assign({ deltaY: 120 }, at));
-      const moved = stageTransform() !== view;
-      wheelOk = wheelOk && !overCard.defaultPrevented && !moved;
+      wheelOk = wheelOk && !overCard.defaultPrevented;
       say("wheel-card: defaultPrevented=" + overCard.defaultPrevented
-        + " viewport-moved=" + moved
+        + " scrollTop=" + scrollWas + "->" + region.el.scrollTop
         + "  (" + describe(region.el) + ")");
     }
-
-    const view2 = stageTransform();
-    const overBoard = wheel(win, doc.getElementById("board"), { deltaY: 120, clientX: 30, clientY: 240 });
-    say("wheel-board: defaultPrevented=" + overBoard.defaultPrevented
-      + " viewport-moved=" + (stageTransform() !== view2));
-
-    const zoomBefore = hudZoom();
-    const zoomAt = region.el === null ? { clientX: 600, clientY: 400 } : { clientX: region.x, clientY: region.y };
-    const zoomOn = doc.elementFromPoint(zoomAt.clientX, zoomAt.clientY) || doc.getElementById("board");
-    wheel(win, zoomOn, Object.assign({ deltaY: -240, ctrlKey: true }, zoomAt));
-    say("wheel-ctrl: " + zoomBefore + " -> " + hudZoom());
   } catch (error) {
     wheelOk = false;
     say("wheel-error: " + (error && error.message ? error.message : String(error)));
@@ -663,9 +717,10 @@ async function main() {
      witness is the pixels.  The strip has to be a band under the HUD, the code
      area has to fill what is left of the right column, the sidebar the left, and
      the two have to end on the board's bottom edge together -- while a card with
-     no place in the tile is hidden, never moved off screen.  Then `mode board`
-     has to put every card back exactly where the document says it was: that is
-     what makes the view a projection of the board and not a second board. */
+     no place in the tile is hidden, never moved off screen.  Then the other
+     tiled view, `mode mod`, has to render as well, and coming back to classic
+     has to put every card exactly where the document says it was: that is what
+     makes a view a projection of the document and not a second document. */
   let classicOk = true;
   try {
     if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
@@ -680,11 +735,12 @@ async function main() {
       box.value = text;
       box.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
     };
-    /* What a round trip through the classic view has to preserve: the board's own
-       pan and zoom, the link layer, and every card's place, size and visibility. */
+    /* What a round trip through a view has to preserve: every card's place, size
+       and visibility.  The stage, the zoom and the link layer belonged to the
+       canvas view that is gone with them, so the pixels that can still move are
+       the cards'. */
     const snapshot = () => {
-      const parts = ["stage=" + stageTransform(), "zoom=" + hudZoom(),
-        "links=" + (doc.getElementById("links").hidden ? "hidden" : "shown")];
+      const parts = [];
       for (const node of cardsNow()) {
         parts.push([node.dataset.cardId, node.style.transform, node.style.width,
           node.style.height, win.getComputedStyle(node).display].join(" "));
@@ -699,7 +755,8 @@ async function main() {
     const isClassic = doc.body.classList.contains("is-classic");
     const modeText = (() => {
       const switchNode = doc.getElementById("mode-switch");
-      const current = switchNode === null ? null : switchNode.querySelector("button.is-current");
+      const current = switchNode === null ? null
+        : switchNode.querySelector('[data-view][aria-pressed="true"]');
       return current === null ? "" : (current.textContent || "").trim();
     })();
     const buttons = tabButtons();
@@ -734,7 +791,7 @@ async function main() {
     say("classic-mode: on=" + isClassic + " tabs=" + buttons.length + " editors=" + editors.length
       + " shown=" + shownCards.map((node) => node.dataset.cardId).join(",")
       + " places=" + places + " tile=" + tile + " strip=" + Math.round(stripRect.height)
-      + " button=" + JSON.stringify(modeText) + " zoom=" + JSON.stringify(hudZoom()));
+      + " button=" + JSON.stringify(modeText) + " hud=" + JSON.stringify(hudView()));
     say("classic-rect: board=" + Math.round(boardRect.width) + "x" + Math.round(boardRect.height)
       + " hud-bottom=" + Math.round(hudBottom)
       + " tabs=" + Math.round(relLeft(stripRect)) + "," + Math.round(relTop(stripRect))
@@ -775,11 +832,11 @@ async function main() {
     say("classic-tab: clicked=" + JSON.stringify(clickedId) + " moved=" + tabClick
       + " selection=" + JSON.stringify(selectionLine()) + " -- " + tabWhy);
 
-    /* The wheel is the board's gesture and the board is not on screen: neither a
-       ctrl+wheel over the code area nor a plain wheel over the strip may move the
-       viewport, and the HUD has to keep saying there is no zoom to speak of. */
-    const stageBefore = stageTransform();
-    const zoomBefore = hudZoom();
+    /* The wheel was the canvas's gesture and there is no canvas under the tile
+       now, so what this measures is that nothing smuggled one back in: a
+       ctrl+wheel over the code area and a plain wheel over the strip, and not a
+       single card may move -- and the HUD must still say which view is on. */
+    const placedBefore = snapshot();
     const areaNow = cardsNow().find((node) => node.dataset.kind === "editor" && drawn(node)) || null;
     if (areaNow !== null) {
       const rect = areaNow.getBoundingClientRect();
@@ -792,21 +849,56 @@ async function main() {
     wheel(win, doc.getElementById("board"), { deltaY: 160,
       clientX: Math.round(stripRect.left + 4), clientY: Math.round(stripRect.top + 2) });
     await sleep(120);
-    const frozen = stageTransform() === stageBefore && hudZoom() === zoomBefore
-      && hudZoom() === "no zoom";
-    say("classic-wheel: frozen=" + frozen + " stage=" + JSON.stringify(stageBefore)
-      + "->" + JSON.stringify(stageTransform()) + " zoom=" + JSON.stringify(zoomBefore)
-      + "->" + JSON.stringify(hudZoom()));
+    const placedAfter = snapshot();
+    /* `#hud-zoom` said "no zoom" for the whole life of the tile because a tiled
+       view has no viewport; now the element itself is gone, so the claim is that
+       it is not in the document -- the same one the boot check makes, re-made
+       here where the canvas machinery used to be measured. */
+    const goneNow = canvasGone();
+    const frozen = placedAfter === placedBefore && hudView() === "classic"
+      && goneNow.zoom && goneNow.links;
+    say("classic-canvas: zoom=" + goneNow.zoom + " links=" + goneNow.links);
+    say("classic-wheel: frozen=" + frozen + " placements=" + cardsNow().length
+      + " hud=" + JSON.stringify(hudView()));
+    if (!frozen) say("classic-wheel-diff: " + placedBefore + "  ->  " + placedAfter);
 
-    /* And back: the same document, on the same pixels, with the viewport exactly
-       where it was -- nothing was mounted, unmounted or moved while away. */
-    runLine("mode board");
-    await sleep(250);
-    const back = !doc.body.classList.contains("is-classic") && snapshot() === before;
-    say("classic-back: restored=" + back + " classic=" + doc.body.classList.contains("is-classic"));
+    /* The other tiled view, and back: `mode mod` has to switch and paint
+       something, and `mode classic` has to bring the same document back on the
+       same pixels -- nothing was mounted, unmounted or moved while away.  The
+       baseline is taken *here*, after the tab click above moved two cards on
+       purpose: `before` predates that click, so comparing against it would fail
+       for a reason that has nothing to do with the view. */
+    const placedAtSwitch = snapshot();
+    runLine("mode mod");
+    const inMod = await waitUntil(() => doc.body.classList.contains("is-mod"), 40, 100);
+    const modShown = cardsNow().filter(drawn).length;
+    const modHud = hudPressed("mod");
+    runLine("mode classic");
+    const inClassic = await waitUntil(() => doc.body.classList.contains("is-classic"), 40, 100);
+    const same = snapshot() === placedAtSwitch;
+    const hudBack = hudView() === "classic";
+    const back = inMod && inClassic && hudBack && same;
+    say("view-switch: mod=" + inMod + " mod-drawn=" + modShown + " mod-hud=" + JSON.stringify(modHud)
+      + " classic=" + back + " hud=" + JSON.stringify(hudView())
+      + " in-classic=" + inClassic + " same=" + same);
+    if (!back) {
+      /* Which half failed, and what the browser thinks each card is: a card the
+         document still holds but that has no box is a layout bug in the shell,
+         not a check that needs loosening. */
+      say("view-switch-cards: " + cardsNow().map((node) => {
+        const box = node.getBoundingClientRect();
+        return (node.dataset.cardId || "?") + ":" + (node.dataset.kind || "?")
+          + ":" + win.getComputedStyle(node).display
+          + ":" + Math.round(box.width) + "x" + Math.round(box.height)
+          + "@" + Math.round(box.left) + "," + Math.round(box.top)
+          + ":transform=" + JSON.stringify(node.style.transform || "");
+      }).join("  "));
+      say("view-switch-diff: " + placedAtSwitch + "  ->  " + snapshot());
+    }
 
     classicOk = isClassic && editors.length > 0 && buttons.length === editors.length
       && places && tile && tabClick && frozen && back;
+    say("phase: classic t=" + elapsed() + "ms");
   } catch (error) {
     classicOk = false;
     say("classic-error: " + (error && error.message ? error.message : String(error)));
@@ -1021,24 +1113,38 @@ async function main() {
       await sleep(200);
       const focused = await settle(pixelPaths.fill);
       const canvas = focused === null ? null : find(focused, '[data-role="pixel-canvas"]');
-      const hasFocus = canvas !== null && doc.activeElement === canvas;
+      const canvasLive = canvas !== null && canvas.isConnected;
+      /* What the browser says about that canvas right now.  A pixel card has no
+         place in a tiled view, and the tile is free to hide a card it has no place
+         for (`.card.is-hidden { display: none }`); a hidden element cannot take
+         the keyboard, so `focused` is measured and reported, never required.  The
+         Ctrl+Z below is dispatched *to the canvas*, so the stroke coming back is
+         the proof that the card received the key, painted or not. */
+      const canvasBox = canvas === null ? null : canvas.getBoundingClientRect();
+      const canvasPainted = canvas !== null && canvas.closest(".is-hidden") === null;
+      const activeNow = doc.activeElement;
+      const activeWhat = activeNow === null || activeNow === undefined ? "none"
+        : (activeNow.tagName || "?") + "." + String(activeNow.className || "");
+      const boxText = canvasBox === null ? "none"
+        : Math.round(canvasBox.width) + "x" + Math.round(canvasBox.height);
       const placed = geometry();
-      const viewport = stageTransform() + " / " + hudZoom();
       key(win, canvas, { key: "z", ctrlKey: true });
       await sleep(250);
       const afterUndo = await inkAt(focused, 7, 7);
       const undoStatus = statusOf(focused);
       const kept = geometry() === placed;
-      const still = stageTransform() + " / " + hudZoom() === viewport;
       key(win, canvas, { key: "z", ctrlKey: true, shiftKey: true });
       await sleep(250);
       const afterRedo = await inkAt(focused, 7, 7);
-      undoOk = hasFocus && afterStroke === second && afterUndo === filledWith
-        && afterUndo !== afterStroke && kept && still;
+      undoOk = canvasLive && afterStroke === second && afterUndo === filledWith
+        && afterUndo !== afterStroke && kept;
       redoOk = afterRedo === second;
-      undoLine = "pixel-undo: focused=" + hasFocus + " stroke=" + JSON.stringify(afterStroke)
+      undoLine = "pixel-undo: canvas=" + (canvasLive ? "connected" : "gone")
+        + " painted=" + canvasPainted + " box=" + boxText
+        + " active=" + JSON.stringify(activeWhat)
+        + " stroke=" + JSON.stringify(afterStroke)
         + " after-ctrl+z=" + JSON.stringify(afterUndo) + " board-document=" + kept
-        + " viewport=" + still + " status=" + JSON.stringify(undoStatus);
+        + " status=" + JSON.stringify(undoStatus);
       redoLine = "pixel-redo: after-ctrl+shift+z=" + JSON.stringify(afterRedo)
         + " status=" + JSON.stringify(statusOf(focused));
     }
@@ -1122,6 +1228,7 @@ async function main() {
     const others = pixelsNow().map((node) => textOf(node, ".card-label")).sort().join(",");
     say("pixel-cards: added=" + added.length + " left=" + left + " others=" + JSON.stringify(others));
     pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk && left === 0;
+    say("phase: pixel t=" + elapsed() + "ms");
   } catch (error) {
     pixelOk = false;
     say("pixel-error: " + (error && error.message ? error.message : String(error)));
@@ -1168,10 +1275,12 @@ async function main() {
     storyLine = "story-error: " + (error && error.message ? error.message : String(error));
   }
   say(storyLine);
+  say("phase: story t=" + elapsed() + "ms");
 
   say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk && pixelOk && storyOk
-    ? "undo, redo, wheel ownership, a watched file, the editor keys, the classic view, the pixel cards and the story table all work in a real browser"
-    : "FAILED -- see the counts, the wheel, the watch, the editor, the classic, the pixel and the story lines above"));
+    ? "undo, redo, who owns a wheel, a watched file, the editor keys, the view switch, the classic tile, the pixel cards and the story table all work in a real browser"
+    : "FAILED -- see the counts, the wheel, the watch, the editor, the classic, the pixel and the story lines above")
+    + " [" + elapsed() + "ms of virtual time]");
   document.title = "input smoke done";
 }
 
@@ -1199,14 +1308,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="input_smoke.py",
         description=(
-            "Boot the real app in the system browser, make a board change, press "
+            "Boot the real app in the system browser, add a card with `note`, press "
             "Ctrl+Z and Ctrl+Shift+Z, dispatch a wheel over a card's own scroll "
-            "region and over the board, watch a file change under an open card, "
-            "drive the editor card's indent, auto-indent, find and replace keys, "
-            "and switch to the classic view -- the same cards as a sidebar, a tab "
-            "strip and a code area -- click a tab, wheel it and come back to the "
-            "board. Exit codes: 0 pass or skipped, 1 a check failed, 2 could not "
-            "run, 3 usage."
+            "region, watch a file change under an open card, drive the editor "
+            "card's indent, auto-indent, find and replace keys, and check the view "
+            "switch: `mode board` is refused as an unknown view, the canvas's "
+            "layers and its zoom readout are gone, and classic and mod both tile "
+            "the same document. Exit codes: 0 pass or skipped, 1 a check failed, "
+            "2 could not run, 3 usage."
         ),
     )
     parser.add_argument("--edge", help="path to msedge.exe (default: $INFANTGOD_BROWSER, then the usual two places)")
@@ -1237,11 +1346,11 @@ class Results:
 
 COUNT_RE = re.compile(r"counts: boot=(\d+) added=(\d+) undone=(\d+) redone=(\d+) in-field=(\d+)")
 
-#: Each wheel line the wrapper writes, as ``name -> pattern``.
+#: Each wheel line the wrapper writes, as ``name -> pattern``.  There is one
+#: line now: the pan and the ctrl+wheel zoom were the canvas view's, and the
+#: canvas view is gone, so nothing dispatches those two any more.
 WHEEL_RES = (
-    ("card", re.compile(r"wheel-card: defaultPrevented=(\w+) viewport-moved=(\w+)(?:  \((.+)\))?")),
-    ("board", re.compile(r"wheel-board: defaultPrevented=(\w+) viewport-moved=(\w+)")),
-    ("ctrl", re.compile(r"wheel-ctrl: (\S+) -> (\S+)")),
+    ("card", re.compile(r"wheel-card: defaultPrevented=(\w+) scrollTop=(-?\d+)->(-?\d+)(?:  \((.+)\))?")),
 )
 
 
@@ -1310,15 +1419,16 @@ def parse_editor(body: str) -> dict:
 
 
 def parse_classic(body: str) -> dict:
-    """The four classic-view lines the wrapper wrote, as tuples of strings."""
+    """The classic-view lines the wrapper wrote, as tuples of strings."""
     found = {}
     patterns = (
         ("mode", r'classic-mode: on=(\w+) tabs=(\d+) editors=(\d+) shown=(\S*)'
-                 r' places=(\w+) tile=(\w+) strip=(\d+) button=("[^"]*") zoom=("[^"]*")'),
+                 r' places=(\w+) tile=(\w+) strip=(\d+) button=("[^"]*") hud=("[^"]*")'),
+        ("canvas", r"classic-canvas: zoom=(\w+) links=(\w+)"),
         ("tab", r'classic-tab: clicked=("[^"]*") moved=(\w+) selection=("[^"]*")'),
-        ("wheel", r'classic-wheel: frozen=(\w+) stage=("[^"]*")->("[^"]*")'
-                  r' zoom=("[^"]*")->("[^"]*")'),
-        ("back", r"classic-back: restored=(\w+) classic=(\w+)"),
+        ("wheel", r'classic-wheel: frozen=(\w+) placements=(\d+) hud=("[^"]*")'),
+        ("switch", r'view-switch: mod=(\w+) mod-drawn=(\d+) mod-hud=("[^"]*")'
+                   r' classic=(\w+) hud=("[^"]*") in-classic=(\w+) same=(\w+)'),
     )
     for key, pattern in patterns:
         match = re.search(pattern, body)
@@ -1335,8 +1445,9 @@ PIXEL_RES = (
     ("pencil", r'pixel-pencil: file="([^"]*)" drew="([^"]*)" press="([^"]*)" far="([^"]*)"'),
     ("eraser", r'pixel-eraser: file="([^"]*)" before="([^"]*)" after="([^"]*)"'),
     ("fill", r'pixel-fill: file="([^"]*)" filled="([^"]*)" press="([^"]*)" far="([^"]*)"'),
-    ("undo", r'pixel-undo: focused=(\w+) stroke="([^"]*)" after-ctrl\+z="([^"]*)"'
-             r' board-document=(\w+) viewport=(\w+)'),
+    ("undo", r'pixel-undo: canvas=(\w+) painted=(\w+) box=([0-9x]+)'
+             r' active=("[^"]*") stroke="([^"]*)" after-ctrl\+z="([^"]*)"'
+             r' board-document=(\w+)'),
     ("redo", r'pixel-redo: after-ctrl\+shift\+z="([^"]*)"'),
     ("d006", r'pixel-d006: rows=(\d+) d006=(\d+) declared=(\w+) named="([^"]*)"'
              r' sprite="([^"]*)" json="([^"]*)" size="([^"]*)"'
@@ -1354,10 +1465,11 @@ def parse_pixel(body: str) -> dict:
         if match is not None:
             found[key] = match.groups()
     # A pixel line that starts with `pixel-error` is the half's own report of a
-    # throwaway failure; the detail of a check whose line is missing quotes it.
+    # throwaway failure; the detail of a check whose line is missing quotes it
+    # first, because it is the reason the later lines were never written.
     none = re.search(r"pixel-error: (.+)", body)
     if none is not None:
-        found.setdefault("note", (none.group(1),))
+        found.setdefault("error", (none.group(1),))
     return found
 
 
@@ -1472,7 +1584,7 @@ def main(argv=None) -> int:
         edge = find_edge(args.edge)
     except DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 26 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 38 skipped (no browser)")
         return 0
 
     # Deliberately *not* install_if_absent(): the counts below are deltas, so the
@@ -1510,6 +1622,9 @@ def main(argv=None) -> int:
     results = Results()
     attempts = 0
     body = ""
+    #: True when the page wrote lines but never reached its own RESULT line: the
+    #: run was cut off by Edge's virtual clock, not by a check going silent.
+    cut_off = False
     try:
         host.start()
         host.wait_ready(min(30.0, args.timeout))
@@ -1532,6 +1647,16 @@ def main(argv=None) -> int:
                 body = body.replace(entity, char)
             for line in body.splitlines():
                 print(f"  {line}")
+            # The page's clock is Edge's `--virtual-time-budget`: a long run can
+            # be cut off between two `say` calls, and then every later check would
+            # report "no ... line" as if the shell had stayed silent.  Say what
+            # really happened, once, before the checks are read.
+            cut_off = "RESULT:" not in body
+            if cut_off:
+                last = body.strip().splitlines()[-1] if body.strip() else "(nothing)"
+                print(f"[FAIL] the page was cut off before its RESULT line after "
+                      f"{BUDGET_MS / 1000:g}s of virtual time -- the last line it wrote was "
+                      f"{last[:140]!r}; raise BUDGET_MS or make the run shorter")
     except (DriverError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"[FAIL] the run did not finish: {exc}")
     finally:
@@ -1560,22 +1685,41 @@ def main(argv=None) -> int:
     booted = "kernel ready: true" in body
     results.check("the app boots in an iframe and reaches kernel ready", booted)
     opened = re.search(r"view-default: classic=(\w+)", body)
-    to_board = re.search(r"view-board: classic=(\w+) mod=(\w+)", body)
+    hud = re.search(r"view-hud: classic=(\w+) mod=(\w+) buttons=(\d+)", body)
+    canvas = re.search(r"canvas-gone: zoom=(\w+) links=(\w+) stage-transform=(\w+)", body)
+    to_board = re.search(r"view-board: warned=(\w+) classic=(\w+) mod=(\w+) hud-classic=(\w*)", body)
     folded = re.search(r'log-boot: hidden=(\w+) open=(\w+) shut=(\w+) button="([^"]*)"', body)
-    results.check("a window opens on the classic tile with the message strip folded away, and `mode board` is still the board",
+    results.check("a window opens on the classic tile with the message strip folded away",
                   opened is not None and opened.group(1) == "true"
-                  and to_board is not None and to_board.group(1) == "false"
-                  and to_board.group(2) == "false"
                   and folded is not None and folded.group(1) == "true"
                   and folded.group(2) == "true" and folded.group(3) == "true",
-                  f"at boot classic={opened.group(1) if opened else '?'}, after `mode board` "
-                  f"classic={to_board.group(1) if to_board else '?'} "
-                  f"mod={to_board.group(2) if to_board else '?'}; "
+                  f"at boot classic={opened.group(1) if opened else '?'}; "
                   f"strip hidden={folded.group(1) if folded else '?'} "
                   f"open={folded.group(2) if folded else '?'} "
                   f"shut={folded.group(3) if folded else '?'} "
                   f"button={folded.group(4) if folded else '?'}")
-    results.check("a double-click on empty space adds a card",
+    results.check("the HUD offers exactly the classic and mod views",
+                  hud is not None and hud.group(1) == "true" and hud.group(2) == "false"
+                  and hud.group(3) == "2",
+                  f"buttons={hud.group(3) if hud else '?'} "
+                  f"classic-pressed={hud.group(1) if hud else '?'} "
+                  f"mod-pressed={hud.group(2) if hud else '?'}")
+    results.check("the HUD has no zoom readout",
+                  canvas is not None and canvas.group(1) == "true",
+                  f"#hud-zoom gone={canvas.group(1) if canvas else '?'}")
+    results.check("the canvas layers are not painted",
+                  canvas is not None and canvas.group(2) == "true" and canvas.group(3) == "true",
+                  f"#links gone={canvas.group(2) if canvas else '?'} "
+                  f"#stage transform empty={canvas.group(3) if canvas else '?'}")
+    results.check('`mode board` is refused as an unknown view and leaves the classic tile alone',
+                  to_board is not None and to_board.group(1) == "true"
+                  and to_board.group(2) == "true" and to_board.group(3) == "false"
+                  and to_board.group(4) == "true",
+                  f'warned={to_board.group(1) if to_board else "?"} '
+                  f'classic={to_board.group(2) if to_board else "?"} '
+                  f'mod={to_board.group(3) if to_board else "?"} '
+                  f'hud-classic={to_board.group(4) if to_board else "?"}')
+    results.check("a `note` command adds a card",
                   counts.get("added") == counts.get("boot", -1) + 1 if counts else False,
                   f"boot={counts.get('boot')} added={counts.get('added')}" if counts else "no counts")
     results.check("Ctrl+Z takes that card back",
@@ -1597,20 +1741,11 @@ def main(argv=None) -> int:
                       (f"no card's scroll region is under the pointer ({why}) -- not proven"
                        if why else "no card's scroll region is under the pointer -- not proven"))
     else:
-        where = f"  ({card_wheel[2]})" if card_wheel[2] else ""
+        where = f"  ({card_wheel[3]})" if card_wheel[3] else ""
         results.check("a wheel over a card's own scroll region is left to the card",
-                      card_wheel[0] == "false" and card_wheel[1] == "false",
-                      f"defaultPrevented={card_wheel[0]} viewport-moved={card_wheel[1]}{where}"
-                      " -- the card keeps the wheel and the board does not move")
-    board_wheel = wheel.get("board")
-    results.check("a wheel over the board still pans",
-                  bool(board_wheel) and board_wheel[:2] == ("true", "true"),
-                  f"defaultPrevented={board_wheel[0]} viewport-moved={board_wheel[1]}"
-                  if board_wheel else "no wheel-board line")
-    ctrl_wheel = wheel.get("ctrl")
-    results.check("ctrl+wheel over a card is still a zoom",
-                  bool(ctrl_wheel) and ctrl_wheel[0] != ctrl_wheel[1],
-                  f"zoom {ctrl_wheel[0]} -> {ctrl_wheel[1]}" if ctrl_wheel else "no wheel-ctrl line")
+                      card_wheel[0] == "false",
+                      f"defaultPrevented={card_wheel[0]} scrollTop="
+                      f"{card_wheel[1]}->{card_wheel[2]}{where} -- the card keeps the wheel")
 
     editor = parse_editor(body)
 
@@ -1700,6 +1835,8 @@ def main(argv=None) -> int:
             return " ".join(got)
         if classic.get("error") is not None:
             return f"classic: {classic['error'][0]}"
+        if cut_off:
+            return f"the page stopped before classic-{key} (virtual-time budget {BUDGET_MS}ms)"
         return f"no classic-{key} line"
 
     mode = classic.get("mode")
@@ -1707,25 +1844,35 @@ def main(argv=None) -> int:
                   bool(mode) and mode[0] == "true" and int(mode[2]) >= 1
                   and int(mode[1]) == int(mode[2]) and mode[3] != ""
                   and mode[4] == "true" and mode[5] == "true" and int(mode[6]) >= 20
-                  and mode[7].strip('"') == "Classic" and mode[8].strip('"') == "no zoom",
+                  and mode[7].strip('"') == "Classic" and mode[8].strip('"') == "classic",
                   f"tabs={mode[1]} editors={mode[2]} shown={mode[3]} places={mode[4]} "
-                  f"tile={mode[5]} strip={mode[6]}px button={mode[7]} zoom={mode[8]}"
+                  f"tile={mode[5]} strip={mode[6]}px button={mode[7]} hud={mode[8]}"
                   if mode else classic_detail("mode"))
     tab = classic.get("tab")
     results.check("clicking a tab makes that file the code area",
                   bool(tab) and tab[0] != '""' and tab[1] == "true",
                   f"clicked={tab[0]} moved={tab[1]} selection={tab[2]}" if tab
                   else classic_detail("tab"))
+    tile_canvas = classic.get("canvas")
+    results.check("the tile has no zoom readout and no link layer of its own",
+                  bool(tile_canvas) and tile_canvas[0] == "true" and tile_canvas[1] == "true",
+                  f"#hud-zoom gone={tile_canvas[0]} #links gone={tile_canvas[1]}"
+                  if tile_canvas else classic_detail("canvas"))
     wheeled = classic.get("wheel")
-    results.check("the board's wheel gestures are off once the board is not on screen",
-                  bool(wheeled) and wheeled[0] == "true" and wheeled[2] == wheeled[1]
-                  and wheeled[4] == wheeled[3],
-                  f"frozen={wheeled[0]} stage={wheeled[1]}->{wheeled[2]} "
-                  f"zoom={wheeled[3]}->{wheeled[4]}" if wheeled else classic_detail("wheel"))
-    back = classic.get("back")
-    results.check("`mode board` puts every card back where the document says it was",
-                  bool(back) and back[0] == "true" and back[1] == "false",
-                  f"restored={back[0]} classic={back[1]}" if back else classic_detail("back"))
+    results.check("a wheel over the tile leaves every card exactly where it was",
+                  bool(wheeled) and wheeled[0] == "true" and int(wheeled[1]) >= 1
+                  and wheeled[2].strip('"') == "classic",
+                  f"frozen={wheeled[0]} placements={wheeled[1]} hud={wheeled[2]}"
+                  if wheeled else classic_detail("wheel"))
+    switched = classic.get("switch")
+    results.check("`mode mod` and `mode classic` both render, and classic comes back on the same pixels",
+                  bool(switched) and switched[3] == "true"
+                  and switched[0] == "true" and int(switched[1]) >= 1
+                  and switched[2].strip('"') == "true" and switched[4].strip('"') == "classic"
+                  and switched[5] == "true" and switched[6] == "true",
+                  f"mod={switched[0]} mod-drawn={switched[1]} mod-hud={switched[2]} "
+                  f"classic={switched[3]} hud={switched[4]} in-classic={switched[5]} same={switched[6]}"
+                  if switched else classic_detail("switch"))
 
     pixel = parse_pixel(body)
 
@@ -1733,8 +1880,10 @@ def main(argv=None) -> int:
         got = pixel.get(key)
         if got is not None:
             return " ".join(got)
-        if pixel.get("note") is not None:
-            return f"pixel: {pixel['note'][0]}"
+        if pixel.get("error") is not None:
+            return f"pixel half died: {pixel['error'][0]}"
+        if cut_off:
+            return f"the page stopped before pixel-{key} (virtual-time budget {BUDGET_MS}ms)"
         return f"no pixel-{key} line"
 
     def saved_image(relative: str):
@@ -1805,19 +1954,23 @@ def main(argv=None) -> int:
                   f"opaque={filled_pixels}/64 image={fill_why or 'read'}"
                   if fill else pixel_detail("fill"))
 
-    # Ctrl+Z and Ctrl+Shift+Z over the focused canvas: the card's own ring has to
-    # answer first (main.mjs's cardUndoOrRing), and the board -- the document that
-    # says which cards exist and where they sit -- must not move while it does.
+    # Ctrl+Z and Ctrl+Shift+Z, sent to the canvas the card drew on: the card's own
+    # ring has to answer first (main.mjs's cardUndoOrRing), and no card may move
+    # while it does -- the undo belongs to the picture, not to the document the
+    # view is telling apart.  The viewport this once compared is gone with the
+    # canvas view, and so is the keyboard focus it once required: a pixel card has
+    # no place in a tiled view, so the tile may hide it (and a hidden element
+    # cannot be focused), while the key reaches the canvas either way.
     undo = pixel.get("undo")
-    stroke_ink = ink_of(undo[1]) if undo else None
-    undone_ink = ink_of(undo[2]) if undo else None
-    results.check("Ctrl+Z over the canvas takes the stroke back and the board does not move",
-                  bool(undo) and undo[0] == "true" and stroke_ink is not None
+    stroke_ink = ink_of(undo[4]) if undo else None
+    undone_ink = ink_of(undo[5]) if undo else None
+    results.check("Ctrl+Z over the pixel canvas takes the stroke back and no card moves",
+                  bool(undo) and undo[0] == "connected" and stroke_ink is not None
                   and stroke_ink[3] == 255 and undone_ink is not None
                   and undone_ink != stroke_ink and undone_ink == fill_ink
-                  and undo[3] == "true" and undo[4] == "true",
-                  f"focused={undo[0]} stroke={undo[1]} after={undo[2]} "
-                  f"board-document={undo[3]} viewport={undo[4]}"
+                  and undo[6] == "true",
+                  f"canvas={undo[0]} painted={undo[1]} box={undo[2]} active={undo[3]} "
+                  f"stroke={undo[4]} after={undo[5]} board-document={undo[6]}"
                   if undo else pixel_detail("undo"))
     redo = pixel.get("redo")
     redone_ink = ink_of(redo[0]) if redo else None

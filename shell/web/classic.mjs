@@ -96,9 +96,9 @@ function numberOr(value, fallback) {
 /**
  * The rectangles the classic view draws, in the pixels of the board element.
  *
- * `viewport` is `{ width, height }` of the visible board -- the identity
- * transform is what lets these be screen pixels and world pixels at once; see
- * `renderStage`.  `top` is how much of that is already taken by the heads-up
+ * `viewport` is `{ width, height }` of the visible board -- these are screen
+ * pixels, because a card is laid out in the board element itself rather than
+ * under a transform.  `top` is how much of that is already taken by the heads-up
  * strip, which floats over the board rather than being a row of its own: the
  * tile starts below it, or the tab strip would sit under the HUD's text.
  *

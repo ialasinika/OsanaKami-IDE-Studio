@@ -57,16 +57,16 @@ EXAMPLES/
 ## Why it is a card and not a side panel
 
 A side panel would be the obvious shape if the board were a document list. It is
-not: the board is a 2-D plane, and "what the panel looks like" is exactly the
-kind of state this project keeps *in the board* — position, size, stacking, and
-which cards are next to which. A project panel that lived outside the board
-would be the one part of the workspace you could not arrange, and the one part
+not: the board document is a *model* of the workspace — its cards carry position,
+size, stacking, and which cards are next to which — and the shell computes a
+tiling from it. A project panel that lived outside the board
+would be the one part of the workspace you could not model, and the one part
 that saved separately from everything else.
 
 A card it remains even in the classic view: `mode classic` — the view a window
 opens in — draws this card in the left column, but the column is a *measurement*
-of that card for the duration of the mode — the card is still the thing, and
-`mode board` puts it back on the plane. See [`PARADIGM.md`](PARADIGM.md).
+of that card for the duration of the view — the card is still the thing, and
+nothing about the card is saved by the drawing. See [`PARADIGM.md`](PARADIGM.md).
 
 It is also why the panel's own state is on the card:
 
@@ -74,7 +74,8 @@ It is also why the panel's own state is on the card:
 | --- | --- |
 | `filter` | the glob, default `**/*` |
 
-It round-trips through `.infantgod/board.json` with the geometry: the board model
+It round-trips through `.infantgod/board.json` with the rest of the document: the
+board model
 in `shell/web/board.mjs` clones any field it does not interpret, and the kernel,
 which stores the whole document without ever reading it, clones everything
 ([`VIEWS.md`](VIEWS.md)).
@@ -141,7 +142,7 @@ gets its context through `ctx.app`, so the panel never talks to the kernel
 directly. It asks for four things the board does not otherwise expose —
 `openEditors()`, `revealCard(id)`, `closeCard(id)` and `workspace()` (the
 `workspace.info` reply, read once at boot) — plus `onBoardChanged(fn)`, which
-fires **only when the set of open editors changes**, not on every frame of a pan.
+fires **only when the set of open editors changes**, not on every render.
 
 Because the board is painted before `workspace.info` answers, a project card that
 is already on screen is told to re-read it once the reply lands

@@ -141,7 +141,7 @@ port     [required]
 
 wksp     [optional]
          workspace reads/writes, path containment, content revisions
-         cut it and: files can no longer be opened or saved; only the canvas remains
+         cut it and: files can no longer be opened or saved; the client is left with what it holds
 
 view     [optional]
          the client's view document: opaque JSON, atomic persistence, revisions
@@ -175,7 +175,7 @@ are whole subsystems.
 | `vec` | required | growable pointer array, used for lists without a fixed bound | nothing builds |
 | `json` | required | JSON parse/serialise; the protocol's value type | nothing builds |
 | `port` | required | the platform boundary: files, paths, threads, processes | nothing builds; this is the layer a fork replaces to leave Win32 |
-| `wksp` | optional | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; only the canvas remains |
+| `wksp` | optional | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; the client is left with what it holds |
 | `view` | optional | the client's view document: opaque JSON, atomic persistence, revisions | no document survives a restart; the client is left with what it holds |
 | `exec` | optional | child processes for `runner` cards, with streamed output | cards can no longer run anything |
 | `serve` | optional | newline-delimited JSON-RPC over stdin/stdout | the kernel has no way in; useful only as a linkable library |
@@ -207,7 +207,7 @@ the `#if SDE_WITH_EXEC` block in `rpc.c`, and the `sde_execset_new` /
 - **Survives:** files, the board, the whole editor, the whole language layer.
 - **Shell must change too:** yes, or the runner card is a control that fails.
 
-### Cutting `view` — a canvas that does not persist
+### Cutting `view` — a document that does not persist
 
 Delete `core/src/view.c`, `core/include/view.h`, its `SRC` line, its table entry,
 the `#if SDE_WITH_VIEW` block in `rpc.c`, and the view construction in `app.c`.
@@ -233,7 +233,7 @@ the `#if SDE_WITH_VIEW` block in `rpc.c`, and the view construction in `app.c`.
   the board for free: `classicLayout` is a projection of the shell's board model,
   so with no document there is nothing to project.
 
-### Cutting `wksp` — only the canvas
+### Cutting `wksp` — cards with no files behind them
 
 Delete `core/src/wksp.c`, `core/include/wksp.h`, its `SRC` line, its table entry,
 and the `workspace.info` / `workspace.list` / `file.read` / `file.write` /

@@ -197,7 +197,9 @@ Regression evidence for this wave lives in
 - **N1 — `tools/e2e.py` reset the board viewport on every run.** The suite
   overwrote `.infantgod/board.json` wholesale, so a developer who had panned or
   zoomed lost the layout just by running the tests.  It now snapshots the whole
-  document and restores it in a `finally`.
+  document and restores it in a `finally`.  (Nothing writes a viewport any more
+  -- no view pans -- but the suite's habit of snapshotting and restoring the whole
+  document is what the entry is about, and it still holds.)
 - **N2 — `tools/e2e.py` could leave its probe text inside `examples/hello.yarn`
   forever.** A failure between "write" and "restore" left the fixture mutated.
   The edit/restore pair now runs in `try/finally` via `_restore_fixture()`, and
@@ -374,6 +376,12 @@ one is silently indistinguishable from a correct one.
 **Checks.** `make version-check` (part of `make test`) compares all four copies
 and fails if any of them disagrees with `VERSION`; `tools/kernel_probe.py`
 re-reads the binary's own `hello` against the same string.
+
+**A note on the words.** Entries above say "board" and "canvas" the way the tree
+did when they were written; the history is kept as it was found. The board is
+still the document — `.infantgod/board.json`, `shell/web/board.mjs` — but the
+spatial canvas is gone: no shipped view pans, zooms or drags a card, and nothing
+writes a `viewport`. Each entry's own facts are unaffected.
 
 ## Recorded, not fixed
 

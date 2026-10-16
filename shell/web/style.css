@@ -73,123 +73,43 @@ body {
   min-height: 0;
   overflow: hidden;
   background-color: var(--bg);
-  /* Two dot layers: a fine grid and a coarse one every 5th dot.  The size and
-     position are driven from JS by the viewport, which is what makes the
-     surface pan and zoom as one plane. */
-  background-image:
-    radial-gradient(circle, #2a2f38 1px, transparent 1px),
-    radial-gradient(circle, #3a414d 1.4px, transparent 1.4px);
-  background-size: 24px 24px, 120px 120px;
-  background-position: 0 0, 0 0;
-  cursor: grab;
-  touch-action: none;
   contain: strict;
 }
 
-#board:active { cursor: grabbing; }
-
-#stage {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
-  transform-origin: 0 0;
-  will-change: transform;
-}
-
+/* The card layer.  It is a positioning box, not a camera: main.mjs writes each
+   card's own left/top/width/height from the tile's arithmetic.  `z-index: 0`
+   makes it a stacking context of its own, which is what the old stage did just
+   by carrying a transform: the cards' own z-order stays inside this box, so the
+   tab strip and the sidebar hint (both painted above it) cannot be covered by a
+   card that has been raised a few hundred times. */
 #cards {
   position: absolute;
   left: 0;
   top: 0;
   width: 0;
   height: 0;
-}
-
-/* The link overlay is a drawing surface, not a layout box: it is a single
-   pixel square that lets everything paint outside it.  Sizing it as a
-   percentage of #stage would make it 0x0, because #stage is a transform
-   origin with no size of its own -- and an SVG with no viewport paints
-   nothing, however correct the geometry inside it is. */
-#links {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: visible;
-  pointer-events: none;
-}
-
-/* The group wrapping every link's paths and label.  It is a plain container:
-   the geometry lives on .link-path/.link-bg and the text on .link-label.  It
-   never takes the pointer, so a link can never eat a card drag. */
-.link { pointer-events: none; }
-
-.link-path {
-  fill: none;
-  stroke: #4b5566;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.link-bg {
-  fill: none;
-  stroke: var(--bg);
-  stroke-width: 4;
-  vector-effect: non-scaling-stroke;
-}
-
-.link-label {
-  fill: var(--fg-dim);
-  font: 10px/1 var(--mono-font);
-  text-anchor: middle;
-  paint-order: stroke;
-}
-
-.link-label.is-empty { display: none; }
-
-.link-label-bg {
-  fill: #1b1e24e6;
-  stroke: var(--line);
-  stroke-width: 1;
-  rx: 3;
+  z-index: 0;
 }
 
 /* ------------------------------------------------------------------ */
-/* the classic view                                                    */
+/* the tiled views                                                     */
 /* ------------------------------------------------------------------ */
 
 /* One class on <body> is the whole switch.  Nothing is unmounted: the cards
    stay in the DOM and are merely not drawn, which is why an editor's unsaved
-   text survives a walk through the classic view and back -- the value lives in
-   the textarea, not in the layout. */
-body.is-classic #board {
-  background-image: none;
-  cursor: default;
-}
-
-body.is-classic #board:active { cursor: default; }
+   text survives a walk from one view to the other -- the value lives in the
+   textarea, not in the layout.  The class is a hint for what follows only: a
+   card's rectangle comes from classic.mjs or modview.mjs, never from CSS. */
 
 /* ------------------------------------------------------------------ */
 /* the mod view                                                        */
 /* ------------------------------------------------------------------ */
 
-/* The same switch, one class further: the mod view is a tile too, so it shares
-   everything above and only adds what makes it about a mod -- a wider package
-   column, and a report panel along the bottom of the code column.  Nothing here
-   moves a card, exactly as in the classic view. */
-body.is-mod #board {
-  background-image: none;
-  cursor: default;
-}
-
-body.is-mod #board:active { cursor: default; }
-
-/* The report panel is a card like any other, drawn in a rectangle modview.mjs
-   chose.  Flattening its corners is what makes it read as a panel of the window
-   rather than a card that happens to be lying there -- the one visual difference
-   between "the board, arranged" and "a window with a bottom pane". */
+/* The mod tile shares everything above and only adds what makes it about a mod:
+   a wider package column, and a report panel along the bottom of the code
+   column.  The panel is a card like any other, drawn in a rectangle modview.mjs
+   chose; flattening its corners is what makes it read as a pane of the window
+   rather than a card that happens to be lying there. */
 body.is-mod .card[data-kind="problems"] {
   border-radius: 0;
   box-shadow: none;
@@ -198,7 +118,7 @@ body.is-mod .card[data-kind="problems"] {
   border-bottom: 0;
 }
 
-/* A card the classic view has no place for.  Hidden, not removed. */
+/* A card the current tile has no place for.  Hidden, not removed. */
 .card.is-hidden { display: none; }
 
 /* The strip is positioned and sized by classic.mjs (the same arithmetic that
@@ -210,8 +130,8 @@ body.is-mod .card[data-kind="problems"] {
   overflow: hidden;
   background: var(--bg-deep);
   border-bottom: 1px solid var(--line);
-  /* Above the cards, below the HUD.  #stage is a stacking context of its own
-     (it carries a transform), so a z-index here is enough. */
+  /* Above the card layer, which is a stacking context of its own, so a z-index
+     here is enough. */
   z-index: 20;
 }
 
@@ -300,7 +220,7 @@ body.is-mod .card[data-kind="problems"] {
 /* Only the selection gives up room.  Everything else keeps its width, so the
    strip is one line high whatever the path is: a long one used to squeeze the
    brand onto a second line, and the board under it dropped three pixels. */
-#hud-revision, #hud-dirty, #hud-zoom, #mode-switch, #log-toggle, #kernel-status { flex: 0 0 auto; }
+#hud-revision, #hud-dirty, #mode-switch, #log-toggle, #kernel-status { flex: 0 0 auto; }
 #hud-selection { color: var(--fg); }
 #hud-dirty.is-dirty { color: var(--warn); }
 

@@ -37,8 +37,9 @@ the containment rules.
 
 ## What InfantGod Studio is
 
-- A **board**: an infinite, pannable, zoomable 2-D canvas of cards. No tabs, no
-  file tree. Where you put things is part of the project state.
+- A **card document**: one persistent set of cards, drawn by two tiled views. No
+  tabs, no file tree. What is open, and what is linked to what, is part of the
+  project state.
 - **Three layers**, each in a different language, each trimmable:
   - `core/` — the kernel. **C89 only**, zero third-party dependencies.
   - `shell/` — the front end, the HTTP/stdio endpoints, and the game layer.
@@ -87,35 +88,34 @@ the containment rules.
 These are hard constraints, not aspirations. They are what make the code base
 forkable, and they are what a fork will change first.
 
-### 1. The paradigm is the board, not tabs and a tree
+### 1. The paradigm is the document, not tabs and a tree
 
-The main surface is one persistent 2-D canvas. Everything you work on is a
-**card** placed at a point on that canvas. A card has a `kind` (`editor`,
+The main surface is not a tab strip over a file tree. Everything you work on is a
+**card** in one persistent document. A card has a `kind` (`editor`,
 `runner`, `note`, `files`, `project`, `sheet`, `mod`, `problems`, `docs`), a
 position and size (`x`, `y`, `w`, `h`, `z`), may
-reference a file, and may be connected by links. The board persists to
-`<root>/.infantgod/board.json`, so **where you put things is part of the project
+reference a file, and may be connected by links. The document persists to
+`<root>/.infantgod/board.json`, so **what is open and how it relates is part of the project
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
-The board is also the only document. The shell draws those same cards two other
-ways — `mode classic` puts the focused editor into a code area, the open files
-into a tab strip above it and a `project`/`files` card, when the board has one,
-into a sidebar; `mode mod` arranges that same tile around a mod package — and a
-window opens on the classic one. Both are
-*projections*: switching to either creates no card and moves none, nothing about
-them is written to `board.json`, and `mode board` puts every card back on the
-pixels it had. The board is still a mode, for the times the arrangement itself is
-what you want to look at; it is deliberately not a button in the HUD. A fork that
-deletes a view loses a way of looking, not a piece of project state; the board is
-still where the project is.
+The board file is the only document, and the shell draws it two ways — `mode
+classic` puts the focused editor into a code area, the open files into a tab
+strip above it and a `project`/`files` card, when the document has one, into a
+sidebar; `mode mod` arranges that same tile around a mod package — and a window
+opens on the classic one. Both are *projections*: switching to either creates no
+card, moves none, and nothing about them is written to `board.json`. A fork that
+deletes a view loses a way of looking, not a piece of project state; the document
+is still where the project is. The geometry (`x`/`y`/`w`/`h`, `viewport`) stays
+in the file for any view that wants to draw a plane, but no shipped view reads
+it, and `mode board` is no longer a mode.
 
 ### 2. No Electron in the core
 
 Nothing below the window knows what a window is: the protocol, the language
-layer, the mod layer and the board are all indifferent to how they are hosted.
-That is a decision of the *shell*, not of the kernel: the kernel stores the
-document, whatever it holds, and knows nothing about cards or canvases
+layer, the mod layer and the board document are all indifferent to how they are
+hosted. That is a decision of the *shell*, not of the kernel: the kernel stores
+the document, whatever it holds, and knows nothing about cards or views
 (`docs/VIEWS.md`). A fork that wants a different main surface replaces this
 document and not the core.
 
@@ -150,11 +150,12 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The six shipped kinds are `editor`, `runner`, `note`, `files`, `project` and
-`sheet` — `sheet` being a structured-data grid (typed cells, rows, columns, TSV
-export) that exists to prove nothing downstream assumes text, and `project`
-being the workspace as one project: what the project contains, merged with what
-the board has open. See [`docs/SURFACES.md`](docs/SURFACES.md) and
+The shell registers eleven kinds — `editor`, `runner`, `note`, `files`,
+`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `mod`,
+`problems` and `docs` — `sheet` being a structured-data grid (typed cells, rows,
+columns, TSV export) that exists to prove nothing downstream assumes text, and
+`project` being the workspace as one project: what the project contains, merged
+with what the document has open. See [`docs/SURFACES.md`](docs/SURFACES.md) and
 [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
@@ -245,7 +246,7 @@ outcome.
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --kernel build/infantgod.exe     # 13 passed, 0 failed, 3 skipped
+python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 skipped
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
@@ -255,7 +256,7 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 208/208 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 225/225 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -285,11 +286,11 @@ on its own and reloads, that a card with unsaved edits is warned instead of
 overwritten, and that deleting the file under a card is reported with the text
 still in the card, that the editor's gutter holds one number per line and that a
 click on it hides it and another brings it back, that a window opens on the
-classic tile with `mode board` still behind it, and that `mode classic` draws the
-tile it promises while `mode board` puts every card back (`input_smoke.py`, 26
+classic tile, and that `mode classic` draws the
+tile it promises (`input_smoke.py`, 26
 checks). On a clone that
 has no
-board yet both install `examples/board.json` for the run and remove it again
+document yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 
 **A file changed behind the app's back is noticed, on a timer.** The kernel emits
@@ -309,29 +310,28 @@ app: the watcher turns itself off with one log line
 `Classic` button in the HUD's view switch marks it as the one that is on, and
 `mode classic` is how you come back to it. It arranges the focused
 editor as a code area,
-the other open files as tabs above it and a `project`/`files` card, if the board has
+the other open files as tabs above it and a `project`/`files` card, if the document has
 one, as a sidebar. The
 arithmetic is pure, lives in `shell/web/classic.mjs` and is measured in the
-board's own pixels, which is why `node shell/web/selftest.mjs` can pin the tile
-with no DOM and `input_smoke.py` can measure it in a real window. The board
+view's own pixels, which is why `node shell/web/selftest.mjs` can pin the tile
+with no DOM and `input_smoke.py` can measure it in a real window. The document
 underneath is untouched: the view computes boxes for the *same* cards from the
 *same* document, a card with no place in the tile is hidden rather than
 unmounted (its text, its scroll position and its listeners survive a round trip),
-and the wheel is the board's gesture — so in classic mode there is no pan and no
-zoom to speak of, and the HUD says so. Nothing about the view is saved, the
-document in memory is never rewritten, no protocol method changed, and
-`mode board` restores every card to the pixels the document gives it;
+and neither view pans or zooms, so there is no scale for the HUD to quote.
+Nothing about the view is saved, the
+document in memory is never rewritten, and no protocol method changed;
 [`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
 
-**The board is a mode, not a button any more.** Its arrangement is only
-meaningful once somebody has dragged cards into it, and a product that opens on
-the tiling should not offer that as the third thing to click, so the HUD switch
-carries `classic` and `mod` and `mode board` is how you ask for the plane. The
+**The views are views, and there are two of them.** A view's arrangement is only
+meaningful because it is computed — nothing is dragged into place — so the HUD
+switch carries `classic` and `mod`, and the plane a card's `x`/`y` once described
+is no longer a mode at all: `mode board` is answered as an unknown view. The
 same reasoning folds the message strip away: it is the whole of the app's dialog
 system — there are no modals, nothing ever covers what you are reading — but a
 strip of running commentary under the code is the tool of the person writing the
-code, so it starts closed and the HUD's `log` button (or the `log` command)
-opens it. A line that arrives while it is shut turns that button into a count
+code, so it starts closed and the HUD's button (or the command line) opens it. A
+line that arrives while it is shut turns that button into a count
 coloured by the worst line waiting, and an `error` opens the strip by itself.
 
 **The protocol suite used to write to your board, and no longer does.** The
@@ -369,13 +369,13 @@ node shell/main.mjs serve --workspace . --no-open    # just serve, print the URL
 node shell/main.mjs rpc --workspace .                # stdio endpoint, no browser
 ```
 
-`.infantgod/` is gitignored, so a fresh clone opens an **empty canvas** — the
+`.infantgod/` is gitignored, so a fresh clone opens an **empty document** — the
 layout is per-checkout project state, deliberately not committed. `tools/demo.py`
-copies `examples/board.json`, the five-card board in every screenshot here, into
-`.infantgod/board.json`. It refuses to overwrite a board you already have unless
+copies `examples/board.json`, the five-card document in every screenshot here, into
+`.infantgod/board.json`. It refuses to overwrite a document you already have unless
 you pass `--force`, and `--print` shows it without touching anything. Opening an
-empty board is fine too: the canvas tells you the commands, and `project` on the
-command line gives you the workspace.
+empty document is fine too: the command line is what tells you the commands, and
+`project` gives you the workspace.
 
 Point it at the game's mods so the 幼神 cards have something to open:
 
@@ -384,7 +384,7 @@ node shell/main.mjs serve --workspace . \
   --mods-root "…/Infant God/StreamingAssets/Mods"
 ```
 
-Then, on the board's command line: `mod MyMod`, `problems MyMod`, `docs Love`.
+Then, on the command line: `mod MyMod`, `problems MyMod`, `docs Love`.
 `--mods-root` narrows what `mod.*` may touch; it defaults to `--workspace` and
 can never widen it.
 
@@ -409,6 +409,7 @@ Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
 README.md               this file
 LICENSE                 MIT -- the code.  Except the docs: see below
 LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
+EULA.txt                the early-version notice the installer shows
 CHANGELOG.md            what is in this version, and what is not
 .github/workflows/      CI: the same make targets, on a Windows runner
 .gitignore              build artefacts and workspace-local state
@@ -443,10 +444,10 @@ shell/                  the front end and the endpoints
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
     selftest.mjs        node shell/mods/selftest.mjs -- 84 checks, no kernel
-  web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
-                        history.mjs, rpc.mjs, watch.mjs, classic.mjs, main.mjs,
-                        story.mjs, storycsv.mjs, ysls.mjs, pixelpng.mjs,
-                        selftest.mjs, README.md
+  web/                  the front end: index.html, style.css, board.mjs, cards.mjs,
+                        views.mjs, history.mjs, rpc.mjs, watch.mjs, classic.mjs,
+                        modview.mjs, main.mjs, story.mjs, storycsv.mjs, ysls.mjs,
+                        pixelpng.mjs, selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean
@@ -502,7 +503,7 @@ Stated plainly, because a fork needs to know what it is inheriting.
   `StreamingAssets/Mods/<Name>/` is therefore a manual step; `mod.scaffold`
   creates directories through `file.write`'s parent-directory creation.
 - **The kernel refuses any file containing a NUL byte**, so `.png` and `.bytes`
-  assets can be listed and diagnosed but not read or written by the board.
+  assets can be listed and diagnosed but not read or written through the document.
 - **Language colouring offsets are JS string indices, not bytes.** For Yarn this
   is what makes Chinese prose highlight correctly; the upstream README's
   "byte offsets" claim was wrong, and `langs/selftest.mjs` pins the gap over a
@@ -512,9 +513,10 @@ Stated plainly, because a fork needs to know what it is inheriting.
   tiling check stays honest even for an astral character.  What would drift is
   any *new* check that compared a wire span to Python's `len(text)`, which
   counts code points.
-- **Links are straight lines.** No router, no obstacle avoidance, no automatic
-  layout. Undo has the same limit: it takes back board edits, and does not
-  reverse a pan, a zoom, or a "raise to front".
+- **Links are data, not drawings.** No router, no obstacle avoidance, no
+  automatic layout, and no shipped view draws a link: the relationship is in the
+  document. Undo has the same limit: it takes back board edits, and does not
+  reverse anything a view computes.
 - **The shell is the only *window*.** `tools/seide_cli.py` is a second protocol
   client and `make cli-check` drives it, but it is a command line: every
   rendering of a view still goes through `shell/web/`, so the drawn client has
@@ -582,6 +584,16 @@ scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). InfantGod Studio is a
 derivative of the MIT-licensed seIDE, and a rename does not change what a
 licence allows: the kernel, the shell, the tools and the fixtures are MIT, and
 only the prose is CC BY 4.0.
+
+The installer shows [EULA.txt](EULA.txt) on its licence page instead of the MIT
+file, because this build is early and not stable, and the one thing worth saying
+before an install is what that costs you: it may have bugs, it writes the files
+under your Mods directory, back them up. It is not a restrictive agreement — it
+says itself that it narrows nothing, and defers to the two licences above. It
+also discloses how the program was made, which is part of judging an early build:
+it is AI-authored throughout, corrected by hand through DSH sessions. The program
+stays free to use, fork, rename and redistribute either way; the licence page is
+about the build you are installing, not about the repository.
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the

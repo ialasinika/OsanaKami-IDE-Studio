@@ -7,27 +7,26 @@
  *   rpc.mjs    talks to the kernel            (transport)
  *   board.mjs  holds the document             (model)
  *   cards.mjs  renders one kind of card       (view)
- *   main.mjs   gestures, command line, status (control)
+ *   main.mjs   the tile, the command line, status (control)
  *
- * The board is a 2-D world.  `#stage` carries one CSS transform
- * (`translate(tx,ty) scale(zoom)`), so panning and zooming never touch a card's
- * own coordinates and the link overlay (written in world units) stays aligned
- * for free.  A file you open becomes a card at a point in space, and where you
- * put it is part of the project.
+ * There is one document -- the cards and what is written in them -- and there
+ * are two ways to look at it: the classic tile (a sidebar, a tab strip, a code
+ * area) and the mod tile (a package tree, code, and the problems that go with
+ * it).  Both are the same cards in the same document, so switching views cannot
+ * lose an edit.  There is no canvas that draws every card exactly where the
+ * document put it, and nothing here pans, zooms or saves a viewport.
  *
- * `mode classic` is the other way to look at those same cards: classic.mjs
- * computes a sidebar / tab strip / code area arrangement, this file draws it by
- * putting `#stage` at the identity transform and positioning each card from
- * that arithmetic.  Nothing about it is written to the document -- switching
- * back is the board again, pan and zoom included -- which is what keeps "the
- * paradigm is the board" true while a tab strip exists.
+ * A tile is arithmetic, not a transform: classic.mjs and modview.mjs compute a
+ * rectangle per card, this file measures those against `#board` and writes each
+ * card's position from the numbers.  The document is therefore in pixels of the
+ * board box, and a card's own `x`/`y` are its place in the tile.
  *
  * Nothing here uses `eval`, inline `on*=` attributes, external URLs or a build
  * step; the browser loads these ES modules as written.
  */
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
-import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
+import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import { classicLayout, classicTabLabel } from "./classic.mjs";
 import { modLayout } from "./modview.mjs";
@@ -37,9 +36,7 @@ import {
   VIEWS,
   VIEW_LABELS,
   VIEW_TITLES,
-  tiledView,
   viewAbout,
-  viewHud,
   viewName,
   viewNote,
 } from "./views.mjs";
@@ -58,7 +55,6 @@ import {
   describeCard,
   emptySheet,
   parseCommandLine,
-  parseZoomArgument,
   renderCard,
 } from "./cards.mjs";
 
@@ -77,85 +73,6 @@ function el(tag, className, text) {
     node.textContent = text;
   }
   return node;
-}
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function svgEl(tag, className) {
-  const node = document.createElementNS(SVG_NS, tag);
-  if (className) {
-    node.setAttribute("class", className);
-  }
-  return node;
-}
-
-const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
-
-/* ------------------------------------------------------------------ */
-/* board geometry helpers (pure, so they are easy to reason about)     */
-/* ------------------------------------------------------------------ */
-
-/** World rect of a card, for computing where a link should attach. */
-function cardRect(card) {
-  return { x: card.x, y: card.y, w: card.w, h: card.h };
-}
-
-/**
- * Where a link leaves `from` and meets `to`: the midpoints of the two facing
- * edges.  Deliberately not a router -- a straight line between the nearest
- * edges is enough to read a board, and it never crosses the cards.
- */
-export function linkPoints(a, b) {
-  const ra = cardRect(a);
-  const rb = cardRect(b);
-  const ac = { x: ra.x + ra.w / 2, y: ra.y + ra.h / 2 };
-  const bc = { x: rb.x + rb.w / 2, y: rb.y + rb.h / 2 };
-  const dx = bc.x - ac.x;
-  const dy = bc.y - ac.y;
-  let p1;
-  let p2;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    p1 = { x: dx >= 0 ? ra.x + ra.w : ra.x, y: ac.y };
-    p2 = { x: dx >= 0 ? rb.x : rb.x + rb.w, y: bc.y };
-  } else {
-    p1 = { x: ac.x, y: dy >= 0 ? ra.y + ra.h : ra.y };
-    p2 = { x: bc.x, y: dy >= 0 ? rb.y : rb.y + rb.h };
-  }
-  return { p1, p2, mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
-}
-
-/** The `overflow` values that make an element a scroll container. */
-const SCROLLABLE = new Set(["auto", "scroll", "overlay"]);
-
-/**
- * How many pixels a scroll container can still move along one axis.
- *
- * `delta` is the sign of the wheel's movement (positive scrolls down/right), so
- * the answer is the room *left in that direction*: 0 means the container is
- * already at the end the wheel is pushing towards, and a card that is short
- * enough to fit has no room either way.  Pure arithmetic, exported so the
- * selftest can prove it without a DOM.
- */
-export function scrollRoom(scroll, client, total, delta) {
-  if (delta === 0 || !Number.isFinite(scroll) || !Number.isFinite(client) || !Number.isFinite(total)) {
-    return 0;
-  }
-  const room = delta < 0 ? scroll : total - client - scroll;
-  return Math.max(0, Math.floor(room));
-}
-
-/**
- * Zoom keeping the world point under `(px, py)` fixed.
- * `px`/`py` are in the board element's own pixel space (post `getBoundingClientRect`).
- */
-export function zoomAbout(viewport, factor, px, py) {
-  const zoom = clamp(viewport.zoom * factor, ZOOM_MIN, ZOOM_MAX);
-  const scale = zoom / viewport.zoom;
-  return {
-    zoom,
-    x: px - (px - viewport.x) * scale,
-    y: py - (py - viewport.y) * scale,
-  };
 }
 
 /**
@@ -276,12 +193,11 @@ const STATUS_LIST = ["connecting", "ready", "unreachable"];
 /** The welcome card a brand-new project gets. It is an ordinary note card. */
 const HINT_SIZE = { w: 380, h: 340 };
 const HINT_TEXT = [
-  "Board: no tabs, no tree.",
+  "One document, two ways to look at it.",
   "",
-  "Drag empty space to pan · wheel pans, but a wheel over a card's own contents",
-  "scrolls the card first · ^wheel to zoom about the cursor.",
-  "Drag a card title to move it · drag its corner to resize.",
-  "Double-click empty space for a note.",
+  "This is the classic view: a sidebar, a tab strip and a code area.",
+  "`mode mod` shows the same cards arranged around a mod package.",
+  "Neither view is saved anywhere — switching is free.",
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
   "those keys undo the typing, as they do anywhere else.",
   "",
@@ -294,8 +210,8 @@ const HINT_TEXT = [
   "",
   "Commands go on the line at the bottom:",
   "  open <path> · run <cmd> · files · note <text> · sheet [title]",
-  "  project [glob] · link <from> <to> · zoom in|out|reset · focus <id>",
-  "  delete <id> · undo · redo · save",
+  "  project [glob] · link <from> <to> · focus <id>",
+  "  delete <id> · undo · redo · save · mode classic|mod",
   "",
   "This arrangement is saved in .infantgod/board.json, not a tab history.",
   "Delete this card once it has told you what you need (`delete` on it).",
@@ -304,13 +220,10 @@ const HINT_TEXT = [
 function createApp() {
   /* -- elements -- */
   const boardEl = $("board");
-  const stageEl = $("stage");
   const cardsEl = $("cards");
-  const linksSvg = $("links");
   const emptyEl = $("empty-state");
   const statusEl = $("kernel-status");
   const selectionEl = $("hud-selection");
-  const zoomEl = $("hud-zoom");
   const revEl = $("hud-revision");
   const dirtyEl = $("hud-dirty");
   const logEl = $("log");
@@ -326,7 +239,7 @@ function createApp() {
      written out, so a view added to `SWITCH_VIEWS` cannot be missing from the
      switch.  A switch and not a cycle: with two views a single button that
      "names the next one" makes the reader work out an order that is not part of
-     the document.  The board is not one of them -- see views.mjs. */
+     the document. */
   const modeButtons = SWITCH_VIEWS.map((name) => {
     const button = el("button", "hud-switch-button", VIEW_LABELS[name]);
     button.type = "button";
@@ -359,11 +272,11 @@ function createApp() {
   let initializing = true;
   let connected = false;
   let autosave = true;
-  /* Which of the three arrangements is on screen: "board", "classic" or "mod".
-     In memory only, deliberately -- `docs/PARADIGM.md` argues the board is the
-     document, and a view that survived a reload would be a document of its own.
-     Reloading the page always starts in `DEFAULT_VIEW` (views.mjs), never in
-     whatever the last window was left showing. */
+  /* Which of the two views is on screen: "classic" or "mod".  In memory only,
+     deliberately -- the document is the cards, and a view that survived a
+     reload would be a document of its own.  Reloading the page always starts in
+     `DEFAULT_VIEW` (views.mjs), never in whatever the last window was left
+     showing. */
   let viewMode = DEFAULT_VIEW;
   /* The view's class on `<body>` is the stylesheet's half of the switch, and a
      window opens *in* a view: it is painted here, before anything is drawn, not
@@ -383,8 +296,6 @@ function createApp() {
 
   /** cardId -> {el, handle, destroy, card} */
   const mounted = new Map();
-  /** linkId -> {group, path, label, bg} */
-  const linkNodes = new Map();
   /** runId -> cardId, so exec.output finds its runner even before the reply lands */
   const runs = new Map();
 
@@ -395,8 +306,8 @@ function createApp() {
   /**
    * The set of *open editors* is a second, smaller source of truth: cards that
    * need it (the project panel) hear about it here.  It is deliberately not
-   * "the board changed" -- the viewport changes on every pan frame, and a
-   * listener that re-listed the workspace would do so sixty times a second.
+   * "the board changed" -- the document changes on every keystroke and every
+   * render, and a listener that re-listed the workspace would do so on each one.
    */
   const boardListeners = new Set();
   let boardSignature = null;
@@ -570,9 +481,7 @@ function createApp() {
     // from it; the cards and the chrome can never disagree about where the code
     // area is, and the mode is one string read by all of them.
     const layout = currentLayout();
-    renderStage();
     renderCards(layout);
-    renderLinks();
     renderHud();
     renderTabs(layout);
     renderSideHint(layout);
@@ -591,7 +500,7 @@ function createApp() {
   }
 
   /**
-   * Switch between the board, the classic view and the mod view.
+   * Switch between the classic view and the mod view.
    *
    * The whole transition is one class on `<body>` (the stylesheet's switch) plus
    * a render: no card is mounted, unmounted or moved in the document, so nothing
@@ -630,49 +539,20 @@ function createApp() {
     return Math.max(0, Math.round(rect.height));
   }
 
-  function renderStage() {
-    if (tiledView(viewMode)) {
-      // The identity transform is what makes the tile arithmetic screen pixels:
-      // the cards keep their *world* x/y, but with scale 1 and no pan, world and
-      // screen are the same thing.  `renderCards` overwrites each card's position
-      // from the layout, so nothing here is a second source of truth -- and the
-      // board's own viewport is left untouched, which is why `mode board` comes
-      // back to the same pan and zoom.
-      stageEl.style.transform = "translate(0px, 0px) scale(1)";
-      boardEl.style.backgroundSize = "auto, auto";
-      boardEl.style.backgroundPosition = "0 0, 0 0";
-      zoomEl.textContent = viewHud(viewMode).zoom;
-      return;
-    }
-
-    const { x, y, zoom } = board.viewport;
-    stageEl.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
-
-    // The dot grid is drawn on the board itself and offset by the pan, so the
-    // whole surface reads as one continuous plane rather than a scrolling list.
-    const step = 24 * zoom;
-    boardEl.style.backgroundSize = `${step}px ${step}px, ${step}px ${step}px`;
-    boardEl.style.backgroundPosition = `${x}px ${y}px, ${x}px ${y}px`;
-
-    zoomEl.textContent = `${Math.round(zoom * 100)}%`;
-  }
-
   /**
-   * The layout the current view is drawing right now, or null on the board.
+   * The layout the current view is drawing right now.
    *
    * Both tiles take the same two arguments and return the same shape, so
    * everything downstream -- `renderCards`, `renderTabs`, `renderSideHint` --
-   * works without knowing which view asked for it.
+   * works without knowing which view asked for it.  `viewMode` is only ever a
+   * name in `VIEWS`, and both of those are tiles, so this always has an answer.
    */
   function currentLayout() {
-    if (!tiledView(viewMode)) {
-      return null;
-    }
-    const viewport = boardPixelSize();
+    const box = boardPixelSize();
     const options = { activeId: board.selectedId, top: hudHeight() };
     return viewMode === "mod"
-      ? modLayout(board.cards, viewport, options)
-      : classicLayout(board.cards, viewport, options);
+      ? modLayout(board.cards, box, options)
+      : classicLayout(board.cards, box, options);
   }
 
   /**
@@ -685,12 +565,8 @@ function createApp() {
    * the same fact the card's own status line shows.
    */
   function renderTabs(layout) {
-    // `layout === null` is the board: there is no strip, because there are no
-    // tabs, because every card is where the document says it is.  The two
-    // renderers below are called from every `renderAll`, so they take the null
-    // rather than being guarded by the caller -- one rule, in one place.
-    const roles = layout === null ? null : layout.roles;
-    tabsEl.hidden = roles === null || roles.tabs.length === 0;
+    const roles = layout.roles;
+    tabsEl.hidden = roles.tabs.length === 0;
     if (tabsEl.hidden) {
       tabsEl.replaceChildren();
       return;
@@ -725,7 +601,7 @@ function createApp() {
 
   /** What stands in the sidebar column when no card can. */
   function renderSideHint(layout) {
-    const missing = layout !== null && layout.sidebar === null;
+    const missing = layout.sidebar === null;
     // A tile with no sidebar card has no column to stand in: `layout.tabs.x` is
     // 0, and advice laid out in a zero-width box is not a hint, it is a smear of
     // clipped words -- which is what the classic view drew, whose sidebar is the
@@ -733,9 +609,9 @@ function createApp() {
     // and a notice over the code is only worth its cost when there is no code
     // under it yet: an empty tile explaining how to fill it, not a banner
     // covering the first two lines of the file you just opened.
-    const columnWidth = layout === null ? 0 : Math.max(0, layout.tabs.x);
+    const columnWidth = Math.max(0, layout.tabs.x);
     const overlay = columnWidth === 0;
-    sideHintEl.hidden = !missing || !tiledView(viewMode) || (overlay && layout.roles.area !== null);
+    sideHintEl.hidden = !missing || (overlay && layout.roles.area !== null);
     if (sideHintEl.hidden) {
       return;
     }
@@ -779,7 +655,7 @@ function createApp() {
   }
 
   /**
-   * Paint the cards, in world space or in the classic view's tile.
+   * Paint the cards, each one from its rectangle in the current tile.
    *
    * `layout` is the arrangement to draw; the default is "work it out from where
    * we are now", which is what the many callers inside gestures and commands
@@ -803,23 +679,18 @@ function createApp() {
       }
       entry.card = card;
       const node = entry.el;
-      // A card the classic view has no place for is hidden, never removed: its
-      // unsaved text, its scroll position and its listeners survive a walk
-      // through the classic view and back.  `box === undefined` is "this
-      // arrangement does not draw it"; `layout === null` is the board, where
-      // every card is drawn where the document says it is.
-      const box = layout === null ? null : layout.boxes.get(card.id);
-      node.classList.toggle("is-hidden", layout !== null && box === undefined);
-      if (box !== undefined && box !== null) {
+      // A card the current tile has no place for is hidden, never removed: its
+      // unsaved text, its scroll position and its listeners survive the card
+      // being out of the arrangement and back.  `box === undefined` is exactly
+      // "this tile does not draw it".
+      const box = layout.boxes.get(card.id);
+      node.classList.toggle("is-hidden", box === undefined);
+      if (box !== undefined) {
         node.style.transform = `translate(${box.x}px, ${box.y}px)`;
         node.style.width = `${box.w}px`;
         node.style.height = `${box.h}px`;
-      } else {
-        node.style.transform = `translate(${card.x}px, ${card.y}px)`;
-        node.style.width = `${card.w}px`;
-        node.style.height = `${card.h}px`;
       }
-      // z-index only orders hit-testing and shadows; positions stay world-space.
+      // z-index only orders hit-testing and shadows; positions are the tile's.
       node.style.zIndex = String(Math.round(card.z) || 0);
       node.classList.toggle("is-selected", card.id === board.selectedId);
     }
@@ -870,86 +741,22 @@ function createApp() {
     return err.message || String(err);
   }
 
-  function renderLinks() {
-    // A link is a line between two points in the board's world.  A tile draws the
-    // same cards in pixels it chose itself, so the lines would cross the code
-    // area pointing at nothing: the overlay is hidden, not rewritten.  `mode
-    // board` brings it back with the cards, unmoved.
-    linksSvg.hidden = tiledView(viewMode);
-    if (linksSvg.hidden) {
-      return;
-    }
-
-    const seen = new Set();
-    for (const link of board.links) {
-      seen.add(link.id);
-      const from = board.findCard(link.from);
-      const to = board.findCard(link.to);
-      if (from === null || to === null) {
-        continue;
-      }
-      const { p1, p2, mid } = linkPoints(from, to);
-      let node = linkNodes.get(link.id);
-      if (node === undefined) {
-        const group = svgEl("g", "link");
-        group.dataset.linkId = link.id;
-        const bg = svgEl("path", "link-bg");
-        const path = svgEl("path", "link-path");
-        const label = svgEl("text", "link-label");
-        const labelBg = svgEl("rect", "link-label-bg");
-        group.append(bg, path, labelBg, label);
-        node = { group, path, bg, label, labelBg };
-        linkNodes.set(link.id, node);
-        linksSvg.append(group);
-      }
-      const d = `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
-      node.path.setAttribute("d", d);
-      node.bg.setAttribute("d", d);
-      const text = link.label || "";
-      node.label.textContent = text;
-      node.label.setAttribute("x", String(mid.x));
-      node.label.setAttribute("y", String(mid.y - 6));
-      node.label.classList.toggle("is-empty", text === "");
-      // A backing rect so a label stays readable over the grid. Sized from the
-      // label's own measured box, which is why this happens after painting.
-      if (text === "") {
-        node.labelBg.setAttribute("width", "0");
-        node.labelBg.setAttribute("height", "0");
-      } else {
-        const box = node.label.getBBox();
-        node.labelBg.setAttribute("x", String(box.x - 4));
-        node.labelBg.setAttribute("y", String(box.y - 1));
-        node.labelBg.setAttribute("width", String(box.width + 8));
-        node.labelBg.setAttribute("height", String(box.height + 2));
-      }
-    }
-
-    for (const [id, node] of linkNodes) {
-      if (!seen.has(id)) {
-        node.group.remove();
-        linkNodes.delete(id);
-      }
-    }
-  }
-
   /* ------------------------------------------------------------------ */
   /* board mutations                                                     */
   /* ------------------------------------------------------------------ */
 
   /**
-   * Something changed the board.  `isDirty` false means the change is not worth
-   * saving (a live pan, whose end will mark the board dirty once), and
-   * `detail.record` false means it is worth saving but not worth an undo step
-   * (raising a card to the front is a consequence of clicking it, not an edit
-   * anybody wants to take back).
+   * Something changed the board.  `detail.record` false means it is worth
+   * saving but not worth an undo step (raising a card to the front is a
+   * consequence of clicking it, not an edit anybody wants to take back).
    */
   function boardTouched(isDirty = true, detail = {}) {
     if (isDirty) {
       dirty = true;
       boardGeneration += 1;
       if (detail.record !== false && !applyingHistory) {
-        // `history.record` copies what it is given, and ignores documents that
-        // differ only in the viewport, so this is safe to call on every edit.
+        // `history.record` copies what it is given, so this is safe to call on
+        // every edit.
         history.record(board.serialize(), detail.label ? { label: detail.label } : {});
       }
     }
@@ -961,10 +768,10 @@ function createApp() {
 
   /**
    * Put one history step back on the board.  The document goes through the same
-   * `loadDocument` an external reload uses, so cards are mounted, links
-   * redrawn and the HUD repainted exactly as they are for any other load; the
-   * only difference is that history is left alone and the result is marked
-   * dirty, because the board on screen and the board on disk now differ.
+   * `loadDocument` an external reload uses, so cards are mounted and the HUD
+   * repainted exactly as they are for any other load; the only difference is
+   * that history is left alone and the result is marked dirty, because the
+   * board on screen and the board on disk now differ.
    */
   function applyHistoryStep(step, verb) {
     if (step === null) {
@@ -988,21 +795,6 @@ function createApp() {
 
   function redoBoard() {
     return applyHistoryStep(history.redo(), "redo");
-  }
-
-  /*
-   * The viewport lives inside the board document, so panning and zooming are
-   * board edits: without this the layout the user just arranged is reported as
-   * "saved" and is gone on the next reload.  This runs many times a second
-   * while a gesture is live, so it deliberately skips renderHud() -- the HUD is
-   * repainted once the gesture ends.
-   */
-  function viewportTouched() {
-    dirty = true;
-    boardGeneration += 1;
-    if (autosave && !initializing) {
-      scheduleAutosave();
-    }
   }
 
   function scheduleAutosave() {
@@ -1137,20 +929,28 @@ function createApp() {
     }
   }
 
-  /** Place a new card near the middle of what the user is looking at. */
+  /**
+   * Where a new card is dropped.
+   *
+   * It used to be the middle of what the board was showing, because a card's
+   * place in the world was something the user chose.  There is no world any
+   * more: a tile computes every rectangle itself, so this is only the *document*
+   * position a new card starts with.  Two things still matter: the value has to
+   * be numeric, because `board.mjs` refuses a card without a numeric x/y, and
+   * two cards dropped one after another must not land on the same pixel -- that
+   * is what a reader would see as one card.
+   *
+   * So it walks a short cascade, one step across per card and a new row every
+   * sixth, which is bounded in x, grows in y and never repeats a point.
+   */
   function centreWorld() {
-    const { x, y, zoom } = board.viewport;
-    const rect = boardEl.getBoundingClientRect();
-    return {
-      x: (rect.width / 2 - x) / zoom,
-      y: (rect.height / 2 - y) / zoom,
-    };
+    const n = board.cards.length;
+    return { x: 160 + (n % 6) * 90, y: 140 + Math.floor(n / 6) * 80 };
   }
 
   function addCard(kind, x, y, fields = {}, geometry = {}) {
     const card = board.addCard(kind, x, y, fields, geometry);
     renderCards();
-    renderLinks();
     boardTouched();
     return card;
   }
@@ -1179,29 +979,24 @@ function createApp() {
       return false;
     }
     renderCards();
-    renderLinks();
     boardTouched();
     return true;
   }
 
-  /** Scroll a card into view by panning, keeping the zoom. */
+  /**
+   * Show a card: focus it, then re-tile.
+   *
+   * The name is left over from the board view, where this panned the world until
+   * the card was in the middle of the window.  A tile has nowhere to pan -- it
+   * puts every card where its own arithmetic says -- so there is nothing left
+   * but the render, which is what makes `focus <id>` show the card as the code
+   * area when it is an editor, the only place a tile has room for it.
+   */
   function centreOn(card) {
-    if (tiledView(viewMode)) {
-      // There is nothing to centre on: a tile puts every card where its own
-      // arithmetic says, and moving the viewport would silently change the board
-      // the user gets back in `mode board`.  The render is what makes `focus
-      // <id>` still *show* the card -- as the code area, when it is an editor --
-      // because that is the only place the tile has room for it.
-      renderAll();
-      return;
-    }
-    const rect = boardEl.getBoundingClientRect();
-    const { zoom } = board.viewport;
-    board.setViewport({
-      x: rect.width / 2 - (card.x + card.w / 2) * zoom,
-      y: rect.height / 2 - (card.y + card.h / 2) * zoom,
-    });
-    scheduleRender();
+    // The caller has already focused the card it names; a tile has no scroll
+    // offset to move, so the render is the whole of "show me that card".
+    void card;
+    renderAll();
   }
 
   /* ------------------------------------------------------------------ */
@@ -1454,25 +1249,19 @@ function createApp() {
   /* gestures                                                            */
   /* ------------------------------------------------------------------ */
 
-  function screenToWorld(clientX, clientY) {
-    const rect = boardEl.getBoundingClientRect();
-    const { x, y, zoom } = board.viewport;
-    return {
-      x: (clientX - rect.left - x) / zoom,
-      y: (clientY - rect.top - y) / zoom,
-    };
-  }
-
   /**
-   * One delegated pointer gesture for the whole surface:
-   *   empty space  -> pan
-   *   card         -> focus + raise
-   *   card-title   -> move
-   *   grip         -> resize
+   * What a click on the surface means, now that nothing pans or zooms:
+   *   empty space -> clear the selection
+   *   card        -> select it and bring it to the front
+   *
+   * A tile has no empty board to pan: the code area and the sidebar *are* cards,
+   * and the pixels between them belong to the layout.  Dragging a card left with
+   * the world it moved in -- the tile decides where every card is -- and the
+   * wheel and the double-click belong to whatever is under them.  These two
+   * listeners, and the one that keeps the browser's own menu off the surface,
+   * are all the delegation that is left.
    */
   function installGestures() {
-    let gesture = null;
-
     boardEl.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) {
         return;
@@ -1482,190 +1271,25 @@ function createApp() {
         return; // let the control have the click
       }
       const cardNode = target instanceof Element ? target.closest("[data-card-id]") : null;
-      const role = target instanceof Element && target.dataset ? target.dataset.role : null;
-      const zoom = board.viewport.zoom;
-
       if (cardNode === null) {
-        if (tiledView(viewMode)) {
-          // A tile has no empty board to pan: the code area and the sidebar are
-          // cards, and the pixels behind them belong to the layout, not to the
-          // world.  Clicking there clears the selection (which is what makes
-          // `mode board` come back with nothing selected) and starts no gesture
-          // at all -- a pan here would move a world nobody can see.
-          board.setSelection(null);
-          renderCards(currentLayout());
-          renderHud();
-          return;
-        }
-        gesture = { kind: "pan", startX: board.viewport.x, startY: board.viewport.y, px: event.clientX, py: event.clientY };
         board.setSelection(null);
-        renderCards();
+        renderCards(currentLayout());
         renderHud();
-      } else {
-        const card = board.findCard(cardNode.dataset.cardId);
-        if (card === null) {
-          return;
-        }
-        board.setSelection(card.id);
-        // Bringing a card to the front changes `z`, which is part of the
-        // document, so it has to be marked dirty or the HUD says "saved" and
-        // the stack order is gone after a reload.  It is not an undo step:
-        // nobody means to take back "I clicked that card".
-        board.raiseCard(card.id);
-        boardTouched(true, { record: false });
-        if (role === "card-title") {
-          const world = screenToWorld(event.clientX, event.clientY);
-          gesture = { kind: "move", card, dx: world.x - card.x, dy: world.y - card.y };
-        } else if (role === "grip") {
-          const world = screenToWorld(event.clientX, event.clientY);
-          gesture = { kind: "resize", card, dx: world.x - card.x, dy: world.y - card.y };
-        } else {
-          gesture = { kind: "focus", card };
-          renderCards();
-          renderHud();
-          return;
-        }
-        renderCards();
-        renderHud();
-      }
-
-      // Capture is a convenience: it keeps the gesture alive when the pointer
-      // leaves the window.  It throws when the pointer is already gone (a
-      // synthetic event, or a device that vanished mid-drag), and that must not
-      // cost us the gesture we just started.
-      try {
-        boardEl.setPointerCapture(event.pointerId);
-      } catch {
-        /* the gesture still works, it just stops at the window edge */
-      }
-      event.preventDefault();
-    });
-
-    boardEl.addEventListener("pointermove", (event) => {
-      if (gesture === null) {
         return;
       }
-      const zoom = board.viewport.zoom;
-      if (gesture.kind === "pan") {
-        board.setViewport({
-          x: gesture.startX + (event.clientX - gesture.px),
-          y: gesture.startY + (event.clientY - gesture.py),
-        });
-        viewportTouched();
-      } else if (gesture.kind === "move") {
-        // The card can vanish under the pointer -- another writer's
-        // view.changed, or a `delete`.  board.moveCard throws for an unknown
-        // id, and an exception here would skip scheduleRender() and leave the
-        // stage stale, so a dead gesture just ends.
-        if (board.findCard(gesture.card.id) === null) {
-          gesture = null;
-          return;
-        }
-        const world = screenToWorld(event.clientX, event.clientY);
-        board.moveCard(gesture.card.id, Math.round(world.x - gesture.dx), Math.round(world.y - gesture.dy));
-      } else if (gesture.kind === "resize") {
-        if (board.findCard(gesture.card.id) === null) {
-          gesture = null;
-          return;
-        }
-        const world = screenToWorld(event.clientX, event.clientY);
-        board.resizeCard(
-          gesture.card.id,
-          Math.max(MIN_SIZE.w, Math.round(world.x - gesture.dx)),
-          Math.max(MIN_SIZE.h, Math.round(world.y - gesture.dy)),
-        );
-      }
-      scheduleRender();
-      void zoom;
-    });
-
-    const endGesture = (event) => {
-      if (gesture === null) {
+      const card = board.findCard(cardNode.dataset.cardId);
+      if (card === null) {
         return;
       }
-      if (gesture.kind === "move" || gesture.kind === "resize" || gesture.kind === "pan") {
-        // For a pan this is also where the HUD catches up, since the movement
-        // path deliberately skips it.
-        boardTouched(gesture.kind !== "pan");
-      }
-      if (boardEl.hasPointerCapture && boardEl.hasPointerCapture(event.pointerId)) {
-        boardEl.releasePointerCapture(event.pointerId);
-      }
-      gesture = null;
-    };
-    boardEl.addEventListener("pointerup", endGesture);
-    boardEl.addEventListener("pointercancel", endGesture);
-
-    // Wheel: a card's own scroll region keeps the wheel while it has somewhere
-    // to go; otherwise plain scroll pans, and ctrl/⌘ (or shift) zooms about the
-    // cursor.  Zooming about the cursor is what makes a 2-D board feel solid.
-    //
-    // A card's contents (an editor's text, a sheet, a runner's output, the mods
-    // list) are a scroll region *inside* the board, and the wheel event bubbles
-    // up to `boardEl` from there -- so panning unconditionally meant the board
-    // moved and the card never did.  The nearest container below the board that
-    // can still move in this direction wins; at its end the wheel pans again,
-    // the way nested scrolling usually chains.
-    function scrollTarget(node, deltaX, deltaY) {
-      for (let el = node instanceof Element ? node : null; el && el !== boardEl; el = el.parentElement) {
-        const style = getComputedStyle(el);
-        // A textarea scrolls even where `overflow` computes to something else.
-        const vertical = SCROLLABLE.has(style.overflowY) || el.tagName === "TEXTAREA";
-        if (vertical && scrollRoom(el.scrollTop, el.clientHeight, el.scrollHeight, deltaY) > 0) {
-          return el;
-        }
-        if (SCROLLABLE.has(style.overflowX) && scrollRoom(el.scrollLeft, el.clientWidth, el.scrollWidth, deltaX) > 0) {
-          return el;
-        }
-      }
-      return null;
-    }
-
-    boardEl.addEventListener("wheel", (event) => {
-      if (tiledView(viewMode)) {
-        // The wheel belongs to whatever is under it -- the code area's textarea
-        // and the problems list above all.  Zooming is off in these views, which
-        // is also why the HUD says `no zoom` instead of quoting the board's.
-        return;
-      }
-      const overCard = !event.ctrlKey && !event.metaKey
-        && scrollTarget(event.target, event.deltaX, event.deltaY) !== null;
-      if (overCard) {
-        return; // the card scrolls; the board stays where it is
-      }
-      event.preventDefault();
-      if (event.ctrlKey || event.metaKey) {
-        const rect = boardEl.getBoundingClientRect();
-        const factor = Math.exp(-event.deltaY * 0.0015);
-        const next = zoomAbout(board.viewport, factor, event.clientX - rect.left, event.clientY - rect.top);
-        board.setViewport(next);
-      } else if (event.shiftKey) {
-        board.setViewport({ x: board.viewport.x - event.deltaY });
-      } else {
-        board.setViewport({
-          x: board.viewport.x - event.deltaX,
-          y: board.viewport.y - event.deltaY,
-        });
-      }
-      viewportTouched();
+      board.setSelection(card.id);
+      // Bringing a card to the front changes `z`, which is part of the document,
+      // so it has to be marked dirty or the HUD says "saved" and the stack order
+      // is gone after a reload.  It is not an undo step: nobody means to take
+      // back "I clicked that card".
+      board.raiseCard(card.id);
+      boardTouched(true, { record: false });
+      renderCards();
       renderHud();
-      renderStage();
-    }, { passive: false });
-
-    boardEl.addEventListener("dblclick", (event) => {
-      const cardNode = event.target instanceof Element ? event.target.closest("[data-card-id]") : null;
-      if (cardNode === null) {
-        if (tiledView(viewMode)) {
-          // A note dropped on the code area would land in the world *behind* the
-          // layout and be hidden the moment it was created: refusing is the
-          // honest answer, and `note` on the command line still works.
-          log("warn", `the ${viewMode} view does not drop notes — \`note <text>\`, or \`mode board\``);
-          return;
-        }
-        // Double-click on empty space drops a note exactly there.
-        const world = screenToWorld(event.clientX, event.clientY);
-        addCard("note", Math.round(world.x - 120), Math.round(world.y - 80), { text: "" });
-      }
     });
 
     boardEl.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -1880,7 +1504,6 @@ function createApp() {
           return;
         }
         const link = board.linkCards(arg(0), arg(1), argc >= 3 ? tokens.slice(3).join(" ") : "");
-        renderLinks();
         boardTouched();
         log("info", `linked ${arg(0)} → ${arg(1)} (${link.id})`);
         return;
@@ -1891,25 +1514,10 @@ function createApp() {
           return;
         }
         if (board.unlink(arg(0))) {
-          renderLinks();
           boardTouched();
         } else {
           log("warn", `no link ${arg(0)}`);
         }
-        return;
-      }
-      case "zoom": {
-        const target = parseZoomArgument(arg(0), board.viewport.zoom);
-        if (target === null) {
-          log("warn", "usage: zoom <n> | in | out | reset");
-          return;
-        }
-        const rect = boardEl.getBoundingClientRect();
-        const factor = target / board.viewport.zoom;
-        board.setViewport(zoomAbout(board.viewport, factor, rect.width / 2, rect.height / 2));
-        viewportTouched();
-        renderHud();
-        renderStage();
         return;
       }
       case "focus": {
@@ -2066,13 +1674,11 @@ function createApp() {
    * focused card" rather than a second one for the strip.
    */
   function installView() {
-    // A window that changes size re-tiles; the board does not care, because
-    // pan and zoom are in world units and a wider window simply shows more of
-    // them.  Only a tile measures the element it fills.
+    // A window that changes size re-tiles: both views measure the element they
+    // fill and place every card from that arithmetic, so there is nothing else
+    // to do about it.
     window.addEventListener("resize", () => {
-      if (tiledView(viewMode)) {
-        renderAll();
-      }
+      renderAll();
     });
 
     /* The log strip's door.  One listener here rather than a click handler per
@@ -2378,8 +1984,6 @@ function createApp() {
       entry.el.remove();
     }
     mounted.clear();
-    linkNodes.forEach((node) => node.group.remove());
-    linkNodes.clear();
     if (historyMode === "reset") {
       // What is on the board now is step zero: the first thing Ctrl+Z can take
       // back is the first edit made after this load.
@@ -2599,7 +2203,6 @@ function createApp() {
     boot,
     runCommand,
     log,
-    window: { zoomAbout, linkPoints },
   };
 
   Object.defineProperty(appApi, "client", { get: () => client });
@@ -2629,12 +2232,13 @@ export const LIMITATIONS = [
   "fixed metrics, so a font with different line heights would shear them apart.",
   "Token offsets from lang.tokenize are JS string indices (UTF-16 code units), not",
   "bytes -- verified for Chinese prose; an astral character counts as two units.",
-  "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and links are straight",
-  "lines -- there is no router and no automatic layout.",
-  "Undo is board-level and in memory: Ctrl+Z takes back board edits in this window,",
+  "Board chunks below MIN_SIZE (" + MIN_SIZE.w + "x" + MIN_SIZE.h + ") are clamped, and a link is",
+  "document data with no renderer: `link` and `unlink` edit board.json, but neither view",
+  "draws a line for one.",
+  "Undo is document-level and in memory: Ctrl+Z takes back edits in this window,",
   "not the typing inside a card, and a reload forgets the steps.",
-  "The classic view is a projection, never a document: nothing about it is saved, a",
-  "reload starts on the board, and a card it has no place for is hidden, not moved.",
-  "It tiles the cards the board already has -- one code area (the focused editor), no",
+  "Every view is a projection, never a document: nothing about the tile is saved, a",
+  "reload starts in DEFAULT_VIEW, and a card the tile has no place for is hidden, not moved.",
+  "It tiles the cards the document already has -- one code area (the focused editor), no",
   "split panes, and no way to close a tab except closing the card.",
 ];

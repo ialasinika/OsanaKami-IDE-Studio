@@ -7,16 +7,14 @@
 <title>InfantGod Studio</title>
 <!--
   The whole page.  A window opens in `classic`: the same cards a person writes,
-  arranged the way an editor is arranged -- sidebar, tab strip, code area -- with
-  no card to drag and nothing to learn first.  `mode mod` is that tile pointed at
-  a mod package instead.  Neither is stored: both are *views* of the one board
-  document (see docs/PARADIGM.md), computed by main.mjs from classic.mjs and
-  modview.mjs, which is why switching cannot lose an edit.
+  arranged the way an editor is arranged -- sidebar, tab strip, code area.
+  `mode mod` is that tile pointed at a mod package instead.  Neither is stored:
+  both are *views* of the one board document (see docs/PARADIGM.md), computed by
+  main.mjs from classic.mjs and modview.mjs, which is why switching cannot lose
+  an edit.
 
-  The board is still a mode -- `mode board` draws every card exactly where the
-  document has it -- and deliberately not a button in the HUD, because that
-  arrangement only means anything to someone dragging cards around on it.  See
-  views.mjs.
+  There is no canvas that draws a card exactly where the document put it: a tile
+  decides where every card goes, and nothing pans or zooms.  See views.mjs.
 
   Everything the browser needs is in this directory.  No CDN, no framework, no
   build step, no network access beyond the kernel's own loopback endpoints.
@@ -24,23 +22,13 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <!-- The surface every view is drawn on. `#board` handles pan/zoom and all
-       pointer gestures; `#stage` carries the single translate+scale.  The board
-       view scrolls inside it; a tiled view is laid out in its pixels instead,
-       which is why the tile has to measure the element it fills. -->
+  <!-- The surface every view is drawn on.  `#board` is the box a tile measures
+       and the element that takes a click; `#cards` holds the card nodes, and a
+       tile positions each one itself -- there is no stage between them
+       transforming a world. -->
   <main id="board" aria-label="board">
-    <div id="stage">
-      <!-- The link overlay lives *inside* #stage on purpose: #stage carries the
-           one translate+scale transform, and main.mjs writes every path in world
-           coordinates -- the same units as a card's x/y.  Nested here, the
-           overlay pans and zooms with the cards for free; as a sibling of
-           #stage it would stay put while the cards moved. -->
-      <svg id="links" aria-hidden="true">
-        <!-- connections are inserted here, in world coordinates -->
-      </svg>
-      <div id="cards">
-        <!-- cards are inserted here by main.mjs -->
-      </div>
+    <div id="cards">
+      <!-- cards are inserted here by main.mjs -->
     </div>
 
     <!-- The tiled views' own chrome, hidden until one of them is showing.  The
@@ -62,7 +50,7 @@
     <button id="reload-board" class="empty-button" type="button">try to connect again</button>
   </section>
 
-  <!-- A fixed heads-up strip: what is selected, at what zoom, saved or not. -->
+  <!-- A fixed heads-up strip: what is selected, saved or not. -->
   <header id="hud">
     <span class="hud-brand">InfantGod Studio</span>
     <span class="hud-sep">/</span>
@@ -70,7 +58,6 @@
     <span class="hud-spacer"></span>
     <span id="hud-revision" class="hud-item">unsaved</span>
     <span id="hud-dirty" class="hud-item">saved</span>
-    <span id="hud-zoom" class="hud-item">100%</span>
     <!-- Every way to look at the same document, in one switch.  Buttons rather
          than keystrokes: the switch is also the answer to "where did the other
          view go?".  main.mjs builds one per entry in views.mjs's SWITCH_VIEWS,

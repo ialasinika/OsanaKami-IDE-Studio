@@ -1,7 +1,7 @@
 /**
  * cards.mjs -- one renderer and one behaviour set per card kind.
  *
- * DELETE THIS FILE and the board still pans; it just has no cards to put on it.
+ * DELETE THIS FILE and the document still opens; it just has no cards to show.
  * InfantGod Studio has no plugin system: extending the visual vocabulary means forking this
  * file.  What it does have is a *hook* -- `registerCardKind()` -- so that
  * "adding a kind" is one self-contained object instead of an edit to a switch
@@ -778,13 +778,12 @@ export const COMMAND_HELP = [
   "docs [query]             幼神知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
-  "zoom <n> | in | out | reset",
   "focus <id>               select and centre a card",
   "delete <id>              remove a card",
   "save                     write the board to .infantgod/board.json",
   "undo                     take back the last board edit (Ctrl+Z)",
   "redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)",
-  "mode board|classic|mod  which way of looking at the same document",
+  "mode classic|mod        which way of looking at the same document",
   "log                      show or hide the message strip",
   "help                     list these commands (and open the strip to show them)",
   "clear                    empty the message strip",
