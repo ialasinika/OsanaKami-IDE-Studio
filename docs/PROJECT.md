@@ -63,6 +63,11 @@ which cards are next to which. A project panel that lived outside the board
 would be the one part of the workspace you could not arrange, and the one part
 that saved separately from everything else.
 
+A card it remains even in the classic view: `mode classic` draws this card in the
+left column, but the column is a *measurement* of that card for the duration of
+the mode — the card is still the thing, and `mode board` puts it back on the
+plane. See [`PARADIGM.md`](PARADIGM.md).
+
 It is also why the panel's own state is on the card:
 
 | field | meaning |

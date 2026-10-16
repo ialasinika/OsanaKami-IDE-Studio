@@ -28,6 +28,15 @@ In InfantGod Studio, opening a file creates a **card at a point on the canvas**.
 closes when you open something else. The card you opened yesterday is still
 where you left it, next to the note where you wrote down why you opened it.
 
+The shell *can* draw a tab strip. `mode classic` puts the open editor cards in a
+row above a code area and the project card in a sidebar column. That exists
+because the request for it was explicit and because an arrangement of a document
+is not a second document — but it is a **projection**, not the paradigm. The tabs
+*are* the editor cards, in board order: there is no tab that is not a card,
+nothing is evicted when the sixth file opens, the strip is rebuilt from the board
+on every render, and switching views writes nothing. If the tabs ever start
+deciding what is open, this project has become the thing it was written not to be.
+
 ### No file tree
 
 A file tree answers "where does this file live in the repository?" It does not
@@ -253,6 +262,12 @@ prototype:
 
 - There is no minimap, no overview mode, no "fit board to window".
 - There is no rubber-band multi-select and no multi-card operations.
+- The watcher is a **poll, not a filesystem notification**: the kernel emits
+  `file.changed` only for writes it made itself, so the shell asks `file.stat`
+  every 1.5 s about the files open editor cards hold. A change is therefore
+  noticed up to 1.5 s late, and never for a file no open card holds;
+  `shell/web/watch.mjs` is the pure decision table and
+  [`shell/web/README.md`](../shell/web/README.md) says what each answer means.
 - Links carry a label but nothing consumes them.
 - Card kinds are registered with one call (`registerCardKind`) rather than edited
   into a switch, but there is still no plugin system: no loading, no discovery,

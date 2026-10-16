@@ -229,7 +229,9 @@ the `#if SDE_WITH_VIEW` block in `rpc.c`, and the view construction in `app.c`.
 - **Shell must change too:** yes and heavily — `board.mjs` and `main.mjs` both
   assume `view.load` / `view.save` exist, and every other client would have to
   keep its own file. `tools/seide_cli.py`'s `board` verb is that second client:
-  with no document it prints only what it was handed.
+  with no document it prints only what it was handed. The classic view goes with
+  the board for free: `classicLayout` is a projection of the shell's board model,
+  so with no document there is nothing to project.
 
 ### Cutting `wksp` — only the canvas
 

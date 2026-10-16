@@ -102,6 +102,17 @@ import { saveOutcomeMessage, scrollRoom, wireChoiceStrip } from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
 import {
+  CLASSIC_SIDEBAR_KINDS,
+  CLASSIC_TAB_H,
+  CLASSIC_VIEWS,
+  classicHud,
+  classicLayout,
+  classicRoles,
+  classicTabLabel,
+  classicViewName,
+} from "./classic.mjs";
+
+import {
   WATCH_GONE,
   WATCH_OK,
   WATCH_RELOAD,
@@ -2239,6 +2250,135 @@ test("watch: a path that is no longer open is forgotten", () => {
   const before = new Map([["gone.yarn", "ok:7"]]);
   const report = watchReport([], before);
   assert.equal(report.next.size, 0, "a long session does not grow the map forever");
+});
+
+/* ------------------------------------------------------------------ */
+/* the classic view --- */
+/*
+ * The second way to look at the same board.  What is pinned here is the two
+ * promises that make it a *view* rather than a second layout engine: nothing it
+ * computes is written back to a card (so `mode board` is exactly the board
+ * again), and every card either has one place in the tile or is hidden -- never
+ * drawn at 0,0 and never moved.
+ *
+ * The pixels themselves are checked as arithmetic: the tile's pieces have to
+ * add up at any window size, which is the part a browser would otherwise be the
+ * only witness to.
+ */
+/* ------------------------------------------------------------------ */
+
+const cardOf = (id, kind, extras = {}) => ({ id, kind, x: 0, y: 0, w: 100, h: 100, z: 1, ...extras });
+
+test("classic: the sidebar is the project panel, and the file list is second choice", () => {
+  assert.deepEqual(CLASSIC_SIDEBAR_KINDS, ["project", "files"]);
+  const board = [cardOf("e1", "editor"), cardOf("n", "note"), cardOf("f", "files")];
+  assert.equal(classicRoles(board).sidebar, "f", "no project panel, so the file list takes the column");
+  assert.equal(classicRoles([...board, cardOf("p", "project")]).sidebar, "p");
+});
+
+test("classic: the code area is the focused editor, and the first one without a focus", () => {
+  const board = [cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("n", "note")];
+  assert.equal(classicRoles(board, "e2").area, "e2", "the focused file is the one a command would act on");
+  assert.equal(classicRoles(board, "n").area, "e1", "a focused note is not a file to edit");
+  assert.equal(classicRoles(board, null).area, "e1");
+  assert.equal(classicRoles([cardOf("n", "note")]).area, null);
+});
+
+test("classic: one card, at most one role -- and everything else is hidden", () => {
+  const board = [cardOf("p", "project"), cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("f", "frame")];
+  const roles = classicRoles(board, "e1");
+  assert.deepEqual([roles.sidebar, roles.area], ["p", "e1"]);
+  assert.deepEqual(roles.tabs, ["e1", "e2"], "every editor is a tab, even the one in the code area");
+  assert.deepEqual(roles.hidden, ["e2", "f"], "the second editor is a tab, not a second pane");
+  const files = classicRoles([cardOf("f", "files")], "f");
+  assert.equal(files.sidebar, "f");
+  assert.equal(files.area, null, "a card cannot be the sidebar and the code area at once");
+});
+
+test("classic: the tile adds up -- no gap and no overlap at any window size", () => {
+  const board = [cardOf("p", "project"), cardOf("e1", "editor")];
+  for (const [width, height, top] of [[1200, 800, 30], [500, 400, 0], [100, 50, 26], [0, 0, 0]]) {
+    const out = classicLayout(board, { width, height }, { activeId: "e1", top });
+    const where = `${width}x${height} top ${top}`;
+    assert.equal(out.tabs.x, out.sidebar.x + out.sidebar.w, `the strip starts where the sidebar ends (${where})`);
+    assert.equal(out.area.x, out.tabs.x, `the code area is under the strip (${where})`);
+    assert.equal(out.area.y, out.tabs.y + out.tabs.h, `and begins where it ends (${where})`);
+    assert.equal(out.tabs.y, top, `nothing is drawn under the HUD (${where})`);
+    assert.equal(out.area.x + out.area.w, width, `the tile reaches the right edge (${where})`);
+    assert.equal(out.sidebar.y + out.sidebar.h, height, `the column reaches the bottom (${where})`);
+    assert.equal(out.area.y + out.area.h, height, `the code area reaches the bottom (${where})`);
+  }
+});
+
+test("classic: with no sidebar card the code area gets the whole width", () => {
+  const out = classicLayout([cardOf("e1", "editor")], { width: 900, height: 600 }, { activeId: "e1" });
+  assert.equal(out.sidebar, null);
+  assert.equal(out.sidebarWidth, 0);
+  assert.equal(out.tabs.x, 0);
+  assert.equal(out.area.w, 900);
+  assert.equal(out.tabHeight, CLASSIC_TAB_H);
+});
+
+test("classic: a narrow window squeezes the column, and the code area never goes negative", () => {
+  const board = [cardOf("p", "project"), cardOf("e1", "editor")];
+  const widthAt = (width) => classicLayout(board, { width, height: 600 }).sidebarWidth;
+  assert.equal(widthAt(1400), 280, "the comfortable width is the cap, not 40% of a big window");
+  assert.equal(widthAt(500), 200, "40% of 500 is the most it may take");
+  assert.equal(widthAt(300), 160, "160 is where its listing stops being readable");
+  assert.equal(widthAt(100), 100, "a window narrower than that has no room for two columns");
+  assert.equal(classicLayout(board, { width: 100, height: 600 }).area.w, 0);
+});
+
+test("classic: the tile starts below the HUD, which floats over the board", () => {
+  const out = classicLayout([cardOf("p", "project"), cardOf("e1", "editor")], { width: 1000, height: 500 }, { top: 30 });
+  assert.equal(out.tabs.y, 30);
+  assert.equal(out.area.y, 30 + CLASSIC_TAB_H);
+  assert.equal(out.sidebar.h, 470);
+  const squashed = classicLayout([cardOf("e1", "editor")], { width: 1000, height: 20 }, { top: 30 });
+  assert.equal(squashed.tabHeight, 0, "a strip taller than what is left is not drawn hanging off the board");
+  assert.equal(squashed.area.h, 0);
+});
+
+test("classic: a tab is the last segment of the path, either slash", () => {
+  assert.equal(classicTabLabel("core/src/wksp.c"), "wksp.c");
+  assert.equal(classicTabLabel("shell\\web\\main.mjs"), "main.mjs");
+  assert.equal(classicTabLabel("notes"), "notes");
+  assert.equal(classicTabLabel("a/b/"), "a/b/", "a trailing slash is not a name");
+  assert.equal(classicTabLabel(""), "");
+  assert.equal(classicTabLabel(null), "");
+  assert.equal(classicTabLabel(undefined), "");
+});
+
+test("classic: the mode a command names is one of two, and an unknown one is refused", () => {
+  assert.deepEqual(CLASSIC_VIEWS, ["board", "classic"]);
+  assert.equal(classicViewName("classic"), "classic");
+  assert.equal(classicViewName("  Board "), "board", "the command line is not case-sensitive");
+  assert.equal(classicViewName("tabs"), null, "an unknown word must warn, not fall back silently");
+  assert.equal(classicViewName(""), null);
+  assert.equal(classicViewName(undefined), null);
+  assert.equal(classicViewName(3), null);
+});
+
+test("classic: the HUD names the view, and quotes no zoom it cannot honour", () => {
+  assert.deepEqual(classicHud("classic"), { button: "board view", zoom: "no zoom" });
+  assert.deepEqual(classicHud("board"), { button: "classic view", zoom: null });
+  assert.deepEqual(classicHud("sideways"), classicHud("board"), "anything else is the board");
+});
+
+test("classic: a card with no place in the tile is hidden, not placed at 0,0", () => {
+  const board = [cardOf("p", "project"), cardOf("e1", "editor", { x: 700, y: 400 }), cardOf("n", "note")];
+  const out = classicLayout(board, { width: 1200, height: 800 }, { activeId: "e1" });
+  assert.equal(out.boxes.size, 2, "only the sidebar and the code area are drawn");
+  assert.equal(out.boxes.has("n"), false, "the note has no home here: hiding it is the answer");
+  assert.deepEqual(out.roles.hidden, ["n"]);
+});
+
+test("classic: the layout is a projection -- it never writes to a card", () => {
+  const board = [cardOf("p", "project", { x: 40, y: 60 }), cardOf("e1", "editor", { x: 700, y: 400, w: 500, h: 400 })];
+  const before = JSON.parse(JSON.stringify(board));
+  const out = classicLayout(board, { width: 1200, height: 800 }, { activeId: "e1", top: 30 });
+  assert.notEqual(out.boxes.get("e1").x, 700, "the code area is somewhere else on screen");
+  assert.deepEqual(board, before, "but the document is untouched -- `mode board` must be the board again");
 });
 
 /* ------------------------------------------------------------------ */

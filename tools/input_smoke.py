@@ -1,11 +1,13 @@
-"""input_smoke.py -- drive the real window: the undo keys, who owns a wheel, and
-a file that changes while nobody is looking.
+"""input_smoke.py -- drive the real window: the undo keys, the editor keys, who
+owns a wheel, a file that changes while nobody is looking, and the classic view
+that tiles the same board into a sidebar, a tab strip and a code area.
 
 The board's *input paths* were the one part of the app that no shipped suite
 could reach: ``selftest.mjs`` proves the undo ring (documents, coalescing, the
-redo branch) with no DOM at all, and this proves the wiring on top of it.
-``--dump-dom`` drives no pointer, no keyboard and no wheel, so those events are
-dispatched from a page this test owns.
+redo branch), the editor's text operations and ``classic.mjs``'s tile with no DOM
+at all, and this proves the wiring on top of them.  ``--dump-dom`` drives no
+pointer, no keyboard and no wheel, so those events are dispatched from a page
+this test owns.
 
 How, without a web driver or CDP: the shell serves every file under
 ``shell/web/``, so this test writes one small wrapper page there for the length
@@ -37,7 +39,13 @@ reach into the iframe and do what a person does:
    ``Escape`` -- and read the buffer and the painted hits back out of the DOM.
    The last check is the one only a real browser can make: the card's own edits
    go in through ``document.execCommand("insertText")``, so ``Ctrl+Z`` still has
-   them, and a card that assigned to ``value`` would fail it.
+   them, and a card that assigned to ``value`` would fail it;
+9. type ``mode classic`` and measure the tile in the board's own pixels: the tab
+   strip under the HUD, the code area filling the right column down to the bottom
+   edge, the sidebar on the left, every other card hidden; click a tab and check
+   the code area moved to that file; wheel the code area and the strip and check
+   the viewport did not move; then ``mode board`` and check every card, every
+   size and the pan and zoom came back exactly.
 
 The board is backed up and restored byte-for-byte, and the host is killed by pid.
 The file step 7 rewrites lives at ``build/__watch_smoke.txt`` and is removed in
@@ -498,9 +506,149 @@ async function main() {
     say("editor-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && watchOk && editorOk
-    ? "undo, redo, wheel ownership, a watched file and the editor keys all work in a real browser"
-    : "FAILED -- see the counts, the wheel, the watch and the editor lines above"));
+  /* --- classic view: the same board, tiled as a sidebar, tabs and a code area ---
+     classic.mjs's arithmetic is pinned by the pure suite; what a browser has to
+     witness is the pixels.  The strip has to be a band under the HUD, the code
+     area has to fill what is left of the right column, the sidebar the left, and
+     the two have to end on the board's bottom edge together -- while a card with
+     no place in the tile is hidden, never moved off screen.  Then `mode board`
+     has to put every card back exactly where the document says it was: that is
+     what makes the view a projection of the board and not a second board. */
+  let classicOk = true;
+  try {
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
+    const cardsNow = () => Array.from(doc.querySelectorAll("#cards [data-card-id]"));
+    const drawn = (node) => win.getComputedStyle(node).display !== "none";
+    const near = (a, b) => Math.abs(a - b) <= 2;
+    const strip = () => doc.getElementById("tabs");
+    const tabButtons = () => Array.from(strip().querySelectorAll("button[data-card-id]"));
+    const selectionLine = () => (doc.getElementById("hud-selection").textContent || "").trim();
+    const runLine = (text) => {
+      const box = doc.getElementById("command");
+      box.value = text;
+      box.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    };
+    /* What a round trip through the classic view has to preserve: the board's own
+       pan and zoom, the link layer, and every card's place, size and visibility. */
+    const snapshot = () => {
+      const parts = ["stage=" + stageTransform(), "zoom=" + hudZoom(),
+        "links=" + (doc.getElementById("links").hidden ? "hidden" : "shown")];
+      for (const node of cardsNow()) {
+        parts.push([node.dataset.cardId, node.style.transform, node.style.width,
+          node.style.height, win.getComputedStyle(node).display].join(" "));
+      }
+      return parts.join(" | ");
+    };
+
+    const before = snapshot();
+    const editors = cardsNow().filter((node) => node.dataset.kind === "editor").map((node) => node.dataset.cardId);
+    runLine("mode classic");
+    await waitUntil(() => doc.body.classList.contains("is-classic"), 40, 100);
+    const isClassic = doc.body.classList.contains("is-classic");
+    const modeText = (doc.getElementById("mode-toggle").textContent || "").trim();
+    const buttons = tabButtons();
+    const shownCards = cardsNow().filter(drawn);
+    const areaNode = shownCards.find((node) => node.dataset.kind === "editor") || null;
+    const sideNode = shownCards.find((node) => node !== areaNode) || null;
+    const boardRect = doc.getElementById("board").getBoundingClientRect();
+    const hudRect = doc.getElementById("hud").getBoundingClientRect();
+    const stripRect = strip().getBoundingClientRect();
+    const areaRect = areaNode === null ? null : areaNode.getBoundingClientRect();
+    const sideRect = sideNode === null ? null : sideNode.getBoundingClientRect();
+    /* The tile is in the board's own pixels, so measure from the board's corner:
+       `hudBottom` is where classic.mjs starts the strip (it asks the HUD how tall
+       it is), and the two columns end on the board's bottom edge together. */
+    const hudBottom = hudRect.bottom - boardRect.top;
+    const relTop = (rect) => rect.top - boardRect.top;
+    const relLeft = (rect) => rect.left - boardRect.left;
+    /* One place each: what is drawn is the code area and -- when the board has a
+       card that can stand in the sidebar -- the sidebar, and nothing else. */
+    const places = shownCards.length === (sideNode === null ? 1 : 2)
+      && shownCards.every((node) => node === areaNode || node === sideNode);
+    const tile = isClassic && areaRect !== null && stripRect.height > 0
+      && near(relTop(stripRect), hudBottom)
+      && near(relTop(areaRect), relTop(stripRect) + stripRect.height)
+      && (sideRect === null
+        ? near(relLeft(stripRect), 0)
+        : near(relLeft(stripRect), relLeft(sideRect) + sideRect.width)
+          && near(relTop(sideRect), hudBottom)
+          && near(sideRect.bottom, boardRect.bottom))
+      && near(areaRect.right, boardRect.right)
+      && near(areaRect.bottom, boardRect.bottom);
+    say("classic-mode: on=" + isClassic + " tabs=" + buttons.length + " editors=" + editors.length
+      + " shown=" + shownCards.map((node) => node.dataset.cardId).join(",")
+      + " places=" + places + " tile=" + tile + " strip=" + Math.round(stripRect.height)
+      + " button=" + JSON.stringify(modeText) + " zoom=" + JSON.stringify(hudZoom()));
+    say("classic-rect: board=" + Math.round(boardRect.width) + "x" + Math.round(boardRect.height)
+      + " hud-bottom=" + Math.round(hudBottom)
+      + " tabs=" + Math.round(relLeft(stripRect)) + "," + Math.round(relTop(stripRect))
+      + "+" + Math.round(stripRect.width) + "x" + Math.round(stripRect.height)
+      + " area=" + (areaRect === null ? "-" : Math.round(relLeft(areaRect)) + "," + Math.round(relTop(areaRect))
+        + "+" + Math.round(areaRect.width) + "x" + Math.round(areaRect.height))
+      + " side=" + (sideRect === null ? "-" : Math.round(relLeft(sideRect)) + "," + Math.round(relTop(sideRect))
+        + "+" + Math.round(sideRect.width) + "x" + Math.round(sideRect.height)));
+
+    /* A tab is a file: clicking one makes it the code area, on the same pixels
+       the previous one had, and selects it -- the route `focus` takes. */
+    let tabClick = false;
+    let clickedId = "";
+    if (buttons.length >= 2 && areaRect !== null) {
+      const other = buttons.find((button) => button.dataset.cardId !== areaNode.dataset.cardId);
+      clickedId = other.dataset.cardId;
+      other.click();
+      await sleep(200);
+      const moved = cardsNow().find((node) => node.dataset.cardId === clickedId);
+      const movedRect = moved.getBoundingClientRect();
+      const active = strip().querySelector("button.is-active");
+      tabClick = drawn(moved) && near(relLeft(movedRect), relLeft(areaRect))
+        && near(relTop(movedRect), relTop(areaRect))
+        && near(movedRect.width, areaRect.width) && near(movedRect.height, areaRect.height)
+        && active !== null && active.dataset.cardId === clickedId
+        && selectionLine().indexOf(clickedId) !== -1;
+    }
+    say("classic-tab: clicked=" + JSON.stringify(clickedId) + " moved=" + tabClick
+      + " selection=" + JSON.stringify(selectionLine()));
+
+    /* The wheel is the board's gesture and the board is not on screen: neither a
+       ctrl+wheel over the code area nor a plain wheel over the strip may move the
+       viewport, and the HUD has to keep saying there is no zoom to speak of. */
+    const stageBefore = stageTransform();
+    const zoomBefore = hudZoom();
+    const areaNow = cardsNow().find((node) => node.dataset.kind === "editor" && drawn(node)) || null;
+    if (areaNow !== null) {
+      const rect = areaNow.getBoundingClientRect();
+      const at = { clientX: Math.round(rect.left + rect.width / 2),
+        clientY: Math.round(rect.top + Math.min(40, Math.max(1, rect.height / 2))) };
+      wheel(win, doc.elementFromPoint(at.clientX, at.clientY) || areaNow,
+        Object.assign({ deltaY: -240, ctrlKey: true }, at));
+    }
+    await sleep(120);
+    wheel(win, doc.getElementById("board"), { deltaY: 160,
+      clientX: Math.round(stripRect.left + 4), clientY: Math.round(stripRect.top + 2) });
+    await sleep(120);
+    const frozen = stageTransform() === stageBefore && hudZoom() === zoomBefore
+      && hudZoom() === "no zoom";
+    say("classic-wheel: frozen=" + frozen + " stage=" + JSON.stringify(stageBefore)
+      + "->" + JSON.stringify(stageTransform()) + " zoom=" + JSON.stringify(zoomBefore)
+      + "->" + JSON.stringify(hudZoom()));
+
+    /* And back: the same document, on the same pixels, with the viewport exactly
+       where it was -- nothing was mounted, unmounted or moved while away. */
+    runLine("mode board");
+    await sleep(250);
+    const back = !doc.body.classList.contains("is-classic") && snapshot() === before;
+    say("classic-back: restored=" + back + " classic=" + doc.body.classList.contains("is-classic"));
+
+    classicOk = isClassic && editors.length > 0 && buttons.length === editors.length
+      && places && tile && tabClick && frozen && back;
+  } catch (error) {
+    classicOk = false;
+    say("classic-error: " + (error && error.message ? error.message : String(error)));
+  }
+
+  say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk
+    ? "undo, redo, wheel ownership, a watched file, the editor keys and the classic view all work in a real browser"
+    : "FAILED -- see the counts, the wheel, the watch, the editor and the classic lines above"));
   document.title = "input smoke done";
 }
 
@@ -521,9 +669,12 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Boot the real app in the system browser, make a board change, press "
             "Ctrl+Z and Ctrl+Shift+Z, dispatch a wheel over a card's own scroll "
-            "region and over the board, watch a file change under an open card, and "
-            "drive the editor card's indent, auto-indent, find and replace keys. Exit "
-            "codes: 0 pass or skipped, 1 a check failed, 2 could not run, 3 usage."
+            "region and over the board, watch a file change under an open card, "
+            "drive the editor card's indent, auto-indent, find and replace keys, "
+            "and switch to the classic view -- the same cards as a sidebar, a tab "
+            "strip and a code area -- click a tab, wheel it and come back to the "
+            "board. Exit codes: 0 pass or skipped, 1 a check failed, 2 could not "
+            "run, 3 usage."
         ),
     )
     parser.add_argument("--edge", help="path to msedge.exe (default: $INFANTGOD_BROWSER, then the usual two places)")
@@ -623,6 +774,27 @@ def parse_editor(body: str) -> dict:
     return found
 
 
+def parse_classic(body: str) -> dict:
+    """The four classic-view lines the wrapper wrote, as tuples of strings."""
+    found = {}
+    patterns = (
+        ("mode", r'classic-mode: on=(\w+) tabs=(\d+) editors=(\d+) shown=(\S*)'
+                 r' places=(\w+) tile=(\w+) strip=(\d+) button=("[^"]*") zoom=("[^"]*")'),
+        ("tab", r'classic-tab: clicked=("[^"]*") moved=(\w+) selection=("[^"]*")'),
+        ("wheel", r'classic-wheel: frozen=(\w+) stage=("[^"]*")->("[^"]*")'
+                  r' zoom=("[^"]*")->("[^"]*")'),
+        ("back", r"classic-back: restored=(\w+) classic=(\w+)"),
+    )
+    for key, pattern in patterns:
+        match = re.search(pattern, body)
+        if match is not None:
+            found[key] = match.groups()
+    none = re.search(r"classic-error: (.+)", body)
+    if none is not None:
+        found["error"] = (none.group(1),)
+    return found
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.timeout <= 0:
@@ -638,7 +810,7 @@ def main(argv=None) -> int:
         edge = find_edge(args.edge)
     except DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 19 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 23 skipped (no browser)")
         return 0
 
     # Deliberately *not* install_if_absent(): the counts below are deltas, so the
@@ -807,6 +979,41 @@ def main(argv=None) -> int:
                   and "gone from disk" in deleted_card[2],
                   f"gone={deleted_card[0]} kept={deleted_card[1]} status={deleted_card[2]!r}"
                   if deleted_card else watch_detail("gone"))
+
+    classic = parse_classic(body)
+
+    def classic_detail(key: str) -> str:
+        got = classic.get(key)
+        if got is not None:
+            return " ".join(got)
+        if classic.get("error") is not None:
+            return f"classic: {classic['error'][0]}"
+        return f"no classic-{key} line"
+
+    mode = classic.get("mode")
+    results.check("`mode classic` tiles the same cards into a sidebar, a tab strip and a code area",
+                  bool(mode) and mode[0] == "true" and int(mode[2]) >= 1
+                  and int(mode[1]) == int(mode[2]) and mode[3] != ""
+                  and mode[4] == "true" and mode[5] == "true" and int(mode[6]) >= 20
+                  and mode[7].strip('"') == "board view" and mode[8].strip('"') == "no zoom",
+                  f"tabs={mode[1]} editors={mode[2]} shown={mode[3]} places={mode[4]} "
+                  f"tile={mode[5]} strip={mode[6]}px button={mode[7]} zoom={mode[8]}"
+                  if mode else classic_detail("mode"))
+    tab = classic.get("tab")
+    results.check("clicking a tab makes that file the code area",
+                  bool(tab) and tab[0] != '""' and tab[1] == "true",
+                  f"clicked={tab[0]} moved={tab[1]} selection={tab[2]}" if tab
+                  else classic_detail("tab"))
+    wheeled = classic.get("wheel")
+    results.check("the board's wheel gestures are off once the board is not on screen",
+                  bool(wheeled) and wheeled[0] == "true" and wheeled[2] == wheeled[1]
+                  and wheeled[4] == wheeled[3],
+                  f"frozen={wheeled[0]} stage={wheeled[1]}->{wheeled[2]} "
+                  f"zoom={wheeled[3]}->{wheeled[4]}" if wheeled else classic_detail("wheel"))
+    back = classic.get("back")
+    results.check("`mode board` puts every card back where the document says it was",
+                  bool(back) and back[0] == "true" and back[1] == "false",
+                  f"restored={back[0]} classic={back[1]}" if back else classic_detail("back"))
 
     results.check("the board is back as it was found", restored,
                   "byte-identical" if backup.existed else "absent again")

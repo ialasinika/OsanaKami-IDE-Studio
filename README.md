@@ -89,6 +89,15 @@ reference a file, and may be connected by links. The board persists to
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
+The board is also the only document. The shell can draw those same cards a second
+way — `mode classic` puts the focused editor into a code area, the open files
+into a tab strip above it and a `project`/`files` card, when the board has one, into a
+sidebar — but that view is
+a *projection*: switching to it creates no card and moves none, nothing about it
+is written to `board.json`, and `mode board` puts every card back on the pixels
+it had. A fork that deletes the view loses a way of looking, not a piece of
+project state; the board is still where the project is.
+
 ### 2. No Electron in the core
 
 Nothing below the window knows what a window is: the protocol, the language
@@ -212,7 +221,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 3 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 19 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 23 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
 ```
@@ -227,12 +236,14 @@ The individual pieces, if you want to run them directly:
 python tools/e2e.py --kernel build/infantgod.exe     # 9 passed, 0 failed, 3 skipped
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
+python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels and editor keys; 19 checks
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys and the classic view: 23 checks
+python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 96/96 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 108/108 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -251,20 +262,18 @@ protocol honest from both ends. `cli-check` is the protocol's **second
 consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
- `smoke` is separate because it needs a
-browser: it renders the board (`browser_smoke.py`, 5 checks) and then drives it
-by hand -- Ctrl+Z and Ctrl+Shift+Z, a wheel over a card's own contents, and the
-editor card's own keys: Tab and Shift+Tab, Enter after an opener, Ctrl+F, the
-find bar's next-match button, replace-all, Escape, and that the textarea's own
-undo still holds those edits. Then it selects the whole board with Ctrl+A, takes
-one card out and puts it back with ctrl+click, draws a rubber band with
-shift+drag, drags one selected card and checks the whole set moved by one delta,
-runs `select all` on the command line, and deletes the set in one step that one
-Ctrl+Z brings back. Last it opens a file from outside the app — the test writes
-it with a plain file write, then again with different bytes — and checks the card
-notices on its own and reloads, that a card with unsaved edits is warned instead
-of overwritten, and that deleting the file under a card is reported with the text
-still in the card (`input_smoke.py`, 19 checks). On a clone that has no
+ `smoke` is separate because it needs a browser: it renders the board
+(`browser_smoke.py`, 5 checks) and then drives it by hand -- Ctrl+Z and
+Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
+Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
+button, replace-all, Escape, and that the textarea's own undo still holds those
+edits. Last it opens a file from outside the app — the test writes it with a
+plain file write, then again with different bytes — and checks the card notices
+on its own and reloads, that a card with unsaved edits is warned instead of
+overwritten, and that deleting the file under a card is reported with the text
+still in the card, and that `mode classic` draws the tile it promises and
+`mode board` puts every card back (`input_smoke.py`, 23 checks). On a clone that
+has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.
 
@@ -281,8 +290,24 @@ with no DOM. A fork that trims `file.stat` out of its kernel does not break the
 app: the watcher turns itself off with one log line
 ([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
 
-**The protocol suite used to write to your board, and no longer does.** The board
-checks drive `view.save` against the workspace they were given, but they
+**The same cards, drawn a second way.** `mode classic` — or the HUD button, which
+reads `classic view` / `board view` — arranges the focused editor as a code area,
+the other open files as tabs above it and a `project`/`files` card, if the board has
+one, as a sidebar. The
+arithmetic is pure, lives in `shell/web/classic.mjs` and is measured in the
+board's own pixels, which is why `node shell/web/selftest.mjs` can pin the tile
+with no DOM and `input_smoke.py` can measure it in a real window. The board
+underneath is untouched: the view computes boxes for the *same* cards from the
+*same* document, a card with no place in the tile is hidden rather than
+unmounted (its text, its scroll position and its listeners survive a round trip),
+and the wheel is the board's gesture — so in classic mode there is no pan and no
+zoom to speak of, and the HUD says so. Nothing about the view is saved, the
+document in memory is never rewritten, no protocol method changed, and
+`mode board` restores every card to the pixels the document gives it;
+[`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
+
+**The protocol suite used to write to your board, and no longer does.** The
+board checks drive `view.save` against the workspace they were given, but they
 snapshot the whole document that was already there and restore it before the
 check returns — including when the check fails. A run against `.` leaves
 `./.infantgod/board.json` semantically identical; with the shipped starter board
@@ -389,9 +414,10 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 81 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 84 checks, no kernel
   web/                  the board UI: index.html, style.css, board.mjs, cards.mjs,
-                        rpc.mjs, main.mjs, selftest.mjs, README.md
+                        history.mjs, rpc.mjs, watch.mjs, classic.mjs, main.mjs,
+                        selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

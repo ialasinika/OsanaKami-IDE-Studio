@@ -12,8 +12,15 @@
  * The board is a 2-D world.  `#stage` carries one CSS transform
  * (`translate(tx,ty) scale(zoom)`), so panning and zooming never touch a card's
  * own coordinates and the link overlay (written in world units) stays aligned
- * for free.  There are no tabs anywhere: a file you open becomes a card at a
- * point in space, and where you put it is part of the project.
+ * for free.  A file you open becomes a card at a point in space, and where you
+ * put it is part of the project.
+ *
+ * `mode classic` is the other way to look at those same cards: classic.mjs
+ * computes a sidebar / tab strip / code area arrangement, this file draws it by
+ * putting `#stage` at the identity transform and positioning each card from
+ * that arithmetic.  Nothing about it is written to the document -- switching
+ * back is the board again, pan and zoom included -- which is what keeps "the
+ * paradigm is the board" true while a tab strip exists.
  *
  * Nothing here uses `eval`, inline `on*=` attributes, external URLs or a build
  * step; the browser loads these ES modules as written.
@@ -22,6 +29,7 @@
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
+import { classicHud, classicLayout, classicRoles, classicTabLabel, classicViewName } from "./classic.mjs";
 import {
   WATCH_GONE,
   WATCH_POLL_MS,
@@ -294,6 +302,9 @@ function createApp() {
   const commandEl = $("command");
   const hintEl = $("command-hint");
   const reloadButton = $("reload-board");
+  const tabsEl = $("tabs");
+  const sideHintEl = $("side-hint");
+  const modeButton = $("mode-toggle");
 
   /* -- state -- */
   const board = createBoard();
@@ -317,6 +328,11 @@ function createApp() {
   let initializing = true;
   let connected = false;
   let autosave = true;
+  /* Which of the two arrangements is on screen: "board" or "classic".  In
+     memory only, deliberately -- `docs/PARADIGM.md` argues the board is the
+     document, and a view that survived a reload would be a document of its own.
+     Reloading the page always starts on the board. */
+  let viewMode = "board";
   let autosaveTimer = null;
   let reconnectTimer = null;
   let reconnectDelay = 800;
@@ -440,13 +456,73 @@ function createApp() {
   }
 
   function renderAll() {
+    // The layout is computed once per frame and handed to everything that draws
+    // from it; the cards and the chrome can never disagree about where the code
+    // area is, and `mode classic` is one boolean read by both.
+    const layout = currentClassicLayout();
     renderStage();
-    renderCards();
+    renderCards(layout);
     renderLinks();
     renderHud();
+    renderTabs(layout);
+    renderSideHint(layout);
+  }
+
+  /**
+   * Switch between the board and the classic view.
+   *
+   * The whole transition is one class on `<body>` (the stylesheet's switch) plus
+   * a render: no card is mounted, unmounted or moved in the document, so nothing
+   * can be lost on the way.  Returns the mode it ended in.
+   */
+  function setView(mode) {
+    if (mode !== "board" && mode !== "classic") {
+      return viewMode;
+    }
+    if (mode === viewMode) {
+      return viewMode;
+    }
+    viewMode = mode;
+    document.body.classList.toggle("is-classic", viewMode === "classic");
+    renderAll();
+    return viewMode;
+  }
+
+  /**
+   * How big the board element is, in its own pixels.
+   *
+   * `getBoundingClientRect` is the only measurement this file trusts, and the
+   * classic view needs it on every render -- a window resize, a card opening
+   * and a mode change all have to re-tile.  Falls back to zero rather than NaN:
+   * a hidden board (the empty state) measures 0x0 and every rectangle from that
+   * is empty, which is the truthful answer.
+   */
+  function boardPixelSize() {
+    const rect = boardEl.getBoundingClientRect();
+    return { width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) };
+  }
+
+  /** How much of the board the floating HUD covers along its top edge. */
+  function hudHeight() {
+    const rect = $("hud").getBoundingClientRect();
+    return Math.max(0, Math.round(rect.height));
   }
 
   function renderStage() {
+    if (viewMode === "classic") {
+      // The identity transform is what makes classic.mjs's arithmetic screen
+      // pixels: the cards keep their *world* x/y, but with scale 1 and no pan,
+      // world and screen are the same thing.  `renderCards` overwrites each
+      // card's position from the layout, so nothing here is a second source of
+      // truth -- and the board's own viewport is left untouched, which is why
+      // `mode board` comes back to the same pan and zoom.
+      stageEl.style.transform = "translate(0px, 0px) scale(1)";
+      boardEl.style.backgroundSize = "auto, auto";
+      boardEl.style.backgroundPosition = "0 0, 0 0";
+      zoomEl.textContent = classicHud(viewMode).zoom;
+      return;
+    }
+
     const { x, y, zoom } = board.viewport;
     stageEl.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
 
@@ -459,15 +535,103 @@ function createApp() {
     zoomEl.textContent = `${Math.round(zoom * 100)}%`;
   }
 
+  /** The layout the classic view is drawing right now, or null in board mode. */
+  function currentClassicLayout() {
+    if (viewMode !== "classic") {
+      return null;
+    }
+    return classicLayout(board.cards, boardPixelSize(), {
+      activeId: board.selectedId,
+      top: hudHeight(),
+    });
+  }
+
+  /**
+   * The tab strip: one button per editor card, in board order.
+   *
+   * Rebuilt rather than diffed.  There can be as many tabs as there are editor
+   * cards and each is a dozen nodes, so a diff would be more code than it saves;
+   * what matters is that it is rebuilt from `board.cards` and not kept as a
+   * second list that could go stale.  A path that is dirty gets a dot, which is
+   * the same fact the card's own status line shows.
+   */
+  function renderTabs(layout) {
+    // `layout === null` is the board: there is no strip, because there are no
+    // tabs, because every card is where the document says it is.  The two
+    // renderers below are called from every `renderAll`, so they take the null
+    // rather than being guarded by the caller -- one rule, in one place.
+    const roles = layout === null ? null : layout.roles;
+    tabsEl.hidden = roles === null || roles.tabs.length === 0;
+    if (tabsEl.hidden) {
+      tabsEl.replaceChildren();
+      return;
+    }
+
+    tabsEl.style.left = `${layout.tabs.x}px`;
+    tabsEl.style.top = `${layout.tabs.y}px`;
+    tabsEl.style.width = `${layout.tabs.w}px`;
+    tabsEl.style.height = `${layout.tabs.h}px`;
+
+    const buttons = [];
+    for (const id of roles.tabs) {
+      const card = board.findCard(id);
+      const entry = mounted.get(id);
+      const path = entry && entry.handle && entry.handle.path ? entry.handle.path : "";
+      const button = el("button", "tab");
+      button.type = "button";
+      button.dataset.cardId = id;
+      if (id === roles.area) {
+        button.classList.add("is-active");
+        button.setAttribute("aria-current", "true");
+      }
+      button.append(el("span", "tab-name", classicTabLabel(path) || describeCard(card)));
+      if (entry && entry.handle && entry.handle.dirty) {
+        button.append(el("span", "tab-dirty", "•"));
+      }
+      button.title = path === "" ? describeCard(card) : path;
+      buttons.push(button);
+    }
+    tabsEl.replaceChildren(...buttons);
+  }
+
+  /** What stands in the sidebar column when no card can. */
+  function renderSideHint(layout) {
+    const missing = layout !== null && layout.sidebar === null;
+    sideHintEl.hidden = !missing || viewMode !== "classic";
+    if (sideHintEl.hidden) {
+      return;
+    }
+    sideHintEl.textContent = "no project card: `project` puts the workspace here";
+    // The column is where the sidebar card would have been: from the HUD down,
+    // the full height of the tile.  `area.y + area.h` is its bottom edge, which
+    // is also the board's -- the layout promises the two tiles end together.
+    const top = layout.tabs.y;
+    sideHintEl.style.left = "0px";
+    sideHintEl.style.top = `${top}px`;
+    sideHintEl.style.width = `${Math.max(0, layout.tabs.x)}px`;
+    sideHintEl.style.height = `${Math.max(0, layout.area.y + layout.area.h - top)}px`;
+  }
+
   function renderHud() {
     const card = selectedCard();
     selectionEl.textContent = card === null ? "no card" : `${describeCard(card)} — ${card.id}`;
     revEl.textContent = boardRevision === null ? "unsaved" : `rev ${boardRevision}`;
     dirtyEl.textContent = dirty ? "unsaved changes" : "saved";
     dirtyEl.classList.toggle("is-dirty", dirty);
+    const hud = classicHud(viewMode);
+    modeButton.textContent = hud.button;
+    modeButton.setAttribute("aria-pressed", viewMode === "classic" ? "true" : "false");
   }
 
-  function renderCards() {
+  /**
+   * Paint the cards, in world space or in the classic view's tile.
+   *
+   * `layout` is the arrangement to draw; the default is "work it out from where
+   * we are now", which is what the many callers inside gestures and commands
+   * want.  `renderAll` passes its own layout so the cards and the chrome are
+   * always drawn from one measurement.
+   */
+  function renderCards(layout = currentClassicLayout()) {
     const seen = new Set();
 
     for (const card of board.cards) {
@@ -484,9 +648,22 @@ function createApp() {
       }
       entry.card = card;
       const node = entry.el;
-      node.style.transform = `translate(${card.x}px, ${card.y}px)`;
-      node.style.width = `${card.w}px`;
-      node.style.height = `${card.h}px`;
+      // A card the classic view has no place for is hidden, never removed: its
+      // unsaved text, its scroll position and its listeners survive a walk
+      // through the classic view and back.  `box === undefined` is "this
+      // arrangement does not draw it"; `layout === null` is the board, where
+      // every card is drawn where the document says it is.
+      const box = layout === null ? null : layout.boxes.get(card.id);
+      node.classList.toggle("is-hidden", layout !== null && box === undefined);
+      if (box !== undefined && box !== null) {
+        node.style.transform = `translate(${box.x}px, ${box.y}px)`;
+        node.style.width = `${box.w}px`;
+        node.style.height = `${box.h}px`;
+      } else {
+        node.style.transform = `translate(${card.x}px, ${card.y}px)`;
+        node.style.width = `${card.w}px`;
+        node.style.height = `${card.h}px`;
+      }
       // z-index only orders hit-testing and shadows; positions stay world-space.
       node.style.zIndex = String(Math.round(card.z) || 0);
       node.classList.toggle("is-selected", card.id === board.selectedId);
@@ -539,6 +716,15 @@ function createApp() {
   }
 
   function renderLinks() {
+    // A link is a line between two points in the board's world.  The classic
+    // view draws the same cards in pixels it chose itself, so the lines would
+    // cross the code area pointing at nothing: the overlay is hidden, not
+    // rewritten.  `mode board` brings it back with the cards, unmoved.
+    linksSvg.hidden = viewMode === "classic";
+    if (linksSvg.hidden) {
+      return;
+    }
+
     const seen = new Set();
     for (const link of board.links) {
       seen.add(link.id);
@@ -845,6 +1031,15 @@ function createApp() {
 
   /** Scroll a card into view by panning, keeping the zoom. */
   function centreOn(card) {
+    if (viewMode === "classic") {
+      // There is nothing to centre on: the classic view puts every card where
+      // its own arithmetic says, and moving the viewport would silently change
+      // the board the user gets back in `mode board`.  The render is what makes
+      // `focus <id>` still *show* the card -- as the code area, when it is an
+      // editor -- because that is the only place this view has room for it.
+      renderAll();
+      return;
+    }
     const rect = boardEl.getBoundingClientRect();
     const { zoom } = board.viewport;
     board.setViewport({
@@ -861,8 +1056,11 @@ function createApp() {
   /**
    * The editor cards currently on the board, as plain data.
    *
-   * This is what "open" means in InfantGod Studio: there is no tab strip and no document
-   * list outside the board -- a file is open exactly when a card holds it.
+   * This is what "open" means in InfantGod Studio: the board is the document
+   * list -- a file is open exactly when a card holds it.  The classic view's tab
+   * strip is drawn from this list and never kept beside it, so a card that is
+   * opened, closed or hidden shows up in (and disappears from) the strip with no
+   * second registry to forget about.
    */
   function openEditors() {
     const out = [];
@@ -1022,6 +1220,17 @@ function createApp() {
       const zoom = board.viewport.zoom;
 
       if (cardNode === null) {
+        if (viewMode === "classic") {
+          // The classic view has no empty board to pan: the code area and the
+          // sidebar are cards, and the pixels behind them belong to the layout,
+          // not to the world.  Clicking there clears the selection (which is
+          // what makes `mode board` come back with nothing selected) and starts
+          // no gesture at all -- a pan here would move a world nobody can see.
+          board.setSelection(null);
+          renderCards(currentClassicLayout());
+          renderHud();
+          return;
+        }
         gesture = { kind: "pan", startX: board.viewport.x, startY: board.viewport.y, px: event.clientX, py: event.clientY };
         board.setSelection(null);
         renderCards();
@@ -1147,6 +1356,12 @@ function createApp() {
     }
 
     boardEl.addEventListener("wheel", (event) => {
+      if (viewMode === "classic") {
+        // The wheel belongs to whatever is under it -- the code area's textarea
+        // above all.  Zooming is off in this view, which is also why the HUD
+        // says `no zoom` instead of quoting the board's.
+        return;
+      }
       const overCard = !event.ctrlKey && !event.metaKey
         && scrollTarget(event.target, event.deltaX, event.deltaY) !== null;
       if (overCard) {
@@ -1174,6 +1389,13 @@ function createApp() {
     boardEl.addEventListener("dblclick", (event) => {
       const cardNode = event.target instanceof Element ? event.target.closest("[data-card-id]") : null;
       if (cardNode === null) {
+        if (viewMode === "classic") {
+          // A note dropped on the code area would land in the world *behind* the
+          // layout and be hidden the moment it was created: refusing is the
+          // honest answer, and `note` on the command line still works.
+          log("warn", "the classic view does not drop notes — `note <text>`, or `mode board`");
+          return;
+        }
         // Double-click on empty space drops a note exactly there.
         const world = screenToWorld(event.clientX, event.clientY);
         addCard("note", Math.round(world.x - 120), Math.round(world.y - 80), { text: "" });
@@ -1190,7 +1412,7 @@ function createApp() {
   const KNOWN_COMMANDS = [
     "open", "note", "sheet", "run", "files", "project", "mod", "problems",
     "docs", "link", "unlink", "zoom", "focus", "delete", "save", "undo", "redo",
-    "help", "clear",
+    "mode", "help", "clear",
   ];
 
   async function runCommand(raw) {
@@ -1385,6 +1607,26 @@ function createApp() {
         log("info", "  clear                    empty the log");
         return;
       }
+      case "mode": {
+        if (argc < 1) {
+          log("info", `the ${viewMode} view is showing. \`mode board\` or \`mode classic\`.`);
+          return;
+        }
+        const wanted = classicViewName(arg(0));
+        if (wanted === null) {
+          log("warn", `unknown view "${arg(0)}". Try \`mode board\` or \`mode classic\`.`);
+          return;
+        }
+        if (wanted === viewMode) {
+          log("info", `already in the ${wanted} view`);
+          return;
+        }
+        setView(wanted);
+        log("info", wanted === "classic"
+          ? "classic view: a sidebar, a tab strip and a code area, drawn over the same board"
+          : "board view: the cards are exactly where the document has them");
+        return;
+      }
       case "clear": {
         logEl.textContent = "";
         logLines.length = 0;
@@ -1444,6 +1686,56 @@ function createApp() {
       }
       const matches = KNOWN_COMMANDS.filter((name) => name.startsWith(word));
       hintEl.textContent = matches.length === 0 ? `unknown command "${word}"` : matches.join(" · ");
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* the classic view's two controls                                     */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * The mode button in the HUD and the tab strip.
+   *
+   * Both are delegated listeners on containers that are rebuilt every render
+   * (the tabs are replaced wholesale), so they are installed once, here, and
+   * never have to be re-attached: a listener on the strip outlives every button
+   * inside it.  Choosing a tab selects its card, which is what makes it the code
+   * area -- the same route `focus <id>` takes, so there is one idea of "the
+   * focused card" rather than a second one for the strip.
+   */
+  function installView() {
+    // A window that changes size re-tiles; the board does not care, because
+    // pan and zoom are in world units and a wider window simply shows more of
+    // them.  Only the classic view measures the element it fills.
+    window.addEventListener("resize", () => {
+      if (viewMode === "classic") {
+        renderAll();
+      }
+    });
+
+    modeButton.addEventListener("click", () => {
+      const next = viewMode === "classic" ? "board" : "classic";
+      setView(next);
+      log("info", next === "classic"
+        ? "classic view: the same board as a sidebar, a tab strip and a code area"
+        : "board view: the cards are where you left them");
+    });
+
+    tabsEl.addEventListener("click", (event) => {
+      const button = event.target instanceof Element ? event.target.closest("button[data-card-id]") : null;
+      if (button === null) {
+        return;
+      }
+      const id = button.dataset.cardId;
+      if (board.findCard(id) === null) {
+        return;
+      }
+      board.setSelection(id);
+      const entry = mounted.get(id);
+      if (entry !== undefined && entry.handle.focus) {
+        entry.handle.focus();
+      }
+      renderAll();
     });
   }
 
@@ -1853,6 +2145,7 @@ function createApp() {
   function start() {
     installGestures();
     installCommandLine();
+    installView();
     setStatus("connecting");
 
     reloadButton.addEventListener("click", () => {
@@ -1960,4 +2253,8 @@ export const LIMITATIONS = [
   "lines -- there is no router and no automatic layout.",
   "Undo is board-level and in memory: Ctrl+Z takes back board edits in this window,",
   "not the typing inside a card, and a reload forgets the steps.",
+  "The classic view is a projection, never a document: nothing about it is saved, a",
+  "reload starts on the board, and a card it has no place for is hidden, not moved.",
+  "It tiles the cards the board already has -- one code area (the focused editor), no",
+  "split panes, and no way to close a tab except closing the card.",
 ];

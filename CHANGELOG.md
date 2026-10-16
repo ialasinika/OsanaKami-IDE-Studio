@@ -46,6 +46,29 @@ tree.
   that the refusal now happens in the process that can explain it.  `main.mjs`
   names the path on every call and listens for `view.changed` instead of
   `board.changed`.
+- The same board can be drawn as a **conventional IDE**: the command
+  `mode classic` (or the HUD button, labelled with the view it will give you)
+  tiles the focused `editor` card into a code area, every open editor into a tab
+  strip above it and the first `project`/`files` card into a sidebar column,
+  hiding the rest.  It is a **view, not a document**: switching creates no card,
+  moves none, writes nothing to `board.json`, and `mode board` restores every
+  card to the pixels — pan and zoom included — the document gives it; a card with
+  no role is hidden rather than unmounted, so its text, scroll position and
+  listeners survive a walk through the view and back; and a click in the view
+  selects but never raises, so a first visit cannot dirty the board.  The role
+  rules and the tile arithmetic are pure (`classicRoles`, `classicLayout`,
+  `classicViewName`, `classicTabLabel`, `classicHud` and the constants
+  `CLASSIC_SIDEBAR_KINDS`, `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`,
+  `CLASSIC_TAB_H`, `CLASSIC_VIEWS` in `shell/web/classic.mjs`) and are measured in
+  the board's own pixels, which is why `shell/web/selftest.mjs` pins them with no
+  DOM (12 new checks, **108** in all) and `tools/input_smoke.py` measures the tile
+  in a real window (4 new checks: the tiling and its parts, a tab click moving the
+  code area to that file, the wheel leaving the viewport alone, and `mode board`
+  restoring the board exactly, **23** in all).  The wheel stays the board's
+  gesture, so the classic view has no pan and no zoom, and the HUD says `no zoom`
+  rather than quoting a number that no longer describes the screen.  The view
+  came from upstream seIDE `564d51e`, applied on top of the fork's own shell;
+  nothing about the protocol, the board document or the card kinds changed.
 
 ### Undo and redo on the board
 
@@ -205,11 +228,23 @@ tree.
   `shell/web/README.md` now say that the board is the shell's convention and where
   the schema lives.  The counts in README.md, tools/README.md and
   docs/ARCHITECTURE.md follow the suites.
+- The classic view is documented where it can be argued with: constraint 1 in
+  `README.md` now says the board is still the only document and the new paragraph
+  describes the projection, `shell/web/README.md` gained `### The same cards as a
+  code area: mode classic` (the role table, the tile's arithmetic, and what the
+  mode deliberately does not do — write, raise, take a shortcut or move the
+  wheel), `docs/PARADIGM.md` answers "No tabs" honestly (a strip drawn from the
+  cards is not the tab strip the paradigm rejects), `docs/PROJECT.md` keeps the
+  project card *a card* even when the view draws it in a column, `docs/FORK.md`
+  gives the mechanical cut, and `docs/TRIM.md` notes that cutting the board
+  document takes the view with it.  The upstream commit also documented a
+  multi-select, a workspace `find` and a `frame` card kind; those features are not
+  in this fork, so no document gained them.
 
 ### Checks
 
 - `make test` (e2e 12, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 96/96, mods 84/84) and `make smoke` (browser smoke 5, input smoke 19)
+  selftest 108/108, mods 84/84) and `make smoke` (browser smoke 5, input smoke 23)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save

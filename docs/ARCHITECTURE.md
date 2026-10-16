@@ -237,14 +237,17 @@ The browser side, `shell/web/`, is module-per-concern:
 | `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
 | `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
 | `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
+| `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the board works, but `mode classic` has no tiling to draw |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
 
-`board.mjs`, `history.mjs` and `watch.mjs` are deliberately UI-free — no
-`document`, no `window`, no timer — so the same objects are used by the browser
-and by `selftest.mjs` under Node. `watch.mjs` decides; the polling that feeds it
-lives in `main.mjs`, which is why the decision table can be pinned without a
-browser, a kernel or a clock.
+`board.mjs`, `history.mjs`, `watch.mjs` and `classic.mjs` are deliberately
+UI-free — no `document`, no `window`, no timer — so the same objects are used by
+the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
+that feeds it lives in `main.mjs`, which is why the decision table can be pinned
+without a browser, a kernel or a clock. `classic.mjs` is the same kind of
+arithmetic: it computes the role and the tile for the cards a document already
+holds, and `main.mjs` owns the pixels.
 
 The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
@@ -265,8 +268,12 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `version-check` | `python tools/version.py check` | the four copies of the version number still agree with `VERSION` |
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (92), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, token spans and the editor's indent/find/replace arithmetic (96 checks), no DOM |
+| — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic view's roles and tile, token spans and the editor's indent/find/replace arithmetic (108 checks), no DOM |
+| — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and `mode classic` is measured as drawn -- the tile, the tab click that moves the code area, and `mode board` restoring every card, size, pan and zoom (23 checks) |
+
+`smoke` runs the last two and needs a browser.
 
 ---
 

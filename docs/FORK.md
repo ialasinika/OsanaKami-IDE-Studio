@@ -77,6 +77,24 @@ The cuts a fork usually makes first, in ascending order of pain:
 **Cost:** proportional to what you cut; the reverse — adding a module back — is
 always harder than leaving it in. Cut last, not first.
 
+One **method** can go without cutting a module: `file.stat` is one handler
+(`h_file_stat`) plus one row in `sde_methods[]`, and this fork's only consumer is
+the shell's watcher, which stops polling on the first `-32601 METHOD_NOT_FOUND`
+and logs that once rather than asking a question the kernel cannot answer. The
+shipped tests still measure the kernel this repository ships, so `make probe`
+(and the watch checks in `make smoke`) will say so — which is the point of
+having them.
+
+The **classic view** is a shell-level cut of the same kind, and it is mechanical
+for the reason it exists: it never wrote to the document. `shell/web/classic.mjs`
+is one pure module imported only by `main.mjs`; the rest of the cut is the
+`mode` row and its `COMMAND_HELP` line in `shell/web/cards.mjs`, the classic
+branches in `renderStage`/`renderCards`/`renderHud` plus `renderTabs`/
+`renderSideHint`/`installView`, the `#tabs` and `#mode-toggle` elements in
+`index.html` and their rules in `style.css`. No `.infantgod/board.json` changes
+and no card loses a field, because the view was drawn from the board document
+and saved nowhere — which is the whole reason a fork can throw it away.
+
 ---
 
 ## 3. Replace the platform layer to leave Win32
@@ -334,8 +352,14 @@ the step you do first and the rest of the prototype becomes your backend.
 
 Not implemented, not promised, and each cheap enough to be tempting:
 
-- **Undo.** `board.mjs` returns a deep copy from `serialize()` and never aliases
-  the model, so a snapshot ring is a small change in the shell alone.
+- **A conventional IDE layout on top of the board.** Built now, as a projection:
+  `mode classic` (one pure module, `shell/web/classic.mjs`) draws the same cards
+  as a code area, a tab strip and a sidebar without creating, moving or saving
+  anything. Still on the table, and each of these would need something the
+  projection deliberately refuses: split panes, a sidebar you drag to resize, a
+  per-tab close (a card has no close), tab reordering, remembering the mode in
+  `board.json`, and a `files`/`project` sidebar that behaves like a tree rather
+  than like the card it is.
 - **A minimap or "fit board to window".** The viewport is three numbers; the
   cards are a flat list with geometry. This is a shell-only feature.
 - **Multi-select.** Gestures are per-card in `installGestures()`; a
