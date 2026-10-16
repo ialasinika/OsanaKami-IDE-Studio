@@ -67,8 +67,10 @@ the containment rules.
   window; see the WRY/Tauri note below.
 - **Not a Yarn compiler.** Yarn support is colouring, package validation,
   diagnosis and completion. It does not run or type-check a story.
-- **Not a binary editor.** The kernel reads and writes UTF-8 text, so `.png`,
-  `.bytes` and archives are listed and copied by hand, not edited in place.
+- **Not an image editor.** The kernel reads and writes bytes
+  (`file.read_bytes`/`file.write_bytes`) and can hand out a revision for any
+  file, but no card draws a `.png` yet: nothing here encodes, decodes or scales
+  one, and there is no palette model.
 - **Not portable yet.** The kernel's platform layer is Win32.
 
 ---
@@ -236,7 +238,7 @@ outcome.
 The individual pieces, if you want to run them directly:
 
 ```sh
-python tools/e2e.py --kernel build/infantgod.exe     # 9 passed, 0 failed, 3 skipped
+python tools/e2e.py --kernel build/infantgod.exe     # 13 passed, 0 failed, 3 skipped
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
@@ -507,8 +509,8 @@ Stated plainly, because a fork needs to know what it is inheriting.
   polls `file.stat` for the paths its cards hold; the kernel does not watch the
   filesystem and the protocol does not promise an event. A card that held a file
   somebody else rewrote is corrected on the next tick, not at the instant it
-  happens — and a card whose file is too large or binary cannot be compared at
-  all (`revision: 0`), so it warns instead of reloading.
+  happens — and a card whose file is over 4 MiB cannot be compared at all
+  (`revision: 0`), so it warns instead of reloading.
 
 ---
 

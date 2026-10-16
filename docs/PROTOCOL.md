@@ -3,7 +3,7 @@
 The wire contract between a client and InfantGod Studio. There are two endpoints and one
 frame format; this document is the frozen reference for both.
 
-- **Kernel endpoint** — `build/infantgod.exe rpc`. Answers the eleven methods in the
+- **Kernel endpoint** — `build/infantgod.exe rpc`. Answers the thirteen methods in the
   table below. Knows nothing about languages.
 - **Shell endpoint** — `node shell/main.mjs rpc` (stdio) or
   `node shell/main.mjs serve` (HTTP + SSE). Forwards every kernel method, adds
@@ -84,7 +84,7 @@ responses at any time. The event list is below.
 ## The kernel method table
 
 The authoritative table is `sde_methods[]` in `core/src/rpc.c`. With both
-compile-time switches on (`SDE_WITH_VIEW`, `SDE_WITH_EXEC`) there are eleven
+compile-time switches on (`SDE_WITH_VIEW`, `SDE_WITH_EXEC`) there are thirteen
 methods. `view.*` disappears when `SDE_WITH_VIEW` is 0; `exec.*` disappears
 when `SDE_WITH_EXEC` is 0.
 
@@ -94,7 +94,9 @@ when `SDE_WITH_EXEC` is 0.
 | `workspace.info` | none | `{root, name, file_count, view_path, view_revision, ignored}` |
 | `workspace.list` | `path?`, `glob?`, `limit?` | `{files, truncated, count}` |
 | `file.read` | `path` | `{path, text, revision, eol, size, mtime}` (+ `lang` from the shell) |
+| `file.read_bytes` | `path` | `{path, base64, revision, size, mtime}` |
 | `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
+| `file.write_bytes` | `path`, `base64`, `base_revision?` | `{path, revision, size}` |
 | `file.stat` | `path` | `{path, exists, dir, size, mtime, revision}` |
 | `view.load` | `path` | `{path, revision, document}` |
 | `view.save` | `path`, `document`, `base_revision?` | `{path, revision, saved}` |
@@ -220,7 +222,13 @@ Refusals, all `IO` (1003) except the first:
 | no such file | 1002 | `NOT_FOUND` | `no such file` |
 | directory | 1003 | `IO` | `is a directory` |
 | larger than 4 MiB | 1003 | `IO` | `file is too large to open` |
-| contains a NUL byte | 1003 | `IO` | `file is binary` |
+| contains a NUL byte | 1003 | `IO` | `file is binary -- use file.read_bytes` |
+
+The last row is not a dead end: a file that is not text is what
+`file.read_bytes` is for, and it takes the same path, the same cap and the same
+containment rule. A client that does not know whether a path is text can read
+with `file.read` and fall back on `1003 file is binary` -- or ask `file.stat`
+first, which now answers with a revision for a binary file too.
 
 Absolute paths and `..` escapes are refused before any of that: `sde_wksp_resolve`
 rejects `absolute paths are not allowed: <path>` and
@@ -258,7 +266,8 @@ unhappy.
 | an empty file | `true` | `false` | `0` | seconds | the hash of no bytes (`2166136261`), not `0` |
 | a directory | `true` | `true` | `0` | seconds | `0` |
 | nothing | `false` | `false` | `0` | `-1` | `0` |
-| a file over 4 MiB, or one holding a NUL byte | `true` | `false` | bytes | seconds | `0` |
+| a binary file (one holding a NUL byte) | `true` | `false` | bytes | seconds | its hash, the same one `file.read_bytes` reports |
+| a file over 4 MiB | `true` | `false` | bytes | seconds | `0` |
 
 A client that finds `revision: 0` where it expected a number must read it as
 "cannot tell", never as "unchanged" or "empty". The shell's watcher warns about
@@ -295,6 +304,78 @@ On success the kernel emits a notification **before** the response is written:
 ```json
 {"event":"file.changed","path":"examples/hello.yarn","revision":987654321}
 ```
+
+### `file.read_bytes`
+
+Required parameter: `path` (non-empty string, relative to the workspace root).
+
+```json
+{"path":"Sprites/hero.png","base64":"iVBORw0KGgoAAAANSUhEUg...","revision":123456789,"size":4096,"mtime":1700000000}
+```
+
+The same file `file.read` reads, for the files `file.read` refuses: `base64` is
+the standard alphabet with `=` padding to a multiple of four and no line breaks,
+and `size` is the number of **bytes**, not the number of characters on the wire.
+A PNG, a WAV, or a `.ysls.json` someone saved as UTF-16 all come through
+unchanged -- and so does a text file, because this verb does not care what the
+bytes mean.
+
+`revision` is the same 32-bit FNV-1a hash of the same bytes that `file.read` and
+`file.stat` report, so a revision from any of the three can be compared with any
+of the others. It is the token `file.write_bytes` checks.
+
+Refusals are `file.read`'s minus the one about NUL bytes -- that is the whole
+point of the verb:
+
+| condition | code | name | message |
+| --- | --- | --- | --- |
+| no such file | 1002 | `NOT_FOUND` | `no such file` |
+| directory | 1003 | `IO` | `is a directory` |
+| larger than 4 MiB | 1003 | `IO` | `file is too large to open` |
+
+Absolute paths and `..` escapes are refused exactly as `file.read` refuses them,
+`1003 IO`. The shell adds no member to this result: `lang` is a statement about
+text, and this is the verb that has none.
+
+### `file.write_bytes`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `path` | string, required | relative path; parent directories are created |
+| `base64` | string, required | the whole new contents, base64. Send `""` to write a zero-byte file. A non-string is `INVALID_PARAMS` with `` `base64` must be a string ``; omitting it is `INVALID_PARAMS` too, because a forgotten member must not silently empty a file |
+| `base_revision` | number, optional | the revision the client read; omit for last-writer-wins |
+
+Result: `{"path":"Sprites/hero.png","revision":987654321,"size":4096}`.
+
+There is no `eol`: a byte write never looked at the bytes as lines, and a
+reported style would be a guess dressed up as a fact.
+
+`base64` has to *be* base64, and a payload that is not is `-32602
+INVALID_PARAMS` with a message naming the reason. The kernel does not guess at a
+near-miss, because the failure mode of guessing is a corrupted image rather than
+a refused request: the check is exactly the one the decoder needs, so the
+standard alphabet, `=` padding, a length that is a multiple of four, and no
+whitespace. A payload whose *decoded* length would exceed 4 MiB is refused with
+`1003 file is too large to write` **before** it is decoded, so the cap is the
+same one `file.read_bytes` reads under.
+
+With a `base_revision` that no longer matches the file on disk the refusal is
+`file.write`'s, unchanged:
+
+```json
+{"jsonrpc":"2.0","id":3,"error":{"code":1001,"name":"STALE_REVISION","message":"file changed on disk since it was read","data":{"current_revision":987654321}}}
+```
+
+On success the kernel emits the same notification a text write emits, before the
+response:
+
+```json
+{"event":"file.changed","path":"Sprites/hero.png","revision":987654321}
+```
+
+That is deliberate rather than incidental: an image editor holding a PNG while a
+second client overwrites it is precisely the race `file.changed` exists to lose
+loudly. Both write verbs emit it from one function, so neither can forget.
 
 ### `view.load`
 
@@ -391,7 +472,7 @@ Parameter: `run_id` (number; a non-number is `-32602` with
 
 | event | members | emitted when |
 | --- | --- | --- |
-| `file.changed` | `path`, `revision` | a successful `file.write` |
+| `file.changed` | `path`, `revision` | a successful `file.write` or `file.write_bytes` |
 | `view.changed` | `path`, `revision` | a successful `view.save` |
 | `exec.output` | `run_id`, `stream`, `data` | the pump read bytes from a child |
 | `exec.exit` | `run_id`, `code` | a child exited and every byte was consumed |
@@ -468,7 +549,7 @@ Three things about it are the point:
 
 | code | name | when |
 | --- | --- | --- |
-| 1001 | `STALE_REVISION` | `file.write` or `view.save` with an out-of-date `base_revision`; carries `data.current_revision` |
+| 1001 | `STALE_REVISION` | `file.write`, `file.write_bytes` or `view.save` with an out-of-date `base_revision`; carries `data.current_revision` |
 | 1002 | `NOT_FOUND` | `file.read` on an absent file; `exec.stop` on an unknown run |
 | 1003 | `IO` | read/write/list/save failures not covered above |
 | 1004 | *(retired)* | was `INVALID_BOARD`; the kernel no longer validates a document, so nothing emits it. The number stays reserved: a client that reads `1004` from an older kernel is looking at a fork or at `infantgod/1` |

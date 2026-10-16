@@ -212,6 +212,59 @@ static void fail_path(sde_call *c, const char *rel, const char *err)
          ? "cannot read file" : err);
 }
 
+/* A base the file no longer has: the caller needs the revision it does have. */
+static void fail_stale(sde_call *c, unsigned long cur)
+{
+    sde_json *d = sde_json_obj();
+
+    if (d != NULL) {
+        sde_json_set(d, "current_revision", sde_json_rev(cur));
+    }
+    fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
+         "file changed on disk since it was read");
+    c->data = d;
+}
+
+/*
+ * A successful write is news to every other viewer of the workspace, and both
+ * write verbs make it.  One function so neither can forget: a `file.read_bytes`
+ * of an image another client just overwrote is exactly the mistake this
+ * notification exists to prevent.
+ */
+static void note_file_changed(sde_call *c, const char *path, const sde_json *res)
+{
+    sde_json *note = sde_json_obj();
+
+    if (note == NULL) {
+        return;
+    }
+    sde_json_set(note, "event", sde_json_str("file.changed"));
+    sde_json_set(note, "path", sde_json_str(path));
+    sde_json_set(note, "revision",
+                 sde_json_rev((unsigned long) sde_json_as_num(
+                     sde_json_get(res, "revision"), 0.0)));
+    (void) sde_app_notify(c->app, note);
+}
+
+/* `base_revision` is optional, and "absent" is not the same as "zero". */
+static int read_base_revision(sde_call *c, unsigned long *out)
+{
+    double num = 0.0;
+
+    switch (opt_number(c->params, "base_revision", &num)) {
+    case -1:
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`base_revision` must be a number when it is present");
+        return -1;
+    case 1:
+        *out = (unsigned long) num;
+        return 1;
+    default:
+        *out = 0;
+        return 0;
+    }
+}
+
 static void h_file_read(sde_call *c)
 {
     char         err[256];
@@ -239,12 +292,10 @@ static void h_file_write(sde_call *c)
     const char         *text;
     size_t              len;
     int                 has_base;
-    double              base_num = 0.0;
     unsigned long       base = 0;
     unsigned long       cur = 0;
     sde_json           *res = NULL;
     int                 rc;
-    sde_json           *note;
 
     need_string(c, "path", &path);
     if (c->code != 0) {
@@ -272,31 +323,16 @@ static void h_file_write(sde_call *c)
     }
     len = strlen(text);
 
-    switch (opt_number(c->params, "base_revision", &base_num)) {
-    case -1:
-        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
-             "`base_revision` must be a number when it is present");
+    has_base = read_base_revision(c, &base);
+    if (has_base < 0) {
         return;
-    case 1:
-        has_base = 1;
-        base = (unsigned long) base_num;
-        break;
-    default:
-        has_base = 0;
-        break;
     }
 
     err[0] = '\0';
     rc = sde_wksp_write(c->app, path, text, len, has_base, base,
                         &res, &cur, err, sizeof(err));
     if (rc == SDE_WKSP_STALE) {
-        sde_json *d = sde_json_obj();
-        if (d != NULL) {
-            sde_json_set(d, "current_revision", sde_json_rev(cur));
-        }
-        fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
-             "file changed on disk since it was read");
-        c->data = d;
+        fail_stale(c, cur);
         return;
     }
     if (rc != SDE_WKSP_OK || res == NULL) {
@@ -305,17 +341,96 @@ static void h_file_write(sde_call *c)
         return;
     }
 
-    /* Other viewers of the same workspace need to know. */
-    note = sde_json_obj();
-    if (note != NULL) {
-        sde_json_set(note, "event", sde_json_str("file.changed"));
-        sde_json_set(note, "path", sde_json_str(path));
-        sde_json_set(note, "revision",
-                     sde_json_rev((unsigned long) sde_json_as_num(
-                         sde_json_get(res, "revision"), 0.0)));
-        (void) sde_app_notify(c->app, note);
+    note_file_changed(c, path, res);
+    c->owned = res;
+}
+
+/*
+ * The byte verbs: `file.read` and `file.write` for a file that is not text.
+ * Same path rules, same cap, same revision track, same `file.changed`
+ * notification -- the difference is the one thing a JSON string cannot carry,
+ * and the one thing it cannot be: bytes.  A PNG cannot go through `file.write`
+ * (a NUL in the string is not round-trippable) and it has no end-of-line style,
+ * so the result of a read is `base64` and the result of a write has no `eol`.
+ */
+static void h_file_read_bytes(sde_call *c)
+{
+    char        err[256];
+    const char *path = NULL;
+    sde_json   *res;
+
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
+    err[0] = '\0';
+    res = sde_wksp_read_bytes(c->app, path, err, sizeof(err));
+    if (res == NULL) {
+        fail_path(c, path, err);
+        return;
+    }
+    c->owned = res;
+}
+
+static void h_file_write_bytes(sde_call *c)
+{
+    char            err[256];
+    const char     *path = NULL;
+    const sde_json *b64v;
+    const char     *b64;
+    int             has_base;
+    unsigned long   base = 0;
+    unsigned long   cur = 0;
+    sde_json       *res = NULL;
+    int             rc;
+
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
     }
 
+    b64v = sde_json_get(c->params, "base64");
+    if (b64v == NULL) {
+        /* Same reasoning as `text`: a forgotten member, not an empty file. */
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`base64` is required; send \"\" to write an empty file");
+        return;
+    }
+    if (b64v->type != SDE_JSON_STR) {
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             "`base64` must be a string");
+        return;
+    }
+    b64 = sde_json_as_str(b64v);
+    if (b64 == NULL) {
+        b64 = "";
+    }
+
+    has_base = read_base_revision(c, &base);
+    if (has_base < 0) {
+        return;
+    }
+
+    err[0] = '\0';
+    rc = sde_wksp_write_bytes(c->app, path, b64, has_base, base,
+                              &res, &cur, err, sizeof(err));
+    if (rc == SDE_WKSP_STALE) {
+        fail_stale(c, cur);
+        return;
+    }
+    if (rc == SDE_WKSP_BAD_B64) {
+        /* A request that cannot mean anything, not a workspace problem. */
+        fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
+             err[0] ? err : "`base64` is not base64");
+        return;
+    }
+    if (rc != SDE_WKSP_OK || res == NULL) {
+        sde_json_free(res);
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot write file");
+        return;
+    }
+
+    note_file_changed(c, path, res);
     c->owned = res;
 }
 
@@ -585,6 +700,8 @@ static const sde_method sde_methods[] = {
     { "workspace.list", h_workspace_list },
     { "file.read",      h_file_read },
     { "file.write",     h_file_write },
+    { "file.read_bytes",  h_file_read_bytes },
+    { "file.write_bytes", h_file_write_bytes },
     { "file.stat",      h_file_stat },
 #if SDE_WITH_VIEW
     { "view.load",      h_view_load },

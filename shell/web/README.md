@@ -212,7 +212,7 @@ hold, and `watch.mjs` — pure, no DOM, no clock — decides what each answer me
 | a revision, no unsaved edits | a different revision | the card **reloads** and its status says `reloaded from disk` |
 | a revision, unsaved edits | a different revision | the text **stays**; the status says `changed on disk (rev …) · ^S overwrites` |
 | a revision | nothing (`exists: false`), or a directory | the status says `gone from disk · ^S writes it back`; the text stays |
-| a revision | a revision the kernel cannot give (`0`: binary, or over 4 MiB) | a warn, never a reload — "cannot compare" is not "unchanged" |
+| a revision | a revision the kernel cannot give (`0`: a directory, or a file over 4 MiB) | a warn, never a reload — "cannot compare" is not "unchanged" |
 | no revision yet | anything | nothing: a card that has not read the file is a version of nothing |
 
 Two rules keep this from being noise. A decision is acted on only when it is

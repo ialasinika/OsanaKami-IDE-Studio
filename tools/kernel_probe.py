@@ -80,10 +80,13 @@ def prepare_workspace():
     os.makedirs(os.path.join(root, ".infantgod"))
     shutil.copyfile(fixture, os.path.join(root, "examples", "hello.yarn"))
     shutil.copyfile(starter, os.path.join(root, ".infantgod", "board.json"))
-    # A file the kernel will not read as text, written here rather than through
-    # `file.write` (which refuses U+0000 on purpose).  `file.stat` must call it
-    # "exists, but no revision to compare", which is what tells a client to warn
-    # about it rather than reload over it.
+    # A file the kernel will not read as *text*, written here rather than through
+    # `file.write` (which refuses U+0000 on purpose).  This used to be the file
+    # with no revision to compare, which was honest while nothing could read it:
+    # there was nothing to compare against.  `file.read_bytes` changed that, so
+    # what this fixture probes now is that the two verbs agree -- `file.stat` and
+    # `file.read_bytes` must hand out one number for one file, or a client
+    # watching an image would never see it change.
     with open(os.path.join(root, "scratch", "binary.bin"), "wb") as handle:
         handle.write(b"\x00\x01\x02\xff")
     return root
@@ -247,9 +250,21 @@ def run(k):
           json.dumps(directory)[:140])
 
     binary = k.call("file.stat", {"path": "scratch/binary.bin"})["result"]
-    check("a file the kernel will not read as text has no revision (0)",
-          binary["exists"] is True and binary["revision"] == 0,
+    check("file.stat reads a binary file's revision, so an image can be watched",
+          binary["exists"] is True and isinstance(binary["revision"], int)
+          and binary["revision"] != 0,
           json.dumps(binary)[:140])
+
+    as_text = k.call("file.read", {"path": "scratch/binary.bin"})
+    check("...while file.read still refuses that file as binary",
+          as_text.get("error", {}).get("code") == 1003
+          and "binary" in str(as_text.get("error", {}).get("message", "")),
+          json.dumps(as_text)[:140])
+
+    as_bytes = k.call("file.read_bytes", {"path": "scratch/binary.bin"})["result"]
+    check("...and file.read_bytes hands out the same revision for the same bytes",
+          as_bytes["revision"] == binary["revision"] and as_bytes["size"] == 4,
+          json.dumps(as_bytes)[:160])
 
     escape = k.call("file.stat", {"path": "../outside.txt"})
     check("file.stat refuses a path that escapes the workspace",

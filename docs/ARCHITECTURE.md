@@ -265,7 +265,7 @@ The Makefile's verification targets, in the order `make test` runs them:
 
 | target | command | what it proves |
 | --- | --- | --- |
-| `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files, the view document, exec |
+| `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files (text and bytes), the view document, exec |
 | `fullcheck` | `python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
 | `cli-check` | `python tools/seide_cli.py selfcheck` | the protocol's second consumer: eight checks -- hello, a write round-trip, the stale-revision rail, the listing, a document the kernel stores without reading it (and the stale write it refuses), a child's output and exit code, that a shell-only method is still `METHOD_NOT_FOUND`, and that the command line refuses to overwrite a file it was not given a base revision for |
@@ -298,9 +298,12 @@ The Makefile's verification targets, in the order `make test` runs them:
   That is exactly the behaviour a closing window needs.
 - **One reader thread per child process.** Rejected in favour of a single
   15 ms polling pump, to keep the kernel single-writer (see above).
-- **Binary files as JSON strings.** `wksp` refuses to read a file containing a
-  NUL byte ("file is binary") because shipping it as a JSON string would produce
-  a document no client can round-trip.
+- **Binary files as JSON strings.** Rejected: `file.read` refuses a file
+  containing a NUL byte ("file is binary -- use file.read_bytes") because
+  shipping it as a JSON string would produce a document no client can
+  round-trip.  The bytes travel as `base64` instead -- an encoding every JSON
+  parser can carry and every byte value survives -- so a client that wants a
+  `.png` asks for it by name rather than discovering the refusal.
 - **A missing or corrupt view document.** Neither is the kernel's problem any
   more. An absent `.infantgod/board.json` is fine (first run: `document: null`,
   `revision: 0`), and a file that **exists but does not parse** is reported to

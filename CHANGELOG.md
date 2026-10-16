@@ -36,6 +36,34 @@ tree.
   is `infantgod/2`, and the rename is breaking on purpose, so an
   `infantgod/1` client is refused rather than half-served.  Reasoning, the
   failures this avoids and the price are in the new `docs/VIEWS.md`.
+- The protocol can now carry **bytes**, for the files that are not text.  Two
+  methods join `file.read` / `file.write`: `file.read_bytes {path}` answers
+  `{path, base64, revision, size, mtime}`, and `file.write_bytes {path, base64,
+  base_revision?}` answers `{path, revision, size}`.  `base64` is the standard
+  alphabet with `=` padding to a multiple of four and no line breaks; the two
+  verbs take the same path, the same 4 MiB cap, the same containment rule and the
+  same revision track as their text siblings, and a stale `base_revision` is
+  refused with the same `1001 STALE_REVISION`, carrying the same
+  `data.current_revision`.  The one member that differs is deliberate: a byte
+  write reports no `eol`, because it never looked at the bytes as lines and a
+  reported style would be a guess.  A payload that is not base64 is `-32602
+  INVALID_PARAMS` -- the kernel does not guess at a near-miss, because the
+  failure mode of guessing is a corrupted image rather than a refused request --
+  and a payload whose *decoded* length would exceed the cap is refused before it
+  is decoded.  The driving case is a PNG: `file.read` refuses a file holding a
+  NUL byte with `1003 file is binary -- use file.read_bytes`, and `file.write`
+  can only carry a JSON string, so an image had no way in or out of a workspace.
+  Both write verbs now run through one function, so a rule added to one -- the
+  staleness check, the `file.changed` notification -- cannot quietly miss the
+  other.
+- `file.stat` now answers with a **revision for a binary file**.  It used to
+  report `0`, "no revision to compare", for any file holding a NUL byte, which
+  was honest while nothing could read one: there was nothing to compare against.
+  `file.read_bytes` changed that, and a watcher that could not compare an image
+  would warn about every change to it instead of reloading.  The number is the
+  same FNV-1a hash `file.read_bytes` reports for the same bytes, so a client
+  holding a revision from `file.read`, `file.read_bytes` or `file.stat` can
+  compare it against any of the other two.
 
 ### Shell
 
@@ -327,7 +355,7 @@ tree.
 
 ### Checks
 
-- `make test` (e2e 12, kernel probe, cli-check, version-check, JSON, langs 91/91,
+- `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
   selftest 120/120, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
@@ -348,7 +376,13 @@ tree.
   on the switch — each was caught by the suite that claims it, and `views.mjs` and
   `index.html` were restored byte-identical.  The first two are only visible to a
   real window, which is the whole reason `tools/input_smoke.py` reads them: no
-  DOM-less check can see which mode a window booted into.
+  DOM-less check can see which mode a window booted into.  The byte verbs were
+  held to it as well (throwaway `build/sabotage_byte_verbs.py`): a payload that
+  is not base64 accepted and written anyway, a revision that is not the file's,
+  the shared `base_revision` guard skipped, and a `size` counted in characters
+  instead of bytes — all four were caught, by `tools/e2e.py` for the first, third
+  and fourth and by `tools/kernel_probe.py` for the second, and `core/src/wksp.c`
+  was restored byte-identical.
 
 ### Licence
 

@@ -455,6 +455,191 @@ static const char *detect_eol(const char *text, size_t len)
     return "lf";
 }
 
+/*
+ * Resolves a path and reads the whole file into `buf`, applying the rules both
+ * read verbs share: it must exist, it must not be a directory, and it must fit
+ * `SDE_WKSP_MAX_READ`.  The one question it does not answer is whether the bytes
+ * are text -- that belongs to `sde_wksp_read`, and it is the whole reason there
+ * are two verbs.
+ *
+ * On success `*out_abs` is the malloc'd absolute path the caller frees; on
+ * failure it is NULL and `buf` is not initialised.
+ */
+static int read_whole_file(const sde_app *app, const char *rel, sde_buf *buf,
+                           char **out_abs, char *err, size_t errcap)
+{
+    char *abs = NULL;
+
+    *out_abs = NULL;
+    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+        return -1;
+    }
+    if (sde_port_is_dir(abs)) {
+        set_err_path(err, errcap, "is a directory", rel);
+        free(abs);
+        return -1;
+    }
+    if (!sde_port_file_exists(abs)) {
+        set_err_path(err, errcap, "no such file", rel);
+        free(abs);
+        return -1;
+    }
+    if (sde_port_file_size(abs) > (long) SDE_WKSP_MAX_READ) {
+        set_err_path(err, errcap, "file is too large to open", rel);
+        free(abs);
+        return -1;
+    }
+
+    sde_buf_init(buf);
+    if (sde_port_read_file(abs, buf, err, errcap) != 0) {
+        sde_buf_free(buf);
+        free(abs);
+        return -1;
+    }
+    *out_abs = abs;
+    return 0;
+}
+
+/* ---------------------------------------------------------------------- */
+/* base64                                                                 */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * One spelling, on purpose: the standard alphabet, `=` to a multiple of four,
+ * and nothing else.  A decoder that skipped whitespace, or stopped at the first
+ * character it did not like, would "succeed" on a string that is not base64 and
+ * write bytes nobody asked for -- and a PNG written from a mis-encoded string is
+ * worse than a refusal, because it looks right until the game loads it.
+ */
+static const char B64_CHARS[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/* malloc'd and NUL-terminated; NULL only when out of memory. */
+static char *b64_encode(const unsigned char *data, size_t len)
+{
+    size_t groups = len / 3;
+    size_t rest = len - groups * 3;
+    char  *out = (char *) malloc(groups * 4 + (rest == 0 ? 0 : 4) + 1);
+    size_t i = 0;
+    size_t o = 0;
+
+    if (out == NULL) {
+        return NULL;
+    }
+    while (i + 3 <= len) {
+        unsigned long v = ((unsigned long) data[i] << 16)
+                        | ((unsigned long) data[i + 1] << 8)
+                        | (unsigned long) data[i + 2];
+
+        out[o++] = B64_CHARS[(v >> 18) & 63];
+        out[o++] = B64_CHARS[(v >> 12) & 63];
+        out[o++] = B64_CHARS[(v >> 6) & 63];
+        out[o++] = B64_CHARS[v & 63];
+        i += 3;
+    }
+    if (rest == 1) {
+        unsigned long v = (unsigned long) data[i] << 16;
+
+        out[o++] = B64_CHARS[(v >> 18) & 63];
+        out[o++] = B64_CHARS[(v >> 12) & 63];
+        out[o++] = '=';
+        out[o++] = '=';
+    } else if (rest == 2) {
+        unsigned long v = ((unsigned long) data[i] << 16)
+                        | ((unsigned long) data[i + 1] << 8);
+
+        out[o++] = B64_CHARS[(v >> 18) & 63];
+        out[o++] = B64_CHARS[(v >> 12) & 63];
+        out[o++] = B64_CHARS[(v >> 6) & 63];
+        out[o++] = '=';
+    }
+    out[o] = '\0';
+    return out;
+}
+
+static int b64_digit(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') return ch - 'A';
+    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
+    if (ch >= '0' && ch <= '9') return ch - '0' + 52;
+    if (ch == '+') return 62;
+    if (ch == '/') return 63;
+    return -1;
+}
+
+/*
+ * 0 on success, -1 out of memory, -2 not base64.  `*out` is always malloc'd on
+ * success -- an empty payload gets a one-byte buffer -- so a caller can free it
+ * without asking how long the payload was.
+ */
+static int b64_decode(const char *text, unsigned char **out, size_t *out_len)
+{
+    size_t         len = strlen(text);
+    size_t         i;
+    size_t         o = 0;
+    unsigned char *buf;
+
+    *out = NULL;
+    *out_len = 0;
+    if (len % 4 != 0) {
+        return -2;
+    }
+    buf = (unsigned char *) malloc(len / 4 * 3 + 1);
+    if (buf == NULL) {
+        return -1;
+    }
+    for (i = 0; i < len; i += 4) {
+        int v0 = b64_digit(text[i]);
+        int v1 = b64_digit(text[i + 1]);
+        int v2 = text[i + 2] == '=' ? 0 : b64_digit(text[i + 2]);
+        int v3 = text[i + 3] == '=' ? 0 : b64_digit(text[i + 3]);
+        int last = (i + 4 >= len);
+        int pad_here = 0;
+
+        if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) {
+            free(buf);
+            return -2;
+        }
+        if (text[i + 3] == '=') {
+            pad_here++;
+            if (text[i + 2] == '=') {
+                pad_here++;
+            }
+        } else if (text[i + 2] == '=') {
+            /* A `=` in the third slot with a real character after it is not a
+             * short group, it is a misplaced `=`. */
+            free(buf);
+            return -2;
+        }
+        if (pad_here > 0 && !last) {
+            free(buf);
+            return -2;
+        }
+        /* RFC 4648: the bits a short group cannot carry must be zero.  A string
+         * with junk in them is not a second spelling of the same bytes, it is a
+         * different string, and it is refused rather than rounded. */
+        if (pad_here == 2 && (v1 & 15) != 0) {
+            free(buf);
+            return -2;
+        }
+        if (pad_here == 1 && (v2 & 3) != 0) {
+            free(buf);
+            return -2;
+        }
+
+        buf[o++] = (unsigned char) ((v0 << 2) | (v1 >> 4));
+        if (pad_here < 2) {
+            buf[o++] = (unsigned char) (((v1 & 15) << 4) | (v2 >> 2));
+        }
+        if (pad_here < 1) {
+            buf[o++] = (unsigned char) (((v2 & 3) << 6) | v3);
+        }
+    }
+    *out = buf;
+    *out_len = o;
+    return 0;
+}
+
 sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t errcap)
 {
     char     *abs = NULL;
@@ -464,29 +649,7 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t e
     const char *text;
     size_t    len;
 
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
-        return NULL;
-    }
-    if (sde_port_is_dir(abs)) {
-        set_err_path(err, errcap, "is a directory", rel);
-        free(abs);
-        return NULL;
-    }
-    if (!sde_port_file_exists(abs)) {
-        set_err_path(err, errcap, "no such file", rel);
-        free(abs);
-        return NULL;
-    }
-    if (sde_port_file_size(abs) > (long) SDE_WKSP_MAX_READ) {
-        set_err_path(err, errcap, "file is too large to open", rel);
-        free(abs);
-        return NULL;
-    }
-
-    sde_buf_init(&buf);
-    if (sde_port_read_file(abs, &buf, err, errcap) != 0) {
-        sde_buf_free(&buf);
-        free(abs);
+    if (read_whole_file(app, rel, &buf, &abs, err, errcap) != 0) {
         return NULL;
     }
     text = buf.data;
@@ -496,9 +659,11 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t e
     }
 
     /* A NUL byte means this is not text, and shipping it as a JSON string
-     * would produce a document no client can round-trip. */
+     * would produce a document no client can round-trip.  The message names the
+     * verb that does read this file, because "I cannot" without "here is what
+     * can" is the kind of refusal a caller has to guess its way past. */
     if (len > 0 && memchr(text, '\0', len) != NULL) {
-        set_err_path(err, errcap, "file is binary", rel);
+        set_err_path(err, errcap, "file is binary -- use file.read_bytes", rel);
         sde_buf_free(&buf);
         free(abs);
         return NULL;
@@ -524,6 +689,50 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t e
     return out;
 }
 
+sde_json *sde_wksp_read_bytes(const sde_app *app, const char *rel,
+                              char *err, size_t errcap)
+{
+    char         *abs = NULL;
+    sde_buf       buf;
+    sde_json     *out;
+    char         *b64;
+    const char   *bytes;
+    unsigned long rev;
+
+    if (read_whole_file(app, rel, &buf, &abs, err, errcap) != 0) {
+        return NULL;
+    }
+    bytes = buf.data == NULL ? "" : buf.data;
+
+    b64 = b64_encode((const unsigned char *) bytes, buf.len);
+    if (b64 == NULL) {
+        set_err(err, errcap, "out of memory");
+        sde_buf_free(&buf);
+        free(abs);
+        return NULL;
+    }
+    rev = sde_rev_of(bytes, buf.len);
+
+    out = sde_json_obj();
+    if (out == NULL) {
+        set_err(err, errcap, "out of memory");
+        free(b64);
+        sde_buf_free(&buf);
+        free(abs);
+        return NULL;
+    }
+    sde_json_set(out, "path", sde_json_str(rel));
+    sde_json_set(out, "base64", sde_json_str(b64));
+    sde_json_set(out, "revision", sde_json_rev(rev));
+    sde_json_set(out, "size", sde_json_int((long) buf.len));
+    sde_json_set(out, "mtime", sde_json_int(sde_port_file_mtime(abs)));
+
+    free(b64);
+    sde_buf_free(&buf);
+    free(abs);
+    return out;
+}
+
 sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t errcap)
 {
     char         *abs = NULL;
@@ -544,10 +753,13 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
             size = 0;
         }
         /*
-         * The revision has to be the number `file.read` hands out for the same
-         * bytes, or a client comparing a held revision with this one could
-         * miss a change.  So the same two refusals apply: a file past the read
-         * cap, and a file with a NUL byte in it, have no revision to report.
+         * The revision has to be the number a read verb hands out for the same
+         * bytes, or a client comparing a held revision with this one could miss
+         * a change.  Only the cap is left as a reason to report none: a file
+         * past it cannot be read at all, so there is nothing to compare
+         * against.  A NUL byte used to be a second reason -- and it stopped
+         * being one when `file.read_bytes` started handing out the same number
+         * for that file, which is the file an image editor holds.
          */
         if (size <= (long) SDE_WKSP_MAX_READ) {
             if (size == 0) {
@@ -557,8 +769,7 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
 
                 sde_buf_init(&buf);
                 if (sde_port_read_file(abs, &buf, NULL, 0) == 0
-                    && buf.data != NULL
-                    && memchr(buf.data, '\0', buf.len) == NULL) {
+                    && buf.data != NULL) {
                     rev = sde_rev_of(buf.data, buf.len);
                 }
                 sde_buf_free(&buf);
@@ -612,21 +823,22 @@ static int ensure_parent(const char *abs, char *err, size_t errcap)
     return rc;
 }
 
-int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
-                   size_t len, int has_base, unsigned long base,
-                   sde_json **out, unsigned long *cur_rev,
-                   char *err, size_t errcap)
+/*
+ * The half of a write both verbs share: resolve the path, refuse a directory,
+ * refuse a file already past the cap, take the current revision, and refuse a
+ * base that is no longer it.  On SDE_WKSP_OK the caller owns `*out_abs` and
+ * writes the bytes itself.  `*out_cur` is set on every path that got far enough
+ * to compute it, which is what a STALE answer must carry back.
+ */
+static int begin_write(const sde_app *app, const char *rel, int has_base,
+                       unsigned long base, char **out_abs,
+                       unsigned long *out_cur, char *err, size_t errcap)
 {
     char         *abs = NULL;
     unsigned long cur;
-    sde_json     *result;
 
-    if (out != NULL) {
-        *out = NULL;
-    }
-    if (cur_rev != NULL) {
-        *cur_rev = 0;
-    }
+    *out_abs = NULL;
+    *out_cur = 0;
     if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
         return SDE_WKSP_FAIL;
     }
@@ -642,39 +854,131 @@ int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
     }
 
     cur = rev_of_file(abs, err, errcap);
-    if (cur_rev != NULL) {
-        *cur_rev = cur;
-    }
+    *out_cur = cur;
     if (has_base && base != cur) {
         /* Someone else got there first.  Refusing is the whole point. */
         set_err_path(err, errcap, "file changed on disk", rel);
         free(abs);
         return SDE_WKSP_STALE;
     }
+    *out_abs = abs;
+    return SDE_WKSP_OK;
+}
+
+/*
+ * `want_eol` is the one thing the two write verbs disagree about: a text write
+ * has an end-of-line style to report, a byte write has no opinion.  Everything
+ * else -- the cap, the staleness, the parents, the `{path, revision, size}` --
+ * is shared, so a rule added to one cannot quietly miss the other.
+ */
+static int write_whole_file(const sde_app *app, const char *rel,
+                            const char *data, size_t len, int has_base,
+                            unsigned long base, int want_eol,
+                            sde_json **out, unsigned long *cur_rev,
+                            char *err, size_t errcap)
+{
+    char         *abs = NULL;
+    unsigned long cur = 0;
+    sde_json     *result;
+    int           rc;
+
+    if (out != NULL) {
+        *out = NULL;
+    }
+    if (cur_rev != NULL) {
+        *cur_rev = 0;
+    }
+
+    rc = begin_write(app, rel, has_base, base, &abs, &cur, err, errcap);
+    if (cur_rev != NULL) {
+        *cur_rev = cur;
+    }
+    if (rc != SDE_WKSP_OK) {
+        return rc;
+    }
     if (ensure_parent(abs, err, errcap) != 0) {
         free(abs);
         return SDE_WKSP_FAIL;
     }
-    if (sde_port_write_file(abs, text, len, err, errcap) != 0) {
+    if (sde_port_write_file(abs, data, len, err, errcap) != 0) {
         free(abs);
         return SDE_WKSP_FAIL;
     }
+    free(abs);
 
     result = sde_json_obj();
     if (result == NULL) {
         set_err(err, errcap, "out of memory");
-        free(abs);
         return SDE_WKSP_FAIL;
     }
     sde_json_set(result, "path", sde_json_str(rel));
-    sde_json_set(result, "revision", sde_json_rev(sde_rev_of(text, len)));
-    sde_json_set(result, "eol", sde_json_str(detect_eol(text, len)));
+    sde_json_set(result, "revision", sde_json_rev(sde_rev_of(data, len)));
+    if (want_eol) {
+        sde_json_set(result, "eol", sde_json_str(detect_eol(data, len)));
+    }
     sde_json_set(result, "size", sde_json_int((long) len));
     if (out != NULL) {
         *out = result;
     } else {
         sde_json_free(result);
     }
-    free(abs);
     return SDE_WKSP_OK;
+}
+
+int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
+                   size_t len, int has_base, unsigned long base,
+                   sde_json **out, unsigned long *cur_rev,
+                   char *err, size_t errcap)
+{
+    return write_whole_file(app, rel, text, len, has_base, base, 1,
+                            out, cur_rev, err, errcap);
+}
+
+int sde_wksp_write_bytes(const sde_app *app, const char *rel, const char *base64,
+                         int has_base, unsigned long base,
+                         sde_json **out, unsigned long *cur_rev,
+                         char *err, size_t errcap)
+{
+    unsigned char *data = NULL;
+    size_t         len = 0;
+    int            rc;
+
+    if (out != NULL) {
+        *out = NULL;
+    }
+    if (cur_rev != NULL) {
+        *cur_rev = 0;
+    }
+    if (base64 == NULL) {
+        base64 = "";
+    }
+
+    /*
+     * Refuse an oversized payload before decoding it.  `serve.c` caps a request
+     * line at 64 MiB, so without this a caller could hand the kernel a string
+     * that decodes to 48 MiB and have it build the buffer only to refuse it.
+     * Four characters carry three bytes, so this bound is exact.
+     */
+    if (strlen(base64) > ((size_t) SDE_WKSP_MAX_READ / 3 + 1) * 4) {
+        set_err_path(err, errcap, "file is too large to write", rel);
+        return SDE_WKSP_FAIL;
+    }
+
+    switch (b64_decode(base64, &data, &len)) {
+    case 0:
+        break;
+    case -1:
+        set_err(err, errcap, "out of memory");
+        return SDE_WKSP_FAIL;
+    default:
+        set_err(err, errcap,
+                "`base64` is not base64 -- expected the standard alphabet, "
+                "`=` padding to a multiple of four, and no line breaks");
+        return SDE_WKSP_BAD_B64;
+    }
+
+    rc = write_whole_file(app, rel, (const char *) data, len, has_base, base, 0,
+                          out, cur_rev, err, errcap);
+    free(data);
+    return rc;
 }

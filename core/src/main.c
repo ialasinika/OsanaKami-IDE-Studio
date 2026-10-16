@@ -52,7 +52,7 @@ static const sde_module sde_module_table[] = {
       "nothing builds; this is the layer a fork replaces to leave Win32",
       0 },
     { "wksp",
-      "workspace reads/writes, path containment, content revisions",
+      "workspace reads/writes, text and bytes, path containment, content revisions",
       "files can no longer be opened or saved; only the canvas remains",
       1 },
     { "view",

@@ -24,6 +24,15 @@ fixture to move its revision (a revision is a content hash) and write the
 original bytes back afterwards, so a completed run leaves the file
 byte-identical.
 
+Since infantgod/2 the protocol also carries **bytes**, for files that are not
+text: ``file.read_bytes`` / ``file.write_bytes``, which the checks here hold to
+the same promises as their text siblings -- same containment, same 4 MiB cap,
+same revision track, same ``STALE_REVISION`` refusal -- plus the one promise of
+their own, that a payload of every byte value round-trips unchanged.  Those
+checks use ``BYTE_SCRATCH`` under ``build/`` and delete it when they are done,
+because unlike the text checks there is no shipped binary file they could edit
+and put back.
+
 The view document is stored at a path **this tool chooses**
 (``DOCUMENT_PATH``, the same one the shell uses): since infantgod/2 the kernel
 keeps a document without reading it, so the path, the schema and the bytes are
@@ -60,6 +69,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import base64
 import collections
 import itertools
 import json
@@ -92,6 +102,18 @@ KERNEL_BINARY = REPO_ROOT / KERNEL_DEFAULT
 #: ``#`` starts a comment in Yarn, so the file still parses and still tokenizes
 #: while it is edited.
 REVISION_PROBE = "\n# e2e: revision probe\n"
+
+#: What the byte checks send through ``file.write_bytes``.  Every byte value is
+#: in it, which is the point: a NUL is what makes ``file.read`` call the file
+#: binary, and 0x89/0xff are what make it stop being a JSON string on the way
+#: back.  A payload of ASCII would pass through ``file.write`` and prove nothing.
+BYTE_PAYLOAD = bytes(range(256)) * 4 + b"\x00\x00PNG\r\n\x1a\n"
+
+#: Where the byte checks put their scratch file: inside the workspace root, so
+#: containment is exercised rather than bypassed, and under ``build/`` -- the
+#: directory the repository already ignores -- so a crashed run cannot leave a
+#: tracked file behind.  Every byte check removes it in a ``finally``.
+BYTE_SCRATCH = "build/e2e-bytes.bin"
 
 #: Kinds ``lang.tokenize`` may put on the wire (mirrors ``langs/lang.mjs``).
 #: Kept here rather than imported so the driver stays runnable against any fork
@@ -932,6 +954,184 @@ def define_checks(h: Harness) -> list:
             )
         return f"absolute and relative escapes both refused with 1003 (e.g. {outside})"
 
+    # -- the byte verbs ----------------------------------------------------
+    #
+    # `file.read` refuses a file with a NUL in it and `file.write` can only carry
+    # a JSON string, so neither can move a PNG.  An image is bytes, not text, and
+    # the contract that has to hold for it is the one that already holds for
+    # text: same containment, same cap, same revision track, same staleness
+    # refusal.  The only promise that is new is the one in the verb's name.
+
+    def _byte_scratch_path():
+        return os.path.join(ctx["root"], BYTE_SCRATCH.replace("/", os.sep))
+
+    def _remove_scratch():
+        try:
+            os.remove(_byte_scratch_path())
+        except OSError:
+            pass  # nothing was written, or a previous finally took it
+
+    def _write_bytes(path, payload_b64, base_revision=None):
+        params = {"path": path, "base64": payload_b64}
+        if base_revision is not None:
+            params["base_revision"] = base_revision
+        return client.call("file.write_bytes", params)
+
+    def byte_roundtrip():
+        _remove_scratch()
+        want = base64.b64encode(BYTE_PAYLOAD).decode("ascii")
+        try:
+            written = _write_bytes(BYTE_SCRATCH, want)
+            require(isinstance(written, dict), "file.write_bytes result is not an object")
+            require(
+                written.get("size") == len(BYTE_PAYLOAD),
+                f"file.write_bytes.size is {written.get('size')!r}, expected the "
+                f"number of bytes written ({len(BYTE_PAYLOAD)}), not the number of "
+                "characters sent",
+            )
+            # A byte write never looked at the bytes as lines, so it has no style
+            # to report: inventing one would be the lie the text verb exists to
+            # tell honestly.
+            require(
+                "eol" not in written,
+                f"file.write_bytes reported eol={written.get('eol')!r}; a byte "
+                "write has no line endings to speak of",
+            )
+            require(_is_id(written.get("revision")), "file.write_bytes.revision is not an int or string")
+
+            read = client.call("file.read_bytes", {"path": BYTE_SCRATCH})
+            require(isinstance(read, dict), "file.read_bytes result is not an object")
+            require(
+                read.get("base64") == want,
+                "file.read_bytes did not return the bytes that were written",
+            )
+            require(
+                read.get("size") == len(BYTE_PAYLOAD),
+                f"file.read_bytes.size is {read.get('size')!r}, expected {len(BYTE_PAYLOAD)}",
+            )
+            require(_is_id(read.get("revision")), "file.read_bytes.revision is not an int or string")
+
+            # The contrast that justifies the verb: the *text* read of the same
+            # file is refused, by code, rather than returning a truncated string.
+            error = client.expect_error("file.read", {"path": BYTE_SCRATCH})
+            code = error.get("code")
+            require(
+                code == 1003 or str(code) == "1003",
+                f"file.read of a binary file reported code={code!r} "
+                f"name={error.get('name')!r}, expected 1003",
+            )
+
+            # And the byte write is on the same revision track as the text one:
+            # identical bytes hash back to the revision they were read at.
+            again = _write_bytes(BYTE_SCRATCH, want, read["revision"])
+            require(
+                again.get("revision") == read["revision"],
+                f"rewriting the same bytes gave revision {again.get('revision')!r}, "
+                f"expected {read['revision']!r}",
+            )
+            return (
+                f"{len(BYTE_PAYLOAD)} bytes (every value 0x00-0xff, plus NUL and 0xff) "
+                f"round-tripped; file.read still refuses it with 1003; revision {read['revision']}"
+            )
+        finally:
+            _remove_scratch()
+
+    def byte_write_stale():
+        _remove_scratch()
+        first = base64.b64encode(b"\x01\x02\x03").decode("ascii")
+        moved = base64.b64encode(b"\x04\x05\x06\x07").decode("ascii")
+        try:
+            base = _write_bytes(BYTE_SCRATCH, first)["revision"]
+            current = _write_bytes(BYTE_SCRATCH, moved, base)["revision"]
+            require(current != base, f"a byte write of different bytes kept revision {base}")
+            error = client.expect_error(
+                "file.write_bytes",
+                {"path": BYTE_SCRATCH, "base64": first, "base_revision": base},
+            )
+            code = error.get("name", error.get("code"))
+            require(
+                code == "STALE_REVISION",
+                f"stale byte write reported {code!r} (code={error.get('code')!r}), "
+                "expected 'STALE_REVISION'",
+            )
+            data = error.get("data")
+            require(
+                isinstance(data, dict),
+                "STALE_REVISION from a byte write carries no data object",
+            )
+            require(
+                data.get("current_revision") == current,
+                f"STALE_REVISION from a byte write reports "
+                f"current_revision={data.get('current_revision')!r}, but the file is at {current!r}",
+            )
+            return f"byte write with base_revision={base} refused (current {current})"
+        finally:
+            _remove_scratch()
+
+    def byte_payload_rejected():
+        _remove_scratch()
+        cases = [
+            ("a character outside the alphabet", "!!!not-base64!!!"),
+            ("a length that is not a multiple of four", "AAA"),
+            ("padding in the middle", "AA==AAAA"),
+            ("a line break", "AA\nAA"),
+        ]
+        try:
+            for label, payload in cases:
+                error = client.expect_error(
+                    "file.write_bytes", {"path": BYTE_SCRATCH, "base64": payload}
+                )
+                code = error.get("name", error.get("code"))
+                require(
+                    code == "INVALID_PARAMS",
+                    f"{label} ({payload!r}) reported {code!r} "
+                    f"(code={error.get('code')!r}), expected 'INVALID_PARAMS'",
+                )
+            # A *forgotten* member is not an empty file, the same way for
+            # `file.write` an absent `text` is not an empty file.
+            error = client.expect_error("file.write_bytes", {"path": BYTE_SCRATCH})
+            require(
+                error.get("name", error.get("code")) == "INVALID_PARAMS",
+                "file.write_bytes without `base64` was not INVALID_PARAMS",
+            )
+            # Which is what makes this the real test of the pair: a genuinely
+            # empty payload *is* a file of zero bytes.
+            empty = _write_bytes(BYTE_SCRATCH, "")
+            require(
+                empty.get("size") == 0,
+                f"writing an empty payload reported size={empty.get('size')!r}, expected 0",
+            )
+            back = client.call("file.read_bytes", {"path": BYTE_SCRATCH})
+            require(
+                back.get("base64") == "",
+                f"an empty file read back as {back.get('base64')!r}",
+            )
+            return f'{len(cases)} malformed payloads and a missing member refused; "" writes 0 bytes'
+        finally:
+            _remove_scratch()
+
+    def byte_path_containment():
+        """The byte verbs keep the containment the text verbs keep.
+
+        Worth its own check rather than a comment: a second verb that resolves
+        paths is a second chance to forget the rule, and the files it would leak
+        are images, which no human reads before they are gone.
+        """
+        outside = str(REPO_ROOT.parent / "e2e-outside.png")
+        for label, path in (("absolute", outside), ("relative", "../e2e-outside.png")):
+            for method in ("file.read_bytes", "file.write_bytes"):
+                params = {"path": path}
+                if method == "file.write_bytes":
+                    params["base64"] = base64.b64encode(b"\x89PNG").decode("ascii")
+                error = client.expect_error(method, params)
+                code = error.get("code")
+                require(
+                    code == 1003 or str(code) == "1003",
+                    f"{method} {label} escape {path!r} reported code={code!r} "
+                    f"name={error.get('name')!r}, expected 1003",
+                )
+        return f"both byte verbs refuse absolute and relative escapes with 1003 ({outside})"
+
     def board_state():
         """Read the live board so a check that saves one can put it back.
 
@@ -1157,6 +1357,10 @@ def define_checks(h: Harness) -> list:
         ("file.write", file_write, None),
         ("file.write stale revision", file_write_stale, None),
         ("file.read path containment", path_containment, None),
+        ("file.read_bytes/file.write_bytes round-trip", byte_roundtrip, None),
+        ("file.write_bytes stale revision", byte_write_stale, None),
+        ("file.write_bytes malformed payload", byte_payload_rejected, None),
+        ("byte verbs path containment", byte_path_containment, None),
         ("view.save/view.load round-trip", board_roundtrip, None),
         ("starter board", starter_board, None),
         ("exec.start run", exec_run, None),

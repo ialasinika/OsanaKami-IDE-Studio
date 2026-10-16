@@ -28,9 +28,11 @@ typedef struct sde_app sde_app;
 #define SDE_WKSP_MAX_DEPTH 24
 
 /* Status codes shared by the mutating calls. */
-#define SDE_WKSP_OK      0
-#define SDE_WKSP_FAIL   -1
-#define SDE_WKSP_STALE  -2
+#define SDE_WKSP_OK        0
+#define SDE_WKSP_FAIL     -1
+#define SDE_WKSP_STALE    -2
+/* A request that is not a workspace problem: the base64 would not decode. */
+#define SDE_WKSP_BAD_B64  -3
 
 /*
  * The optimistic-concurrency token for a file's contents.  Callers treat it
@@ -69,12 +71,39 @@ sde_json *sde_wksp_read(const sde_app *app, const char *rel,
                         char *err, size_t errcap);
 
 /*
+ * {"path","base64","revision","size","mtime"} -- the same file as
+ * `sde_wksp_read()` reads, for the files that are not text.
+ *
+ * The bytes travel base64'd, and that is the only spelling of arbitrary bytes
+ * that survives the trip: the protocol carries a string, and `sde_wksp_read()`
+ * refuses a NUL byte precisely because a JSON string holding one cannot be
+ * round-tripped by every client.  Base64 has no such byte, so this is the verb
+ * an image goes through.  The spelling is fixed: the standard alphabet, `=`
+ * padding to a multiple of four, and nothing else -- no line breaks, no URL
+ * alphabet, no unpadded form.  A client that sends anything else is told so.
+ *
+ * `revision` is the same FNV-1a number over the same bytes that `sde_wksp_read()`
+ * reports for a text file and `sde_wksp_stat()` reports for any file, so a
+ * client holds one token whichever verb it read with, and a token from one can
+ * be sent to `sde_wksp_write_bytes()` as its `base`.
+ */
+sde_json *sde_wksp_read_bytes(const sde_app *app, const char *rel,
+                              char *err, size_t errcap);
+
+/*
  * {"path","exists","dir","size","mtime","revision"} -- facts about a file
  * without its text, for a client that wants to notice a change made behind its
  * back.  `revision` is the hash `sde_wksp_read()` would report, and 0 when
- * there is nothing to hash (absent, a directory, larger than the read cap, or
- * not text): a caller must read 0 as "cannot compare", not as "empty", because
- * a file that exists and is empty hashes to a real revision.
+ * there is nothing to hash (absent, a directory, or larger than the read cap):
+ * a caller must read 0 as "cannot compare", not as "empty", because a file that
+ * exists and is empty hashes to a real revision.
+ *
+ * A file holding a NUL byte is hashed like any other.  It was once reported as
+ * "no revision to compare" -- on the argument that the number had to be the one
+ * `file.read` hands out, and `file.read` refuses such a file.  `file.read_bytes`
+ * hands one out for it now, so the argument is gone and the refusal with it: an
+ * image that changes behind the client's back is exactly the case this method
+ * exists for, and a client cannot watch a file it is told it cannot compare.
  */
 sde_json *sde_wksp_stat(const sde_app *app, const char *rel,
                         char *err, size_t errcap);
@@ -88,5 +117,25 @@ int sde_wksp_write(const sde_app *app, const char *rel, const char *text,
                    size_t len, int has_base, unsigned long base,
                    sde_json **out, unsigned long *cur_rev,
                    char *err, size_t errcap);
+
+/*
+ * Writes the bytes `base64` decodes to.  Every rule of `sde_wksp_write()` holds
+ * unchanged -- the same resolve, the same cap, the same stale check, the same
+ * parent creation, the same `{path, revision, size}` result -- and the only
+ * difference is what the bytes mean: nothing.  There is no `text`, so there is
+ * no `eol` to report either.
+ *
+ * The cap applies to the *decoded* bytes, and a payload over it is refused
+ * before anything is allocated, so a request cannot ask the kernel to build a
+ * 48 MB buffer only to throw it away.
+ *
+ * A string that is not base64 is a malformed request, not a workspace problem:
+ * it returns SDE_WKSP_BAD_B64 with `err` holding the reason, and the RPC layer
+ * turns that into INVALID_PARAMS rather than IO.
+ */
+int sde_wksp_write_bytes(const sde_app *app, const char *rel, const char *base64,
+                         int has_base, unsigned long base,
+                         sde_json **out, unsigned long *cur_rev,
+                         char *err, size_t errcap);
 
 #endif /* INFANTGOD_WKSP_H */

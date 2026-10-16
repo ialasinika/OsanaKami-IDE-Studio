@@ -71,11 +71,14 @@ python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."
   **full mode** with `--kernel-cmd` (the command line is spawned verbatim, e.g.
   `node shell/main.mjs rpc --workspace .`; `lang.list`, `lang.tokenize` and the
   span-tiling assertion all run).
-* `e2e.py` asserts twelve things: the `hello` handshake, `workspace.info`, the
+* `e2e.py` asserts sixteen things: the `hello` handshake, `workspace.info`, the
   language layer (`lang.list`, `lang.tokenize`, and that its spans tile the file
   with no gaps or overlaps), `file.read`, `file.write` plus a stale
   `base_revision`, path containment (absolute and relative escapes refused with
-  `1003`), the `view.save`/`view.load` round-trip, the shipped starter board
+  `1003`), the `file.read_bytes`/`file.write_bytes` round-trip of all 256 byte
+  values (including the NULs that make the file binary, and the same
+  `base_revision` rail the text verbs use), a payload that is not base64, the
+  `view.save`/`view.load` round-trip, the shipped starter board
   (`examples/board.json` stored and read back member for member -- the kernel
   does not judge the shape, so this is a storage check, and the board schema's
   own check is `shell/web/selftest.mjs`), and `exec.start` streamed to
