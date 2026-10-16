@@ -19,14 +19,51 @@
  * Pure, so it runs under Node: no DOM, no clock, no I/O.
  */
 
+/**
+ * The mode a window opens in.
+ *
+ * A mod author opens this to write `.yarn`, `.json` and `.csv` in a mod
+ * package, and the tile is the arrangement that does that without being taught
+ * anything.  The board is still one `mode` away for the times the arrangement
+ * itself is the thing you want to see; it is simply not where anyone lands, and
+ * not a button (see `SWITCH_VIEWS`).
+ */
+export const DEFAULT_VIEW = "classic";
+
 /** The mode names, as `mode <name>` takes them, in switch order. */
 export const VIEWS = Object.freeze(["board", "classic", "mod"]);
 
-/** What the switch calls each one.  `board` is first: a reload lands there. */
+/**
+ * The modes the HUD switch offers -- what a window can be changed into.
+ *
+ * The board is deliberately absent.  It is a *mode*, not a destination: it draws
+ * every card where the document put it, including the ones overlapping, and the
+ * only way to make that arrangement meaningful is to drag cards around on it,
+ * which is the paradigm this product stopped asking anyone to learn.  Leaving it
+ * on the switch would put that back in front of every user as a button; leaving
+ * it in `mode` keeps it reachable, and `docs/VIEWS.md` says why.
+ */
+export const SWITCH_VIEWS = Object.freeze(["classic", "mod"]);
+
+/** What the switch calls each one. */
 export const VIEW_LABELS = Object.freeze({
   board: "Board",
   classic: "Classic",
   mod: "Mod",
+});
+
+/**
+ * The one line of prose each view gets, for the switch button's tooltip.
+ *
+ * Every name in `VIEWS` has one, including the board, so that putting any view
+ * back on the switch is a matter of adding it to `SWITCH_VIEWS` and nothing
+ * else -- a button whose title is `undefined` is the kind of thing nobody
+ * notices until a user hovers it.  `selftest.mjs` holds that completeness.
+ */
+export const VIEW_TITLES = Object.freeze({
+  board: "every card exactly where the document has it",
+  classic: "the same cards as a sidebar, a tab strip and a code area",
+  mod: "the same cards arranged around a mod package: package, code, problems",
 });
 
 /**

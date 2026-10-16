@@ -731,7 +731,10 @@ export const COMMAND_HELP = [
   "save                     write the board to .infantgod/board.json",
   "undo                     take back the last board edit (Ctrl+Z)",
   "redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)",
-  "mode board | classic     the board, or the same cards as sidebar + tabs + code area",
+  "mode board|classic|mod  which way of looking at the same document",
+  "log                      show or hide the message strip",
+  "help                     list these commands (and open the strip to show them)",
+  "clear                    empty the message strip",
 ];
 
 /* ------------------------------------------------------------------ */

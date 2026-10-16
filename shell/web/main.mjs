@@ -31,7 +31,18 @@ import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } f
 import { createHistory } from "./history.mjs";
 import { classicLayout, classicTabLabel } from "./classic.mjs";
 import { modLayout } from "./modview.mjs";
-import { VIEWS, VIEW_LABELS, tiledView, viewAbout, viewHud, viewName, viewNote } from "./views.mjs";
+import {
+  DEFAULT_VIEW,
+  SWITCH_VIEWS,
+  VIEWS,
+  VIEW_LABELS,
+  VIEW_TITLES,
+  tiledView,
+  viewAbout,
+  viewHud,
+  viewName,
+  viewNote,
+} from "./views.mjs";
 import {
   WATCH_GONE,
   WATCH_POLL_MS,
@@ -300,6 +311,7 @@ function createApp() {
   const revEl = $("hud-revision");
   const dirtyEl = $("hud-dirty");
   const logEl = $("log");
+  const logToggle = $("log-toggle");
   const barEl = $("bar");
   const commandEl = $("command");
   const hintEl = $("command-hint");
@@ -307,21 +319,17 @@ function createApp() {
   const tabsEl = $("tabs");
   const sideHintEl = $("side-hint");
   const modeSwitch = $("mode-switch");
-  /* One button per view, built from the registry rather than written out, so a
-     view added to views.mjs cannot be missing from the switch.  A switch and not
-     a cycle: with three views a single button that "names the next one" makes
-     the reader work out an order that is not part of the document. */
-  const modeTitles = {
-    board: "every card exactly where the document has it",
-    classic: "the same cards as a sidebar, a tab strip and a code area",
-    mod: "the same cards arranged around a mod package: package, code, problems",
-  };
-  const modeButtons = VIEWS.map((name) => {
+  /* One button per view the switch offers, built from the registry rather than
+     written out, so a view added to `SWITCH_VIEWS` cannot be missing from the
+     switch.  A switch and not a cycle: with two views a single button that
+     "names the next one" makes the reader work out an order that is not part of
+     the document.  The board is not one of them -- see views.mjs. */
+  const modeButtons = SWITCH_VIEWS.map((name) => {
     const button = el("button", "hud-switch-button", VIEW_LABELS[name]);
     button.type = "button";
     button.dataset.view = name;
-    button.title = modeTitles[name];
-    button.setAttribute("aria-pressed", name === "board" ? "true" : "false");
+    button.title = VIEW_TITLES[name];
+    button.setAttribute("aria-pressed", name === DEFAULT_VIEW ? "true" : "false");
     modeSwitch.append(button);
     return button;
   });
@@ -351,8 +359,14 @@ function createApp() {
   /* Which of the three arrangements is on screen: "board", "classic" or "mod".
      In memory only, deliberately -- `docs/PARADIGM.md` argues the board is the
      document, and a view that survived a reload would be a document of its own.
-     Reloading the page always starts on the board. */
-  let viewMode = "board";
+     Reloading the page always starts in `DEFAULT_VIEW` (views.mjs), never in
+     whatever the last window was left showing. */
+  let viewMode = DEFAULT_VIEW;
+  /* The view's class on `<body>` is the stylesheet's half of the switch, and a
+     window opens *in* a view: it is painted here, before anything is drawn, not
+     only when a switch changes it.  `setView` returns early when the mode asked
+     for is the one already on, which is exactly what a boot would ask. */
+  paintView();
   let autosaveTimer = null;
   let reconnectTimer = null;
   let reconnectDelay = 800;
@@ -413,6 +427,68 @@ function createApp() {
   /* logging (never a modal: everything lands on the bottom line)        */
   /* ------------------------------------------------------------------ */
 
+  /* The strip is where every refusal, warning and unknown command lands -- the
+     whole of InfantGod Studio's dialog system -- and it starts closed.  A window is
+     for writing, and 132px of mostly-routine chatter along the bottom of it is
+     132px nobody asked for.  The price of closing it is that "closed" has to be
+     able to say "something happened", which is what the HUD button does.  It is
+     not a notification system: the button counts lines and remembers the worst
+     level, nothing per-message, because the strip itself is one click away. */
+  let logOpen = false;
+  let logUnseen = 0;
+  let logWorst = "info";
+  /* Boot is the window saying it started -- version, protocol, workspace, the
+     board it read -- not news.  Until it finishes, the strip stays out of the
+     way and the button counts nothing, or every window would open on `log · 4`
+     with nothing in it worth reading. */
+  let logSettled = false;
+
+  const LOG_LEVELS = ["info", "warn", "error"];
+
+  function paintLogToggle() {
+    const worst = LOG_LEVELS.indexOf(logWorst);
+    logToggle.textContent = logOpen || logUnseen === 0 ? "log" : `log · ${logUnseen}`;
+    logToggle.setAttribute("aria-expanded", logOpen ? "true" : "false");
+    logToggle.classList.toggle("is-hot", !logOpen && worst >= 1);
+    logToggle.classList.toggle("is-error", !logOpen && worst >= 2);
+    logToggle.title = logOpen
+      ? "hide the message strip"
+      : logUnseen === 0
+        ? "messages — nothing new"
+        : `${logUnseen} message${logUnseen === 1 ? "" : "s"} since you last looked`;
+  }
+
+  /**
+   * Open or close the message strip.
+   *
+   * Opening it is also how you acknowledge it: the count and the colour are
+   * about what arrived while it was shut, so they clear the moment it is read.
+   */
+  function showLog(open) {
+    logOpen = open;
+    logEl.hidden = !open;
+    if (open) {
+      logUnseen = 0;
+      logWorst = "info";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    paintLogToggle();
+  }
+
+  /**
+   * The window has finished starting, so the strip's count starts from here.
+   *
+   * Called at the end of `boot()`, which is what emits the banner the count
+   * would otherwise include.  Nothing else clears it: from here on, a line that
+   * arrives while the strip is shut is a line somebody has not read.
+   */
+  function settleLog() {
+    logSettled = true;
+    logUnseen = 0;
+    logWorst = "info";
+    paintLogToggle();
+  }
+
   const logLines = [];
   function log(level, message, path) {
     const text = typeof message === "string" ? message : String(message);
@@ -429,6 +505,17 @@ function createApp() {
       logEl.firstElementChild.remove();
     }
     logEl.scrollTop = logEl.scrollHeight;
+    if (level === "error") {
+      // A failure is the one thing that must not wait to be noticed, whether or
+      // not the window has finished starting.
+      showLog(true);
+    } else if (logSettled && !logOpen) {
+      logUnseen += 1;
+      if (LOG_LEVELS.indexOf(level) > LOG_LEVELS.indexOf(logWorst)) {
+        logWorst = level;
+      }
+      paintLogToggle();
+    }
     return line;
   }
 
@@ -489,6 +576,18 @@ function createApp() {
   }
 
   /**
+   * Paint the view's class on `<body>` -- the stylesheet's half of the switch.
+   *
+   * Separate from `setView` because it is not a transition: the first paint of a
+   * window is already in a view, and `setView` refuses to act when the mode it is
+   * handed is the one already on.
+   */
+  function paintView() {
+    document.body.classList.toggle("is-classic", viewMode === "classic");
+    document.body.classList.toggle("is-mod", viewMode === "mod");
+  }
+
+  /**
    * Switch between the board, the classic view and the mod view.
    *
    * The whole transition is one class on `<body>` (the stylesheet's switch) plus
@@ -503,8 +602,7 @@ function createApp() {
       return viewMode;
     }
     viewMode = mode;
-    document.body.classList.toggle("is-classic", viewMode === "classic");
-    document.body.classList.toggle("is-mod", viewMode === "mod");
+    paintView();
     renderAll();
     return viewMode;
   }
@@ -625,7 +723,16 @@ function createApp() {
   /** What stands in the sidebar column when no card can. */
   function renderSideHint(layout) {
     const missing = layout !== null && layout.sidebar === null;
-    sideHintEl.hidden = !missing || !tiledView(viewMode);
+    // A tile with no sidebar card has no column to stand in: `layout.tabs.x` is
+    // 0, and advice laid out in a zero-width box is not a hint, it is a smear of
+    // clipped words -- which is what the classic view drew, whose sidebar is the
+    // optional one.  There the hint becomes a notice over the code area instead,
+    // and a notice over the code is only worth its cost when there is no code
+    // under it yet: an empty tile explaining how to fill it, not a banner
+    // covering the first two lines of the file you just opened.
+    const columnWidth = layout === null ? 0 : Math.max(0, layout.tabs.x);
+    const overlay = columnWidth === 0;
+    sideHintEl.hidden = !missing || !tiledView(viewMode) || (overlay && layout.roles.area !== null);
     if (sideHintEl.hidden) {
       return;
     }
@@ -639,10 +746,20 @@ function createApp() {
     // it does it -- not the code area -- is what reaches the bottom edge.
     const top = layout.tabs.y;
     const bottom = layout.panel ? layout.panel.y + layout.panel.h : layout.area.y + layout.area.h;
+    sideHintEl.classList.toggle("is-notice", overlay);
     sideHintEl.style.left = "0px";
-    sideHintEl.style.top = `${top}px`;
-    sideHintEl.style.width = `${Math.max(0, layout.tabs.x)}px`;
-    sideHintEl.style.height = `${Math.max(0, bottom - top)}px`;
+    if (!overlay) {
+      sideHintEl.style.top = `${top}px`;
+      sideHintEl.style.width = `${columnWidth}px`;
+      sideHintEl.style.height = `${Math.max(0, bottom - top)}px`;
+    } else {
+      // Below the tab strip, not over it: with no sidebar card the tabs start at
+      // the tile's left edge, so a notice at `top` would cover the very tab the
+      // code it covers is in.  A tile with nothing open has no strip to clear.
+      sideHintEl.style.top = `${tabsEl.hidden ? top : top + layout.tabs.h}px`;
+      sideHintEl.style.width = `${Math.min(280, Math.max(180, Math.round(layout.tabs.w * 0.3)))}px`;
+      sideHintEl.style.height = "auto";
+    }
   }
 
   function renderHud() {
@@ -1444,11 +1561,12 @@ function createApp() {
   /* the command line                                                    */
   /* ------------------------------------------------------------------ */
 
-  const KNOWN_COMMANDS = [
-    "open", "note", "sheet", "run", "files", "project", "mod", "problems",
-    "docs", "link", "unlink", "zoom", "focus", "delete", "save", "undo", "redo",
-    "mode", "help", "clear",
-  ];
+  /* The vocabulary, derived from the one place it is written down.  `COMMAND_HELP`
+     is what `help` prints and what the hint reads, so taking the first word of
+     each row means a command cannot be spellable but unlisted, or listed but
+     unspellable -- which is how `clear` came to be a command the hint knew
+     nothing about. */
+  const KNOWN_COMMANDS = COMMAND_HELP.map((row) => row.trim().split(/\s+/)[0]);
 
   async function runCommand(raw) {
     const line = raw.trim();
@@ -1635,11 +1753,22 @@ function createApp() {
         return;
       }
       case "help": {
+        // An answer to a question is not something to go looking for: the strip
+        // opens itself so that what was asked for is on screen.
+        showLog(true);
         log("info", "commands:");
         for (const row of COMMAND_HELP) {
           log("info", `  ${row}`);
         }
-        log("info", "  clear                    empty the log");
+        return;
+      }
+      case "log": {
+        // A toggle rather than `log on` / `log off`, because the HUD button is the
+        // same toggle and either way the answer is the strip itself.
+        showLog(!logOpen);
+        if (logOpen) {
+          log("info", "the message strip is open; `log` or the HUD button closes it");
+        }
         return;
       }
       case "mode": {
@@ -1663,6 +1792,9 @@ function createApp() {
       case "clear": {
         logEl.textContent = "";
         logLines.length = 0;
+        logUnseen = 0;
+        logWorst = "info";
+        paintLogToggle();
         return;
       }
       default: {
@@ -1745,6 +1877,12 @@ function createApp() {
         renderAll();
       }
     });
+
+    /* The log strip's door.  One listener here rather than a click handler per
+       render, like the switch above: the button is in index.html and is never
+       rebuilt. */
+    logToggle.addEventListener("click", () => showLog(!logOpen));
+    paintLogToggle();
 
     for (const button of modeButtons) {
       button.addEventListener("click", () => {
@@ -2172,6 +2310,8 @@ function createApp() {
     watchSeen = new Map();
     watchUnavailable = false;
     startWatching();
+    // The banner is written; from here a message with the strip shut is news.
+    settleLog();
   }
 
   /* ------------------------------------------------------------------ */

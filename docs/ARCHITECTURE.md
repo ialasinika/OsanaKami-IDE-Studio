@@ -238,16 +238,20 @@ The browser side, `shell/web/`, is module-per-concern:
 | `cards.mjs` | one renderer and behaviour set per card kind | the board pans but has no cards on it |
 | `rpc.mjs` | the client side of the kernel protocol | the board renders as an empty canvas |
 | `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the board works, but `mode classic` has no tiling to draw |
+| `modview.mjs` | the same cards arranged as a mod workbench: a package column, a code area and a report panel (pure) | the board works, but `mode mod` has no tiling to draw |
+| `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
 
-`board.mjs`, `history.mjs`, `watch.mjs` and `classic.mjs` are deliberately
+`board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs` and
+`views.mjs` are deliberately
 UI-free — no `document`, no `window`, no timer — so the same objects are used by
 the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
 that feeds it lives in `main.mjs`, which is why the decision table can be pinned
-without a browser, a kernel or a clock. `classic.mjs` is the same kind of
-arithmetic: it computes the role and the tile for the cards a document already
-holds, and `main.mjs` owns the pixels.
+without a browser, a kernel or a clock. `classic.mjs` and `modview.mjs` are the
+same kind of arithmetic: they compute the role and the tile for the cards a
+document already holds, `views.mjs` names the modes and says which one a window
+opens in, and `main.mjs` owns the pixels.
 
 The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
@@ -269,9 +273,9 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, token spans and the editor's indent/find/replace arithmetic (118 checks), no DOM |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic (120 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and `mode classic` is measured as drawn -- the tile, the tab click that moves the code area, and `mode board` restoring every card, size, pan and zoom -- and the editor's gutter is read back one number per line and toggled off and on by a real click (25 checks) |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, a wheel over a card's own contents is left to the card while the board's own wheel still pans, the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and `mode classic` is measured as drawn -- the tile, the tab click that moves the code area, and `mode board` restoring every card, size, pan and zoom -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and a window is checked to open on the classic tile with `mode board` still reachable behind it -- which is why the board's own steps say `mode board` out loud before they drag anything (26 checks) |
 
 `smoke` runs the last two and needs a browser.
 

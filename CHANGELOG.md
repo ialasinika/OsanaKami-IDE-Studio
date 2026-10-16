@@ -61,10 +61,10 @@ tree.
   `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`, `CLASSIC_TAB_H` in
   `shell/web/classic.mjs`) and are measured in
   the board's own pixels, which is why `shell/web/selftest.mjs` pins them with no
-  DOM (12 new checks, **118** in all) and `tools/input_smoke.py` measures the tile
+  DOM (12 new checks, **108** in all) and `tools/input_smoke.py` measures the tile
   in a real window (4 new checks: the tiling and its parts, a tab click moving the
   code area to that file, the wheel leaving the viewport alone, and `mode board`
-  restoring the board exactly, **25** in all).  The wheel stays the board's
+  restoring the board exactly, **23** in all).  The wheel stays the board's
   gesture, so the classic view has no pan and no zoom, and the HUD says `no zoom`
   rather than quoting a number that no longer describes the screen.  The view
   came from upstream seIDE `564d51e`, applied on top of the fork's own shell;
@@ -116,6 +116,43 @@ tree.
   carries the `min-width: 0` a flex item needs before it can ellipsize at all,
   every item with a fixed width keeps it, and the selection is the one thing that
   gives up room.
+- A window now **opens on the classic tile**, and the board is a **mode**, not a
+  button.  `shell/web/views.mjs` separates the view a window starts in
+  (`DEFAULT_VIEW`) from the views the switch offers (`SWITCH_VIEWS`, which is
+  `classic` and `mod`): `board` stays a member of `VIEWS` — its command, its
+  `body` class and its tile arithmetic are untouched — it is simply not one of
+  the buttons, because a switch should offer the views you are *not* in and the
+  board already has `mode board`, the command bar and `help`.  The first paint is
+  a view like any other: `paintView` writes `body.is-classic` where `viewMode` is
+  initialised, because `setView` refuses to act on the mode it is already in, and
+  a window that booted into a mode nobody painted was left wearing the board's
+  CSS.  `shell/web/selftest.mjs` gained two checks — that the default view is a
+  member and the switch is not, and that every switchable view has a button title
+  (**120** in all) — and `tools/input_smoke.py` gained one, that a window really
+  opens on the classic tile with `mode board` still behind it (**26** in all,
+  whose board steps now say `mode board` out loud instead of assuming it).
+- The **message strip is folded away** until it has something to say.  What it
+  holds is the `info` chatter a quiet window emits — the startup banner and the
+  workspace path — which is exactly the clutter a person who opened the app to
+  edit a file does not want; so `#log` starts `hidden`, its rows go back to the
+  tile (measured in a real window: 620 px of board against 559 px with the strip
+  open), and the HUD carries a `log` button in its place.  An `error` opens the
+  strip on the spot and never folds it back on its own; while it is shut the
+  button counts what is waiting and takes the worst level's colour (`log · 3`,
+  `is-hot` at a warning and `is-error` at an error, in the button's own tooltip);
+  `help` opens it; `log` and a click on the button toggle it.  No message text
+  changed, so the suites that read the strip still read it.
+- The hint that stands in the sidebar column is no longer a **smear of clipped
+  words**.  A tile with no `project` card has no column to stand in — the tile
+  arithmetic gives the tabs and the code area the whole width, so `layout.tabs.x`
+  is 0 — and advice laid out in a zero-width box wraps to one word per line
+  behind the code.  It is a notice there instead, and only while the code area is
+  empty: below the tab strip rather than over it (with no sidebar card the tabs
+  start at the tile's left edge, so a notice at the tile's top would cover the
+  very tab the file under it is open in), 280 px wide and its own height, with a
+  border all round instead of a panel's cut-off edge.  Once a file is open the
+  notice is not drawn at all, because advice is worth less than the first two
+  lines of the file you just opened.
 
 ### Undo and redo on the board
 
@@ -291,7 +328,7 @@ tree.
 ### Checks
 
 - `make test` (e2e 12, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 118/118, mods 84/84) and `make smoke` (browser smoke 5, input smoke 25)
+  selftest 120/120, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
@@ -304,7 +341,14 @@ tree.
   That file was also reading the current view out of `#mode-toggle`, the single
   button the classic view introduced and the view switch replaced: the stale
   lookup threw inside the classic block and took four checks down with it, which
-  is why it now finds the button marked `is-current` instead.
+  is why it now finds the button marked `is-current` instead.  The three promises
+  this release adds were held to the same bar (throwaway
+  `build/sabotage_default_view.py`): a window made to open on the board instead of
+  the classic tile, a message strip made to ship unfolded, and the board put back
+  on the switch — each was caught by the suite that claims it, and `views.mjs` and
+  `index.html` were restored byte-identical.  The first two are only visible to a
+  real window, which is the whole reason `tools/input_smoke.py` reads them: no
+  DOM-less check can see which mode a window booted into.
 
 ### Licence
 

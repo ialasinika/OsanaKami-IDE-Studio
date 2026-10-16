@@ -123,8 +123,11 @@ import {
 } from "./modview.mjs";
 
 import {
+  DEFAULT_VIEW,
+  SWITCH_VIEWS,
   VIEWS,
   VIEW_LABELS,
+  VIEW_TITLES,
   tiledView,
   viewAbout,
   viewHud,
@@ -2389,6 +2392,30 @@ test("views: the HUD quotes no zoom a tile cannot honour", () => {
   assert.equal(tiledView("classic"), true);
   assert.equal(tiledView("mod"), true);
   assert.equal(tiledView("sideways"), false, "an unknown view is not a tile, so it cannot be drawn");
+});
+
+test("views: the window opens on the tile, and the board is a mode rather than a button", () => {
+  assert.equal(DEFAULT_VIEW, "classic", "a window opens where a mod author works, not on a canvas");
+  assert.ok(VIEWS.indexOf(DEFAULT_VIEW) !== -1, "the default has to be a name `mode` accepts");
+  assert.deepEqual(SWITCH_VIEWS, ["classic", "mod"]);
+  assert.equal(SWITCH_VIEWS.indexOf("board"), -1, "the board is reachable by name and offered to nobody");
+  assert.ok(SWITCH_VIEWS.indexOf(DEFAULT_VIEW) !== -1, "the view a window opens in must be one you can leave");
+  for (const view of SWITCH_VIEWS) {
+    assert.ok(VIEWS.indexOf(view) !== -1, `${view}: the switch cannot offer a name \`mode\` would refuse`);
+  }
+});
+
+test("views: a switch button has a label and a tooltip whichever view is on it", () => {
+  for (const view of VIEWS) {
+    assert.equal(typeof VIEW_LABELS[view], "string", `${view}: a button needs a label`);
+    assert.equal(typeof VIEW_TITLES[view], "string", `${view}: a button title of undefined is not a title`);
+    assert.ok(VIEW_TITLES[view].length > 20, `${view}: the tooltip says something about the view`);
+  }
+  assert.deepEqual(
+    Object.keys(VIEW_TITLES).sort(),
+    [...VIEWS].sort(),
+    "and nothing besides the views: a title for no view is dead weight",
+  );
 });
 
 test("views: every view names the ways out of it and says what it is", () => {

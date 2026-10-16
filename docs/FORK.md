@@ -355,11 +355,13 @@ Not implemented, not promised, and each cheap enough to be tempting:
 - **A conventional IDE layout on top of the board.** Built now, as a projection:
   `mode classic` (one pure module, `shell/web/classic.mjs`) draws the same cards
   as a code area, a tab strip and a sidebar without creating, moving or saving
-  anything. Still on the table, and each of these would need something the
-  projection deliberately refuses: split panes, a sidebar you drag to resize, a
-  per-tab close (a card has no close), tab reordering, remembering the mode in
-  `board.json`, and a `files`/`project` sidebar that behaves like a tree rather
-  than like the card it is.
+  anything, and it is the view a window opens in; `mode mod`
+  (`shell/web/modview.mjs`) is the same kind of projection into a workbench with
+  a package column and a report panel. Still on the table, and each of these
+  would need something the projection deliberately refuses: split panes, a
+  sidebar you drag to resize, a per-tab close (a card has no close), tab
+  reordering, remembering the mode in `board.json`, and a `files`/`project`
+  sidebar that behaves like a tree rather than like the card it is.
 - **A minimap or "fit board to window".** The viewport is three numbers; the
   cards are a flat list with geometry. This is a shell-only feature.
 - **Multi-select.** Gestures are per-card in `installGestures()`; a

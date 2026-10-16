@@ -15,7 +15,11 @@ of the run, deletes it in a ``finally``, and refuses to start if the name is
 already taken.  The wrapper is same-origin with the app it frames, so it can
 reach into the iframe and do what a person does:
 
-1. wait for the app to reach "kernel ready";
+1. wait for the app to reach "kernel ready", and read which view the window
+   opened on: every step below is the board's -- the empty-space double-click,
+   the pan, the zoom, the wheel over bare board -- so the wrapper says `mode
+   board` and reports both, rather than inheriting whatever the product happens
+   to open on;
 2. double-click empty space -- a real board change through the real gesture;
 3. dispatch ``keydown`` with ``ctrlKey`` for ``z``, then for ``shift+z``;
 4. count the card elements in the iframe's DOM after each step;
@@ -215,6 +219,36 @@ async function main() {
   say("kernel ready: true");
   const doc = frame.contentDocument, win = frame.contentWindow;
   await sleep(400);
+
+  /* This window opens on the classic tile.  The steps below are about the board
+     -- the double-click that drops a note, the pan, the zoom, the wheel over
+     bare board -- so this says which one is being measured rather than inheriting
+     whatever the product opens on.  The default is reported first: it is a claim
+     the product makes (views.mjs's DEFAULT_VIEW), and this is the only suite that
+     can see a running window make it. */
+  say("view-default: classic=" + doc.body.classList.contains("is-classic"));
+
+  /* The message strip is the app's only voice and it starts folded: a window
+     that opened with it open is the regression this measures.  The two clicks
+     are the same `#log-toggle` a reader would use, so the button is measured as
+     the way in rather than as an element that merely exists. */
+  const logEl = doc.getElementById("log"), logToggleEl = doc.getElementById("log-toggle");
+  const logAtBoot = logEl.hidden === true && logEl.getBoundingClientRect().height === 0;
+  logToggleEl.click();
+  await sleep(400);
+  const logWhenOpened = logEl.hidden === false && logEl.getBoundingClientRect().height > 0;
+  logToggleEl.click();
+  await sleep(400);
+  const logWhenShut = logEl.hidden === true;
+  say("log-boot: hidden=" + logAtBoot + " open=" + logWhenOpened + " shut=" + logWhenShut
+    + ' button="' + (logToggleEl.textContent || "").trim() + '"');
+
+  const commandEl = doc.getElementById("command");
+  commandEl.value = "mode board";
+  commandEl.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+  await sleep(500);
+  say("view-board: classic=" + doc.body.classList.contains("is-classic")
+    + " mod=" + doc.body.classList.contains("is-mod"));
 
   const before = cardCount();
   say("cards at boot: " + before);
@@ -849,7 +883,7 @@ def main(argv=None) -> int:
         edge = find_edge(args.edge)
     except DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 25 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 26 skipped (no browser)")
         return 0
 
     # Deliberately *not* install_if_absent(): the counts below are deltas, so the
@@ -911,6 +945,22 @@ def main(argv=None) -> int:
     wheel = parse_wheel(body)
     booted = "kernel ready: true" in body
     results.check("the app boots in an iframe and reaches kernel ready", booted)
+    opened = re.search(r"view-default: classic=(\w+)", body)
+    to_board = re.search(r"view-board: classic=(\w+) mod=(\w+)", body)
+    folded = re.search(r'log-boot: hidden=(\w+) open=(\w+) shut=(\w+) button="([^"]*)"', body)
+    results.check("a window opens on the classic tile with the message strip folded away, and `mode board` is still the board",
+                  opened is not None and opened.group(1) == "true"
+                  and to_board is not None and to_board.group(1) == "false"
+                  and to_board.group(2) == "false"
+                  and folded is not None and folded.group(1) == "true"
+                  and folded.group(2) == "true" and folded.group(3) == "true",
+                  f"at boot classic={opened.group(1) if opened else '?'}, after `mode board` "
+                  f"classic={to_board.group(1) if to_board else '?'} "
+                  f"mod={to_board.group(2) if to_board else '?'}; "
+                  f"strip hidden={folded.group(1) if folded else '?'} "
+                  f"open={folded.group(2) if folded else '?'} "
+                  f"shut={folded.group(3) if folded else '?'} "
+                  f"button={folded.group(4) if folded else '?'}")
     results.check("a double-click on empty space adds a card",
                   counts.get("added") == counts.get("boot", -1) + 1 if counts else False,
                   f"boot={counts.get('boot')} added={counts.get('added')}" if counts else "no counts")

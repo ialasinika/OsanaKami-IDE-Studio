@@ -37,6 +37,12 @@ workbench](#the-board-as-a-mod-workbench-mode-mod)). Neither creates a card,
 moves a card or saves anything — the tabs are the editor cards, in board order.
 The board is the document; the views are what you can do with it.
 
+A window opens in `classic`, and the HUD switch offers `classic` and `mod`
+(`views.mjs`'s `DEFAULT_VIEW` and `SWITCH_VIEWS`). The board is still a mode —
+`mode board` draws every card exactly where the document put it, and nothing
+about it was removed — but it is not a button: its arrangement only means
+something once you have dragged cards into it, and nothing here asks you to.
+
 The layout *is* project data. It lives in `.infantgod/board.json` next to your
 sources, so the IDE remembers a spatial arrangement — what you had open, where
 you put it, what was linked to what — rather than a tab history. Two people on
@@ -51,8 +57,16 @@ touching `core/` — [`docs/VIEWS.md`](../../docs/VIEWS.md).
 
 The command line at the bottom is the only place commands live. It is not a
 modal palette and not a fuzzy finder popup: it stays where it is, it acts on the
-currently focused card, and every message it has for you is appended to the log
-line above it. **InfantGod Studio has no dialogs**, so nothing ever covers the board.
+currently focused card, and every message it has for you is appended to the log.
+
+**The log starts folded away, and `log` toggles it.** It is the app's only voice
+— there are no dialogs, so nothing ever covers what you are reading — but a strip
+of running commentary under the code is the tool of the person writing the code,
+not of the person using it. The HUD's `log` button (`#log-toggle`) unfolds it and
+the same button folds it back. A line that arrives while it is folded turns the
+button into a count and colours it by the worst line waiting, so nothing fails in
+silence and nothing is in the way; unfolding clears the count. An `error` is the
+one thing that will not wait to be noticed: it opens the strip by itself.
 
 ### Card kinds (registered, not hard-coded)
 
@@ -274,9 +288,10 @@ neither the painted height nor a click is visible to a DOM-less test.
 
 ### The same cards as a code area: `mode classic`
 
-`mode classic` — or the `Classic` button in the HUD's view switch, whose buttons
-are named by `VIEWS` and whose current one is marked — draws the board a second
-way:
+A window **opens here**: `DEFAULT_VIEW` in `views.mjs` names this mode, and the
+board is the one that has to be asked for. `mode classic` — or the `Classic`
+button in the HUD's view switch, whose buttons come from `SWITCH_VIEWS` and whose
+current one is marked — draws the board a second way:
 
 | part | which card | where |
 | --- | --- | --- |

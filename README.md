@@ -89,14 +89,17 @@ reference a file, and may be connected by links. The board persists to
 state**. A non-modal command line at the bottom acts on the focused card.
 See `docs/PARADIGM.md`.
 
-The board is also the only document. The shell can draw those same cards a second
-way — `mode classic` puts the focused editor into a code area, the open files
-into a tab strip above it and a `project`/`files` card, when the board has one, into a
-sidebar — but that view is
-a *projection*: switching to it creates no card and moves none, nothing about it
-is written to `board.json`, and `mode board` puts every card back on the pixels
-it had. A fork that deletes the view loses a way of looking, not a piece of
-project state; the board is still where the project is.
+The board is also the only document. The shell draws those same cards two other
+ways — `mode classic` puts the focused editor into a code area, the open files
+into a tab strip above it and a `project`/`files` card, when the board has one,
+into a sidebar; `mode mod` arranges that same tile around a mod package — and a
+window opens on the classic one. Both are
+*projections*: switching to either creates no card and moves none, nothing about
+them is written to `board.json`, and `mode board` puts every card back on the
+pixels it had. The board is still a mode, for the times the arrangement itself is
+what you want to look at; it is deliberately not a button in the HUD. A fork that
+deletes a view loses a way of looking, not a piece of project state; the board is
+still where the project is.
 
 ### 2. No Electron in the core
 
@@ -221,7 +224,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 3 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 25 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
 ```
@@ -238,12 +241,12 @@ python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the classic view: 25 checks
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the classic view a window opens in: 26 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 118/118 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 120/120 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -272,8 +275,9 @@ plain file write, then again with different bytes — and checks the card notice
 on its own and reloads, that a card with unsaved edits is warned instead of
 overwritten, and that deleting the file under a card is reported with the text
 still in the card, that the editor's gutter holds one number per line and that a
-click on it hides it and another brings it back, and that `mode classic` draws the
-tile it promises while `mode board` puts every card back (`input_smoke.py`, 25
+click on it hides it and another brings it back, that a window opens on the
+classic tile with `mode board` still behind it, and that `mode classic` draws the
+tile it promises while `mode board` puts every card back (`input_smoke.py`, 26
 checks). On a clone that
 has no
 board yet both install `examples/board.json` for the run and remove it again
@@ -292,8 +296,10 @@ with no DOM. A fork that trims `file.stat` out of its kernel does not break the
 app: the watcher turns itself off with one log line
 ([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
 
-**The same cards, drawn a second way.** `mode classic` — or the HUD button, which
-reads `classic view` / `board view` — arranges the focused editor as a code area,
+**A window opens on the classic tile.** It is the view `DEFAULT_VIEW` names, the
+`Classic` button in the HUD's view switch marks it as the one that is on, and
+`mode classic` is how you come back to it. It arranges the focused
+editor as a code area,
 the other open files as tabs above it and a `project`/`files` card, if the board has
 one, as a sidebar. The
 arithmetic is pure, lives in `shell/web/classic.mjs` and is measured in the
@@ -307,6 +313,17 @@ zoom to speak of, and the HUD says so. Nothing about the view is saved, the
 document in memory is never rewritten, no protocol method changed, and
 `mode board` restores every card to the pixels the document gives it;
 [`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
+
+**The board is a mode, not a button any more.** Its arrangement is only
+meaningful once somebody has dragged cards into it, and a product that opens on
+the tiling should not offer that as the third thing to click, so the HUD switch
+carries `classic` and `mod` and `mode board` is how you ask for the plane. The
+same reasoning folds the message strip away: it is the whole of the app's dialog
+system — there are no modals, nothing ever covers what you are reading — but a
+strip of running commentary under the code is the tool of the person writing the
+code, so it starts closed and the HUD's `log` button (or the `log` command)
+opens it. A line that arrives while it is shut turns that button into a count
+coloured by the worst line waiting, and an `error` opens the strip by itself.
 
 **The protocol suite used to write to your board, and no longer does.** The
 board checks drive `view.save` against the workspace they were given, but they

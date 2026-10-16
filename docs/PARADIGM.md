@@ -28,14 +28,18 @@ In InfantGod Studio, opening a file creates a **card at a point on the canvas**.
 closes when you open something else. The card you opened yesterday is still
 where you left it, next to the note where you wrote down why you opened it.
 
-The shell *can* draw a tab strip. `mode classic` puts the open editor cards in a
-row above a code area and the project card in a sidebar column. That exists
-because the request for it was explicit and because an arrangement of a document
-is not a second document — but it is a **projection**, not the paradigm. The tabs
-*are* the editor cards, in board order: there is no tab that is not a card,
-nothing is evicted when the sixth file opens, the strip is rebuilt from the board
-on every render, and switching views writes nothing. If the tabs ever start
-deciding what is open, this project has become the thing it was written not to be.
+The shell *does* draw a tab strip, and a window opens on it: `mode classic` is
+the view a new window starts in, and it puts the open editor cards in a row above
+a code area and the project card in a sidebar column. That exists because the
+request for it was explicit and because an arrangement of a document is not a
+second document — but it is a **projection**, not the paradigm. The tabs *are* the
+editor cards, in board order: there is no tab that is not a card, nothing is
+evicted when the sixth file opens, the strip is rebuilt from the board on every
+render, and switching views writes nothing. `mode board` — still a command, no
+longer one of the HUD's view buttons — puts every card back at the pixels the
+document gives it. If the tabs ever start deciding what is open, if a card can be
+closed from a tab or a tab can exist without one, this project has become the
+thing it was written not to be.
 
 ### No file tree
 

@@ -4,14 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>InfantGod Studio — board</title>
+<title>InfantGod Studio</title>
 <!--
-  The whole page.  There is no tab strip and no side panel here until the board
-  is asked for one: `mode classic` puts the same cards into a conventional
-  arrangement (sidebar, tab strip, code area) as a *view* of the board
-  document, computed by main.mjs from classic.mjs.  Nothing about it is stored,
-  and `mode board` is the board again exactly as it was -- so the paradigm is
-  still the board, and the conventional IDE is a way of looking at it.
+  The whole page.  A window opens in `classic`: the same cards a person writes,
+  arranged the way an editor is arranged -- sidebar, tab strip, code area -- with
+  no card to drag and nothing to learn first.  `mode mod` is that tile pointed at
+  a mod package instead.  Neither is stored: both are *views* of the one board
+  document (see docs/PARADIGM.md), computed by main.mjs from classic.mjs and
+  modview.mjs, which is why switching cannot lose an edit.
+
+  The board is still a mode -- `mode board` draws every card exactly where the
+  document has it -- and deliberately not a button in the HUD, because that
+  arrangement only means anything to someone dragging cards around on it.  See
+  views.mjs.
 
   Everything the browser needs is in this directory.  No CDN, no framework, no
   build step, no network access beyond the kernel's own loopback endpoints.
@@ -19,8 +24,10 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <!-- The board: one persistent 2-D surface. `#board` handles pan/zoom and all
-       pointer gestures; `#stage` carries the single translate+scale. -->
+  <!-- The surface every view is drawn on. `#board` handles pan/zoom and all
+       pointer gestures; `#stage` carries the single translate+scale.  The board
+       view scrolls inside it; a tiled view is laid out in its pixels instead,
+       which is why the tile has to measure the element it fills. -->
   <main id="board" aria-label="board">
     <div id="stage">
       <!-- The link overlay lives *inside* #stage on purpose: #stage carries the
@@ -36,11 +43,12 @@
       </div>
     </div>
 
-    <!-- The classic view's chrome, hidden until `mode classic`.  The tab strip
-         is built by main.mjs -- one button per editor card -- and the hint
-         stands in the sidebar column when the board has no project card to put
-         there.  Both are laid out in pixels by classic.mjs, which is the same
-         arithmetic that places the cards: one source of truth for the tile. -->
+    <!-- The tiled views' own chrome, hidden until one of them is showing.  The
+         tab strip is built by main.mjs -- one button per editor card -- and the
+         hint stands in the sidebar column when the board has no project card to
+         put there.  Both are laid out in pixels by classic.mjs and modview.mjs,
+         which is the same arithmetic that places the cards: one source of truth
+         for the tile. -->
     <nav id="tabs" hidden aria-label="open files"></nav>
     <p id="side-hint" hidden></p>
   </main>
@@ -63,23 +71,35 @@
     <span id="hud-revision" class="hud-item">unsaved</span>
     <span id="hud-dirty" class="hud-item">saved</span>
     <span id="hud-zoom" class="hud-item">100%</span>
-    <!-- Every way to look at the same board, in one switch.  Buttons rather
+    <!-- Every way to look at the same document, in one switch.  Buttons rather
          than keystrokes: the switch is also the answer to "where did the other
-         view go?".  main.mjs builds one per entry in views.mjs, so a view
-         cannot be added without a way to reach it. -->
+         view go?".  main.mjs builds one per entry in views.mjs's SWITCH_VIEWS,
+         so a view cannot be added without a way to reach it. -->
     <span id="mode-switch" class="hud-item hud-switch" role="group" aria-label="view"></span>
+    <!-- The door to the log strip.  The strip is where every refusal and warning
+         lands -- it is the whole of InfantGod Studio's dialog system -- but it
+         is not worth a permanent 132px to someone writing a dialogue tree, so
+         it starts closed.  When something arrives while it is closed this button
+         counts it, and turns red if any of it was an error. -->
+    <button id="log-toggle" class="hud-item hud-button" type="button"
+            aria-controls="log" aria-expanded="false">log</button>
     <span id="kernel-status" class="hud-item is-connecting" data-state="connecting">connecting…</span>
   </header>
 
   <!-- The board's own log.  Every refusal, warning and unknown command lands
-       here as a line, which is why InfantGod Studio needs no dialogs. -->
-  <div id="log" role="log" aria-live="polite" aria-label="board log"></div>
+       here as a line, which is why InfantGod Studio needs no dialogs.  It is
+       closed by default: the `log` command and #log-toggle above both open and
+       close it, and an error opens it on its own. -->
+  <div id="log" role="log" aria-live="polite" aria-label="board log" hidden></div>
 
-  <!-- The single command line, at the bottom, acting on the focused card. -->
+  <!-- The single command line, at the bottom, acting on the focused card.  The
+       hint on the right appears as you type and names what the word so far
+       could be; the full vocabulary is the `help` command, not this placeholder,
+       which is why the placeholder is one short sentence. -->
   <footer id="bar">
     <span class="bar-prompt" aria-hidden="true">&gt;</span>
     <input id="command" type="text" spellcheck="false" autocomplete="off"
-           placeholder="open &lt;path&gt; · mod &lt;dir&gt; · problems &lt;dir&gt; · note &lt;text&gt; · run &lt;cmd&gt; · files · sheet [title] · mode mod · undo · help"
+           placeholder="a command — help lists them"
            aria-label="board command line">
     <span id="command-hint" class="bar-hint" aria-hidden="true"></span>
   </footer>

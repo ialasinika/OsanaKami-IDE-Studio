@@ -114,6 +114,13 @@ You do not touch `core/`. You have two configurations, both already supported:
   `shell/web/README.md` describes each tile and `docs/MODS.md` what the mod one
   is showing.
 
+  A window opens in `classic` (`views.mjs`'s `DEFAULT_VIEW`), and the HUD switch
+  offers the two tilings (`SWITCH_VIEWS`). The board is still a mode -- `mode
+  board` draws every card exactly where the document put it, and none of it was
+  removed -- but it is not a button. Its arrangement is only meaningful once you
+  have dragged cards into it, and a product that opens on the tiling and never
+  asks anyone to learn the board should not offer it as the third thing to click.
+
 A view that shares the *file* with another view is the interesting case: two
 clients, the same `path`, one `base_revision` rail between them.
 `make cli-check` drives the second client (`tools/seide_cli.py`) against a
