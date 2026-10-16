@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "blob.h"
 #include "exec.h"
 #include "port.h"
 #include "view.h"
@@ -67,6 +68,15 @@ int sde_app_init(sde_app *app, const char *root, const char *exe_dir,
     /* Lets the exec pump thread publish notifications through app->emit. */
     sde_exec_bind(app->execs, app);
 
+    app->blobs = sde_blobset_new();
+    if (app->blobs == NULL) {
+        if (err != NULL && errcap > 0) {
+            snprintf(err, errcap, "out of memory");
+        }
+        sde_app_free(app);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -81,6 +91,8 @@ void sde_app_free(sde_app *app)
     app->view = NULL;
     sde_execset_free(app->execs);
     app->execs = NULL;
+    sde_blobset_free(app->blobs);
+    app->blobs = NULL;
 }
 
 int sde_app_notify(sde_app *app, sde_json *payload)

@@ -115,6 +115,32 @@ BYTE_PAYLOAD = bytes(range(256)) * 4 + b"\x00\x00PNG\r\n\x1a\n"
 #: tracked file behind.  Every byte check removes it in a ``finally``.
 BYTE_SCRATCH = "build/e2e-bytes.bin"
 
+#: Where the blob checks put their scratch.  The file is *generated*, never
+#: committed: 5,751,617 bytes is the size of the largest translation table the
+#: game ships, which is the file that used to be unopenable and the reason the
+#: session subsystem exists.  Every value 0x00-0xff is in it, so a chunk that
+#: survives only because it was text proves nothing.
+BLOB_SIZE = 5751617
+BLOB_SCRATCH = "build/e2e-blob.bin"
+BLOB_WRITE_SCRATCH = "build/e2e-blob-written.bin"
+
+#: The most one ``file.blobRead``/``file.blobAppend`` frame may carry.
+BLOB_CHUNK = 1024 * 1024
+
+
+def _content_revision(payload: bytes) -> int:
+    """The kernel's content revision: FNV-1a over the whole file, 32 bit.
+
+    Mirrored here from ``sde_rev_update``/``sde_rev_final`` so a session's
+    ``want_revision`` can be checked against the bytes on disk rather than
+    against another reply that might be wrong in the same way.  The hash landing
+    on 0 is reported as 1, because 0 means "no revision to compare".
+    """
+    digest = 2166136261
+    for byte in payload:
+        digest = ((digest ^ byte) * 16777619) & 0xFFFFFFFF
+    return 1 if digest == 0 else digest
+
 #: Kinds ``lang.tokenize`` may put on the wire (mirrors ``langs/lang.mjs``).
 #: Kept here rather than imported so the driver stays runnable against any fork
 #: whose language layer is a reimplementation, as the wire contract allows.
@@ -1132,6 +1158,658 @@ def define_checks(h: Harness) -> list:
                 )
         return f"both byte verbs refuse absolute and relative escapes with 1003 ({outside})"
 
+    # -- blob sessions ------------------------------------------------------
+    #
+    # ``file.read`` refuses anything over 4 MiB and that wall is not moving: the
+    # 5.75 MB translation table arrives in bounded chunks through a session and
+    # is published with one rename.  These checks drive the real wire for all
+    # five verbs against a real file of that size, generated under ``build/``.
+
+    _blob_cache = {}
+
+    def _blob_path(rel):
+        return os.path.join(ctx["root"], rel.replace("/", os.sep))
+
+    def _blob_payload():
+        if "bytes" not in _blob_cache:
+            cycle = bytes(range(256))
+            _blob_cache["bytes"] = (cycle * (BLOB_SIZE // 256 + 1))[:BLOB_SIZE]
+        return _blob_cache["bytes"]
+
+    def _blob_revision():
+        if "rev" not in _blob_cache:
+            _blob_cache["rev"] = _content_revision(_blob_payload())
+        return _blob_cache["rev"]
+
+    def _blob_lay_down(rel, payload):
+        path = _blob_path(rel)
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+        return path
+
+    def _blob_clean(rel):
+        """Remove a scratch file and the temp file a live write session holds."""
+        for path in (_blob_path(rel), _blob_path(rel) + ".tmp"):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _first_difference(got, want):
+        for index, byte in enumerate(got):
+            if index >= len(want) or byte != want[index]:
+                return index
+        return min(len(got), len(want))
+
+    def _blob_read_all(session, size, chunk=BLOB_CHUNK):
+        """Walk a read session in bounded frames and reassemble what it returns."""
+        parts = []
+        offset = 0
+        frames = 0
+        while offset < size:
+            frame = client.call(
+                "file.blobRead",
+                {"session": session, "offset": offset, "length": chunk},
+                timeout=60.0,
+            )
+            require(
+                frame.get("session") == session,
+                f"blobRead answered for session {frame.get('session')!r}, asked for {session!r}",
+            )
+            require(
+                frame.get("offset") == offset,
+                f"blobRead echoed offset={frame.get('offset')!r}, asked for {offset}",
+            )
+            require(
+                frame.get("size") == size,
+                f"blobRead reports size={frame.get('size')!r}, the file is {size}",
+            )
+            data = base64.b64decode(frame.get("data") or "")
+            want = min(chunk, size - offset)
+            require(
+                len(data) == want,
+                f"blobRead at {offset} returned {len(data)} bytes, expected {want}",
+            )
+            require(
+                frame.get("eof") == (offset + want == size),
+                f"blobRead at {offset} reports eof={frame.get('eof')!r} with "
+                f"{size - offset - want} bytes still to come",
+            )
+            parts.append(data)
+            offset += len(data)
+            frames += 1
+        return b"".join(parts), frames
+
+    def blob_read_large():
+        """A file over 4 MiB walks out in 1 MiB chunks, byte for byte.
+
+        The point of a session is that the file never has to fit in one JSON
+        string, or one allocation: every frame is bounded and the concatenation
+        is the file.  The old wall is asserted first, so this fails loudly if
+        someone raises the text limit instead of using the sessions.
+        """
+        payload = _blob_payload()
+        _blob_clean(BLOB_SCRATCH)
+        try:
+            _blob_lay_down(BLOB_SCRATCH, payload)
+            for method in ("file.read", "file.read_bytes"):
+                error = client.expect_error(method, {"path": BLOB_SCRATCH}, timeout=60.0)
+                name = error.get("name", error.get("code"))
+                message = str(error.get("message", ""))
+                require(
+                    name == "IO" and "too large" in message,
+                    f"{method} on a {BLOB_SIZE}-byte file reported {name!r} {message!r}, "
+                    "expected the 4 MiB refusal",
+                )
+
+            opened = client.call(
+                "file.blobOpen",
+                {"path": BLOB_SCRATCH, "mode": "read", "want_revision": True},
+                timeout=60.0,
+            )
+            session = opened.get("session")
+            require(
+                isinstance(session, int) and not isinstance(session, bool),
+                f"blobOpen answered session={session!r}",
+            )
+            require(
+                opened.get("path") == BLOB_SCRATCH,
+                f"blobOpen named {opened.get('path')!r}, asked for {BLOB_SCRATCH!r}",
+            )
+            require(
+                opened.get("size") == BLOB_SIZE,
+                f"blobOpen reports size={opened.get('size')!r}, the file is {BLOB_SIZE}",
+            )
+            require(
+                opened.get("revision") == _blob_revision(),
+                f"blobOpen reports revision={opened.get('revision')!r}, the file hashes "
+                f"to {_blob_revision()}",
+            )
+
+            whole, frames = _blob_read_all(session, BLOB_SIZE)
+            require(
+                whole == payload,
+                f"the {BLOB_SIZE} bytes read through the session are not the file's "
+                f"({len(whole)} bytes back, first difference at "
+                f"{_first_difference(whole, payload)})",
+            )
+            require(
+                frames == (BLOB_SIZE + BLOB_CHUNK - 1) // BLOB_CHUNK,
+                f"{frames} frames carried {BLOB_SIZE} bytes in {BLOB_CHUNK}-byte chunks",
+            )
+
+            # No length at all is still bounded by the chunk, not by the file.
+            loose = client.call(
+                "file.blobRead", {"session": session, "offset": 0}, timeout=60.0
+            )
+            loose_bytes = base64.b64decode(loose.get("data") or "")
+            require(
+                len(loose_bytes) == BLOB_CHUNK,
+                f"a frame with no length carried {len(loose_bytes)} bytes, expected the "
+                f"{BLOB_CHUNK}-byte chunk",
+            )
+            require(
+                loose.get("eof") is False,
+                f"a frame with no length at offset 0 claims eof on a {BLOB_SIZE}-byte file",
+            )
+
+            # An explicit offset is honoured even after the session has moved:
+            # this reads the middle of the file, out of order, and must get the
+            # bytes that are there -- not the ones the session happens to hold.
+            middle = client.call(
+                "file.blobRead",
+                {"session": session, "offset": BLOB_CHUNK + 4321, "length": 64},
+                timeout=60.0,
+            )
+            require(
+                middle.get("offset") == BLOB_CHUNK + 4321
+                and base64.b64decode(middle.get("data") or "")
+                == payload[BLOB_CHUNK + 4321 : BLOB_CHUNK + 4385],
+                f"an explicit offset after the session moved answered {_short(middle)}",
+            )
+
+            closed = client.call("file.blobAbort", {"session": session})
+            require(
+                closed.get("aborted") is True,
+                f"blobAbort answered {closed!r}, expected {{'aborted': true}}",
+            )
+            return (
+                f"{BLOB_SIZE} bytes (> 4 MiB) in {frames} chunks of 1 MiB, identical to the "
+                f"file; revision {_blob_revision()} matches whole-file FNV-1a; file.read and "
+                "file.read_bytes still refuse it"
+            )
+        finally:
+            _blob_clean(BLOB_SCRATCH)
+
+    def blob_write_large():
+        """Append chunks, then commit: one rename publishes the whole file.
+
+        ``replaced``, no temp file afterwards, and the bytes on disk are what
+        "published atomically" means from outside.  The old contents are asserted
+        to still be there *before* the commit, so a commit that wrote in place
+        would fail this check instead of passing it.
+        """
+        payload = _blob_payload()
+        previous = b"old contents, to be replaced\n"
+        _blob_clean(BLOB_WRITE_SCRATCH)
+        try:
+            _blob_lay_down(BLOB_WRITE_SCRATCH, previous)
+            opened = client.call(
+                "file.blobOpen",
+                {
+                    "path": BLOB_WRITE_SCRATCH,
+                    "mode": "write",
+                    "base_revision": _content_revision(previous),
+                },
+                timeout=60.0,
+            )
+            session = opened.get("session")
+            require(
+                opened.get("size") == 0,
+                f"a write session starts empty and grows by appends; it reported size="
+                f"{opened.get('size')!r} (the file it will replace is {len(previous)} bytes)",
+            )
+
+            offset = 0
+            frames = 0
+            while offset < len(payload):
+                chunk = payload[offset : offset + BLOB_CHUNK]
+                frame = client.call(
+                    "file.blobAppend",
+                    {
+                        "session": session,
+                        "data": base64.b64encode(chunk).decode("ascii"),
+                        "offset": offset,
+                    },
+                    timeout=60.0,
+                )
+                require(
+                    frame.get("offset") == offset + len(chunk)
+                    and frame.get("size") == offset + len(chunk),
+                    f"blobAppend at {offset} reported offset={frame.get('offset')!r} "
+                    f"size={frame.get('size')!r}, expected {offset + len(chunk)}",
+                )
+                offset += len(chunk)
+                frames += 1
+
+            require(
+                os.path.exists(_blob_path(BLOB_WRITE_SCRATCH) + ".tmp"),
+                "a live write session keeps its bytes in a temp file; none was there",
+            )
+            require(
+                open(_blob_path(BLOB_WRITE_SCRATCH), "rb").read() == previous,
+                "the target changed before the commit: nothing was published atomically",
+            )
+
+            committed = client.call(
+                "file.blobCommit",
+                {"session": session, "total_size": len(payload)},
+                timeout=60.0,
+            )
+            require(
+                committed.get("path") == BLOB_WRITE_SCRATCH,
+                f"blobCommit named {committed.get('path')!r}, asked for {BLOB_WRITE_SCRATCH!r}",
+            )
+            require(
+                committed.get("size") == len(payload),
+                f"blobCommit reports size={committed.get('size')!r}, expected {len(payload)}",
+            )
+            require(
+                committed.get("revision") == _blob_revision(),
+                f"blobCommit reports revision={committed.get('revision')!r}, the committed "
+                f"bytes hash to {_blob_revision()}",
+            )
+            require(
+                committed.get("replaced") is True,
+                f"blobCommit over an existing file reports replaced="
+                f"{committed.get('replaced')!r}, expected true",
+            )
+            require(
+                not os.path.exists(_blob_path(BLOB_WRITE_SCRATCH) + ".tmp"),
+                "blobCommit left its temp file behind",
+            )
+            on_disk = open(_blob_path(BLOB_WRITE_SCRATCH), "rb").read()
+            require(
+                on_disk == payload,
+                f"the committed file is not what was appended ({len(on_disk)} bytes on "
+                f"disk, {len(payload)} appended, first difference at "
+                f"{_first_difference(on_disk, payload)})",
+            )
+
+            event = client.wait_event(
+                lambda e: e.get("event") == "file.changed"
+                and str(e.get("path", ""))
+                .replace("\\", "/")
+                .endswith(BLOB_WRITE_SCRATCH.split("/")[-1]),
+                "file.changed for the committed file",
+                10.0,
+            )
+            require(
+                event.get("revision") == committed.get("revision"),
+                f"file.changed reports revision={event.get('revision')!r}, the commit "
+                f"reported {committed.get('revision')!r}",
+            )
+
+            again = client.call(
+                "file.blobOpen", {"path": BLOB_WRITE_SCRATCH, "mode": "read"}, timeout=60.0
+            )
+            back, _ = _blob_read_all(again.get("session"), len(payload))
+            require(
+                back == payload,
+                "the committed file read back through a session is not the file",
+            )
+            client.call("file.blobAbort", {"session": again.get("session")})
+            return (
+                f"{len(payload)} bytes appended in {frames} frames and published by rename; "
+                f"replaced; read back byte-identical; file.changed revision "
+                f"{committed.get('revision')}"
+            )
+        finally:
+            _blob_clean(BLOB_WRITE_SCRATCH)
+
+    def blob_abort():
+        """Aborting a write closes the session and takes its temp file with it."""
+        target = "build/e2e-blob-aborted.bin"
+        _blob_clean(target)
+        try:
+            opened = client.call("file.blobOpen", {"path": target, "mode": "write"}, timeout=60.0)
+            session = opened.get("session")
+            client.call(
+                "file.blobAppend",
+                {
+                    "session": session,
+                    "data": base64.b64encode(b"never published").decode("ascii"),
+                    "offset": 0,
+                },
+                timeout=60.0,
+            )
+            require(
+                os.path.exists(_blob_path(target) + ".tmp"),
+                "a live write session holds no temp file",
+            )
+            aborted = client.call("file.blobAbort", {"session": session})
+            require(
+                aborted.get("aborted") is True,
+                f"blobAbort answered {aborted!r}, expected {{'aborted': true}}",
+            )
+            require(
+                not os.path.exists(_blob_path(target) + ".tmp"),
+                "the temp file outlived the abort",
+            )
+            require(
+                not os.path.exists(_blob_path(target)),
+                "an aborted write created its target",
+            )
+            for label, method, params in (
+                ("read", "file.blobRead", {"session": session, "offset": 0, "length": 16}),
+                ("a second abort", "file.blobAbort", {"session": session}),
+            ):
+                error = client.expect_error(method, params)
+                name = error.get("name", error.get("code"))
+                require(
+                    name == "INVALID_PARAMS" and "session" in str(error.get("message", "")),
+                    f"{label} on a closed session reported {name!r} "
+                    f"{error.get('message')!r}, expected INVALID_PARAMS naming the session",
+                )
+            return (
+                "15 bytes written into a session, then aborted: no target, no temp file, "
+                "and the session is gone (-32602 on read and on a second abort)"
+            )
+        finally:
+            _blob_clean(target)
+
+    def blob_open_refusals():
+        """Open's ways to say no: missing, stale, malformed, outside the root."""
+        base = "build/e2e-blob-base.bin"
+        small = b"revision base\n"
+        _blob_clean(base)
+        try:
+            written = _write_bytes(base, base64.b64encode(small).decode("ascii"))
+            revision = written["revision"]
+            require(
+                revision == _content_revision(small),
+                f"file.write_bytes reported revision {revision}, the bytes hash to "
+                f"{_content_revision(small)}",
+            )
+
+            missing = client.expect_error(
+                "file.blobOpen", {"path": "build/e2e-blob-absent.bin", "mode": "read"}
+            )
+            require(
+                missing.get("code") == 1002
+                and missing.get("name", missing.get("code")) == "NOT_FOUND",
+                f"opening a missing file for reading reported code={missing.get('code')!r} "
+                f"name={missing.get('name')!r}, expected 1002 NOT_FOUND",
+            )
+
+            stale = client.expect_error(
+                "file.blobOpen",
+                {"path": base, "mode": "write", "base_revision": revision ^ 0x5A5A5A5A},
+            )
+            require(
+                stale.get("name", stale.get("code")) == "STALE_REVISION",
+                f"opening with a stale base reported {stale.get('name', stale.get('code'))!r} "
+                f"(code={stale.get('code')!r}), expected 'STALE_REVISION'",
+            )
+            data = stale.get("data")
+            require(
+                isinstance(data, dict) and data.get("current_revision") == revision,
+                f"STALE_REVISION from blobOpen carries "
+                f"{data!r}, expected current_revision={revision!r}",
+            )
+
+            fresh = client.call(
+                "file.blobOpen",
+                {"path": base, "mode": "write", "base_revision": revision},
+                timeout=60.0,
+            )
+            require(
+                fresh.get("size") == 0,
+                f"a write session starts empty whatever the file's size (it reported "
+                f"{fresh.get('size')!r}); base_revision is what ties it to the file",
+            )
+            client.call("file.blobAbort", {"session": fresh.get("session")})
+
+            reader = client.call(
+                "file.blobOpen",
+                {"path": base, "mode": "read", "want_revision": True},
+                timeout=60.0,
+            )
+            require(
+                reader.get("revision") == revision,
+                f"blobOpen want_revision reports {reader.get('revision')!r}, the file is at "
+                f"{revision!r}",
+            )
+            client.call("file.blobAbort", {"session": reader.get("session")})
+
+            for label, params in (
+                ("a mode that is neither read nor write", {"path": base, "mode": "append"}),
+                ("a missing path", {"mode": "read"}),
+                ("a missing mode", {"path": base}),
+                ("an empty path", {"path": "", "mode": "read"}),
+                ("a non-string path", {"path": 7, "mode": "read"}),
+            ):
+                error = client.expect_error("file.blobOpen", params)
+                name = error.get("name", error.get("code"))
+                require(
+                    name == "INVALID_PARAMS",
+                    f"blobOpen with {label} reported {name!r} "
+                    f"(code={error.get('code')!r}), expected 'INVALID_PARAMS'",
+                )
+
+            outside = str(REPO_ROOT.parent / "e2e-blob-outside.bin")
+            for label, path in (("absolute", outside), ("relative", "../e2e-blob-outside.bin")):
+                error = client.expect_error("file.blobOpen", {"path": path, "mode": "read"})
+                require(
+                    isinstance(error, dict) and error.get("code") != 0,
+                    f"blobOpen {label} escape {path!r} was not refused: {_short(error)}",
+                )
+            require(
+                not os.path.exists(outside),
+                "a refused blob open left a file outside the workspace",
+            )
+            return (
+                "a missing file is 1002; a stale base is 1001 with current_revision; a bad "
+                "mode, path or missing member is -32602; both escapes refused"
+            )
+        finally:
+            _blob_clean(base)
+
+    def blob_bounds():
+        """Every number and payload the chunk verbs take is bounded, by name."""
+        base = "build/e2e-blob-bounds.bin"
+        small = b"0123456789" * 4
+        _blob_clean(base)
+        try:
+            _blob_lay_down(base, small)
+            reader = client.call("file.blobOpen", {"path": base, "mode": "read"}, timeout=60.0)
+            session = reader.get("session")
+            for label, params in (
+                ("length 0", {"session": session, "offset": 0, "length": 0}),
+                (
+                    "a length over the chunk",
+                    {"session": session, "offset": 0, "length": BLOB_CHUNK + 1},
+                ),
+                ("a fractional length", {"session": session, "offset": 0, "length": 1.5}),
+                ("a negative offset", {"session": session, "offset": -1, "length": 4}),
+                ("a fractional offset", {"session": session, "offset": 0.25, "length": 4}),
+                ("a string offset", {"session": session, "offset": "0", "length": 4}),
+            ):
+                error = client.expect_error("file.blobRead", params)
+                name = error.get("name", error.get("code"))
+                require(
+                    name == "INVALID_PARAMS",
+                    f"blobRead with {label} reported {name!r} "
+                    f"(code={error.get('code')!r}), expected 'INVALID_PARAMS'",
+                )
+            unknown = client.expect_error(
+                "file.blobRead", {"session": 987654321, "offset": 0, "length": 1}
+            )
+            require(
+                unknown.get("name", unknown.get("code")) == "INVALID_PARAMS"
+                and "session" in str(unknown.get("message", "")),
+                f"an unknown session reported {unknown!r}, expected INVALID_PARAMS naming "
+                "the session",
+            )
+
+            past = client.call(
+                "file.blobRead",
+                {"session": session, "offset": len(small) + 10, "length": 8},
+                timeout=60.0,
+            )
+            require(
+                base64.b64decode(past.get("data") or "") == b""
+                and past.get("eof") is True
+                and past.get("size") == len(small)
+                and past.get("offset") == len(small),
+                f"a read past the end answered {_short(past)}, expected an empty frame "
+                f"reported at the end of the file ({len(small)}) that still names the "
+                f"file's size",
+            )
+            whole = client.call(
+                "file.blobRead", {"session": session, "offset": 0, "length": len(small)},
+                timeout=60.0,
+            )
+            require(
+                base64.b64decode(whole.get("data") or "") == small
+                and whole.get("eof") is True,
+                f"a whole-file frame answered {_short(whole)}",
+            )
+            client.call("file.blobAbort", {"session": session})
+
+            writer = client.call(
+                "file.blobOpen", {"path": base, "mode": "write"}, timeout=60.0
+            )
+            wsession = writer.get("session")
+            for label, params in (
+                (
+                    "an offset that is not the end",
+                    {
+                        "session": wsession,
+                        "data": base64.b64encode(b"xy").decode("ascii"),
+                        "offset": 5,
+                    },
+                ),
+                (
+                    "a chunk over the limit",
+                    {
+                        "session": wsession,
+                        "data": base64.b64encode(b"x" * (BLOB_CHUNK + 1)).decode("ascii"),
+                    },
+                ),
+                (
+                    "a payload that is not base64",
+                    {"session": wsession, "data": "!!!not-base64!!!"},
+                ),
+                ("no data at all", {"session": wsession}),
+                ("a non-string payload", {"session": wsession, "data": 7}),
+                (
+                    "an unknown session",
+                    {"session": 987654321, "data": base64.b64encode(b"x").decode("ascii")},
+                ),
+            ):
+                error = client.expect_error("file.blobAppend", params)
+                name = error.get("name", error.get("code"))
+                require(
+                    name == "INVALID_PARAMS",
+                    f"blobAppend with {label} reported {name!r} "
+                    f"(code={error.get('code')!r}), expected 'INVALID_PARAMS'",
+                )
+
+            # Every refusal above left the session usable, and "" is a real
+            # append of zero bytes, not a malformed one.
+            empty = client.call(
+                "file.blobAppend", {"session": wsession, "data": "", "offset": 0},
+                timeout=60.0,
+            )
+            require(
+                empty.get("size") == 0,
+                f"appending nothing reported size={empty.get('size')!r}, expected 0",
+            )
+            ok = client.call(
+                "file.blobAppend",
+                {"session": wsession, "data": base64.b64encode(b"xy").decode("ascii"), "offset": 0},
+                timeout=60.0,
+            )
+            require(
+                ok.get("offset") == 2 and ok.get("size") == 2,
+                f"appending after the refusals reported {_short(ok)}, expected offset 2, size 2",
+            )
+            wrong = client.expect_error(
+                "file.blobCommit", {"session": wsession, "total_size": 99}
+            )
+            require(
+                wrong.get("name", wrong.get("code")) == "INVALID_PARAMS",
+                f"a commit naming the wrong total reported {wrong!r}, expected INVALID_PARAMS",
+            )
+            still = client.call(
+                "file.blobAppend",
+                {"session": wsession, "data": base64.b64encode(b"z").decode("ascii"), "offset": 2},
+                timeout=60.0,
+            )
+            require(
+                still.get("size") == 3,
+                f"the session did not survive the refused commit: {_short(still)}",
+            )
+            client.call("file.blobAbort", {"session": wsession})
+            require(
+                not os.path.exists(_blob_path(base) + ".tmp"),
+                "the abort left the temp file behind",
+            )
+            require(
+                open(_blob_path(base), "rb").read() == small,
+                "a write session changed its file before the commit",
+            )
+            return (
+                "13 unusable requests refused as INVALID_PARAMS (bad offsets, lengths, "
+                "sessions and payloads); past-EOF reads are empty frames; every refusal "
+                "left the session usable and the file untouched"
+            )
+        finally:
+            _blob_clean(base)
+
+    def blob_revision_agreement():
+        """A session's revision is the file's revision, the same number file.read reports."""
+        base = "build/e2e-blob-rev.bin"
+        _blob_clean(base)
+        try:
+            payload = b"the same bytes, four verbs\n" * 7
+            written = _write_bytes(base, base64.b64encode(payload).decode("ascii"))
+            revision = written["revision"]
+            require(
+                revision == _content_revision(payload),
+                f"file.write_bytes reported revision {revision}, the bytes hash to "
+                f"{_content_revision(payload)}",
+            )
+            text = client.call("file.read", {"path": base})
+            binary = client.call("file.read_bytes", {"path": base})
+            stat = client.call("file.stat", {"path": base})
+            opened = client.call(
+                "file.blobOpen",
+                {"path": base, "mode": "read", "want_revision": True},
+                timeout=60.0,
+            )
+            client.call("file.blobAbort", {"session": opened.get("session")})
+            for label, value in (
+                ("file.read", text.get("revision")),
+                ("file.read_bytes", binary.get("revision")),
+                ("file.stat", stat.get("revision")),
+                ("file.blobOpen want_revision", opened.get("revision")),
+            ):
+                require(
+                    value == revision,
+                    f"{label} reports revision {value!r}, the bytes hash to {revision}",
+                )
+            return (
+                f"file.read, file.read_bytes, file.stat and file.blobOpen all report the "
+                f"same revision {revision} as FNV-1a over the file's bytes"
+            )
+        finally:
+            _blob_clean(base)
+
     def board_state():
         """Read the live board so a check that saves one can put it back.
 
@@ -1361,6 +2039,12 @@ def define_checks(h: Harness) -> list:
         ("file.write_bytes stale revision", byte_write_stale, None),
         ("file.write_bytes malformed payload", byte_payload_rejected, None),
         ("byte verbs path containment", byte_path_containment, None),
+        ("file.blobOpen/file.blobRead over 4 MiB", blob_read_large, None),
+        ("file.blobAppend/file.blobCommit over 4 MiB", blob_write_large, None),
+        ("file.blobAbort leaves nothing", blob_abort, None),
+        ("file.blobOpen refusals", blob_open_refusals, None),
+        ("blob chunk bounds", blob_bounds, None),
+        ("blob revision agrees with the file verbs", blob_revision_agreement, None),
         ("view.save/view.load round-trip", board_roundtrip, None),
         ("starter board", starter_board, None),
         ("exec.start run", exec_run, None),

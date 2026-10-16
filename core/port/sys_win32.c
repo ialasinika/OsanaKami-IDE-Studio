@@ -459,6 +459,123 @@ int sde_port_read_file(const char *path, sde_buf *out, char *err, size_t errcap)
     return 0;
 }
 
+/*
+ * Reads up to `len` bytes at `offset` and appends them to `out`, which is what
+ * a session needs: a window of a file that must never be pulled into memory
+ * whole.  Returns the number of bytes appended, or -1 with `err` set.  When
+ * `out_size` is not NULL it receives the file's size as it was measured after
+ * the read -- the file may have grown or shrunk while it was being read, and a
+ * caller that reports the size it just saw is more useful than one that reports
+ * the size from before.
+ *
+ * `offset` past the end of the file is not an error: it is an empty window.
+ */
+long sde_port_read_at(const char *path, long offset, size_t len, sde_buf *out,
+                      long *out_size, char *err, size_t errcap)
+{
+    char  chunk[65536];
+    FILE *f;
+    long  total = 0;
+    long  size;
+
+    if (out_size != NULL) {
+        *out_size = -1;
+    }
+    if (offset < 0) {
+        set_err(err, errcap, "negative offset reading", path);
+        return -1;
+    }
+    size = sde_port_file_size(path);
+    if (size < 0) {
+        set_err(err, errcap, "cannot read", path);
+        return -1;
+    }
+    if (offset >= size || len == 0u) {
+        if (out_size != NULL) {
+            *out_size = size;
+        }
+        return 0;
+    }
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        set_err(err, errcap, "cannot open for reading", path);
+        return -1;
+    }
+    if (_fseeki64(f, offset, SEEK_SET) != 0) {
+        fclose(f);
+        set_err(err, errcap, "cannot seek in", path);
+        return -1;
+    }
+    for (;;) {
+        size_t want = len - (size_t) total;
+        size_t got;
+
+        if (want == 0u) {
+            break;
+        }
+        if (want > sizeof(chunk)) {
+            want = sizeof(chunk);
+        }
+        got = fread(chunk, 1, want, f);
+        if (got == 0u) {
+            if (ferror(f)) {
+                fclose(f);
+                set_err(err, errcap, "read failed on", path);
+                return -1;
+            }
+            break;   /* end of file */
+        }
+        if (sde_buf_add(out, chunk, got) != 0) {
+            fclose(f);
+            set_err(err, errcap, "out of memory reading", path);
+            return -1;
+        }
+        total += (long) got;
+    }
+    if (fclose(f) != 0) {
+        set_err(err, errcap, "read failed on", path);
+        return -1;
+    }
+    size = sde_port_file_size(path);
+    if (out_size != NULL) {
+        *out_size = size;
+    }
+    return total;
+}
+
+/*
+ * Appends `len` bytes to `path`, creating it when it is not there.  Unlike
+ * `sde_port_write_file()` this never truncates, which is what makes a session's
+ * temporary file grow one chunk at a time.
+ */
+int sde_port_append_file(const char *path, const char *data, size_t len,
+                         char *err, size_t errcap)
+{
+    FILE  *f;
+    size_t total;
+
+    if (len > 0u && data == NULL) {
+        set_err(err, errcap, "no data appending to", path);
+        return -1;
+    }
+    f = fopen(path, "ab");
+    if (f == NULL) {
+        set_err(err, errcap, "cannot open for appending", path);
+        return -1;
+    }
+    total = (len == 0u) ? 0u : fwrite(data, 1, len, f);
+    if (total != len) {
+        fclose(f);
+        set_err(err, errcap, "short append on", path);
+        return -1;
+    }
+    if (fclose(f) != 0) {
+        set_err(err, errcap, "cannot flush", path);
+        return -1;
+    }
+    return 0;
+}
+
 int sde_port_mkdirs(const char *path, char *err, size_t errcap)
 {
     sde_buf norm;

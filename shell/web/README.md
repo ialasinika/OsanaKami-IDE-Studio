@@ -156,9 +156,21 @@ An unknown command prints one line in the log and moves on. Nothing is modal,
 nothing steals focus.
 
 `story` is the one command that can open two files: the `.yarn` and, when you
-name one, the translation table beside it. Saving writes the story, and writes
-the table only if the card put a row in it — which it does when you add a line
-to the story, because that line is a row the table owes.
+name one, the translation table beside it. The table moves a frame at a time
+through a `file.blob*` session, because the game's real tables run from 4.5 MB
+to 5.75 MB and a whole-file `file.read` is refused over 4 MiB: the session is
+opened once (`file.blobOpen`), each `file.blobRead` carries at most one
+mebibyte, and the kernel never holds the file whole. The status line shows how
+far the read has got, and the frames are decoded with a streaming UTF-8
+decoder, so a table whose bytes straddle a frame boundary is still assembled
+character for character. A frame that fails is named on the card and leaves no
+table behind — a shorter table is never passed off as the whole one. The
+session is given back on every path, a failed read included. Saving writes the
+story, and writes the table only if the card put a row in it — which it does
+when you add a line to the story, because that line is a row the table owes. A
+table save uses a session of its own: the new text is appended in frames and
+published with `file.blobCommit`, whose `total_size` is checked against the
+bytes actually appended.
 
 ---
 

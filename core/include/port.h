@@ -61,6 +61,24 @@ int  sde_port_read_file(const char *path, sde_buf *out, char *err, size_t errcap
 int  sde_port_write_file(const char *path, const char *data, size_t len,
                          char *err, size_t errcap);
 
+/*
+ * Reads up to `len` bytes at `offset` and appends them to `out` -- a window of
+ * a file rather than the whole thing, for the sessions that page a file bigger
+ * than the text ceiling.  Returns the bytes appended, or -1 with `err` set;
+ * `*out_size` (when not NULL) receives the size measured after the read, so a
+ * caller can notice a file that changed underneath it.  An `offset` at or past
+ * the end is an empty window, not an error.
+ */
+long sde_port_read_at(const char *path, long offset, size_t len, sde_buf *out,
+                      long *out_size, char *err, size_t errcap);
+
+/*
+ * Appends `len` bytes to `path`, creating it when it is not there, and never
+ * truncating.  `sde_port_write_file()` is the one that starts a file over.
+ */
+int  sde_port_append_file(const char *path, const char *data, size_t len,
+                          char *err, size_t errcap);
+
 int  sde_port_file_exists(const char *path);
 int  sde_port_is_dir(const char *path);
 long sde_port_file_size(const char *path);   /* -1 if it cannot be read */

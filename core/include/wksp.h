@@ -38,7 +38,17 @@ typedef struct sde_app sde_app;
  * The optimistic-concurrency token for a file's contents.  Callers treat it
  * as opaque: compare it, never interpret it.  FNV-1a, 32 bits; the RPC layer
  * carries it as a JSON number.
+ *
+ * `sde_rev_update()` and `sde_rev_final()` are the same hash in two steps, so a
+ * caller that never holds a whole file -- the binary sessions, which can stream
+ * a file larger than memory -- hashes it a chunk at a time and still reports
+ * the number `sde_rev_of()` would report for the same bytes.  One revision
+ * means one thing whichever verb produced it.
  */
+#define SDE_REV_SEED 2166136261UL
+
+unsigned long sde_rev_update(unsigned long h, const char *data, size_t len);
+unsigned long sde_rev_final(unsigned long h);
 unsigned long sde_rev_of(const char *data, size_t len);
 
 /*

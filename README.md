@@ -488,10 +488,16 @@ Stated plainly, because a fork needs to know what it is inheriting.
   `lang` member (the detected language id, or `null`); the kernel does not,
   because it has no language layer. `docs/PROTOCOL.md` marks which members come
   from which layer.
-- **The kernel still caps a single read at 4 MiB.** The game's localisation CSVs
-  are around 4.5 MB, so they will not open through `file.read`. The 幼神 cards
-  read and validate them in Node instead, which is why `problems` works on a
-  package the editor cannot open.
+- **A single read is still capped at 4 MiB; a file no longer is.** `file.read` and
+  `file.read_bytes` carry a whole file through one JSON value and still refuse
+  anything over 4 MiB with `1003 file is too large to open` — the game's
+  localisation CSVs are 4.5-5.75 MB, which is exactly where that stopped.  The
+  `file.blob*` session verbs are the companion for the files that are bigger than
+  a JSON string should be: a session reads a table in 1 MiB frames and writes one
+  the same way, so the story card opens a real `NewProject_<lang>.csv` instead of
+  reporting a read failure.  The `problems` panel and the mods layer still read
+  and validate a package in Node rather than through the kernel, which is why
+  `problems` works on a package the editor has never opened.
 - **The kernel has no delete or rename.** Copying a mod package into
   `StreamingAssets/Mods/<Name>/` is therefore a manual step; `mod.scaffold`
   creates directories through `file.write`'s parent-directory creation.
@@ -517,8 +523,13 @@ Stated plainly, because a fork needs to know what it is inheriting.
   polls `file.stat` for the paths its cards hold; the kernel does not watch the
   filesystem and the protocol does not promise an event. A card that held a file
   somebody else rewrote is corrected on the next tick, not at the instant it
-  happens — and a card whose file is over 4 MiB cannot be compared at all
-  (`revision: 0`), so it warns instead of reloading.
+  happens — and `file.stat` reports `revision: 0` for anything over 4 MiB, because
+  a revision means hashing the file the kernel will not read whole, so a card on a
+  file that big still warns that its file changed rather than reloading it.  The
+  blob session is how such a file is *read and written*; it is not how the watcher
+  compares it.  (The kernel compares a base revision correctly at the write, so
+  nothing is overwritten blind: a save against a five-megabyte table that moved
+  under the card is refused with `1001`, not applied.)
 
 ---
 

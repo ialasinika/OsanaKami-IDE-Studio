@@ -40,6 +40,16 @@ typedef struct sde_view sde_view;
 typedef struct sde_execset sde_execset;
 #endif
 
+/*
+ * The binary / large-file sessions.  Declared here rather than only in blob.h
+ * because every module that is handed `app` can see the field, and because a
+ * fork that deletes blob.c deletes this one line with it.
+ */
+#ifndef INFANTGOD_BLOBSET_TYPEDEF
+#define INFANTGOD_BLOBSET_TYPEDEF
+typedef struct sde_blobset sde_blobset;
+#endif
+
 /* Takes ownership of `payload`.  Returns 0 on success. */
 typedef int (*sde_emit_fn)(void *ud, sde_json *payload);
 
@@ -47,6 +57,7 @@ struct sde_app {
     char        *root;      /* absolute, '/'-separated workspace root */
     sde_view    *view;      /* the client's view document: opaque JSON */
     sde_execset *execs;     /* running child processes */
+    sde_blobset *blobs;     /* open binary / large-file sessions */
     sde_emit_fn  emit;
     void        *emit_ud;
     int          verbose;

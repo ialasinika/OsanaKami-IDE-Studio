@@ -16,6 +16,7 @@ Each check asserts the *safe* outcome, not merely that an error came back: a
 refused document must also leave what the kernel holds untouched, and a refused
 write must leave the file as it was.
 """
+import base64
 import json
 import os
 import re
@@ -269,6 +270,130 @@ def run(k):
     escape = k.call("file.stat", {"path": "../outside.txt"})
     check("file.stat refuses a path that escapes the workspace",
           escape.get("error", {}).get("name") == "IO", json.dumps(escape)[:140])
+
+    print("\n== a file over the text cap travels as a blob ==")
+    # The company the 4 MiB text cap keeps: the same file, one chunk at a time.
+    # The fixture is generated here rather than committed -- it is 5 MiB, and a
+    # repository should not carry a file whose only job is to be too big.
+    pattern = bytes((i * 131 + 17) & 0xFF for i in range(4096))
+    big = (pattern * ((5 * 1024 * 1024 + 11) // len(pattern) + 1))[:5 * 1024 * 1024 + 11]
+    with open(os.path.join(k.root, "scratch", "large.bin"), "wb") as handle:
+        handle.write(big)
+
+    def fnv1a(data):
+        h = 2166136261
+        for byte in data:
+            h = ((h ^ byte) * 16777619) & 0xFFFFFFFF
+        return h if h != 0 else 1
+
+    opened = k.call("file.blobOpen",
+                    {"path": "scratch/large.bin", "mode": "read", "want_revision": True})
+    check("file.blobOpen reports a 5 MiB file's size and revision",
+          opened.get("result", {}).get("size") == len(big)
+          and opened["result"].get("revision") == fnv1a(big),
+          json.dumps(opened)[:160])
+
+    session = opened.get("result", {}).get("session")
+    pieces = []
+    offset = 0
+    ends = 0
+    while session is not None:
+        frame = k.call("file.blobRead",
+                       {"session": session, "offset": offset, "length": 1024 * 1024})
+        if "result" not in frame:
+            break
+        got = frame["result"]
+        if not got.get("data"):
+            break
+        pieces.append(base64.b64decode(got["data"]))
+        offset = got["offset"] + len(pieces[-1])
+        if got.get("eof"):
+            ends += 1
+            break
+    streamed = b"".join(pieces)
+    check("...and the chunks reassemble into the file byte for byte",
+          streamed == big and offset == len(big) and ends == 1,
+          f"{len(streamed)} of {len(big)} bytes, {len(pieces)} chunks, {ends} end frames")
+
+    text = k.call("file.read", {"path": "scratch/large.bin"})
+    check("...while the text cap still refuses that file whole",
+          text.get("error", {}).get("code") == 1003
+          and "too large" in str(text.get("error", {}).get("message", "")),
+          json.dumps(text)[:140])
+
+    wrote = k.call("file.blobOpen",
+                   {"path": "scratch/published.bin", "mode": "write", "want_revision": True})
+    check("a write session opens on a file that does not exist yet, at size 0",
+          wrote.get("result", {}).get("size") == 0
+          and wrote.get("result", {}).get("revision") == 0,
+          json.dumps(wrote)[:160])
+    wsession = wrote.get("result", {}).get("session")
+    half = big[:700000]
+    first = k.call("file.blobAppend", {"session": wsession,
+                                       "data": base64.b64encode(half).decode("ascii")})
+    check("blobAppend reports where the next append goes",
+          first.get("result", {}).get("offset") == len(half)
+          and first["result"].get("size") == len(half),
+          json.dumps(first)[:160])
+    wrong = k.call("file.blobAppend", {"session": wsession, "offset": 3,
+                                       "data": base64.b64encode(b"x").decode("ascii")})
+    check("an append at an offset that is not the end is refused, and the session survives",
+          wrong.get("error", {}).get("code") == -32602
+          and "offset" in str(wrong.get("error", {}).get("message", "")),
+          json.dumps(wrong)[:160])
+    # The rest goes up the way a real client sends it: frames of at most 1 MiB.
+    landed = len(half)
+    for start in range(len(half), len(big), 1024 * 1024):
+        piece = big[start:start + 1024 * 1024]
+        frame = k.call("file.blobAppend",
+                       {"session": wsession,
+                        "data": base64.b64encode(piece).decode("ascii")})
+        landed = frame.get("result", {}).get("offset", -1)
+    check("...and the remaining chunks land at the end",
+          landed == len(big), f"the session's end is {landed}, the file is {len(big)} bytes")
+    committed = k.call("file.blobCommit", {"session": wsession, "total_size": len(big)})
+    check("blobCommit publishes the file with the whole file's revision",
+          committed.get("result", {}).get("replaced") is True
+          and committed["result"].get("revision") == fnv1a(big)
+          and committed["result"].get("size") == len(big),
+          json.dumps(committed)[:160])
+    with open(os.path.join(k.root, "scratch", "published.bin"), "rb") as handle:
+        on_disk = handle.read()
+    check("the published bytes are the bytes that were appended",
+          on_disk == big, f"{len(on_disk)} bytes on disk")
+
+    after = k.call("file.blobRead", {"session": wsession, "offset": 0, "length": 4})
+    check("the committed session is closed",
+          after.get("error", {}).get("code") == -32602
+          and "no such blob session" in str(after.get("error", {}).get("message", "")),
+          json.dumps(after)[:140])
+
+    missing = k.call("file.blobOpen", {"path": "scratch/nope.bin", "mode": "read"})
+    check("opening a missing file for reading is NOT_FOUND",
+          missing.get("error", {}).get("code") == 1002, json.dumps(missing)[:140])
+    stale = k.call("file.blobOpen", {"path": "scratch/large.bin", "mode": "write",
+                                     "base_revision": 1})
+    check("a stale base_revision on a blob open is STALE_REVISION with current_revision",
+          stale.get("error", {}).get("code") == 1001
+          and isinstance(stale.get("error", {}).get("data", {}).get("current_revision"), int),
+          json.dumps(stale)[:160])
+
+    bad_len = k.call("file.blobRead",
+                     {"session": opened["result"]["session"], "offset": 0,
+                      "length": 1024 * 1024 + 1})
+    check("a chunk over 1 MiB is refused, not truncated",
+          bad_len.get("error", {}).get("code") == -32602, json.dumps(bad_len)[:140])
+
+    temp = k.call("file.blobOpen", {"path": "scratch/thrown-away.bin", "mode": "write"})
+    tsession = temp.get("result", {}).get("session")
+    k.call("file.blobAppend", {"session": tsession,
+                               "data": base64.b64encode(b"half a file").decode("ascii")})
+    aborted = k.call("file.blobAbort", {"session": tsession})
+    check("aborting a write session publishes nothing and leaves no temporary file",
+          aborted.get("result", {}).get("aborted") is True
+          and not os.path.exists(os.path.join(k.root, "scratch", "thrown-away.bin"))
+          and not os.path.exists(os.path.join(k.root, "scratch", "thrown-away.bin.tmp")),
+          json.dumps(aborted)[:140])
 
     print("\n== the binary is the one the sources describe ==")
     stamp = build_stamp()

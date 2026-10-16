@@ -1395,6 +1395,212 @@ export function storyAddLine(story, nodeIndex, at, text = "") {
   return index;
 }
 
+/* -------------------- moving a file in chunks -------------------- */
+
+/**
+ * Bytes one `file.blobRead` or `file.blobAppend` call carries.
+ *
+ * `SDE_BLOB_MAX_CHUNK`: a frame carries at most this many decoded bytes and a
+ * chunk over it is refused rather than truncated, so the limit is the kernel's
+ * and this is the client's half of it.  The game's own translation tables are
+ * 4.5-5.75 MB (`NewProject_RU.csv` is 5,751,617 bytes) and `file.read` refuses
+ * anything over 4 MiB, so a table moves through a blob session instead: a
+ * mebibyte a call is six calls for the largest table the game ships, no single
+ * frame big enough to matter, and no call that asks for the whole file.
+ */
+export const BLOB_CHUNK_BYTES = 1024 * 1024;
+
+/** base64 to bytes.  `atob` is the page's decoder; `Buffer` is not here. */
+export function bytesFromBase64(base64) {
+  const binary = atob(String(base64));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/** Bytes to base64.  `btoa` is the page's encoder and wants a binary string. */
+export function base64FromBytes(bytes) {
+  let binary = "";
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+/** The chunk size a caller asked for, never more than one frame may carry. */
+function chunkBytesOf(options) {
+  const wanted = Number.isFinite(options.chunkBytes)
+    ? Math.floor(options.chunkBytes)
+    : BLOB_CHUNK_BYTES;
+  if (wanted < 1) {
+    throw new Error(`a chunk of ${options.chunkBytes} bytes is not a chunk`);
+  }
+  return Math.min(wanted, BLOB_CHUNK_BYTES);
+}
+
+/**
+ * Read a text file through a `file.blob*` read session.
+ *
+ * `file.read` carries a file inside one JSON string and refuses anything over
+ * 4 MiB, which is every translation table the game ships; a session moves the
+ * file in frames instead, and the kernel never holds the whole thing at once.
+ * The session is opened once, read until `eof`, and aborted whatever happens --
+ * including when a frame fails -- because a session left open holds a file.
+ *
+ * The bytes are decoded with a STREAMING decoder, so a frame that ends in the
+ * middle of a character is completed by the next one instead of becoming a
+ * replacement mark, and the final `decode()` flushes the character the last
+ * frame may have left open.
+ *
+ * Returns `{ text, size, revision, chunks }`.  Every way this can go wrong -- a
+ * missing file or a refused frame, a session the kernel has forgotten, a frame
+ * served from the wrong offset, a frame longer than one may be -- throws an
+ * Error whose message is the sentence to show.  There is no partial result: the
+ * caller either gets the whole file or gets nothing, because half a translation
+ * table shown as the table is the card lying about the mod.
+ */
+export async function readTextInChunks(client, path, options = {}) {
+  const chunkBytes = chunkBytesOf(options);
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+  const decoder = new TextDecoder("utf-8", { stream: true });
+  const parts = [];
+
+  /* `want_revision` is how a table's base revision is learned: `file.stat`
+     reports 0 for a file too large to read whole. */
+  const opened = await client.call("file.blobOpen", { path, mode: "read", want_revision: true });
+  const session = opened.session;
+  const size = Number(opened.size);
+  if (!Number.isInteger(size) || size < 0) {
+    throw new Error(`the kernel reported a size of ${opened.size} for ${path}`);
+  }
+
+  let offset = 0;
+  let chunks = 0;
+  let eof = false;
+  onProgress(0, size);
+  try {
+    while (!eof) {
+      let frame;
+      try {
+        frame = await client.call("file.blobRead", { session, offset, length: chunkBytes });
+      } catch (err) {
+        throw new Error(`frame at byte ${offset}: ${err.message}`);
+      }
+
+      /* The reply says where the bytes begin.  A kernel that served the wrong
+         offset would hand back bytes already read, which reads as a table that
+         is fine and is not, so the echo is checked rather than trusted. */
+      if (Number(frame.offset) !== offset) {
+        throw new Error(`asked for byte ${offset} and got byte ${frame.offset}`);
+      }
+
+      let bytes;
+      try {
+        bytes = bytesFromBase64(frame.data === undefined ? "" : frame.data);
+      } catch (err) {
+        throw new Error(`the base64 at byte ${offset}: ${err.message}`);
+      }
+      if (bytes.length > chunkBytes) {
+        throw new Error(`the kernel sent ${bytes.length} bytes for a ${chunkBytes} byte frame at byte ${offset}`);
+      }
+
+      if (bytes.length === 0) {
+        /* Asking past the end is not an error: the answer is an empty frame and
+           `eof`.  A kernel that says "not the end" while sending nothing has
+           stopped with bytes still to come, and a shorter table passed off as
+           the table is the thing this reader exists to refuse. */
+        if (frame.eof === true || offset >= size) {
+          break;
+        }
+        throw new Error(`the read stopped at byte ${offset} of ${size}`);
+      }
+
+      parts.push(decoder.decode(bytes, { stream: true }));
+      offset += bytes.length;
+      chunks += 1;
+      onProgress(offset, size);
+
+      /* `eof` ends it; the offset reaching the size the kernel last reported is
+         the same answer from a kernel that forgets to set it.  A file that grew
+         while it was read moves that size on, so the reading follows it. */
+      eof = frame.eof === true || offset >= size;
+    }
+  } finally {
+    /* The session holds the file open, so it goes away on every path -- and a
+       kernel that has already forgotten it is not worth a second error. */
+    try {
+      await client.call("file.blobAbort", { session });
+    } catch (err) {
+      /* the read's own error is the one to report */
+    }
+  }
+
+  /* Flush: the last frame may have ended in the middle of a character. */
+  parts.push(decoder.decode());
+  return { text: parts.join(""), size, revision: opened.revision, chunks };
+}
+
+/**
+ * Write text through a `file.blob*` write session.
+ *
+ * The bytes are the file, so the text is encoded once, sliced into frames the
+ * kernel accepts, appended, and published with `file.blobCommit`, whose
+ * `total_size` is the client's own statement that nothing was left out -- the
+ * kernel publishes only when it equals the bytes actually written.  A refused
+ * commit leaves the session open, so the error the caller sees is the kernel's
+ * own sentence; the session is aborted on the way out either way, which takes
+ * the session's temporary file with it.
+ *
+ * Returns `{ size, revision, replaced, chunks }`; `revision` is the next
+ * `base_revision` for the file, the number `file.read` would report for it.
+ */
+export async function writeTextInChunks(client, path, text, options = {}) {
+  const chunkBytes = chunkBytesOf(options);
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+  const bytes = new TextEncoder().encode(text);
+  const params = { path, mode: "write" };
+  if (options.baseRevision !== undefined && options.baseRevision !== null) {
+    params.base_revision = options.baseRevision;
+  }
+
+  const opened = await client.call("file.blobOpen", params);
+  const session = opened.session;
+  let offset = 0;
+  let chunks = 0;
+  onProgress(0, bytes.length);
+  try {
+    while (offset < bytes.length) {
+      const frame = bytes.subarray(offset, offset + chunkBytes);
+      const appended = await client.call("file.blobAppend", {
+        session, data: base64FromBytes(frame), offset,
+      });
+      const moved = Number(appended.offset);
+      if (!Number.isInteger(moved) || moved !== offset + frame.length) {
+        throw new Error(`appended ${frame.length} bytes at byte ${offset} and the kernel reported byte ${appended.offset}`);
+      }
+      offset = moved;
+      chunks += 1;
+      onProgress(offset, bytes.length);
+    }
+    const committed = await client.call("file.blobCommit", { session, total_size: bytes.length });
+    return {
+      size: bytes.length,
+      revision: committed.revision,
+      replaced: committed.replaced === true,
+      chunks,
+    };
+  } finally {
+    try {
+      await client.call("file.blobAbort", { session });
+    } catch (err) {
+      /* committed above, or the write's own error is the one to report */
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* DOM                                                                    */
 /* ------------------------------------------------------------------ */
@@ -3921,20 +4127,26 @@ function renderStory(card, ctx) {
    * The table is written only when the card put a row in it -- never because it
    * was read.  The story is already on disk by the time this runs, so a failure
    * here is said out loud rather than turned into a failed save.
+   *
+   * The bytes go through a `file.blob*` write session for the same reason the
+   * reading does: a table of megabytes does not fit in one `file.write` frame,
+   * and the kernel publishes the new file only when the commit's own total
+   * matches what was appended.  The session's base revision is the one the read
+   * session reported, so a file that changed under the card is refused at the
+   * open, before a byte of the card's rows is on disk.
    */
   async function saveTable() {
     if (state.table === null || state.tablePath === "" || !state.tableDirty) {
       return true;
     }
-    const params = { path: state.tablePath, text: serializeCsv(state.table) };
-    if (state.tableRevision !== null) {
-      params.base_revision = state.tableRevision;
-    }
+    const text = serializeCsv(state.table);
     try {
-      const result = await client.call("file.write", params);
-      state.tableRevision = result.revision;
+      const written = await writeTextInChunks(client, state.tablePath, text, {
+        baseRevision: state.tableRevision === null ? undefined : state.tableRevision,
+      });
+      state.tableRevision = written.revision;
       state.tableDirty = false;
-      app.log("info", `saved ${state.tablePath} (rev ${result.revision}) \u2014 the table has the new row`);
+      app.log("info", `saved ${state.tablePath} (rev ${written.revision}) \u2014 the table has the new row`);
       return true;
     } catch (err) {
       renderStatus(`the story was saved \u00b7 ${state.tablePath} was not`);
@@ -3971,30 +4183,42 @@ function renderStory(card, ctx) {
   }
 
   /**
-   * The translation table is a second file, read the same way the story is, and
-   * kept read-only: the card shows what the table says about the open story and
-   * refuses to guess at it.  Saving a table belongs to whoever writes tables.
+   * The translation table is a second file, and it is read through a
+   * `file.blob*` session because of its size, not in one piece: the game's own
+   * tables are megabytes, and one whole-file read of one is the read that never
+   * came back.  The session hands over one mebibyte frame at a time and the
+   * assembled text goes to the same parser as before, so a small table parses to
+   * exactly the rows it always did.  The status line says how far it has got,
+   * and a read that fails is said out loud and leaves no table behind -- a table
+   * that is half the file would be the card lying about the mod.
    */
   async function loadTable(path) {
-    let result;
+    let read;
     try {
-      result = await client.call("file.read", { path });
+      read = await readTextInChunks(client, path, {
+        onProgress: (bytesRead, total) => {
+          renderStatus(bytesRead === 0 || total === 0
+            ? "reading table\u2026"
+            : `reading table\u2026 ${formatSize(bytesRead)}/${formatSize(total)}`);
+        },
+      });
     } catch (err) {
-      renderStatus(`could not read ${path}`);
-      app.log("error", `file.read ${path}: ${err.message}`);
+      renderStatus(`could not read ${path}: ${err.message}`);
+      app.log("error", `file.blobRead ${path}: ${err.message}`);
       return false;
     }
     state.tablePath = path;
-    state.table = parseCsv(result.text);
+    state.table = parseCsv(read.text);
     state.tableById = rowsById(state.table);
-    state.tableRevision = result.revision;
+    state.tableRevision = read.revision;
     state.tableDirty = false;
     paint();
     return true;
   }
 
   /**
-   * The mod's own command schema, read the same way the table is.
+   * The mod's own command schema, read whole in one `file.read` -- a schema is a
+   * few kilobytes, and the table's range reading is about the table's size.
    *
    * A `.ysls.json` is what tells a modder's editor which commands exist, so the
    * card reads the file rather than carrying a list of its own: a mod that adds a
@@ -4058,7 +4282,14 @@ function renderStory(card, ctx) {
           path: state.path, current, cardId: card.id,
         });
         if (choice === "reload") {
-          return load(state.path, { confirmDiscard: false });
+          const reloaded = await load(state.path, { confirmDiscard: false });
+          /* The table is locked to the revision it was read at, and the disk has
+             moved on, so the rows are read again before the next save -- the
+             card says what the file says, or it says nothing. */
+          if (reloaded && state.tablePath !== "") {
+            await loadTable(state.tablePath);
+          }
+          return reloaded;
         }
         if (choice === "overwrite") {
           state.baseRevision = current;

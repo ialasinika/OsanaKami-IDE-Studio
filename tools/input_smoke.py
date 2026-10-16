@@ -70,6 +70,9 @@ counts card *deltas* from whatever the workspace already holds.
 """
 
 import argparse
+import csv
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -124,6 +127,79 @@ PIXEL_PNGS = tuple(REPO_ROOT / relative for _, relative in PIXEL_STROKES)
 #: so this directory goes on the host's command line.
 MODS_ROOT = REPO_ROOT.parent / "Mods"
 MOD_NAME = "SODefines"
+
+#: The real game's Russian translation table: 5,751,617 bytes, far past the
+#: kernel's 4 MiB whole-file read, so the story card can only open it by paging a
+#: ``file.blob*`` session.  It lives *beside* the repository while the kernel's
+#: root is the repository (``serve --workspace`` below), and ``file.*`` refuses
+#: both spellings that would reach it from there: ``../Mods/...`` and an absolute
+#: path are "path escapes the workspace" (``sde_wksp_resolve`` in wksp.c), and
+#: plain ``Mods/...`` resolves to a directory the root does not have.  The run
+#: therefore hard-links the table -- the same file, one inode, not a copy -- under
+#: ``build/`` and opens that, which the kernel may reach and which is still the
+#: real bytes.  The yarn names the first and the last line id the table holds, so
+#: the card paints a translation for both ends of the file; the last row sits
+#: past the 4 MiB mark, where a whole-file read could never have got.
+STORY_TABLE_SRC = MODS_ROOT / "MyMod" / "Yarn" / "NewProject_RU.csv"
+STORY_TABLE_REL = "build/__input_smoke_table.csv"
+STORY_TABLE = REPO_ROOT / "build" / "__input_smoke_table.csv"
+STORY_YARN_REL = "build/__input_smoke_story.yarn"
+STORY_YARN = REPO_ROOT / "build" / "__input_smoke_story.yarn"
+#: The whole-file cap the story card's old read ran into, and the frame a blob
+#: session moves, both quoted in the check's detail line.
+STORY_WHOLE_CAP = 4 * 1024 * 1024
+STORY_FRAME = 1024 * 1024
+STORY_RES = re.compile(r"story-table: (\{.*\})")
+
+
+def read_story_table() -> dict:
+    """What the real table says, computed from the file rather than from the card.
+
+    The card's parser drops the header row (``storycsv.parseCsv`` folds it into
+    ``header``), so the count below is data rows and ``head``/``tail`` are the
+    first and last of those.  ``tail_at`` is where the last row's id sits in the
+    file, quoted because it is past ``STORY_WHOLE_CAP``: a read that stopped at
+    the old cap could not have seen it.
+    """
+    data = STORY_TABLE_SRC.read_bytes()
+    text = data.decode("utf-8")
+    rows = list(csv.reader(text.splitlines()))
+    body = rows[1:]
+    tail = body[-1]
+    return {
+        "bytes": len(data),
+        "rows": len(body),
+        "head_id": body[0][1],
+        "head_text": body[0][2],
+        "tail_id": tail[1],
+        "tail_text": tail[2],
+        "tail_at": text.rfind(tail[1]),
+        "crlf": text.count("\r\n"),
+    }
+
+
+def plant_story_table(real: dict) -> str:
+    """Put the real table where the kernel can reach it, and a story to open it.
+
+    Returns "" on success or the reason it could not be planted.
+    """
+    try:
+        STORY_TABLE.unlink(missing_ok=True)
+        try:
+            os.link(STORY_TABLE_SRC, STORY_TABLE)
+        except OSError:
+            shutil.copyfile(STORY_TABLE_SRC, STORY_TABLE)
+        STORY_YARN.write_text(
+            "title: Table_Smoke\n---\n"
+            f"Aistalt: hi. #line:{real['head_id'].split(':', 1)[-1]}\n"
+            f"News: bye. #line:{real['tail_id'].split(':', 1)[-1]}\n"
+            "===\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    except OSError as exc:
+        return f"could not plant the table: {exc}"
+    return ""
 
 #: Gives the page as much virtual time as it needs for five settled steps plus
 #: the wheel half; the real limit is ``--timeout`` on the browser process.
@@ -1051,9 +1127,51 @@ async function main() {
     say("pixel-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk && pixelOk
-    ? "undo, redo, wheel ownership, a watched file, the editor keys, the classic view and the pixel cards all work in a real browser"
-    : "FAILED -- see the counts, the wheel, the watch, the editor, the classic and the pixel lines above"));
+  /* The real game's Russian translation table is 5.75 MB, past the kernel's 4 MiB
+     whole-file read, so the story card can only open it by paging a blob session.
+     The run plants the table and a two-line story beside it; what this reads back
+     is the card's own row count, the words it paints for the first and the last
+     row of the table, and its status line -- a fallback read would leave the
+     status saying "could not read" and paint no translation at all. */
+  let storyOk = false;
+  let storyLine = "story-table: the card never opened";
+  try {
+    const storyCards = () => Array.from(doc.querySelectorAll("#cards [data-card-id]"));
+    const storyText = (node, selector) => {
+      const el = node.querySelector(selector);
+      return el === null ? "" : (el.textContent || "").trim();
+    };
+    const storyOf = () => storyCards().find((node) => node.dataset.kind === "story") || null;
+    const command = doc.getElementById("command");
+    command.value = "story @@STORY_YARN@@ @@STORY_TABLE@@";
+    command.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    const opened = await waitUntil(() => {
+      const node = storyOf();
+      return node !== null && /[0-9]+ rows/.test(storyText(node, '[data-role="story-table"]'));
+    }, 300, 100);
+    const card = storyOf();
+    const table = card === null ? "" : storyText(card, '[data-role="story-table"]');
+    const status = card === null ? "" : storyText(card, '[data-role="card-status"]');
+    const cells = card === null ? [] : Array.from(card.querySelectorAll('[data-role="story-translation"]'))
+      .map((cell) => (cell.textContent || "").trim());
+    const counted = table.match(/([0-9]+) rows/);
+    storyLine = "story-table: " + JSON.stringify({
+      opened: opened,
+      rows: counted === null ? 0 : Number(counted[1]),
+      table: table,
+      status: status,
+      cells: cells,
+    });
+    storyOk = opened && status.indexOf("could not read") < 0 && cells.length >= 2;
+  } catch (error) {
+    storyOk = false;
+    storyLine = "story-error: " + (error && error.message ? error.message : String(error));
+  }
+  say(storyLine);
+
+  say("RESULT: " + (ok && wheelOk && watchOk && editorOk && classicOk && pixelOk && storyOk
+    ? "undo, redo, wheel ownership, a watched file, the editor keys, the classic view, the pixel cards and the story table all work in a real browser"
+    : "FAILED -- see the counts, the wheel, the watch, the editor, the classic, the pixel and the story lines above"));
   document.title = "input smoke done";
 }
 
@@ -1072,6 +1190,9 @@ PAGE = PAGE.replace("@@PIXEL2@@", PIXEL_STROKES[1][1])
 PAGE = PAGE.replace("@@PIXEL3@@", PIXEL_STROKES[2][1])
 #: ...and the mod whose D006 rows its problems card has to offer.
 PAGE = PAGE.replace("@@MOD@@", MOD_NAME)
+#: ...and the story the story half opens, with the real 5.75 MB table it names.
+PAGE = PAGE.replace("@@STORY_YARN@@", STORY_YARN_REL)
+PAGE = PAGE.replace("@@STORY_TABLE@@", STORY_TABLE_REL)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1240,6 +1361,22 @@ def parse_pixel(body: str) -> dict:
     return found
 
 
+def parse_story(body: str) -> dict:
+    """The story half's JSON line: the card's row count, status and cells.
+
+    Empty when the line is missing -- the check that uses it says so rather than
+    pretending the card never had a table to read.
+    """
+    found = STORY_RES.search(body)
+    if found is None:
+        return {}
+    try:
+        report = json.loads(found.group(1))
+    except ValueError:
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
 def decode_rgba(path: Path):
     """``(width, height, rows)`` for a .png, rows as raw RGBA bytes.
 
@@ -1350,6 +1487,14 @@ def main(argv=None) -> int:
           f"{'' if backup.existed else ' (absent -- this run will create and remove it)'}")
     print("-" * 68)
     profile = Path(tempfile.mkdtemp(prefix="infantgod-input-smoke-"))
+    # The story half opens the real 5.75 MB translation table.  ``file.*`` cannot
+    # reach it beside the repository, so the run hard-links it (one inode, the same
+    # bytes) under build/ and writes the two-line story that names the first and the
+    # last row the table holds -- then opens that.  Both files go away in the
+    # finally below; the table they point at never does.
+    real = read_story_table() if STORY_TABLE_SRC.is_file() else {}
+    story_fixture = (plant_story_table(real) if real
+                     else f"no translation table at {STORY_TABLE_SRC}")
     WRAPPER.write_text(PAGE, encoding="utf-8", newline="\n")
     # ``serve`` resolves every ``mod.*`` root under ``--mods-root``, which
     # defaults to the workspace; the mod whose D006 rows the pixel check opens
@@ -1395,6 +1540,10 @@ def main(argv=None) -> int:
         # The watch half writes this with a real child process; take it away
         # whether or not the checks got that far.
         SCRATCH.unlink(missing_ok=True)
+        # The story half's story, and the hard link that made the real table
+        # reachable from the workspace; removing the link leaves the table itself.
+        STORY_YARN.unlink(missing_ok=True)
+        STORY_TABLE.unlink(missing_ok=True)
         # The pixel half's cards create their .png on the first save and the
         # checks below decode them, so those files outlive this block and are
         # taken away after the last check.
@@ -1704,6 +1853,30 @@ def main(argv=None) -> int:
                   bool(cards) and int(cards[0]) >= 5 and cards[1] == "0",
                   f"added={cards[0]} left={cards[1]} others={cards[2]}"
                   if cards else pixel_detail("cards"))
+
+    # The real game's translation table is 5.75 MB, past the kernel's 4 MiB
+    # whole-file read, so the card can only have opened it by paging a blob
+    # session.  The card's own row count is compared with the count computed here
+    # from the file, and the words it painted for the first and the last row the
+    # table holds -- the last row sits past the 4 MiB mark, which a read that
+    # stopped at the old cap could not have reached.  A fallback read leaves
+    # "could not read" in the status line and no translation cell at all.  The
+    # expected count is quoted in the detail line either way.
+    story = parse_story(body)
+    story_cells = story.get("cells") or []
+    story_ok = (not story_fixture and bool(real)
+                and story.get("rows") == real.get("rows")
+                and story_cells[:2] == [real.get("head_text"), real.get("tail_text")]
+                and "could not read" not in str(story.get("status", "")))
+    if story_fixture:
+        story_detail = story_fixture
+    else:
+        story_detail = (f"{STORY_TABLE_SRC.name}: {real.get('bytes')} bytes, {real.get('rows')} rows, "
+                        f"the last of them at byte {real.get('tail_at')} (computed here); card rows="
+                        f"{story.get('rows')} table={story.get('table')!r} status={story.get('status')!r} "
+                        f"cells={story_cells!r}")
+    results.check("the story card reads the real 5.75 MB translation table whole, through a blob session",
+                  story_ok, story_detail)
 
     results.check("the board is back as it was found", restored,
                   "byte-identical" if backup.existed else "absent again")

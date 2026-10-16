@@ -26,7 +26,9 @@ SRC = \
 	core/src/buf.c \
 	core/src/vec.c \
 	core/src/json.c \
+	core/src/base64.c \
 	core/src/wksp.c \
+	core/src/blob.c \
 	core/src/view.c \
 	core/src/exec.c \
 	core/src/rpc.c \
@@ -71,6 +73,16 @@ JSONTEST = build/obj/test_json.exe
 
 $(JSONTEST): core/tests/test_json.c $(OBJDIR)/json.o $(OBJDIR)/buf.o $(OBJDIR)/vec.o
 	$(CC) $(CFLAGS) core/tests/test_json.c $(OBJDIR)/json.o $(OBJDIR)/buf.o $(OBJDIR)/vec.o -o $@
+
+# The blob layer's own unit test: the five file.blob* methods, base64 on the
+# wire, offsets, limits and sessions -- driven through sde_rpc_handle(), so it
+# needs every object except the one that owns main().  Its scratch files live
+# under build/test-blob and are removed on every exit path, so `make test`
+# leaves nothing behind.
+BLOBTEST = build/obj/test_blob.exe
+
+$(BLOBTEST): core/tests/test_blob.c $(filter-out $(OBJDIR)/main.o,$(OBJ))
+	$(CC) $(CFLAGS) core/tests/test_blob.c $(filter-out $(OBJDIR)/main.o,$(OBJ)) -o $@
 
 # The object directory is a directory, not a file: an order-only prerequisite
 # keeps make from rebuilding everything whenever its timestamp moves.  It is
@@ -141,8 +153,9 @@ smoke: $(BIN)
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe cli-check version-check $(JSONTEST)
+test: check fullcheck probe cli-check version-check $(JSONTEST) $(BLOBTEST)
 	$(JSONTEST)
+	$(BLOBTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs
 	$(NODE) shell/mods/selftest.mjs

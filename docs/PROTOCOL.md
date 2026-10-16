@@ -84,7 +84,7 @@ responses at any time. The event list is below.
 ## The kernel method table
 
 The authoritative table is `sde_methods[]` in `core/src/rpc.c`. With both
-compile-time switches on (`SDE_WITH_VIEW`, `SDE_WITH_EXEC`) there are thirteen
+compile-time switches on (`SDE_WITH_VIEW`, `SDE_WITH_EXEC`) there are eighteen
 methods. `view.*` disappears when `SDE_WITH_VIEW` is 0; `exec.*` disappears
 when `SDE_WITH_EXEC` is 0.
 
@@ -98,6 +98,11 @@ when `SDE_WITH_EXEC` is 0.
 | `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
 | `file.write_bytes` | `path`, `base64`, `base_revision?` | `{path, revision, size}` |
 | `file.stat` | `path` | `{path, exists, dir, size, mtime, revision}` |
+| `file.blobOpen` | `path`, `mode`, `base_revision?`, `want_revision?` | `{session, path, size, revision?}` |
+| `file.blobRead` | `session`, `offset?`, `length?` | `{session, offset, size, eof, data}` |
+| `file.blobAppend` | `session`, `data`, `offset?` | `{session, offset, size}` |
+| `file.blobCommit` | `session`, `total_size?` | `{path, size, revision, replaced}` |
+| `file.blobAbort` | `session` | `{aborted}` |
 | `view.load` | `path` | `{path, revision, document}` |
 | `view.save` | `path`, `document`, `base_revision?` | `{path, revision, saved}` |
 | `exec.start` | `cmd`, `card_id?`, `cwd?` | `{run_id}` |
@@ -229,6 +234,10 @@ The last row is not a dead end: a file that is not text is what
 containment rule. A client that does not know whether a path is text can read
 with `file.read` and fall back on `1003 file is binary` -- or ask `file.stat`
 first, which now answers with a revision for a binary file too.
+
+A file bigger than 4 MiB is not a dead end either: that cap is on *one call*, and
+the `file.blob*` methods below move the same file in 1 MiB chunks through a
+session, with the same path containment and the same revisions.
 
 Absolute paths and `..` escapes are refused before any of that: `sde_wksp_resolve`
 rejects `absolute paths are not allowed: <path>` and
@@ -376,6 +385,136 @@ response:
 That is deliberate rather than incidental: an image editor holding a PNG while a
 second client overwrites it is precisely the race `file.changed` exists to lose
 loudly. Both write verbs emit it from one function, so neither can forget.
+
+### `file.blobOpen`
+
+The blob methods are the companion to the cap above, not a second cap. The four
+file verbs made above move a whole file through one JSON string, which is why 4
+MiB is where they stop; the blob verbs move a file in 1 MiB chunks through a
+session, so a 2 GiB translation table is as ordinary as a 2 KiB one. Both paths
+share the same revisions, the same path containment and the same atomic publish
+the text verbs already use, so a file can be opened as a blob and afterwards read
+with `file.read_bytes`, or the other way round.
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `path` | string | workspace-relative, contained and normalised exactly as `file.read`'s |
+| `mode` | string | `"read"` or `"write"` |
+| `base_revision?` | number | the revision the caller believes is on disk |
+| `want_revision?` | bool | ask for the file's revision in the result |
+
+A `"read"` session on a file that does not exist is refused:
+
+```json
+{"jsonrpc":"2.0","id":4,"error":{"code":1002,"name":"NOT_FOUND","message":"no such file: Yarn/NewProject_RU.csv"}}
+```
+
+A `"write"` session does not need the file to exist -- it creates it on commit --
+and its size starts at `0` and grows with every append. A `base_revision` that no
+longer matches is `file.write`'s refusal, byte for byte:
+
+```json
+{"jsonrpc":"2.0","id":4,"error":{"code":1001,"name":"STALE_REVISION","message":"file changed on disk since it was read","data":{"current_revision":987654321}}}
+```
+
+With `want_revision` the result carries the revision of the file on disk, so one
+round trip answers "give me a session, and is my copy still current?". The same
+value can be had from `file.stat`, `file.read` and `file.read_bytes`; all four
+are the one FNV-1a hash of the whole file.
+
+### `file.blobRead`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `session` | number | from `file.blobOpen` |
+| `offset?` | number | byte to start at; default is where the last read stopped |
+| `length?` | number | 1 to `SDE_BLOB_MAX_CHUNK` (1 MiB); default 1 MiB |
+
+```json
+{"jsonrpc":"2.0","id":5,"result":{"session":1,"offset":1048576,"size":5751617,"eof":false,"data":"iVBORw0KGgo..."}}
+```
+
+`size` is the file's size, `data` is base64, and `eof` is true on the frame that
+reached the end. Asking past the end is not an error -- the answer is an empty
+frame whose `offset` is the end of the file, so a loop that trusted a stale
+`size` still terminates:
+
+```json
+{"jsonrpc":"2.0","id":6,"result":{"session":1,"offset":5751617,"size":5751617,"eof":true,"data":""}}
+```
+
+A `length` over 1 MiB is refused, never truncated, and a write session has
+nothing to read:
+
+| refusal | code | name | message |
+| --- | --- | --- | --- |
+| unknown or closed session | -32602 | `INVALID_PARAMS` | `no such blob session` |
+| `length` not 1..1 MiB | -32602 | `INVALID_PARAMS` | `length must be 1 to 1048576 bytes` |
+| negative `offset` | -32602 | `INVALID_PARAMS` | `offset must not be negative` |
+| reading a write session | -32602 | `INVALID_PARAMS` | `a write session has nothing to read` |
+| the file became unreadable | 1003 | `IO` | the kernel's message |
+
+### `file.blobAppend`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `session` | number | a `"write"` session |
+| `data` | string | base64; must decode to at most 1 MiB |
+| `offset?` | number | must equal the current end of the session |
+
+The result's `offset` is where the *next* append goes, so a sender that keeps
+its own count checks it rather than assumes it:
+
+```json
+{"jsonrpc":"2.0","id":7,"result":{"session":2,"offset":2097152,"size":2097152}}
+```
+
+An explicit `offset` that is not the current end is refused with
+`offset does not match the end of what has been written`; the payload is not
+spliced in and the session stays open, so the sender can retry. The whole 5.75 MB
+table goes up this way in six frames of at most 1 MiB.
+
+### `file.blobCommit`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `session` | number | a `"write"` session |
+| `total_size?` | number | what the sender believes it wrote; required |
+
+```json
+{"jsonrpc":"2.0","id":8,"result":{"path":"Yarn/NewProject_RU.csv","size":5751617,"revision":1625651871,"replaced":true}}
+```
+
+The bytes were appended to `<path>.tmp`; commit renames that over the target, the
+same atomic publish `file.write` uses, and `replaced` is true whenever that
+rename happened -- it says the commit published, not that a file was there
+before (`size: 0` in the open is how a sender learns it is starting a new file).
+`total_size` must equal what was appended -- a truncated or padded
+upload is refused rather than published. On success the session is closed and the
+kernel emits `file.changed` with the new revision, like any other write. A
+refusal *leaves the session open*, so the sender can append the missing bytes and
+commit again.
+
+### `file.blobAbort`
+
+```json
+{"jsonrpc":"2.0","id":9,"result":{"aborted":true}}
+```
+
+Abort throws the session away, and with it a write session's temporary file: an
+aborted upload leaves the target exactly as it was and no `.tmp` beside it. It is
+the right call on every failure path, and it is cheap: the client can send it
+without knowing whether the session still exists, because closing a session that
+is already gone is `-32602 no such blob session` rather than something worse.
+
+### Sessions have limits
+
+| limit | value | what happens |
+| --- | --- | --- |
+| sessions per kernel | 8 | a ninth open is refused, not queued |
+| idle close | 15 minutes | a session nobody reads, appends or commits is closed and its temp removed |
+| chunk | 1 MiB | a longer `length` or a larger decoded `data` is refused, never truncated |
+| a killed kernel | -- | no commit happened, so no target moved; the `.tmp` is left for the next sweep |
 
 ### `view.load`
 

@@ -116,17 +116,19 @@ builds and runs without it.
 | `buf` | growable byte buffer, the kernel's only string type | nothing builds: every other module formats through it | no |
 | `vec` | growable pointer array, used for lists without a fixed bound | nothing builds | no |
 | `json` | JSON parse/serialise; the protocol's value type | nothing builds | no |
+| `base64` | base64 for the byte verbs and for blob chunks | binary files can no longer cross the wire, in either direction | no |
 | `port` | the platform boundary: files, paths, threads, processes | nothing builds; this is the layer a fork replaces to leave Win32 | no |
 | `wksp` | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; only the canvas remains | yes |
+| `blob` | large files as chunked sessions, published atomically on commit | a file over 4 MiB can only be read or written whole, if at all | no |
 | `view` | the client's view document: opaque JSON, atomic persistence, revisions | no document survives a restart; the client is left with what it holds | yes |
 | `exec` | child processes for `runner` cards, with streamed output | cards can no longer run anything | yes |
 | `serve` | newline-delimited JSON-RPC over stdin/stdout | the kernel has no way in; useful only as a linkable library | yes |
 | `rpc` | the method table that turns frames into actions | nothing is callable; keep it and the kernel has no verbs | no |
 | `app` | constructs and owns the shared state modules are handed | nothing builds | no |
 
-Ten modules. Six required (`buf`, `vec`, `json`, `port`, `rpc`, `app`), four
-optional (`wksp`, `view`, `exec`, `serve`). Beyond the module table there are
-two compile-time switches in `core/include/infantgod_cfg.h`:
+Twelve modules. Eight required (`buf`, `vec`, `json`, `base64`, `port`, `blob`,
+`rpc`, `app`), four optional (`wksp`, `view`, `exec`, `serve`). Beyond the module
+table there are two compile-time switches in `core/include/infantgod_cfg.h`:
 
 ```c
 /* Compile-time switches a fork flips to cut whole subsystems out. */
@@ -167,6 +169,57 @@ and raises two Win32 macros that the kernel depends on:
   implementations back.
 - `_WIN32_WINNT 0x0600` — needed before `<windows.h>` so condition variables and
   `TryEnterCriticalSection` are visible.
+
+---
+
+## Files over 4 MiB: the blob layer
+
+The four `file.*` verbs move a whole file through one JSON string, so 4 MiB is
+where they stop; that limit is unchanged and those refusals still read
+`file is too large to open`. `core/src/blob.c` is the companion for the files
+that are bigger than a JSON string should be: a session turns one file into a
+sequence of 1 MiB chunks, so a 5.75 MB translation table is read and written
+without either side ever holding it whole.
+
+- **A session is a small state machine.** `sde_blobset` holds eight sessions; a
+  session is a path already resolved through `sde_wksp_resolve` (so `../` and
+  absolute paths are refused before a file is touched), a mode, a position and,
+  for writes, the temporary file. `file.blobOpen` takes a `base_revision` and
+  checks it exactly as `file.write` does, so the stale-revision rail is the same
+  rail.
+- **Reads seek instead of buffering.** `sde_port_read_at()` reads `length` bytes
+  at `offset` in 64 KiB steps. The per-call chunk is capped at
+  `SDE_BLOB_MAX_CHUNK` (1 MiB) and refused, never truncated, so a client cannot
+  ask one call for the whole file and defeat the point. Asking past the end is
+  answered with an empty frame *at the end of the file*, which keeps a loop that
+  trusted a stale size terminating.
+- **Revisions stream.** `sde_rev_update()`/`sde_rev_final()` (in `wksp.c`, seed
+  `SDE_REV_SEED`) are the FNV-1a hash of `sde_rev_of()` split into two steps, so
+  the same hash can be computed in 64 KiB pieces. A chunked write folds each
+  append into the session's running hash as the bytes arrive; a chunked read
+  streams the file through the same helper. `sde_rev_final()` maps a hash of 0
+  to 1, because 0 is the protocol's "no revision". The result is that a 5.75 MB
+  file read as a blob, read as text, `file.stat`ed and committed as a blob all
+  report the same number.
+- **Publish is still one rename.** A write session appends to `<path>.tmp`;
+  `file.blobCommit` requires `total_size` to equal what was appended and then
+  calls the same `sde_port_replace_file()` that `file.write` uses. A refusal
+  leaves the session open so the sender can send the missing bytes; `file.blobAbort`
+  closes it and removes the temporary file; a session idle for fifteen minutes is
+  closed by the next blob call, which is what keeps a crashed client from leaving
+  a `.tmp` behind forever.
+- **Errors keep the wire's meaning.** `SDE_BLOB_STALE` becomes `1001
+  STALE_REVISION` with `data.current_revision`; a read open of a missing file is
+  `1002 NOT_FOUND`; an unknown session, a bad `mode`, a chunk over 1 MiB, a
+  negative offset, an append offset that is not the end and a `total_size` that
+  does not match are all `-32602 INVALID_PARAMS`; anything else is `1003 IO`.
+  The mapping lives in one function (`fail_blob()` in `core/src/rpc.c`) so a
+  status cannot drift from its code.
+
+`core/src/blob.c` and the port use `long` throughout, the layer's existing size
+type. On Win64 `long` is 32-bit, so a blob session covers files up to 2 GiB --
+three orders of magnitude above the 4 MiB it removes, and a local change if a
+fork ever needs more.
 
 ---
 
@@ -269,13 +322,14 @@ The Makefile's verification targets, in the order `make test` runs them:
 
 | target | command | what it proves |
 | --- | --- | --- |
-| `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files (text and bytes), the view document, exec |
+| `check` | `python tools/e2e.py --kernel build/infantgod.exe` | the kernel alone: protocol, files (text and bytes), blob sessions over 4 MiB, the view document, exec |
 | `fullcheck` | `python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."` | the whole endpoint, including the language layer |
 | `probe` | `python tools/kernel_probe.py` | every bug in `docs/BUGS.md`, against its own scratch workspace under `build/` |
 | `cli-check` | `python tools/seide_cli.py selfcheck` | the protocol's second consumer: eight checks -- hello, a write round-trip, the stale-revision rail, the listing, a document the kernel stores without reading it (and the stale write it refuses), a child's output and exit code, that a shell-only method is still `METHOD_NOT_FOUND`, and that the command line refuses to overwrite a file it was not given a base revision for |
 | `version-check` | `python tools/version.py check` | the four copies of the version number still agree with `VERSION` |
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
+| `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, against its own scratch directory under `build/` (130 checks) |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip (208 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |

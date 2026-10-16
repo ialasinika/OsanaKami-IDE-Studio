@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "base64.h"
 #include "port.h"
 #include "wksp.h"
 
@@ -43,9 +44,8 @@ static void set_err_path(char *err, size_t errcap, const char *message, const ch
 /* revisions                                                              */
 /* ====================================================================== */
 
-unsigned long sde_rev_of(const char *data, size_t len)
+unsigned long sde_rev_update(unsigned long h, const char *data, size_t len)
 {
-    unsigned long h = 2166136261UL;
     size_t i;
 
     for (i = 0; i < len; i++) {
@@ -53,6 +53,22 @@ unsigned long sde_rev_of(const char *data, size_t len)
         h = (h * 16777619UL) & 0xFFFFFFFFUL;
     }
     return h;
+}
+
+unsigned long sde_rev_final(unsigned long h)
+{
+    /*
+     * 0 means "there is no revision to compare" -- an absent file, say.  The
+     * hash itself can land on 0 (~2^-32 per content), and a file whose bytes
+     * hash to 0 would then be indistinguishable from a missing one, so that
+     * one value is reported as 1.
+     */
+    return (h == 0UL) ? 1UL : h;
+}
+
+unsigned long sde_rev_of(const char *data, size_t len)
+{
+    return sde_rev_final(sde_rev_update(SDE_REV_SEED, data, len));
 }
 
 /* A file that does not exist has a well-defined revision of 0. */
@@ -505,140 +521,11 @@ static int read_whole_file(const sde_app *app, const char *rel, sde_buf *buf,
 /* ---------------------------------------------------------------------- */
 
 /*
- * One spelling, on purpose: the standard alphabet, `=` to a multiple of four,
- * and nothing else.  A decoder that skipped whitespace, or stopped at the first
- * character it did not like, would "succeed" on a string that is not base64 and
- * write bytes nobody asked for -- and a PNG written from a mis-encoded string is
- * worse than a refusal, because it looks right until the game loads it.
+ * The one spelling of base64 lives in `base64.c`, because two spellings of an
+ * encoder is how a payload round-trips through one verb and not the other.  The
+ * rules are RFC 4648 and nothing else, and a string that is not base64 is
+ * refused rather than guessed at.
  */
-static const char B64_CHARS[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/* malloc'd and NUL-terminated; NULL only when out of memory. */
-static char *b64_encode(const unsigned char *data, size_t len)
-{
-    size_t groups = len / 3;
-    size_t rest = len - groups * 3;
-    char  *out = (char *) malloc(groups * 4 + (rest == 0 ? 0 : 4) + 1);
-    size_t i = 0;
-    size_t o = 0;
-
-    if (out == NULL) {
-        return NULL;
-    }
-    while (i + 3 <= len) {
-        unsigned long v = ((unsigned long) data[i] << 16)
-                        | ((unsigned long) data[i + 1] << 8)
-                        | (unsigned long) data[i + 2];
-
-        out[o++] = B64_CHARS[(v >> 18) & 63];
-        out[o++] = B64_CHARS[(v >> 12) & 63];
-        out[o++] = B64_CHARS[(v >> 6) & 63];
-        out[o++] = B64_CHARS[v & 63];
-        i += 3;
-    }
-    if (rest == 1) {
-        unsigned long v = (unsigned long) data[i] << 16;
-
-        out[o++] = B64_CHARS[(v >> 18) & 63];
-        out[o++] = B64_CHARS[(v >> 12) & 63];
-        out[o++] = '=';
-        out[o++] = '=';
-    } else if (rest == 2) {
-        unsigned long v = ((unsigned long) data[i] << 16)
-                        | ((unsigned long) data[i + 1] << 8);
-
-        out[o++] = B64_CHARS[(v >> 18) & 63];
-        out[o++] = B64_CHARS[(v >> 12) & 63];
-        out[o++] = B64_CHARS[(v >> 6) & 63];
-        out[o++] = '=';
-    }
-    out[o] = '\0';
-    return out;
-}
-
-static int b64_digit(char ch)
-{
-    if (ch >= 'A' && ch <= 'Z') return ch - 'A';
-    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
-    if (ch >= '0' && ch <= '9') return ch - '0' + 52;
-    if (ch == '+') return 62;
-    if (ch == '/') return 63;
-    return -1;
-}
-
-/*
- * 0 on success, -1 out of memory, -2 not base64.  `*out` is always malloc'd on
- * success -- an empty payload gets a one-byte buffer -- so a caller can free it
- * without asking how long the payload was.
- */
-static int b64_decode(const char *text, unsigned char **out, size_t *out_len)
-{
-    size_t         len = strlen(text);
-    size_t         i;
-    size_t         o = 0;
-    unsigned char *buf;
-
-    *out = NULL;
-    *out_len = 0;
-    if (len % 4 != 0) {
-        return -2;
-    }
-    buf = (unsigned char *) malloc(len / 4 * 3 + 1);
-    if (buf == NULL) {
-        return -1;
-    }
-    for (i = 0; i < len; i += 4) {
-        int v0 = b64_digit(text[i]);
-        int v1 = b64_digit(text[i + 1]);
-        int v2 = text[i + 2] == '=' ? 0 : b64_digit(text[i + 2]);
-        int v3 = text[i + 3] == '=' ? 0 : b64_digit(text[i + 3]);
-        int last = (i + 4 >= len);
-        int pad_here = 0;
-
-        if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) {
-            free(buf);
-            return -2;
-        }
-        if (text[i + 3] == '=') {
-            pad_here++;
-            if (text[i + 2] == '=') {
-                pad_here++;
-            }
-        } else if (text[i + 2] == '=') {
-            /* A `=` in the third slot with a real character after it is not a
-             * short group, it is a misplaced `=`. */
-            free(buf);
-            return -2;
-        }
-        if (pad_here > 0 && !last) {
-            free(buf);
-            return -2;
-        }
-        /* RFC 4648: the bits a short group cannot carry must be zero.  A string
-         * with junk in them is not a second spelling of the same bytes, it is a
-         * different string, and it is refused rather than rounded. */
-        if (pad_here == 2 && (v1 & 15) != 0) {
-            free(buf);
-            return -2;
-        }
-        if (pad_here == 1 && (v2 & 3) != 0) {
-            free(buf);
-            return -2;
-        }
-
-        buf[o++] = (unsigned char) ((v0 << 2) | (v1 >> 4));
-        if (pad_here < 2) {
-            buf[o++] = (unsigned char) (((v1 & 15) << 4) | (v2 >> 2));
-        }
-        if (pad_here < 1) {
-            buf[o++] = (unsigned char) (((v2 & 3) << 6) | v3);
-        }
-    }
-    *out = buf;
-    *out_len = o;
-    return 0;
-}
 
 sde_json *sde_wksp_read(const sde_app *app, const char *rel, char *err, size_t errcap)
 {
@@ -704,7 +591,7 @@ sde_json *sde_wksp_read_bytes(const sde_app *app, const char *rel,
     }
     bytes = buf.data == NULL ? "" : buf.data;
 
-    b64 = b64_encode((const unsigned char *) bytes, buf.len);
+    b64 = sde_base64_encode(bytes, buf.len);
     if (b64 == NULL) {
         set_err(err, errcap, "out of memory");
         sde_buf_free(&buf);
@@ -964,7 +851,7 @@ int sde_wksp_write_bytes(const sde_app *app, const char *rel, const char *base64
         return SDE_WKSP_FAIL;
     }
 
-    switch (b64_decode(base64, &data, &len)) {
+    switch (sde_base64_decode(base64, strlen(base64), (char **) &data, &len)) {
     case 0:
         break;
     case -1:

@@ -64,6 +64,32 @@ tree.
   same FNV-1a hash `file.read_bytes` reports for the same bytes, so a client
   holding a revision from `file.read`, `file.read_bytes` or `file.stat` can
   compare it against any of the other two.
+- The kernel can now move a file that is too big to be one JSON **string**.  The
+  four `file.*` text/byte verbs carry a whole file through one JSON value, so all
+  of them stop at 4 MiB: the game's own translation tables run from 4.5 MB to
+  5.75 MB and were simply unopenable.  Five methods replace "one big string" with
+  a session.  `file.blobOpen {path, mode, base_revision?, want_revision?}` opens
+  one; `file.blobRead {session, offset?, length?}` answers at most 1 MiB of base64
+  at a time with `eof`; `file.blobAppend {session, data, offset?}` writes into a
+  `<path>.tmp` neighbour; `file.blobCommit {session, total_size}` publishes it
+  with the same atomic replace `file.write` uses — a reader of the target sees the
+  old file or the new one and never a half-written one — and `file.blobAbort`
+  takes the temporary file with it.  A chunk over 1 MiB is refused rather than
+  truncated, an append whose `offset` is not where the session's data currently
+  ends is refused rather than spliced into the wrong spot, `base_revision` is
+  compared exactly as `file.write` compares it (`1001 STALE_REVISION` with
+  `data.current_revision`), a read session on a missing file is `1002`, and an
+  unknown session is `-32602`.  `blobOpen`'s `want_revision` and `blobCommit`'s
+  `revision` are the same FNV-1a hash the other `file.*` verbs report for those
+  bytes, which is how a client learns the base of a file too large for
+  `file.stat` to have hashed; a write session on a file that is not there is not
+  an error, because the commit creates it.  Eight sessions per kernel, closed
+  after fifteen idle minutes, and a kernel killed with sessions open leaves no
+  commit.  `core/src/blob.c` hashes in 64 KiB steps and seeks instead of
+  buffering, `core/include/base64.h` is now the one base64 implementation (the
+  statics in `wksp.c` are gone), and `core/port/sys_win32.c` gained `read_at` and
+  `append_file`, so neither side ever holds the file whole.  The 4 MiB refusals
+  are unchanged and still read `file is too large to open`.
 
 ### Shell
 
@@ -242,6 +268,19 @@ tree.
   worse than none.  A JSON file with neither a `commands` nor a `functions` list
   is refused rather than read as an empty schema that would complete nothing for
   the rest of the session.
+- The tables are too big for one JSON string, so the card no longer asks for one.
+  A `NewProject_<lang>.csv` is 4.5-5.75 MB and a whole-file `file.read` is
+  refused over 4 MiB, which the card used to meet as a plain read failure.  The
+  table now moves through a `file.blob*` session — opened once, read in 1 MiB
+  frames, each frame decoded by a *streaming* UTF-8 decoder so a table whose bytes
+  straddle a frame boundary is still assembled character for character, and the
+  session given back on every path, a failed read included.  The status line shows
+  how far the read has got, and a frame that fails is named on the card and leaves
+  no table behind: a shorter table is never passed off as the whole one.  Saving
+  uses a session of its own — the new text appended in frames and published with
+  `file.blobCommit`, whose `total_size` is checked against the bytes actually
+  appended — under the same stale-revision rules as any other write, so the game's
+  real tables are written the way they are read.
 
 ### A pixel canvas, and the file it draws
 
@@ -448,8 +487,11 @@ tree.
   defines (what one is — the schema, the meaning, the path, the ids), the three
   failures that follow from confusing the two, and what it costs.  `docs/BUGS.md`
   entries A and E are kept as history with that context added.
-- `docs/PROTOCOL.md` documents the two new methods, the eleven-method table, the
-  retired `1004`, and `workspace.info`'s `view_path` / `view_revision`;
+- `docs/PROTOCOL.md` documents the two new methods, the method table (now
+  eighteen entries, the five `file.blob*` verbs among them), the retired `1004`,
+  and `workspace.info`'s `view_path` / `view_revision`; the blob layer is argued
+  where it can be checked, under `## Files over 4 MiB: the blob layer` in
+  `docs/ARCHITECTURE.md`;
   `docs/ARCHITECTURE.md`, `docs/PARADIGM.md`, `docs/TRIM.md`, `docs/SURFACES.md`,
   `docs/FORK.md`, `docs/PROJECT.md`, `README.md`, `tools/README.md` and
   `shell/web/README.md` now say that the board is the shell's convention and where
@@ -470,9 +512,32 @@ tree.
 
 ### Checks
 
-- `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 208/208, mods 84/84) and `make smoke` (browser smoke 5, input smoke 34)
-  are green.  Every
+- `make test` (e2e 22, kernel probe, cli-check, version-check, JSON, blob 130/130,
+  langs 91/91, selftest 223/223, mods 84/84) and `make smoke` (browser smoke 5,
+  input smoke 35) are green.  The blob layer was held to the same bar rather than
+  to "it compiles": ten breaks in `build/sabotage_blob.py` — a stale base not
+  compared, a session table that answers to any id, an idle reaper that closes
+  live sessions, a read cap and an append cap not enforced, an append at the wrong
+  offset accepted, a read that ignores the offset it was given, a hash that folds
+  one byte per chunk, an abort that forgets its temporary file, and a commit that
+  reports success without publishing — were all caught by a failing check (the new
+  `core/tests/test_blob.c` and `tools/e2e.py`'s six blob checks between them), and
+  `core/src/blob.c` was restored byte-identical by `sha256`.  The point of the
+  layer was measured against the game's own table rather than a fixture: the real
+  5,751,617-byte `Mods/MyMod/Yarn/NewProject_RU.csv` is refused by `file.read`
+  with `1003 file is too large to open`, then read through a session in six frames
+  (1 MiB, 1 MiB, 1 MiB, 1 MiB, 1 MiB, 508,737 bytes) whose concatenation is the
+  file byte for byte, and written back through a write session to a copy with the
+  same sha256 as the source; the stale-base, wrong-offset and over-1 MiB refusals
+  were exercised on the same run.  The same file was then read by the *card*, in a
+  real browser: a `tools/input_smoke.py` check opens the story card on the real
+  5,751,617-byte table (hard-linked under `build/`, because `file.*` is bounded by
+  the workspace and the mods root is its sibling) and compares the card's 18,609
+  rows and its first and last translated cells — the last row at byte 4,617,216,
+  past the cap — against values computed from the file in Python; with `loadTable`
+  made to read the table whole again the check goes red (`could not read … file is
+  too large to open`), and `shell/web/cards.mjs` was restored byte-identical.
+  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
   accepted, a first-run answer that is `{}` instead of `null`, the client writing
