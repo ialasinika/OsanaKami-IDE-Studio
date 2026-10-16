@@ -29,7 +29,9 @@
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
-import { classicHud, classicLayout, classicRoles, classicTabLabel, classicViewName } from "./classic.mjs";
+import { classicLayout, classicTabLabel } from "./classic.mjs";
+import { modLayout } from "./modview.mjs";
+import { VIEWS, VIEW_LABELS, tiledView, viewAbout, viewHud, viewName, viewNote } from "./views.mjs";
 import {
   WATCH_GONE,
   WATCH_POLL_MS,
@@ -304,7 +306,25 @@ function createApp() {
   const reloadButton = $("reload-board");
   const tabsEl = $("tabs");
   const sideHintEl = $("side-hint");
-  const modeButton = $("mode-toggle");
+  const modeSwitch = $("mode-switch");
+  /* One button per view, built from the registry rather than written out, so a
+     view added to views.mjs cannot be missing from the switch.  A switch and not
+     a cycle: with three views a single button that "names the next one" makes
+     the reader work out an order that is not part of the document. */
+  const modeTitles = {
+    board: "every card exactly where the document has it",
+    classic: "the same cards as a sidebar, a tab strip and a code area",
+    mod: "the same cards arranged around a mod package: package, code, problems",
+  };
+  const modeButtons = VIEWS.map((name) => {
+    const button = el("button", "hud-switch-button", VIEW_LABELS[name]);
+    button.type = "button";
+    button.dataset.view = name;
+    button.title = modeTitles[name];
+    button.setAttribute("aria-pressed", name === "board" ? "true" : "false");
+    modeSwitch.append(button);
+    return button;
+  });
 
   /* -- state -- */
   const board = createBoard();
@@ -328,8 +348,8 @@ function createApp() {
   let initializing = true;
   let connected = false;
   let autosave = true;
-  /* Which of the two arrangements is on screen: "board" or "classic".  In
-     memory only, deliberately -- `docs/PARADIGM.md` argues the board is the
+  /* Which of the three arrangements is on screen: "board", "classic" or "mod".
+     In memory only, deliberately -- `docs/PARADIGM.md` argues the board is the
      document, and a view that survived a reload would be a document of its own.
      Reloading the page always starts on the board. */
   let viewMode = "board";
@@ -458,8 +478,8 @@ function createApp() {
   function renderAll() {
     // The layout is computed once per frame and handed to everything that draws
     // from it; the cards and the chrome can never disagree about where the code
-    // area is, and `mode classic` is one boolean read by both.
-    const layout = currentClassicLayout();
+    // area is, and the mode is one string read by all of them.
+    const layout = currentLayout();
     renderStage();
     renderCards(layout);
     renderLinks();
@@ -469,14 +489,14 @@ function createApp() {
   }
 
   /**
-   * Switch between the board and the classic view.
+   * Switch between the board, the classic view and the mod view.
    *
    * The whole transition is one class on `<body>` (the stylesheet's switch) plus
    * a render: no card is mounted, unmounted or moved in the document, so nothing
    * can be lost on the way.  Returns the mode it ended in.
    */
   function setView(mode) {
-    if (mode !== "board" && mode !== "classic") {
+    if (VIEWS.indexOf(mode) === -1) {
       return viewMode;
     }
     if (mode === viewMode) {
@@ -484,6 +504,7 @@ function createApp() {
     }
     viewMode = mode;
     document.body.classList.toggle("is-classic", viewMode === "classic");
+    document.body.classList.toggle("is-mod", viewMode === "mod");
     renderAll();
     return viewMode;
   }
@@ -509,17 +530,17 @@ function createApp() {
   }
 
   function renderStage() {
-    if (viewMode === "classic") {
-      // The identity transform is what makes classic.mjs's arithmetic screen
-      // pixels: the cards keep their *world* x/y, but with scale 1 and no pan,
-      // world and screen are the same thing.  `renderCards` overwrites each
-      // card's position from the layout, so nothing here is a second source of
-      // truth -- and the board's own viewport is left untouched, which is why
-      // `mode board` comes back to the same pan and zoom.
+    if (tiledView(viewMode)) {
+      // The identity transform is what makes the tile arithmetic screen pixels:
+      // the cards keep their *world* x/y, but with scale 1 and no pan, world and
+      // screen are the same thing.  `renderCards` overwrites each card's position
+      // from the layout, so nothing here is a second source of truth -- and the
+      // board's own viewport is left untouched, which is why `mode board` comes
+      // back to the same pan and zoom.
       stageEl.style.transform = "translate(0px, 0px) scale(1)";
       boardEl.style.backgroundSize = "auto, auto";
       boardEl.style.backgroundPosition = "0 0, 0 0";
-      zoomEl.textContent = classicHud(viewMode).zoom;
+      zoomEl.textContent = viewHud(viewMode).zoom;
       return;
     }
 
@@ -535,15 +556,22 @@ function createApp() {
     zoomEl.textContent = `${Math.round(zoom * 100)}%`;
   }
 
-  /** The layout the classic view is drawing right now, or null in board mode. */
-  function currentClassicLayout() {
-    if (viewMode !== "classic") {
+  /**
+   * The layout the current view is drawing right now, or null on the board.
+   *
+   * Both tiles take the same two arguments and return the same shape, so
+   * everything downstream -- `renderCards`, `renderTabs`, `renderSideHint` --
+   * works without knowing which view asked for it.
+   */
+  function currentLayout() {
+    if (!tiledView(viewMode)) {
       return null;
     }
-    return classicLayout(board.cards, boardPixelSize(), {
-      activeId: board.selectedId,
-      top: hudHeight(),
-    });
+    const viewport = boardPixelSize();
+    const options = { activeId: board.selectedId, top: hudHeight() };
+    return viewMode === "mod"
+      ? modLayout(board.cards, viewport, options)
+      : classicLayout(board.cards, viewport, options);
   }
 
   /**
@@ -597,19 +625,24 @@ function createApp() {
   /** What stands in the sidebar column when no card can. */
   function renderSideHint(layout) {
     const missing = layout !== null && layout.sidebar === null;
-    sideHintEl.hidden = !missing || viewMode !== "classic";
+    sideHintEl.hidden = !missing || !tiledView(viewMode);
     if (sideHintEl.hidden) {
       return;
     }
-    sideHintEl.textContent = "no project card: `project` puts the workspace here";
+    // Each tile names the card it wanted, because "no project card" is the wrong
+    // advice to give someone who opened the mod view to look at a mod.
+    sideHintEl.textContent = viewMode === "mod"
+      ? "no mod card: `mod <dir>` puts the package here"
+      : "no project card: `project` puts the workspace here";
     // The column is where the sidebar card would have been: from the HUD down,
-    // the full height of the tile.  `area.y + area.h` is its bottom edge, which
-    // is also the board's -- the layout promises the two tiles end together.
+    // to the bottom of the tile.  `panel` only exists in the mod view, and when
+    // it does it -- not the code area -- is what reaches the bottom edge.
     const top = layout.tabs.y;
+    const bottom = layout.panel ? layout.panel.y + layout.panel.h : layout.area.y + layout.area.h;
     sideHintEl.style.left = "0px";
     sideHintEl.style.top = `${top}px`;
     sideHintEl.style.width = `${Math.max(0, layout.tabs.x)}px`;
-    sideHintEl.style.height = `${Math.max(0, layout.area.y + layout.area.h - top)}px`;
+    sideHintEl.style.height = `${Math.max(0, bottom - top)}px`;
   }
 
   function renderHud() {
@@ -618,9 +651,11 @@ function createApp() {
     revEl.textContent = boardRevision === null ? "unsaved" : `rev ${boardRevision}`;
     dirtyEl.textContent = dirty ? "unsaved changes" : "saved";
     dirtyEl.classList.toggle("is-dirty", dirty);
-    const hud = classicHud(viewMode);
-    modeButton.textContent = hud.button;
-    modeButton.setAttribute("aria-pressed", viewMode === "classic" ? "true" : "false");
+    for (const button of modeButtons) {
+      const current = button.dataset.view === viewMode;
+      button.classList.toggle("is-current", current);
+      button.setAttribute("aria-pressed", current ? "true" : "false");
+    }
   }
 
   /**
@@ -631,7 +666,7 @@ function createApp() {
    * want.  `renderAll` passes its own layout so the cards and the chrome are
    * always drawn from one measurement.
    */
-  function renderCards(layout = currentClassicLayout()) {
+  function renderCards(layout = currentLayout()) {
     const seen = new Set();
 
     for (const card of board.cards) {
@@ -716,11 +751,11 @@ function createApp() {
   }
 
   function renderLinks() {
-    // A link is a line between two points in the board's world.  The classic
-    // view draws the same cards in pixels it chose itself, so the lines would
-    // cross the code area pointing at nothing: the overlay is hidden, not
-    // rewritten.  `mode board` brings it back with the cards, unmoved.
-    linksSvg.hidden = viewMode === "classic";
+    // A link is a line between two points in the board's world.  A tile draws the
+    // same cards in pixels it chose itself, so the lines would cross the code
+    // area pointing at nothing: the overlay is hidden, not rewritten.  `mode
+    // board` brings it back with the cards, unmoved.
+    linksSvg.hidden = tiledView(viewMode);
     if (linksSvg.hidden) {
       return;
     }
@@ -1031,12 +1066,12 @@ function createApp() {
 
   /** Scroll a card into view by panning, keeping the zoom. */
   function centreOn(card) {
-    if (viewMode === "classic") {
-      // There is nothing to centre on: the classic view puts every card where
-      // its own arithmetic says, and moving the viewport would silently change
-      // the board the user gets back in `mode board`.  The render is what makes
-      // `focus <id>` still *show* the card -- as the code area, when it is an
-      // editor -- because that is the only place this view has room for it.
+    if (tiledView(viewMode)) {
+      // There is nothing to centre on: a tile puts every card where its own
+      // arithmetic says, and moving the viewport would silently change the board
+      // the user gets back in `mode board`.  The render is what makes `focus
+      // <id>` still *show* the card -- as the code area, when it is an editor --
+      // because that is the only place the tile has room for it.
       renderAll();
       return;
     }
@@ -1220,14 +1255,14 @@ function createApp() {
       const zoom = board.viewport.zoom;
 
       if (cardNode === null) {
-        if (viewMode === "classic") {
-          // The classic view has no empty board to pan: the code area and the
-          // sidebar are cards, and the pixels behind them belong to the layout,
-          // not to the world.  Clicking there clears the selection (which is
-          // what makes `mode board` come back with nothing selected) and starts
-          // no gesture at all -- a pan here would move a world nobody can see.
+        if (tiledView(viewMode)) {
+          // A tile has no empty board to pan: the code area and the sidebar are
+          // cards, and the pixels behind them belong to the layout, not to the
+          // world.  Clicking there clears the selection (which is what makes
+          // `mode board` come back with nothing selected) and starts no gesture
+          // at all -- a pan here would move a world nobody can see.
           board.setSelection(null);
-          renderCards(currentClassicLayout());
+          renderCards(currentLayout());
           renderHud();
           return;
         }
@@ -1356,10 +1391,10 @@ function createApp() {
     }
 
     boardEl.addEventListener("wheel", (event) => {
-      if (viewMode === "classic") {
+      if (tiledView(viewMode)) {
         // The wheel belongs to whatever is under it -- the code area's textarea
-        // above all.  Zooming is off in this view, which is also why the HUD
-        // says `no zoom` instead of quoting the board's.
+        // and the problems list above all.  Zooming is off in these views, which
+        // is also why the HUD says `no zoom` instead of quoting the board's.
         return;
       }
       const overCard = !event.ctrlKey && !event.metaKey
@@ -1389,11 +1424,11 @@ function createApp() {
     boardEl.addEventListener("dblclick", (event) => {
       const cardNode = event.target instanceof Element ? event.target.closest("[data-card-id]") : null;
       if (cardNode === null) {
-        if (viewMode === "classic") {
+        if (tiledView(viewMode)) {
           // A note dropped on the code area would land in the world *behind* the
           // layout and be hidden the moment it was created: refusing is the
           // honest answer, and `note` on the command line still works.
-          log("warn", "the classic view does not drop notes — `note <text>`, or `mode board`");
+          log("warn", `the ${viewMode} view does not drop notes — \`note <text>\`, or \`mode board\``);
           return;
         }
         // Double-click on empty space drops a note exactly there.
@@ -1609,12 +1644,12 @@ function createApp() {
       }
       case "mode": {
         if (argc < 1) {
-          log("info", `the ${viewMode} view is showing. \`mode board\` or \`mode classic\`.`);
+          log("info", viewNote(viewMode));
           return;
         }
-        const wanted = classicViewName(arg(0));
+        const wanted = viewName(arg(0));
         if (wanted === null) {
-          log("warn", `unknown view "${arg(0)}". Try \`mode board\` or \`mode classic\`.`);
+          log("warn", `unknown view "${arg(0)}". Try \`mode ${VIEWS.join("`, `mode ")}\`.`);
           return;
         }
         if (wanted === viewMode) {
@@ -1622,9 +1657,7 @@ function createApp() {
           return;
         }
         setView(wanted);
-        log("info", wanted === "classic"
-          ? "classic view: a sidebar, a tab strip and a code area, drawn over the same board"
-          : "board view: the cards are exactly where the document has them");
+        log("info", viewAbout(wanted));
         return;
       }
       case "clear": {
@@ -1706,20 +1739,23 @@ function createApp() {
   function installView() {
     // A window that changes size re-tiles; the board does not care, because
     // pan and zoom are in world units and a wider window simply shows more of
-    // them.  Only the classic view measures the element it fills.
+    // them.  Only a tile measures the element it fills.
     window.addEventListener("resize", () => {
-      if (viewMode === "classic") {
+      if (tiledView(viewMode)) {
         renderAll();
       }
     });
 
-    modeButton.addEventListener("click", () => {
-      const next = viewMode === "classic" ? "board" : "classic";
-      setView(next);
-      log("info", next === "classic"
-        ? "classic view: the same board as a sidebar, a tab strip and a code area"
-        : "board view: the cards are where you left them");
-    });
+    for (const button of modeButtons) {
+      button.addEventListener("click", () => {
+        const wanted = button.dataset.view;
+        if (wanted === viewMode) {
+          return;
+        }
+        setView(wanted);
+        log("info", viewAbout(wanted));
+      });
+    }
 
     tabsEl.addEventListener("click", (event) => {
       const button = event.target instanceof Element ? event.target.closest("button[data-card-id]") : null;

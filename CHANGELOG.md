@@ -57,9 +57,9 @@ tree.
   listeners survive a walk through the view and back; and a click in the view
   selects but never raises, so a first visit cannot dirty the board.  The role
   rules and the tile arithmetic are pure (`classicRoles`, `classicLayout`,
-  `classicViewName`, `classicTabLabel`, `classicHud` and the constants
-  `CLASSIC_SIDEBAR_KINDS`, `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`,
-  `CLASSIC_TAB_H`, `CLASSIC_VIEWS` in `shell/web/classic.mjs`) and are measured in
+  `classicTabLabel` and the constants `CLASSIC_SIDEBAR_KINDS`,
+  `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`, `CLASSIC_TAB_H` in
+  `shell/web/classic.mjs`) and are measured in
   the board's own pixels, which is why `shell/web/selftest.mjs` pins them with no
   DOM (12 new checks, **108** in all) and `tools/input_smoke.py` measures the tile
   in a real window (4 new checks: the tiling and its parts, a tab click moving the
@@ -69,6 +69,27 @@ tree.
   rather than quoting a number that no longer describes the screen.  The view
   came from upstream seIDE `564d51e`, applied on top of the fork's own shell;
   nothing about the protocol, the board document or the card kinds changed.
+- The same board can also be drawn as a **mod workbench**: `mode mod` (or the
+  `Mod` button in the HUD's view switch) puts the mod package in the left column,
+  the focused editor in the middle and the first `problems` card underneath it,
+  hiding everything else.  It is the same kind of thing as `mode classic` — a
+  **view, not a document**: nothing is written, no card moves, a card with no role
+  is hidden rather than unmounted, a click selects but never raises, and
+  `mode board` restores the pan and the zoom the document gives it.  The tile is
+  the classic tile plus a report panel, and both can drop out: `MOD_SIDEBAR_KINDS`
+  (the `mod` card first, then `project`, then `files`) at `MOD_SIDEBAR_W` 320 px
+  and `MOD_SIDEBAR_MIN` 180 px, `MOD_TAB_H` 34 px, and a panel of `MOD_PANEL_H`
+  200 px at its tallest — dropped outright rather than squeezing the code area
+  below `MOD_AREA_MIN` 140 px, so that a board with no `problems` card has no
+  panel and a board with no package card has no column, instead of drawing 320
+  pixels of nothing.  The full rules are in `modview.mjs`; what every view is
+  *called* moved out of `classic.mjs` into the new `shell/web/views.mjs`
+  (`VIEWS`, `VIEW_LABELS`, `viewName`, `tiledView`, `viewHud`, `viewNote`,
+  `viewAbout`), so the mode switch — now **one button per view**, built from
+  `VIEWS`, instead of a single toggle — and the two tiles cannot disagree about
+  what a mode is named.  `shell/web/selftest.mjs` gained 10 checks (**118** in
+  all); the tile was then measured in a real window over a real mod package
+  (`Mods/SODefines`, 1306 files, 347 validator errors) before it was written up.
 
 ### Undo and redo on the board
 

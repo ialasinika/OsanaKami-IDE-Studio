@@ -104,10 +104,15 @@ You do not touch `core/`. You have two configurations, both already supported:
   watcher and HUD, implement your model next to `board.mjs` and hand it to the
   same client (`shell/web/rpc.mjs` does not care what is in the document).
 - **Another rendering of the same document.** Draw the document differently
-  without creating or moving a card -- a tab strip over the focused editor, say:
-  the kernel never learns about tabs, and the file on disk does not change when
-  the rendering does.  This fork ships no such renderer yet; upstream's
-  `mode classic` is not part of `shell/web/main.mjs` here.
+  without creating or moving a card. This fork ships two of those, and they are
+  the model to copy: `mode classic` tiles the board as a code area, a tab strip
+  and a sidebar (`shell/web/classic.mjs`), and `mode mod` tiles it as a package
+  tree, the editor and the validation report (`shell/web/modview.mjs`). Both
+  create nothing, move nothing and save nothing: the kernel never learns about
+  tabs or panels, and the file on disk does not change when the rendering does.
+  The list of view names they share lives in `shell/web/views.mjs`;
+  `shell/web/README.md` describes each tile and `docs/MODS.md` what the mod one
+  is showing.
 
 A view that shares the *file* with another view is the interesting case: two
 clients, the same `path`, one `base_revision` rail between them.

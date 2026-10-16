@@ -104,13 +104,33 @@ import { createHistory, describeChange } from "./history.mjs";
 import {
   CLASSIC_SIDEBAR_KINDS,
   CLASSIC_TAB_H,
-  CLASSIC_VIEWS,
-  classicHud,
   classicLayout,
   classicRoles,
   classicTabLabel,
-  classicViewName,
 } from "./classic.mjs";
+
+import {
+  MOD_AREA_MIN,
+  MOD_PANEL_H,
+  MOD_PANEL_KINDS,
+  MOD_PANEL_MIN,
+  MOD_SIDEBAR_KINDS,
+  MOD_SIDEBAR_MIN,
+  MOD_SIDEBAR_W,
+  MOD_TAB_H,
+  modLayout,
+  modRoles,
+} from "./modview.mjs";
+
+import {
+  VIEWS,
+  VIEW_LABELS,
+  tiledView,
+  viewAbout,
+  viewHud,
+  viewName,
+  viewNote,
+} from "./views.mjs";
 
 import {
   WATCH_GONE,
@@ -2349,20 +2369,158 @@ test("classic: a tab is the last segment of the path, either slash", () => {
   assert.equal(classicTabLabel(undefined), "");
 });
 
-test("classic: the mode a command names is one of two, and an unknown one is refused", () => {
-  assert.deepEqual(CLASSIC_VIEWS, ["board", "classic"]);
-  assert.equal(classicViewName("classic"), "classic");
-  assert.equal(classicViewName("  Board "), "board", "the command line is not case-sensitive");
-  assert.equal(classicViewName("tabs"), null, "an unknown word must warn, not fall back silently");
-  assert.equal(classicViewName(""), null);
-  assert.equal(classicViewName(undefined), null);
-  assert.equal(classicViewName(3), null);
+test("views: the mode a command names is one of three, and an unknown one is refused", () => {
+  assert.deepEqual(VIEWS, ["board", "classic", "mod"]);
+  assert.deepEqual(VIEW_LABELS, { board: "Board", classic: "Classic", mod: "Mod" });
+  assert.equal(viewName("classic"), "classic");
+  assert.equal(viewName("  Mod "), "mod", "the command line is not case-sensitive");
+  assert.equal(viewName("tabs"), null, "an unknown word must warn, not fall back silently");
+  assert.equal(viewName(""), null);
+  assert.equal(viewName(undefined), null);
+  assert.equal(viewName(3), null);
 });
 
-test("classic: the HUD names the view, and quotes no zoom it cannot honour", () => {
-  assert.deepEqual(classicHud("classic"), { button: "board view", zoom: "no zoom" });
-  assert.deepEqual(classicHud("board"), { button: "classic view", zoom: null });
-  assert.deepEqual(classicHud("sideways"), classicHud("board"), "anything else is the board");
+test("views: the HUD quotes no zoom a tile cannot honour", () => {
+  assert.deepEqual(viewHud("classic"), { view: "classic", zoom: "no zoom" });
+  assert.deepEqual(viewHud("mod"), { view: "mod", zoom: "no zoom" });
+  assert.deepEqual(viewHud("board"), { view: "board", zoom: null });
+  assert.deepEqual(viewHud("sideways"), viewHud("board"), "anything else is the board");
+  assert.equal(tiledView("board"), false);
+  assert.equal(tiledView("classic"), true);
+  assert.equal(tiledView("mod"), true);
+  assert.equal(tiledView("sideways"), false, "an unknown view is not a tile, so it cannot be drawn");
+});
+
+test("views: every view names the ways out of it and says what it is", () => {
+  for (const view of VIEWS) {
+    const note = viewNote(view);
+    assert.ok(note.indexOf(`the ${view} view`) !== -1, `${view}: the note says where you are`);
+    for (const other of VIEWS) {
+      if (other !== view) {
+        assert.ok(note.indexOf(`mode ${other}`) !== -1, `${view}: the note names how to reach ${other}`);
+      }
+    }
+    assert.ok(viewAbout(view).length > 20, `${view}: it has a sentence of its own`);
+  }
+  assert.notEqual(viewAbout("board"), viewAbout("mod"), "the mod view is not described as the board");
+  assert.equal(viewAbout("sideways"), viewAbout("board"), "an unknown view is the board");
+});
+
+test("mod: the package is the sidebar, the report is the panel, both before their fallbacks", () => {
+  const board = [cardOf("n", "note"), cardOf("f", "files"), cardOf("p", "project"), cardOf("m", "mod")];
+  assert.equal(modRoles(board).sidebar, "m", "a mod package beats the project panel and the file list");
+  assert.equal(modRoles([cardOf("p", "project"), cardOf("f", "files")]).sidebar, "p");
+  assert.equal(modRoles([cardOf("f", "files")]).sidebar, "f", "the file list is the last resort");
+  assert.equal(modRoles([cardOf("n", "note")]).sidebar, null, "a note is not a package tree");
+  assert.equal(modRoles([cardOf("x", "problems")]).panel, "x");
+  assert.equal(modRoles([cardOf("n", "note")]).panel, null, "no report card, no panel");
+});
+
+test("mod: the code area is the focused editor, and a focused note is not one", () => {
+  const board = [cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("n", "note")];
+  assert.equal(modRoles(board, "e2").area, "e2", "the focused file is the one a command would act on");
+  assert.equal(modRoles(board, "n").area, "e1", "a focused note is not a file to edit");
+  assert.equal(modRoles(board, null).area, "e1");
+  assert.equal(modRoles([cardOf("n", "note")]).area, null);
+  assert.deepEqual(modRoles(board, "e2").tabs, ["e1", "e2"], "every editor is a tab, in board order");
+});
+
+test("mod: a card has one part, and the parts do not overlap", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor"), cardOf("x", "problems"), cardOf("n", "note")];
+  const roles = modRoles(board, "e1");
+  const parts = [roles.sidebar, roles.area, roles.panel];
+  assert.equal(new Set(parts).size, 3, "three roles, three different cards");
+  for (const id of parts) {
+    assert.equal(roles.hidden.indexOf(id), -1, `${id} plays a part, so it is not also hidden`);
+  }
+  assert.deepEqual(roles.hidden, ["n"], "the note has no part in this view");
+  assert.equal(modRoles([cardOf("m", "mod")], "m").area, null, "the package cannot double as the code area");
+});
+
+test("mod: the tile has no gap and no overlap, at any size", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor"), cardOf("x", "problems")];
+  for (const width of [1600, 1200, 900, 700, 400, 200]) {
+    for (const height of [900, 700, 500, 300, 240]) {
+      const out = modLayout(board, { width, height }, { activeId: "e1", top: 30 });
+      const where = `${width}x${height}`;
+      assert.equal(out.tabs.x, out.sidebarWidth, `${where}: the strip starts where the column ends`);
+      assert.equal(out.area.x, out.sidebarWidth, `${where}: the code starts where the column ends`);
+      assert.equal(out.tabs.y, 30, `${where}: the strip starts under the HUD`);
+      assert.equal(out.tabs.y + out.tabs.h, out.area.y, `${where}: the area begins where the strip ends`);
+      assert.equal(out.tabs.w, out.area.w, `${where}: strip and area are the same column`);
+      if (out.panel !== null) {
+        assert.equal(out.area.y + out.area.h, out.panel.y, `${where}: the panel begins where the code ends`);
+        assert.equal(out.panel.w, out.area.w, `${where}: the panel is as wide as the code`);
+        assert.equal(out.panel.y + out.panel.h, height, `${where}: the panel ends on the bottom edge`);
+      } else {
+        assert.equal(out.area.y + out.area.h, height, `${where}: with no panel the code reaches the bottom`);
+      }
+      assert.equal(out.sidebar.y, 30, `${where}: the column starts under the HUD`);
+      assert.equal(out.sidebar.y + out.sidebar.h, height, `${where}: the column is as tall as the board`);
+      assert.ok(out.sidebar.w + out.area.w <= width, `${where}: column and code fit side by side`);
+      assert.ok(out.area.h >= 0, `${where}: the code area is never negative`);
+      if (out.panel !== null) {
+        assert.ok(out.panel.h >= 0, `${where}: the panel is never negative`);
+      }
+    }
+  }
+});
+
+test("mod: the sidebar squeezes to 40%, never below 180, until the window itself is narrower", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor")];
+  const widthAt = (width) => modLayout(board, { width, height: 600 }).sidebarWidth;
+  assert.equal(widthAt(2000), MOD_SIDEBAR_W, "a wide window gets the comfortable width");
+  assert.equal(widthAt(1200), MOD_SIDEBAR_W);
+  assert.equal(widthAt(700), 280, "40% of 700 is 280");
+  assert.equal(widthAt(500), 200, "40% of 500 is 200");
+  assert.equal(widthAt(400), MOD_SIDEBAR_MIN, "below 450 the column stops shrinking at its readable minimum");
+  assert.equal(widthAt(100), 100, "a window narrower than the column gives it the whole window");
+  assert.equal(modLayout([cardOf("e1", "editor")], { width: 1200, height: 600 }).sidebarWidth, 0, "no sidebar card, no column");
+  assert.equal(modLayout(board, { width: 1200, height: 600 }).area.w, 1200 - MOD_SIDEBAR_W);
+});
+
+test("mod: a window too short for both drops the panel and gives the height to the code", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor"), cardOf("x", "problems")];
+  const tall = modLayout(board, { width: 1200, height: 900 }, { top: 30 });
+  assert.equal(tall.panelHeight, MOD_PANEL_H, "a tall window gets the comfortable panel");
+  assert.equal(tall.panel.h, MOD_PANEL_H);
+  const short = modLayout(board, { width: 1200, height: 240 }, { top: 30 });
+  assert.equal(short.panelHeight, 0, "no room to keep both, so the panel goes");
+  assert.equal(short.panel, null, "and there is no rectangle to draw it in");
+  assert.equal(short.boxes.has("x"), false, "a panel with no height is not placed at 0,0");
+  assert.equal(short.area.y + short.area.h, 240, "the code takes the whole column back");
+  const justEnough = modLayout(board, { width: 1200, height: 300 }, { top: 30 });
+  assert.ok(justEnough.panelHeight >= MOD_PANEL_MIN, "the panel is either readable or absent");
+  assert.ok(justEnough.area.h >= MOD_AREA_MIN, "the code keeps its minimum whenever the panel is drawn");
+});
+
+test("mod: with no report card the tile is the classic one, plus a package column", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor"), cardOf("n", "note")];
+  const out = modLayout(board, { width: 1200, height: 800 }, { activeId: "e1", top: 30 });
+  assert.equal(out.panelHeight, 0);
+  assert.equal(out.tabHeight, MOD_TAB_H);
+  assert.equal(out.boxes.size, 2, "the column and the code area, and nothing else");
+  assert.equal(out.boxes.has("n"), false, "the note has no home here: hiding it is the answer");
+  assert.deepEqual(out.roles.hidden, ["n"]);
+});
+
+test("mod: the layout is a projection -- it never writes to a card", () => {
+  const board = [
+    cardOf("m", "mod", { x: 40, y: 60 }),
+    cardOf("e1", "editor", { x: 700, y: 400, w: 500, h: 400 }),
+    cardOf("x", "problems"),
+  ];
+  const before = JSON.parse(JSON.stringify(board));
+  const out = modLayout(board, { width: 1200, height: 800 }, { activeId: "e1", top: 30 });
+  assert.notEqual(out.boxes.get("e1").x, 700, "the code area is somewhere else on screen");
+  assert.notEqual(out.boxes.get("x").y, out.boxes.get("e1").y, "the report is under the code, not on it");
+  assert.deepEqual(board, before, "but the document is untouched -- `mode board` must be the board again");
+});
+
+test("mod: a panel kind and a sidebar kind are disjoint by rule, not by accident", () => {
+  for (const kind of MOD_SIDEBAR_KINDS) {
+    assert.equal(MOD_PANEL_KINDS.indexOf(kind), -1, `${kind} cannot be both the column and the panel`);
+  }
 });
 
 test("classic: a card with no place in the tile is hidden, not placed at 0,0", () => {

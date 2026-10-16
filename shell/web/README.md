@@ -13,6 +13,8 @@ history.mjs   the undo ring: document snapshots, coalescing, redo branch
 watch.mjs     what a card should do when the file moves under it (pure)
 cards.mjs     one renderer per card kind + the pure helpers
 classic.mjs   the same cards as a code area, tabs and a sidebar (pure)
+views.mjs     the views by name, and what the HUD says in each (pure)
+modview.mjs   the same cards as a package tree, editor and problems (pure)
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
 ```
@@ -26,12 +28,14 @@ pannable, zoomable 2-D space, and everything you work on is a **card** placed at
 a point in it. Opening a file does not add a tab; it puts a card somewhere on
 the plane. Closing a card does not lose the file; it removes a rectangle.
 
-There is one second arrangement, and it is a *view*: `mode classic` lays the same
-cards out as a code area, a tab strip and, when the board has a
-`project`/`files` card to spare, a sidebar (see
-[the classic view](#the-same-cards-as-a-code-area-mode-classic)). It creates no
-card, moves no card, and saves nothing — the tabs are the editor cards, in board
-order. The board is the document; the view is what you can do with it.
+There are two more arrangements, and each is a *view*: `mode classic` lays the
+same cards out as a code area, a tab strip and, when the board has a
+`project`/`files` card to spare, a sidebar ([the classic
+view](#the-same-cards-as-a-code-area-mode-classic)); `mode mod` lays them out as
+a package tree, the editor, and the problems the mod reports ([the mod
+workbench](#the-board-as-a-mod-workbench-mode-mod)). Neither creates a card,
+moves a card or saves anything — the tabs are the editor cards, in board order.
+The board is the document; the views are what you can do with it.
 
 The layout *is* project data. It lives in `.infantgod/board.json` next to your
 sources, so the IDE remembers a spatial arrangement — what you had open, where
@@ -144,7 +148,9 @@ the trade-off is explicit rather than discovered.
 | `cards.mjs` | the board still pans and zooms, but it has no cards to put on it. |
 | `history.mjs` | `Ctrl+Z` stops existing: every gesture still edits the board, but nothing is remembered, and the undo ring starts empty. |
 | `watch.mjs` | nothing polls for changes made outside the app. Cards still read and write files; a file rewritten by another program is simply not noticed until the card is reopened. |
-| `classic.mjs` | the board works as always, but there is no second arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode. |
+| `classic.mjs` | the board works as always, but there is no conventional-IDE arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode. |
+| `views.mjs` | the views have no names and the HUD cannot say which one is on, so the mode switch goes and `mode classic` / `mode mod` are no longer modes. |
+| `modview.mjs` | the board works as always, but there is no mod workbench: no package tree, no report panel, and `mode mod` is not a mode. |
 | `style.css` | the board still works, but it renders as unstyled white boxes stacked at the origin. The editor's colour layer and text layer stop lining up. |
 | `main.mjs` | `index.html` has nothing to boot: a blank dark page. |
 | `index.html` | nothing is served at `/`; `main.mjs` is still a valid module. |
@@ -241,8 +247,9 @@ The arithmetic is pure and exported — `indentSelection`, `indentAfterEnter`,
 
 ### The same cards as a code area: `mode classic`
 
-`mode classic` — or the HUD button, which is labelled with the view it will give
-you, `classic view` / `board view` — draws the board a second way:
+`mode classic` — or the `Classic` button in the HUD's view switch, whose buttons
+are named by `VIEWS` and whose current one is marked — draws the board a second
+way:
 
 | part | which card | where |
 | --- | --- | --- |
@@ -253,9 +260,11 @@ you, `classic view` / `board view` — draws the board a second way:
 Every other card is **hidden, not unmounted** (`.card.is-hidden`), so a card's
 text, its scroll position and its listeners survive a walk through the view and
 back. The rules are pure and exported from `classic.mjs` —
-`classicViewName`, `classicTabLabel`, `classicHud`, `classicRoles`,
-`classicLayout` — so `selftest.mjs` pins them with no DOM and `input_smoke.py`
-measures the same rectangles in a real window.
+`CLASSIC_SIDEBAR_KINDS`, `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`,
+`CLASSIC_TAB_H`, `classicTabLabel`, `classicRoles`, `classicLayout` — so
+`selftest.mjs` pins them with no DOM and `input_smoke.py` measures the same
+rectangles in a real window. The view's *name* and its HUD reading come from
+`views.mjs`, next to the mod view's.
 
 What the mode deliberately does **not** do: it writes nothing (the document keeps
 its `x`/`y`/`w`/`h`, so `mode board` restores the pan, the zoom and every
@@ -266,6 +275,56 @@ classic view has no pan and no zoom and the HUD says `no zoom` rather than
 quoting a number that no longer describes the screen. A window `resize` while
 the mode is on re-measures the tile. A card with no role is a card with no box:
 the caller hides it rather than drawing it at 0,0.
+
+### The board as a mod workbench: `mode mod`
+
+`mode mod` draws the same cards a third way — the package tree on the left, the
+file in the middle, and what validation says about it underneath:
+
+| part | which card | where |
+| --- | --- | --- |
+| package tree | the first `mod` card, else the first `project` card, else the first `files` card | the left column, `MOD_SIDEBAR_W` (320 px) wide, `MOD_SIDEBAR_MIN` (180 px) at the least, and never more than 40% of the board |
+| tab strip | every `editor` card, in board order | `MOD_TAB_H` (34 px) under the HUD, right of the tree |
+| code area | the focused `editor` card, else the first editor | all that is left of the column above the report |
+| report | the first `problems` card | along the foot of the column, `MOD_PANEL_H` (200 px) at its tallest and `MOD_PANEL_MIN` (80 px) at its shortest |
+
+The difference from the classic view is what it is *for*. There, the sidebar is
+whatever card happened to be a project; here the tree is a mod **package** — the
+manifest, the defines and the Yarn — and the panel is the validator's output, so
+the errors sit under the file they are about instead of floating somewhere on the
+plane. Which card takes which place is the same rule as everywhere else: the
+*first* card of a kind, in board order, so a second `mod` or `problems` card
+stays on the board and is merely hidden while the mode is on.
+
+`mode mod` is the same kind of thing as `mode classic`: a view, not a document.
+It writes nothing, moves nothing, hides what has no role rather than unmounting
+it, and refuses to raise a card on a click, so a first visit cannot dirty the
+board. It keeps the wheel, too: no pan, no zoom, and the HUD says `no zoom`
+rather than quoting a number that no longer describes the screen. A window
+`resize` while the mode is on re-measures the tile.
+
+The panel is the only part that can disappear. A window too short for both drops
+it and gives the height back to the code — rather than squeezing the editor into
+a slit to keep a two-line report on screen — and `MOD_AREA_MIN` (140 px) is where
+that happens. A board with no `problems` card has no panel at all, and a board
+with no `mod`, `project` or `files` card has no tree: an empty column is 320
+pixels of nothing, so the code area takes the width instead. A card with no role
+is a card with no box, and the caller hides it rather than drawing it at 0,0.
+
+The rules are pure and exported from `modview.mjs` — `modRoles`, `modLayout`,
+`MOD_SIDEBAR_KINDS`, `MOD_PANEL_KINDS`, `MOD_SIDEBAR_W`, `MOD_SIDEBAR_MIN`,
+`MOD_TAB_H`, `MOD_PANEL_H`, `MOD_PANEL_MIN`, `MOD_AREA_MIN` — so `selftest.mjs`
+pins them with no DOM and `input_smoke.py` measures the same rectangles in a real
+window. What every view *is called* and what the HUD says in it lives one file
+over, in `views.mjs` (`VIEWS`, `VIEW_LABELS`, `viewName`, `tiledView`, `viewHud`,
+`viewNote`, `viewAbout`), so the two tiles cannot disagree about what a mode is
+named: the HUD's switch is built from `VIEWS`, one button per view, and a view
+added to that list is reachable by mouse and by `mode <name>` at once.
+
+What it deliberately does **not** do: it does not build, validate, edit a define
+or write a Yarn file — those are the cards' jobs (`mod`, `problems`, `docs`), and
+the view only decides where they are drawn. It has no keyboard shortcut, for the
+same reason the classic view has none: a hidden keystroke is not discoverable.
 
 ### Known limitations (deliberate, documented rather than hidden)
 
@@ -283,8 +342,8 @@ the caller hides it rather than drawing it at 0,0.
   them together, but a browser that substitutes a different font for one layer
   only would shear the two apart.
 * Links are straight lines. There is no router, no obstacle avoidance and no
-  automatic layout: where you put a card is where it stays. The one arrangement
-  seIDE computes is the classic view's tile — and it is a view, not a layout: it
+  automatic layout: where you put a card is where it stays. The only arrangements
+  seIDE computes are the two tiled views' — and they are views, not layouts: each
   is drawn from the document and never saved into it.
 * Output from a long-running command is capped (200 000 characters / 2 000
   lines); the head is dropped and the card says how much went.
@@ -296,11 +355,14 @@ the caller hides it rather than drawing it at 0,0.
   programmatic edit (a `Tab` or a Replace All is one step, not a character at a
   time), no per-key bindings, no code folding, and the find bar is **literal
   text only** — no regular expressions, no match-case and no whole-word toggles.
-* The classic view is a **view**: no split panes, no drag-to-resize on the
-  sidebar, no per-tab close (a card has no close, and the strip is rebuilt from
-  the board on every render), no tab reordering that survives anything, no second
-  layout to save, and no effect on the protocol or on `board.json`. Hide a card
-  and it is still open; the board is what is real.
+* The tiled views are **views**: no split panes, no drag-to-resize on the sidebar
+  or the report panel, no per-tab close (a card has no close, and the strip is
+  rebuilt from the board on every render), no tab reordering that survives
+  anything, no second layout to save, and no effect on the protocol or on
+  `board.json`. Hide a card and it is still open; the board is what is real. The
+  mod view adds no second panel of its own: the report *is* a `problems` card, so
+  a bottom panel that is not on the board does not exist, and `problems <dir>` is
+  what puts one there.
 
 ---
 
@@ -340,9 +402,11 @@ node shell/web/selftest.mjs
 It imports the pure parts of the shell and drives them against a fake SSE stream
 with no DOM and no network: chunk-split frame reassembly, `RpcError` mapping,
 `STALE_REVISION` surfacing `data.current_revision`, board add/move/link/serialize
-round-trips, document repair, viewport clamping, the classic view (which card
-plays which part, the label a tab gets, the HUD's two readings, and a tile that
-leaves no gap or overlap and stays inside the viewport at several sizes), the
+round-trips, document repair, viewport clamping, the views (what each mode is
+called, what its HUD says, which card plays which part in the classic and the mod
+tile, the label a tab gets, and a tile that leaves no gap or overlap and stays
+inside the viewport at several sizes, including the mod report panel dropping out
+when the window is too short for it), the
 watcher's decision table (a clean card adopts new bytes, a dirty one is only
 warned, a revision that cannot be compared is never a reload, and one piece of
 news is reported once), and token-span application to a string. It prints

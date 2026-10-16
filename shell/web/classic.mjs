@@ -29,48 +29,12 @@ export const CLASSIC_SIDEBAR_MIN = 160;
 /** The tab strip's height, in pixels. */
 export const CLASSIC_TAB_H = 34;
 
-/** The mode names, as `mode <name>` takes them. */
-export const CLASSIC_VIEWS = Object.freeze(["board", "classic"]);
-
-/**
- * The mode a command-line argument names, or null when it names none.
- *
- * A projection of an existing idea must not be entered by accident: an unknown
- * argument is `null` (the caller warns) rather than a silent fall back to the
- * board, because "mode clasic" quietly doing nothing looks like a lost command.
- */
-export function classicViewName(value) {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const wanted = value.trim().toLowerCase();
-  return CLASSIC_VIEWS.indexOf(wanted) === -1 ? null : wanted;
-}
-
 /** The tab a path gets: the last segment, with either slash treated as one. */
 export function classicTabLabel(path) {
   const text = String(path === null || path === undefined ? "" : path).replace(/\\/g, "/");
   const cut = text.lastIndexOf("/");
   const base = cut === -1 ? text : text.slice(cut + 1);
   return base === "" ? text : base;
-}
-
-/**
- * What the heads-up strip says while a view is showing.
- *
- * In the classic view the zoom reading is a lie -- the transform is the identity
- * and the wheel is off -- so the slot says so instead of quoting a number that
- * no longer describes what is on screen.  The button names the view you would
- * get by pressing it, which is also the answer to "where did the classic view
- * go?" whenever you are in it.  Anything that is not `classic` is the board, the
- * same way an unknown mode argument is refused by `classicViewName`.
- */
-export function classicHud(view) {
-  const classic = view === "classic";
-  return {
-    button: classic ? "board view" : "classic view",
-    zoom: classic ? "no zoom" : null,
-  };
 }
 
 /**

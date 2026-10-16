@@ -171,6 +171,33 @@ body.is-classic #board {
 
 body.is-classic #board:active { cursor: default; }
 
+/* ------------------------------------------------------------------ */
+/* the mod view                                                        */
+/* ------------------------------------------------------------------ */
+
+/* The same switch, one class further: the mod view is a tile too, so it shares
+   everything above and only adds what makes it about a mod -- a wider package
+   column, and a report panel along the bottom of the code column.  Nothing here
+   moves a card, exactly as in the classic view. */
+body.is-mod #board {
+  background-image: none;
+  cursor: default;
+}
+
+body.is-mod #board:active { cursor: default; }
+
+/* The report panel is a card like any other, drawn in a rectangle modview.mjs
+   chose.  Flattening its corners is what makes it read as a panel of the window
+   rather than a card that happens to be lying there -- the one visual difference
+   between "the board, arranged" and "a window with a bottom pane". */
+body.is-mod .card[data-kind="problems"] {
+  border-radius: 0;
+  box-shadow: none;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
 /* A card the classic view has no place for.  Hidden, not removed. */
 .card.is-hidden { display: none; }
 
@@ -276,6 +303,38 @@ body.is-classic #board:active { cursor: default; }
 
 .hud-button:hover { color: var(--accent); border-color: var(--accent-dim); }
 .hud-button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dim); }
+
+/* The view switch: one button per view, the current one marked.  A group rather
+   than one button that cycles, because with three views a cycling label makes
+   the reader work out an order that is not part of the document. */
+.hud-switch {
+  display: inline-flex;
+  align-items: stretch;
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: #1b1e24cc;
+}
+
+.hud-switch-button {
+  padding: 2px 8px;
+  border: 0;
+  border-right: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hud-switch-button:last-child { border-right: 0; }
+.hud-switch-button:hover { color: var(--fg); background: #1b1e24; }
+
+.hud-switch-button.is-current {
+  color: var(--accent);
+  background: #262b34;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
 
 #kernel-status::before {
   content: "";

@@ -63,10 +63,11 @@
     <span id="hud-revision" class="hud-item">unsaved</span>
     <span id="hud-dirty" class="hud-item">saved</span>
     <span id="hud-zoom" class="hud-item">100%</span>
-    <!-- The second way to look at the same board.  A button rather than a
-         keystroke: it is also the answer to "where did the classic view go?". -->
-    <button id="mode-toggle" class="hud-item hud-button" type="button"
-            aria-pressed="false" title="arrange the same cards as a code area, a tab strip and a sidebar (the board document is not changed)">classic view</button>
+    <!-- Every way to look at the same board, in one switch.  Buttons rather
+         than keystrokes: the switch is also the answer to "where did the other
+         view go?".  main.mjs builds one per entry in views.mjs, so a view
+         cannot be added without a way to reach it. -->
+    <span id="mode-switch" class="hud-item hud-switch" role="group" aria-label="view"></span>
     <span id="kernel-status" class="hud-item is-connecting" data-state="connecting">connecting…</span>
   </header>
 
@@ -78,7 +79,7 @@
   <footer id="bar">
     <span class="bar-prompt" aria-hidden="true">&gt;</span>
     <input id="command" type="text" spellcheck="false" autocomplete="off"
-           placeholder="open &lt;path&gt; · note &lt;text&gt; · run &lt;cmd&gt; · sheet [title] · files · project · mode classic · undo · link &lt;from&gt; &lt;to&gt; · help"
+           placeholder="open &lt;path&gt; · mod &lt;dir&gt; · problems &lt;dir&gt; · note &lt;text&gt; · run &lt;cmd&gt; · files · sheet [title] · mode mod · undo · help"
            aria-label="board command line">
     <span id="command-hint" class="bar-hint" aria-hidden="true"></span>
   </footer>
