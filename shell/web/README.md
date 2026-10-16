@@ -17,6 +17,7 @@ views.mjs     the views by name, and what the HUD says in each (pure)
 modview.mjs   the same cards as a package tree, editor and problems (pure)
 story.mjs     a Yarn story: nodes, lines, speakers, tags and `#line:` ids (pure)
 storycsv.mjs  the translation tables the game keeps beside a story (pure)
+ysls.mjs      the game's own command schema, and where `<<name` is typed (pure)
 main.mjs      bootstrap: gestures, command line, log, dirty state
 selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
 ```
@@ -132,7 +133,8 @@ never be resized into something you cannot grab again.
 open <path>              open a file in a new editor card
 note <text>              drop a note card
 sheet [title]            drop a structured-data card (typed cells, not text)
-story <path> [table.csv] edit a story beside its translations
+story <path> [table.csv] [commands.json]
+                         edit a story beside its translations, with completion
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)

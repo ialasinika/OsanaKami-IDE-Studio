@@ -1266,10 +1266,13 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
   text-transform: uppercase;
 }
 
-/* The two editable spans.  An underline on focus is the whole affordance:
-   a boxed input per line would put a wall of borders through the dialogue. */
+/* The two editable spans, plus the command line, which is editable for the same
+   reason: it is text an author types.  An underline on focus is the whole
+   affordance: a boxed input per line would put a wall of borders through the
+   dialogue. */
 .story-speaker,
-.story-text {
+.story-text,
+.story-command {
   min-width: 0;
   background: transparent;
   border: 0;
@@ -1281,8 +1284,10 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
 }
 .story-speaker { flex: 0 0 108px; color: var(--accent); }
 .story-text { flex: 1 1 auto; }
+.story-command { flex: 1 1 auto; color: var(--warn); }
 .story-speaker:focus,
-.story-text:focus {
+.story-text:focus,
+.story-command:focus {
   outline: none;
   border-bottom-color: var(--accent);
   background: var(--bg-deep);
@@ -1290,7 +1295,6 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
 
 .story-colon { color: var(--fg-faint); }
 .story-option { color: var(--ok); white-space: pre-wrap; }
-.story-command { color: var(--warn); white-space: pre-wrap; }
 .story-raw { color: var(--fg-dim); white-space: pre-wrap; }
 .story-tags,
 .story-comment,
@@ -1341,6 +1345,52 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
   font: 11px/1.5 var(--mono-font);
   color: var(--fg-faint);
   font-style: italic;
+}
+
+.story-schema {
+  color: var(--fg-faint);
+  font: 10px/1 var(--mono-font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34%;
+  align-self: center;
+}
+
+/* The completion list: the mod's own commands for the `<<` the caret is in.  A
+   strip under the lines rather than a popup, because a card never knows where a
+   caret is on screen -- and the schema is the only thing here naming a command. */
+.story-suggest {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.story-suggest-hint {
+  color: var(--fg-faint);
+  font: 10px/1 var(--mono-font);
+  align-self: center;
+}
+.story-suggest-item {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10px/1 var(--mono-font);
+  padding: 3px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.story-suggest-item:hover { color: var(--fg); border-color: var(--accent-dim); }
+.story-suggest-item.is-current {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: var(--bg-deep);
 }
 
 .story-tools {

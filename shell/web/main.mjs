@@ -285,7 +285,8 @@ const HINT_TEXT = [
   "those keys undo the typing, as they do anywhere else.",
   "",
   "幼神 Mod 面板 / Mod surfaces:",
-  "  story <path.yarn> [translation.csv]  edit a story beside its translations",
+  "  story <path.yarn> [translation.csv] [commands.json]  edit a story, its",
+  "                  translations and the commands its own schema allows",
   "  mod <dir>       open a mod package (defines, Yarn, sprites)",
   "  problems <dir>  validate it; click a row to open the file",
   "  docs [query]    search the game's own 136 commands / 63 functions",
@@ -1606,18 +1607,23 @@ function createApp() {
         return;
       }
       case "story": {
-        /* The translation table is the one optional second word, and it is
-           always a .csv -- so `story a b.yarn` stays a path with a space in it
-           while `story a.yarn zh.csv` reads as the pair it is. */
+        /* Two optional files can follow the story: the translation table and the
+           command schema, told apart by their extensions -- so `story a b.yarn`
+           stays a path with a space in it while `story a.yarn zh.csv` reads as the
+           pair it is. */
         const rest = line.replace(/^\s*story\s*/i, "").trim();
         const words = rest.split(/\s+/);
         let table = "";
+        let schema = "";
+        if (words.length > 1 && /\.json$/i.test(words[words.length - 1])) {
+          schema = words.pop().replace(/\\/g, "/");
+        }
         if (words.length > 1 && /\.csv$/i.test(words[words.length - 1])) {
           table = words.pop().replace(/\\/g, "/");
         }
         const wanted = words.join(" ").replace(/\\/g, "/");
         if (wanted === "") {
-          log("warn", "usage: story <path.yarn> [translation.csv]");
+          log("warn", "usage: story <path.yarn> [translation.csv] [commands.json]");
           return;
         }
         /* One card per file: a second story card on the same path would be two
@@ -1630,6 +1636,9 @@ function createApp() {
             if (table !== "" && entry.handle.tablePath !== table) {
               entry.handle.loadTable(table);
             }
+            if (schema !== "" && entry.handle.schemaPath !== schema) {
+              entry.handle.loadSchema(schema);
+            }
             focusCard(entry.card.id);
             centreOn(entry.card);
             return;
@@ -1640,6 +1649,7 @@ function createApp() {
         addCard("story", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
           file: wanted,
           table,
+          schema,
         }, size);
         log("info",
           `story card added (${wanted}) \u2014 nodes, lines and translations, not the raw file`);

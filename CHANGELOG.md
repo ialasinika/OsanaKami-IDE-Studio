@@ -225,6 +225,23 @@ tree.
   know it, and a guessed path is a path the game would fail to find.  Nothing is
   written to disk until the card is saved, and a card that added no line writes
   its table back not at all.
+- `<<commands>>` are completed from the mod's own schema, not from a list kept in
+  the shell.  `shell/web/ysls.mjs` reads the `.ysls.json` the game's compiler
+  generates — this mod's is 136 commands and 63 functions — as two lists in the
+  file's own order, keeping each entry's parameters, their types and a function's
+  answer.  A `story` card opened with a third word (`story <path.yarn>
+  [table.csv] [commands.json]`) holds one, and a caret inside a `<<name` offers
+  what that file has: a name that starts with what was typed, before one that
+  merely contains it; an empty `<<` browses the head of the schema; and a name the
+  compiler marked `containsErrors` is never offered, because it exists in the file
+  and not in the game.  Tab or Enter takes the current one, and the line is
+  rewritten through the same door as any other edit, so nothing else on it moves
+  — including the indentation, which is what a command line keeps in its raw text
+  rather than in its `indent`.  A space, a `>` or ordinary prose closes the list:
+  a suggestion box that appeared while somebody was writing dialogue would be
+  worse than none.  A JSON file with neither a `commands` nor a `functions` list
+  is refused rather than read as an empty schema that would complete nothing for
+  the rest of the session.
 
 ### Undo and redo on the board
 
@@ -400,7 +417,7 @@ tree.
 ### Checks
 
 - `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 183/183, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
+  selftest 195/195, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
@@ -445,7 +462,17 @@ tree.
   columns, a card that adds the line but never tells the table, and a table
   rewritten even though the card added nothing — all six were caught, by
   `shell/web/selftest.mjs` for the shape and by `build/storycard.probe.mjs` for
-  the wiring, and both files were restored byte-identical.  The corpus is the second half of the bar: 211 real `.yarn` files
+  the wiring, and both files were restored byte-identical.  The completion of
+  `<<commands>>` was held to it too (throwaway `build/sabotage_completion.py`):
+  a name offered for not starting with what was typed, a name the compiler marked
+  broken offered anyway, a space no longer ending the name, a `>` no longer
+  closing the command, taking a name dropping what came after the caret, a JSON
+  file that is no schema read as an empty one, a function's answer left out of its
+  call, a command edited with its indent inside the field, a command written back
+  losing its indent, and a suggestion taken but never written — all ten were
+  caught, by `shell/web/selftest.mjs` for the schema reading and by
+  `build/storycard.probe.mjs` for the card, and both files were restored
+  byte-identical.  The corpus is the second half of the bar: 211 real `.yarn` files
   parse and re-serialise byte for byte, and the story card's own probe opens a
   real story with its real `NewProject_EN.csv` and edits through the card.
 

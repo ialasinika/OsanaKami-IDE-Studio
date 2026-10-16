@@ -40,14 +40,17 @@
  * verified byte-for-byte against the game's own mod tree -- and a second
  * reading of the format is a second answer that drifts.
  *
- * It is the file's only import: everything else a card needs arrives through
- * `ctx`, which is what keeps a card from reaching past the board.
+ * It imports three pure modules and nothing else: `story.mjs` for what a `.yarn`
+ * line is, `storycsv.mjs` for what the game's translation tables say about one, and
+ * `ysls.mjs` for the mod's own command schema.  Everything else a card needs
+ * arrives through `ctx`, which is what keeps a card from reaching past the board.
  */
 import {
   lineIdOf,
   nextLineId,
   parseStory,
   serializeStory,
+  setLineRaw,
   setLineSpeaker,
   setLineText,
   storyAbout,
@@ -55,7 +58,6 @@ import {
   storyNodes,
 } from "./story.mjs";
 import {
-  CSV_COLUMNS,
   lockOf,
   parseCsv,
   rowFor,
@@ -63,6 +65,14 @@ import {
   rowsById,
   serializeCsv,
 } from "./storycsv.mjs";
+import {
+  applyCommand,
+  commandTypedAt,
+  completeYsls,
+  parseYsls,
+  yslsAbout,
+  yslsSignature,
+} from "./ysls.mjs";
 
 /**
  * Kinds the wire may carry, mapped to the class suffix `style.css` styles.
@@ -1159,6 +1169,71 @@ export function storySetSpeaker(story, nodeIndex, lineIndex, speaker) {
 export function storySetText(story, nodeIndex, lineIndex, text) {
   const node = storyNodeAt(story, nodeIndex);
   return node !== null && setLineText(node, lineIndex, text) !== null;
+}
+
+/**
+ * The text a line is edited as.
+ *
+ * A dialogue line is edited as its words; the speaker, the tags and the id stay
+ * where they are, which is what `setLineText` promises.  A `<<command>>` line has
+ * no words to edit -- it *is* the command -- so its whole line is the field, minus
+ * the indent, because the indent belongs to the file and writing it twice would
+ * move the line.  A command's indent is not in `line.indent` (the parser only
+ * fills that for the lines it splits), so it is read off the raw line.
+ */
+export function storyEditableText(line) {
+  if (line === null || typeof line !== "object") {
+    return "";
+  }
+  if (line.kind === "command") {
+    const raw = typeof line.raw === "string" ? line.raw : "";
+    return raw.replace(/^[ \t]+/, "");
+  }
+  return line.text === null || line.text === undefined ? "" : String(line.text);
+}
+
+/**
+ * Write back what a line was edited as, on the kind of line it is.
+ *
+ * A command is rewritten whole and re-parsed, so a line whose text stops being a
+ * command stops being one -- the parser decides, not the card.
+ */
+export function storyWriteText(story, nodeIndex, lineIndex, line, text) {
+  if (line === null || typeof line !== "object") {
+    return false;
+  }
+  if (line.kind === "command") {
+    const raw = typeof line.raw === "string" ? line.raw : "";
+    const indent = /^[ \t]*/.exec(raw)[0];
+    const node = storyNodeAt(story, nodeIndex);
+    return node !== null && setLineRaw(node, lineIndex, `${indent}${String(text)}`) !== null;
+  }
+  return storySetText(story, nodeIndex, lineIndex, text);
+}
+
+/**
+ * What an author could be typing, from the mod's own command schema.
+ *
+ * Empty for a caret that is not inside a `<<...>>` name, which is most of the
+ * time: a suggestion list that appeared while somebody typed prose would be
+ * worse than none.  Pure -- the card calls it on every keystroke and it reads the
+ * line, the caret and the schema, and nothing else.
+ */
+export function storySuggestions(line, caret, schema, limit = 8) {
+  const text = storyEditableText(line);
+  if (schema === null || typeof schema !== "object") {
+    return { text, caret, items: [] };
+  }
+  const spot = commandTypedAt(text, caret);
+  if (spot === null) {
+    return { text, caret, items: [] };
+  }
+  return { text, caret, items: completeYsls(schema, spot.prefix, limit) };
+}
+
+/** The line as it would read after a suggestion is taken, and where the caret goes. */
+export function storyAcceptSuggestion(line, caret, name) {
+  return applyCommand(storyEditableText(line), caret, name);
 }
 
 /**
@@ -3330,9 +3405,10 @@ function renderStory(card, ctx) {
   const lineList = h("div", "story-lines", { attrs: { "data-role": "story-lines" } });
   const panes = h("div", "story-panes", { children: [nodeList, lineList] });
   const tools = h("div", "story-tools", { attrs: { "data-role": "story-tools" } });
+  const suggestBox = h("div", "story-suggest", { attrs: { "data-role": "story-suggest" } });
   const status = makeStatus();
   const body = h("div", "card-body card-body-story", {
-    children: [panes, tools, status],
+    children: [panes, tools, suggestBox, status],
   });
   const shell = cardShell(card, body);
 
@@ -3352,7 +3428,10 @@ function renderStory(card, ctx) {
   const tableLabel = h("span", "story-table", {
     attrs: { "data-role": "story-table" },
   });
-  tools.append(addLineButton, saveButton, tableLabel);
+  const schemaLabel = h("span", "story-schema", {
+    attrs: { "data-role": "story-schema" },
+  });
+  tools.append(addLineButton, saveButton, tableLabel, schemaLabel);
 
   const state = {
     path: typeof card.file === "string" ? card.file : "",
@@ -3367,6 +3446,12 @@ function renderStory(card, ctx) {
     tableById: null,
     tableRevision: null,
     tableDirty: false,
+    schemaPath: typeof card.schema === "string" ? card.schema : "",
+    schema: null,
+    suggest: [],
+    suggestAt: -1,
+    suggestCaret: 0,
+    suggestIndex: 0,
   };
 
   /** The parsed node the line list is showing, or null. */
@@ -3391,6 +3476,9 @@ function renderStory(card, ctx) {
     tableLabel.textContent = state.tablePath === ""
       ? "no translation table"
       : `${state.tablePath} \u00b7 ${state.table === null ? 0 : state.table.rows.length} rows`;
+    schemaLabel.textContent = state.schemaPath === ""
+      ? "no command schema"
+      : `${state.schemaPath} \u00b7 ${state.schema === null ? "not loaded" : yslsAbout(state.schema)}`;
     updateLabel();
   }
 
@@ -3450,6 +3538,9 @@ function renderStory(card, ctx) {
   }
 
   function paintLines() {
+    /* Every input in the list is about to be replaced, so a suggestion list
+       pointing at one of them is stale by the time the new rows exist. */
+    clearSuggest();
     lineList.textContent = "";
     const node = activeNode();
     if (node === null) {
@@ -3530,11 +3621,29 @@ function renderStory(card, ctx) {
       });
       stopTypingKeys(speaker);
       stopTypingKeys(text);
+      suggestKeys(text, index);
       row.append(speaker, h("span", "story-colon", { text: ":" }), text);
     } else if (line.kind === "option") {
       row.append(h("span", "story-option", { text: line.raw.trim() }));
     } else if (line.kind === "command") {
-      row.append(h("span", "story-command", { text: line.raw.trim() }));
+      /* A command is the one non-dialogue line an author types, so it is the one
+         that is editable: `<<` is where the schema's completion belongs.  The
+         indent is the file's, so it is not in the field -- writing it back with
+         the text is what would move the line. */
+      const command = h("input", "story-command", {
+        attrs: {
+          type: "text", value: storyEditableText(line),
+          spellcheck: "false", autocomplete: "off",
+          "data-role": "story-command", "aria-label": `command of line ${index + 1}`,
+        },
+      });
+      command.addEventListener("input", () => {
+        storyWriteText(state.story, state.nodeIndex, index, line, command.value);
+        markEdited(index);
+      });
+      stopTypingKeys(command);
+      suggestKeys(command, index);
+      row.append(command);
     } else if (line.kind !== "blank") {
       /* A comment, a lone tag run or a line no rule fits: shown as it is, so
          the file is never hiding a line from the person editing it. */
@@ -3583,19 +3692,151 @@ function renderStory(card, ctx) {
     }
   }
 
-  function focusLine(index) {
+  function focusLine(index, caret = null) {
     const row = lineList.querySelector(`[data-line="${index}"]`);
     if (row === null) {
       return;
     }
-    const target = row.querySelector('[data-role="story-text"]')
+    const target = row.querySelector('[data-role="story-command"]')
+      || row.querySelector('[data-role="story-text"]')
       || row.querySelector('[data-role="story-speaker"]');
     if (target !== null) {
       target.focus();
       if (typeof target.select === "function") {
         target.select();
       }
+      if (Number.isInteger(caret)) {
+        target.selectionStart = caret;
+        target.selectionEnd = caret;
+      }
     }
+  }
+
+  /**
+   * The schema's completion, as the caret moves.
+   *
+   * A card that offered a list while somebody typed prose would be worse than a
+   * card that offered none, so the only thing that can open the list is a caret
+   * inside a `<<...>>` name.  Everything the list shows comes from the mod's own
+   * `.ysls.json`; nothing here knows a command's name.
+   */
+  function refreshSuggest(index, control) {
+    const node = activeNode();
+    const line = node === null ? undefined : storyLines(node)[index];
+    if (line === undefined || state.schema === null) {
+      return clearSuggest();
+    }
+    const caret = typeof control.selectionStart === "number"
+      ? control.selectionStart
+      : storyEditableText(line).length;
+    const found = storySuggestions(line, caret, state.schema);
+    state.suggest = found.items;
+    state.suggestAt = index;
+    state.suggestCaret = caret;
+    state.suggestIndex = 0;
+    paintSuggest();
+    return found.items;
+  }
+
+  function clearSuggest() {
+    state.suggest = [];
+    state.suggestAt = -1;
+    paintSuggest();
+    return [];
+  }
+
+  function paintSuggest() {
+    suggestBox.textContent = "";
+    state.suggest.forEach((entry, index) => {
+      const item = h("button", `story-suggest-item${index === state.suggestIndex ? " is-current" : ""}`, {
+        attrs: {
+          type: "button", "data-role": "story-suggest-item",
+          "data-command": entry.name, title: yslsSignature(entry),
+        },
+        text: yslsSignature(entry),
+      });
+      /* The button takes the click before the input's own blur can close the
+         list, because the list is only rebuilt by a keystroke or a caret. */
+      item.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      item.addEventListener("click", () => {
+        acceptSuggest(entry.name);
+      });
+      suggestBox.append(item);
+    });
+  }
+
+  /** Take one suggestion: rewrite the line, move the caret past it, repaint. */
+  function acceptSuggest(name) {
+    const node = activeNode();
+    const line = node === null ? undefined : storyLines(node)[state.suggestAt];
+    if (line === undefined || typeof name !== "string" || name === "") {
+      return;
+    }
+    const accepted = storyAcceptSuggestion(line, state.suggestCaret, name);
+    if (accepted.text === storyEditableText(line)) {
+      return;
+    }
+    storyWriteText(state.story, state.nodeIndex, state.suggestAt, line, accepted.text);
+    const at = state.suggestAt;
+    state.dirty = true;
+    app.boardTouched(true);
+    state.lineIndex = at;
+    state.suggest = [];
+    paintSuggest();
+    paint();
+    focusLine(at, accepted.caret);
+  }
+
+  /**
+   * The keys the list owns while it is open.  Tab and Enter take the current
+   * one, the arrows move, Escape closes; everything else is the author's.
+   */
+  function suggestKeys(control, index) {
+    const move = (event) => {
+      const count = state.suggest.length;
+      if (count === 0) {
+        return;
+      }
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      state.suggestIndex = (state.suggestIndex + step + count) % count;
+      paintSuggest();
+    };
+    const take = (event) => {
+      if (state.suggest.length === 0) {
+        return;
+      }
+      const current = state.suggest[state.suggestIndex];
+      if (current === undefined) {
+        return;
+      }
+      event.preventDefault();
+      acceptSuggest(current.name);
+    };
+    control.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" || event.key === "Enter") {
+        take(event);
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        move(event);
+        return;
+      }
+      if (event.key === "Escape" && state.suggest.length > 0) {
+        clearSuggest();
+      }
+    });
+    const typed = (event) => {
+      if (["Tab", "Enter", "ArrowDown", "ArrowUp", "Escape"].includes(event.key)) {
+        return;
+      }
+      refreshSuggest(index, control);
+    };
+    control.addEventListener("input", () => refreshSuggest(index, control));
+    control.addEventListener("keyup", typed);
+    control.addEventListener("click", () => refreshSuggest(index, control));
   }
 
   function markEdited(index) {
@@ -3740,6 +3981,36 @@ function renderStory(card, ctx) {
     return true;
   }
 
+  /**
+   * The mod's own command schema, read the same way the table is.
+   *
+   * A `.ysls.json` is what tells a modder's editor which commands exist, so the
+   * card reads the file rather than carrying a list of its own: a mod that adds a
+   * command gets completion for it the moment its schema is regenerated.  A file
+   * that is not a schema is refused here, while the mistake is still a sentence.
+   */
+  async function loadSchema(path) {
+    let result;
+    try {
+      result = await client.call("file.read", { path });
+    } catch (err) {
+      renderStatus(`could not read ${path}`);
+      app.log("error", `file.read ${path}: ${err.message}`);
+      return false;
+    }
+    const parsed = parseYsls(result.text);
+    if (parsed.error !== "") {
+      renderStatus(`could not read ${path}`);
+      app.log("error", `${path}: ${parsed.error} \u2014 a command schema is a .ysls.json`);
+      return false;
+    }
+    state.schemaPath = path;
+    state.schema = parsed;
+    card.schema = path;
+    paint();
+    return true;
+  }
+
   async function save() {
     if (state.path === "" || state.story === null) {
       app.log("warn",
@@ -3798,6 +4069,9 @@ function renderStory(card, ctx) {
       if (opened && state.tablePath !== "") {
         loadTable(state.tablePath);
       }
+      if (opened && state.schemaPath !== "") {
+        loadSchema(state.schemaPath);
+      }
     });
   } else {
     paint();
@@ -3811,12 +4085,27 @@ function renderStory(card, ctx) {
       save,
       load,
       loadTable,
+      loadSchema,
       repaint: paint,
       get path() {
         return state.path;
       },
       get tablePath() {
         return state.tablePath;
+      },
+      get schemaPath() {
+        return state.schemaPath;
+      },
+      get schema() {
+        return state.schema;
+      },
+      /** The suggestions the card would offer a caret in one of its lines. */
+      suggestAt(lineIndex, caret) {
+        const node = activeNode();
+        const line = node === null ? undefined : storyLines(node)[lineIndex];
+        return line === undefined || state.schema === null
+          ? []
+          : storySuggestions(line, caret, state.schema).items;
       },
       get dirty() {
         return state.dirty;

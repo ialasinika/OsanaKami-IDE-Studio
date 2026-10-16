@@ -804,6 +804,25 @@ export function setLineSpeaker(node, index, speaker) {
   return refreshEntry(entry);
 }
 
+/**
+ * Replace one line's whole text, whatever kind of line it is.
+ *
+ * `setLineText` rewrites the span between a speaker and the tag run, which a
+ * `<<command>>` line does not have -- so a card that lets an author edit a
+ * command has nothing to call.  This rewrites the line itself and re-reads it,
+ * which is what lets a line change kind when its text stops being a command:
+ * the parser, not the caller, decides what the new line is.
+ */
+export function setLineRaw(node, index, raw) {
+  const entry = lineAt(node, index);
+  if (entry === null) {
+    return null;
+  }
+  const text = String(raw);
+  entry.edit = { head: text, tail: "" };
+  return refreshEntry(entry);
+}
+
 /** One line of prose naming what was parsed, in the voice of `viewAbout`. */
 export function storyAbout(story) {
   if (story === null || typeof story !== "object") {
