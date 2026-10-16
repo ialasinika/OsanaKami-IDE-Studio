@@ -48,9 +48,9 @@ const DEFAULT_KERNEL = process.platform === "win32"
 /*
  * How long a single kernel call may take before this side gives up waiting.
  * It is a patience limit, not a deadline: nothing is cancelled at the other
- * end.  Boards are content-validated on every save, and a fork that raises
- * the ceiling (many thousands of cards, a slow disk) should be able to say so
- * with --timeout-ms rather than by editing this file.
+ * end.  A view document can be large, and a fork that raises the ceiling (many
+ * thousands of cards, a slow disk) should be able to say so with
+ * --timeout-ms rather than by editing this file.
  */
 const DEFAULT_TIMEOUT_MS = 30000;
 

@@ -34,6 +34,12 @@ Severity is what the bug costs a *fork*, which is the point of this codebase.
 | F | Revisions above 2^31 saturated and broke optimistic locking | critical |
 | G | A header-only change shipped a binary that reported two versions | high |
 
+Entries A and E describe the kernel's board validator. infantgod/2 deleted it: the
+kernel now stores the view document without reading it, and the board schema
+lives in `shell/web/board.mjs` (`docs/VIEWS.md`). They are kept as written
+because the lessons still govern that model -- never *repair* a value you cannot
+read, and never let a wrong-typed guard mean "no guard at all".
+
 ---
 
 ## A. `board.save` emptied the board and reported success
@@ -45,8 +51,8 @@ The card layout is the project state in this paradigm, so this is total,
 silent data loss with a success reply.  (It is how the demo board in
 `docs/board.png` was destroyed the first time.)
 
-**Root cause.** `fill_defaults()` in `core/src/board.c` repaired wrong types as
-if they were missing ones:
+**Root cause.** `fill_defaults()` in the then-`core/src/board.c` repaired wrong
+types as if they were missing ones:
 
 ```c
 if (!is_arr(cards)) {            /* object, null, string -- all "fixed" */
@@ -60,7 +66,7 @@ so `validate()` saw a legal document and `sde_board_adopt()` accepted it.
 to conflate, and only ever *adds* what is *absent*:
 
 - a present-but-wrong-typed `version`, `viewport`, `cards`, or `links` is left
-  alone, so `validate()` rejects it (`1004 INVALID_BOARD`);
+  alone, so `validate()` rejected it (`1004 INVALID_BOARD`);
 - `cards` and `links` are synthesized only when `make_arrays` is set, which is
   the `sde_board_load()` path (a hand-written `board.json` may leave them out).
   A document arriving over the wire must carry both.
@@ -82,8 +88,8 @@ guard" -- a detected conflict becomes a lost update.
 
 **Fix.** A shared `opt_number()` helper in `core/src/rpc.c` returns
 `1` (number), `0` (absent or `null`), or `-1` (**present, wrong type**), and
-`-1` is reported as `-32602 INVALID_PARAMS`.  `h_board_save()` uses the same
-helper, so a wrong-typed `base_revision` cannot disable the board guard either.
+`-1` is reported as `-32602 INVALID_PARAMS`.  `h_view_save()` uses the same
+helper, so a wrong-typed `base_revision` cannot disable the view guard either.
 `base_revision: null` still means "no guard", deliberately.
 
 ## C. `\u0000` was truncated instead of refused
@@ -116,8 +122,9 @@ which is correct JSON-RPC and is what the probe now asserts.
 
 ## E. `base_revision` as a non-number (probe A/B's sibling)
 
-Covered by B; listed separately because it was found through the board path
-(`board.save`), where the same silent fallback disabled the *board* guard.
+Covered by B; listed separately because it was found through the document path
+(`board.save`, now `view.save`), where the same silent fallback disabled the
+*view* guard.
 
 ## F. Revisions above 2^31 saturated, breaking optimistic locking
 
@@ -141,8 +148,8 @@ happens to work on x86.)
   the full 32-bit revision space.
 - `sde_json_rev()` (new, `core/include/json.h`) emits a revision as a
   non-negative double.  Every revision site -- `file.read`, `file.write`,
-  `file.changed`, `workspace.info`, `board.load`, `board.save`,
-  `board.changed`, and both `current_revision` payloads -- now uses it, so a
+  `file.changed`, `workspace.info`, `view.load`, `view.save`,
+  `view.changed`, and both `current_revision` payloads -- now uses it, so a
   revision is always a plain positive integer on the wire.
 
 ---
@@ -217,29 +224,35 @@ Regression evidence for this wave lives in
   `build/probes/lead/probe_exec_bytes.py` (`a\uFFFDb\uFFFDc€d`).
 - **N5 — `exec.stop` never emitted `exec.exit`.** A stopped run left runner
   cards spinning forever; it now reports `exec.exit` with code -1.
-- **N7 — the board revision depended on JSON member order.** Two boards with
+- **N7 — the board revision depended on JSON member order.** Two documents with
   identical content hashed differently depending on how the client spelled
   them, which made optimistic locking fire spuriously.  The new
   `sde_json_write_canonical()` (`core/src/json.c`, declared at
   `core/include/json.h:124`) writes object members sorted, and
-  `sde_board_revision()` uses it.  `probe_boardorder.py` asserts the two
+  `sde_view_revision()` uses it (the board-specific `sde_board_revision()` went
+  with `core/src/board.c`).  `probe_boardorder.py` asserts the two
   revisions are equal.
 - **N8 — duplicate card ids and duplicate link ids were accepted.** Boards that
-  name the same card twice are ambiguous for every consumer, so validation now
-  rejects them: `cards[N]: duplicate \`id\`` and `links[N]: duplicate \`id\``,
-  `1004 INVALID_BOARD`.
+  name the same card twice are ambiguous for every consumer, so validation
+  rejected them: `cards[N]: duplicate \`id\`` and `links[N]: duplicate \`id\``,
+  `1004 INVALID_BOARD`.  infantgod/2 moved that check to the client: the kernel
+  stores the document as it is, and `serialize()` in `shell/web/board.mjs`
+  refuses to write one back.
 - **N9 — `file.write` with no `text` member truncated the file to 0 bytes.**
   A client that mis-spelled the parameter lost the file.  `text` is now
   required (`-32602`).
 - **N10 — a UTF-8 BOM in `.infantgod/board.json` made the kernel refuse to start.**
   Windows editors add one readily, and the failure was a refused startup rather
-  than a diagnostic.  The loader now skips a leading BOM.
+  than a diagnostic.  The kernel no longer reads a document at startup at all
+  (a client's file is never a reason to refuse to start); `sde_view_load()`
+  skips a leading BOM when a client asks for the file.
 - **N6 — a board large enough to exceed the shell's 30 s call timeout could not
   be saved, and was reported as a failure while the kernel kept writing.**  Two
   independent halves.  The kernel's board validation was O(n²) (20000 cards took
   72.59 s to validate, now 0.81 s) because it re-scanned the card list for every
-  id; it now builds an index once (`board_id`/`build_ids`/`lookup_id`/
-  `first_duplicate`).  And the shell's timeout message now says plainly that
+  id; it built an index once (`board_id`/`build_ids`/`lookup_id`/
+  `first_duplicate`).  That validation is gone with `core/src/board.c`; the
+  shell's timeout message still says plainly that
   giving up does **not** cancel the call, so a slow kernel is not mistaken for a
   dead one.
 
@@ -367,7 +380,7 @@ re-reads the binary's own `hello` against the same string.
 Both of these are known and left alone on purpose; a fork should know before it
 assumes otherwise.
 
-- **A host that answers `board.save` without a `revision` leaves the client
+- **A host that answers `view.save` without a `revision` leaves the client
   unable to guard the next write.** `boardRevision` stays undefined, so the next
   save omits `base_revision` and overwrites whatever is on disk.  The status line
   now says `rev unknown` rather than pretending the write was guarded, but the

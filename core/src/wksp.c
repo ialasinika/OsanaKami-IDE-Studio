@@ -7,7 +7,7 @@
  *   1. Nothing outside `root` is ever touched, however creative the path in a
  *      request is.  sde_wksp_resolve() is the only door.
  *   2. A write that raced with someone else's write is refused rather than
- *      silently winning.  The board and the editor both rely on this.
+ *      silently winning.  A document and the editor both rely on this.
  */
 #include "infantgod_cfg.h"
 

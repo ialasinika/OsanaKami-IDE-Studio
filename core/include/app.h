@@ -30,9 +30,9 @@
 typedef struct sde_app sde_app;
 #endif
 
-#ifndef INFANTGOD_BOARD_TYPEDEF
-#define INFANTGOD_BOARD_TYPEDEF
-typedef struct sde_board sde_board;
+#ifndef INFANTGOD_VIEW_TYPEDEF
+#define INFANTGOD_VIEW_TYPEDEF
+typedef struct sde_view sde_view;
 #endif
 
 #ifndef INFANTGOD_EXECSET_TYPEDEF
@@ -45,7 +45,7 @@ typedef int (*sde_emit_fn)(void *ud, sde_json *payload);
 
 struct sde_app {
     char        *root;      /* absolute, '/'-separated workspace root */
-    sde_board   *board;     /* the spatial board document */
+    sde_view    *view;      /* the client's view document: opaque JSON */
     sde_execset *execs;     /* running child processes */
     sde_emit_fn  emit;
     void        *emit_ud;

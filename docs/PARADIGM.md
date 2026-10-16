@@ -8,6 +8,11 @@ Everything else follows from that. If you disagree with this document, fork the
 project and change it — but change it knowingly, because several other decisions
 (card kinds, the command line, the board file) only make sense in this frame.
 
+This is the paradigm of **one view**, and it is the shell's, not the kernel's:
+the kernel defines that a view document exists and how it is stored, and nothing
+about what is in it. If you want a different main surface, you are replacing this
+document rather than fighting the core — see [`VIEWS.md`](VIEWS.md).
+
 ---
 
 ## The two things InfantGod Studio removes
@@ -68,13 +73,13 @@ with:
 
 | field | meaning | enforced by |
 | --- | --- | --- |
-| `id` | non-empty, unique string | kernel (`core/src/board.c`) |
-| `kind` | non-empty string, e.g. `editor` | kernel (any string) |
-| `x`, `y`, `w`, `h` | numeric geometry, world units | kernel |
-| `z` | numeric stacking order, defaults to 0 | kernel (`fill_defaults`) |
+| `id` | non-empty, unique string | the board model (`shell/web/board.mjs`) |
+| `kind` | non-empty string, e.g. `editor` | the board model (any string) |
+| `x`, `y`, `w`, `h` | numeric geometry, world units | the board model |
+| `z` | numeric stacking order, defaults to 0 | the board model's load defaults |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships six kinds:
+The shell ships nine kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -84,15 +89,18 @@ The shell ships six kinds:
 | `files` | a filterable workspace listing | `filter` |
 | `project` | the workspace as one project: what it contains, and what is open | `filter` |
 | `sheet` | structured data: typed cells in a grid, not text | `title`, `doc` |
+| `mod` | one Mod package: its manifest and diagnostics | `dir` |
+| `problems` | the diagnostics of one Mod, as a list | `root` |
+| `docs` | the game's knowledge base, searched | `query` |
 
-The kernel does **not** interpret `kind`. `core/include/board.h` says so
-explicitly: `editor`, `runner`, `note`, `files`, `project` and `sheet` are
+The board model does **not** interpret `kind`, and the kernel never sees it.
+`core/include/view.h` stores any document verbatim; `shell/web/board.mjs` states
+the schema, and `docs/VIEWS.md` states the seam: those nine kinds are
 conventions the shell implements, and a fork that invents `timeline` or
-`waveform` changes the
-shell and nothing else. A card with an unknown kind still loads, still saves, and
-still renders — `renderCard` in `shell/web/cards.mjs` falls through to a
-placeholder that says the card is preserved in `board.json` and lists the kinds
-that build does know.
+`waveform` changes the shell and nothing else. A card with an unknown kind still
+loads, still saves, and still renders — `renderCard` in `shell/web/cards.mjs`
+falls through to a placeholder that says the card is preserved in `board.json`
+and lists the kinds that build does know.
 
 Adding a kind is one registration, not a renderer plus three edits:
 
@@ -115,17 +123,18 @@ A link is a named connection between two cards:
 { "id": "l1", "from": "c1", "to": "c2", "label": "" }
 ```
 
-Both `from` and `to` must name an existing card; the kernel rejects a document
-where they do not. Links have **no semantics** in the prototype — nothing is
+Both `from` and `to` must name an existing card; the board model refuses to
+serialise a document where they do not, and the file then stays as it was. Links
+have **no semantics** in the prototype — nothing is
 executed along them, nothing is inferred from them. They are drawn as a
 straight line between the midpoints of the two facing edges of the connected
 cards (`linkPoints` in `shell/web/main.mjs`), which is deliberately not a
 router: a straight line is enough to read a board and it never crosses the
 cards it connects.
 
-Deleting a card drops every link that touched it, both in the kernel's
-validation and in `board.mjs`'s `removeCard`. Links pointing at a dead card
-would make the next save fail validation.
+Deleting a card drops every link that touched it, in `board.mjs`'s
+`removeCard`. Links pointing at a dead card
+would make the next save fail the model's own serialisation check.
 
 ### The board file
 
@@ -146,6 +155,8 @@ to a temporary file and then atomically replacing the real one
 (`sde_port_replace_file`), so an interrupted save never leaves a truncated
 board behind. The board's `revision` is a content hash (FNV-1a, 32 bits) of the
 serialised document, and it is the token the optimistic-concurrency checks use.
+The path and the shape are the shell's conventions -- `docs/VIEWS.md` -- and the
+kernel's part of this is only the atomic replace and the revision.
 
 This file is why **where you put things is part of the project state**. Two
 developers with different board files are working on different projects in a

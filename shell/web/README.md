@@ -30,6 +30,13 @@ sources, so the IDE remembers a spatial arrangement — what you had open, where
 you put it, what was linked to what — rather than a tab history. Two people on
 the same repository open the same board.
 
+This directory is a **reference implementation** of one view. The schema, the
+path and the ids are all decided here (`board.mjs` owns `BOARD_PATH`, the
+`isValidCard`/`normaliseDocument` rules and `makeId`); the kernel is handed the
+document and stores it without reading it, so another client can keep a
+different document at a different path, or draw this one another way, without
+touching `core/` — [`docs/VIEWS.md`](../../docs/VIEWS.md).
+
 The command line at the bottom is the only place commands live. It is not a
 modal palette and not a fuzzy finder popup: it stays where it is, it acts on the
 currently focused card, and every message it has for you is appended to the log

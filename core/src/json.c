@@ -1119,7 +1119,7 @@ int sde_json_write(sde_buf *out, const sde_json *v)
  *
  * Revisions are content hashes, so they have to be taken over this form rather
  * than over whatever member order arrived on the wire.  Otherwise two clients
- * holding the same board, one of which wrote `version` first and the other
+ * holding the same object, one of which wrote `version` first and the other
  * `links`, compute different revisions for it and hand each other a spurious
  * STALE_REVISION.
  */
@@ -1177,7 +1177,7 @@ static int jw_canonical(sde_buf *out, const sde_json *v)
             for (i = 0; i < v->nvals; i++) {
                 order[i] = i;
             }
-            /* Insertion sort: boards have a handful of members, not thousands. */
+            /* Insertion sort: objects have a handful of members, not thousands. */
             for (i = 1; i < v->nvals; i++) {
                 size_t here = order[i];
 

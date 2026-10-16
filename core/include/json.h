@@ -80,8 +80,8 @@ void         sde_json_free(sde_json *v);
 sde_json    *sde_json_rev(unsigned long rev);
 
 /*
- * Deep copy.  Needed wherever a module hands out a tree it still owns -- the
- * board document is the case that forced it.
+ * Deep copy.  Needed wherever a module hands out a tree it still owns -- a
+ * view document is the case that forced it.
  */
 sde_json    *sde_json_clone(const sde_json *v);
 

@@ -19,9 +19,10 @@ Three things make the rest of this document work:
    fight this; it is what keeps the kernel portable.
 2. **stdout is protocol-only.** If you add a `printf` for debugging, it breaks
    the parser of every client. Use stderr.
-3. **The kernel does not know about languages, and the board does not know about
-   card semantics.** Keeping those two facts true is what keeps the code base
-   small enough to fork.
+3. **The kernel does not know about languages, and it does not know what a
+   view document means.** It stores one at the path a client names, verbatim; the
+   board and everything that makes a card a `card` live in the shell.  Keeping
+   those two facts true is what keeps the code base small enough to fork.
 
 ---
 
@@ -43,8 +44,10 @@ Cheapest step. The name appears in these places:
 
 Two traps:
 
-- `core/src/board.c` derives the board path from the literal `SDE_BOARD_RELPATH`
-  (`.infantgod/board.json`), and `tools/e2e.py` spawns `<binary> rpc`. If you rename
+- The board path is **not** a kernel constant any more: `shell/web/board.mjs`
+  owns `BOARD_PATH` (`.infantgod/board.json`) and names it on every call, so a
+  fork renames it in one place. `tools/e2e.py` spawns `<binary> rpc`; if you
+  rename
   the executable, update the shell's `DEFAULT_KERNEL` **and** every documented
   command.
 - The function and type names (`sde_*`, `SDE_*`) do **not** need renaming. They
@@ -67,8 +70,8 @@ The cuts a fork usually makes first, in ascending order of pain:
 | --- | --- | --- |
 | `langs/` (the whole language layer) | `rm -rf langs/`; the shell falls back automatically | colouring; the editor renders plain text |
 | `exec` | 4 edits + `app.c` | `runner` cards and the `exec.*` methods — and with them the `exec.start` check in `tools/e2e.py` |
-| `board` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — the paradigm |
-| `wksp` | 4 edits + the `editor`, `files` and `project` card kinds | files; the canvas alone remains |
+| `view` | 4 edits + `app.c` + heavy shell changes | persistence of the layout — and with it the ability to keep any document at all |
+| `wksp` | 4 edits + the file-facing card kinds (`editor`, `files`, `project`, `runner`) | files; the canvas alone remains |
 | `serve` | 4 edits + the `rpc` subcommand | any way into the process |
 
 **Cost:** proportional to what you cut; the reverse — adding a module back — is
@@ -166,9 +169,9 @@ falls through to a placeholder that says the card is preserved in `board.json`
 and lists the kinds that build knows. That placeholder is your scaffold.
 
 If the kind needs a new kernel capability, add a method to `rpc.c`'s table —
-and accept that you have just coupled the kernel to a feature. The five shipped
-kinds between them need nine kernel methods; five of them are generic file and
-process verbs. A `sheet`-like structured surface needs **no** kernel method at
+and accept that you have just coupled the kernel to a feature. The shipped kinds
+between them need eleven kernel methods, six of which are generic file and
+workspace verbs. A `sheet`-like structured surface needs **no** kernel method at
 all, because the kernel stores its payload verbatim.
 
 **Cost:** hours for a self-contained kind (a `note`-like card is ~60 lines), days
@@ -343,6 +346,10 @@ Not implemented, not promised, and each cheap enough to be tempting:
   a shell feature over existing methods.
 - **Find across the board.** `workspace.list` and `file.read` are enough to
   build it without new kernel verbs.
-- **A second client.** The protocol has exactly one consumer today. A second one
-  — a CLI, a test harness, an editor plugin — is what would keep the frozen
-  contract honest.
+- **A second client.** Built now, in the cheap direction: `tools/seide_cli.py` is
+  a command-line consumer of `docs/PROTOCOL.md` (read, write, list, run, board)
+  that imports nothing from `shell/`, with its eight checks in `make test` as
+  `cli-check`. What that does *not* cover: it speaks to the kernel endpoint only,
+  so the shell's additions (`lang.*`, HTTP + SSE) still have exactly one
+  consumer — a second client for those, or an editor plugin, remains on the
+  table.

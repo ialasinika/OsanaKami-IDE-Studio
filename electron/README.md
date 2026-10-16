@@ -191,8 +191,8 @@ icacls node_modules\electron /setintegritylevel Medium /T /C /Q
 
 The label is per-file and survives copying, so it needs doing once per checkout.
 `build/infantgod.exe` needs the same treatment: at Low integrity the kernel cannot
-create `.infantgod/board.json`, and the board reports
-`board.save failed: cannot create directory`.
+create `.infantgod/board.json`, and the status line reports
+`save failed: cannot create directory`.
 
 ## If Electron runs but no window appears
 

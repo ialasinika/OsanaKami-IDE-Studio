@@ -6,15 +6,15 @@ Run it from a clone:
 
 It builds nothing itself -- build `build/infantgod.exe` first (`make`).  The probe
 spawns the kernel against a **scratch workspace** under `build/` (git-ignored),
-so it cannot touch your board, your files or your layout; the scratch directory
+so it cannot touch your document, your files or your layout; the scratch directory
 is removed on the way out, including when a check fails.  The scratch root is
 inside the project rather than in the system temp directory on purpose: some
 sandboxed environments deny a freshly built native binary write access outside
 the project tree, and a probe that fails for that reason would be lying.
 
 Each check asserts the *safe* outcome, not merely that an error came back: a
-refused document must also leave the stored board untouched, and a refused write
-must leave the file as it was.
+refused document must also leave what the kernel holds untouched, and a refused
+write must leave the file as it was.
 """
 import json
 import os
@@ -99,44 +99,73 @@ def run(k):
           isinstance(rev, (int, float)) and rev >= 0, repr(rev))
     check("...and is an int on the wire", isinstance(rev, int), repr(rev))
     info = k.call("workspace.info", {})["result"]
-    check("board_revision is non-negative", info["board_revision"] >= 0,
-          repr(info["board_revision"]))
+    check("view_revision is non-negative", info["view_revision"] >= 0,
+          repr(info["view_revision"]))
 
-    print("\n== bug A: a document that is not a board must not empty the board ==")
-    before = k.call("board.load", {})["result"]
-    before_rev = before["revision"]
+    print("\n== the kernel stores a document without reading it ==")
+    # This path is this tool's convention, not the kernel's: the probe plants
+    # the shipped board exactly where the shell would look for it.  The kernel
+    # only knows the path it was handed on the last call.
+    DOC = ".infantgod/board.json"
+    before = k.call("view.load", {"path": DOC})["result"]
     n_cards = len(before["document"]["cards"])
-    check("there is a board to protect", n_cards > 0, f"{n_cards} cards")
+    check("there is a document to protect", n_cards > 0, f"{n_cards} cards")
 
-    for label, document in [
-        ("cards is an object", {"version": 1, "cards": {}, "links": []}),
-        ("cards is absent", {"version": 1, "links": []}),
-        ("links is absent", {"version": 1, "cards": []}),
-        ("links is an object", {"version": 1, "cards": [], "links": {}}),
-        ("cards is null", {"version": 1, "cards": None, "links": []}),
-        ("version is a string", {"version": "1", "cards": [], "links": []}),
-        ("viewport is an array", {"version": 1, "viewport": [], "cards": [], "links": []}),
+    # Everything the board schema calls wrong is the kernel's business to keep,
+    # not to judge.  This is the whole point of the split: `cards` is a client
+    # word, so a document that misuses it must survive a round-trip untouched.
+    opaque = {"app": "kernel_probe", "cards": {"nope": True},
+              "links": None, "views": [{"id": "v1"}]}
+    r = k.call("view.save", {"path": DOC, "document": opaque})
+    check("view.save takes a document the board schema would reject",
+          "result" in r and r["result"].get("saved") is True, json.dumps(r)[:120])
+    now_rev = r["result"]["revision"] if "result" in r else None
+    back = k.call("view.load", {"path": DOC})["result"]["document"]
+    check("...and hands it back unchanged", back == opaque, json.dumps(back)[:120])
+
+    # A refused write must leave what the kernel holds exactly as it was.  There
+    # are two ways to be refused: a base revision that moved on, and no document
+    # at all.
+    r = k.call("view.save", {"path": DOC, "document": {"views": []},
+                             "base_revision": before["revision"]})
+    check("view.save refuses a stale base revision",
+          r.get("error", {}).get("name") == "STALE_REVISION", json.dumps(r)[:160])
+    check("...and says which revision is current",
+          (r.get("error", {}).get("data") or {}).get("current_revision") == now_rev,
+          json.dumps(r)[:160])
+    for label, params in [
+        ("no document member", {"path": DOC}),
+        ("document: null", {"path": DOC, "document": None}),
     ]:
-        r = k.call("board.save", {"document": document})
+        r = k.call("view.save", params)
         err = r.get("error", {}).get("name") if isinstance(r, dict) else None
-        check(f"board.save refuses: {label}", err == "INVALID_BOARD", json.dumps(r)[:120])
+        check(f"view.save refuses: {label}", err == "INVALID_PARAMS", json.dumps(r)[:120])
+    check("the document survived every refusal",
+          k.call("view.load", {"path": DOC})["result"]["document"] == opaque, "")
 
-    after = k.call("board.load", {})["result"]
-    check("the board survived all seven refusals",
-          after["revision"] == before_rev and len(after["document"]["cards"]) == n_cards,
-          f"rev {before_rev} -> {after['revision']}, "
-          f"{n_cards} -> {len(after['document']['cards'])} cards")
+    print("\n== a first run has no document, and that is not an error ==")
+    never = ".infantgod/never-written.json"
+    r = k.call("view.load", {"path": never})
+    check("view.load answers with an explicit null and revision 0",
+          "result" in r and r["result"]["document"] is None
+          and r["result"]["revision"] == 0, json.dumps(r)[:160])
+    r = k.call("view.save", {"path": never, "document": {}})
+    check("view.save writes a document at a path of the caller's choosing",
+          "result" in r and r["result"].get("saved") is True, json.dumps(r)[:120])
+    check("...including an empty object, which is still a document",
+          k.call("view.load", {"path": never})["result"]["document"] == {}, "")
 
-    print("\n== a legitimately empty board is still accepted ==")
-    r = k.call("board.save", {"document": {"version": 1, "cards": [], "links": []}})
-    check("board.save accepts an empty board", "result" in r and r["result"].get("saved") is True,
-          json.dumps(r)[:120])
-    empty_rev = r["result"]["revision"] if "result" in r else None
-    r = k.call("board.save", {"document": before["document"], "base_revision": empty_rev})
-    check("and the original board can be put back (stale-guarded)",
+    # The two loads just above made `.infantgod/never-written.json` the document
+    # the kernel holds, and the rail compares against what the kernel last read or
+    # wrote -- so the board's revision is read again here instead of reusing
+    # `now_rev`, which belongs to the document the probe replaced.
+    board_rev = k.call("view.load", {"path": DOC})["result"]["revision"]
+    r = k.call("view.save", {"path": DOC, "document": before["document"],
+                             "base_revision": board_rev})
+    check("the original board can be put back (stale-guarded)",
           "result" in r, json.dumps(r)[:160])
-    check("the board is back, card for card",
-          k.call("board.load", {})["result"]["document"] == before["document"], "")
+    check("the board is back, member for member",
+          k.call("view.load", {"path": DOC})["result"]["document"] == before["document"], "")
 
     print("\n== bug B: a wrong-typed base_revision must not disable the guard ==")
     k.call("file.write", {"path": "scratch/guard.txt", "text": "one"})
@@ -250,8 +279,8 @@ def run(k):
     check("file.read is unchanged",
           r["size"] == size and r["revision"] == rev and r["eol"] == eol,
           f"size={r['size']} (was {size}) rev={r['revision']} (was {rev}) eol={r['eol']}")
-    check("the board document still round-trips",
-          "result" in k.call("board.save", {"document": before["document"]}), "")
+    check("the document still round-trips",
+          "result" in k.call("view.save", {"path": DOC, "document": before["document"]}), "")
 
 
 def main():

@@ -82,8 +82,8 @@ forkable, and they are what a fork will change first.
 
 The main surface is one persistent 2-D canvas. Everything you work on is a
 **card** placed at a point on that canvas. A card has a `kind` (`editor`,
-`runner`, `note`, `files`, `project`), a position and size (`x`, `y`, `w`, `h`,
-`z`), may
+`runner`, `note`, `files`, `project`, `sheet`, `mod`, `problems`, `docs`), a
+position and size (`x`, `y`, `w`, `h`, `z`), may
 reference a file, and may be connected by links. The board persists to
 `<root>/.infantgod/board.json`, so **where you put things is part of the project
 state**. A non-modal command line at the bottom acts on the focused card.
@@ -93,6 +93,11 @@ See `docs/PARADIGM.md`.
 
 Nothing below the window knows what a window is: the protocol, the language
 layer, the mod layer and the board are all indifferent to how they are hosted.
+That is a decision of the *shell*, not of the kernel: the kernel stores the
+document, whatever it holds, and knows nothing about cards or canvases
+(`docs/VIEWS.md`). A fork that wants a different main surface replaces this
+document and not the core.
+
 The default host stays the system's Edge/Chromium launched in
 `--app=http://127.0.0.1:PORT` app mode with a throwaway profile — no bundled
 Chromium, nothing to download, and `node shell/main.mjs serve` works on a machine
@@ -116,7 +121,8 @@ discovery and no sandbox.
 
 What there *is* is one hook for new card kinds, because "a card is a file with a
 cursor" is the assumption most likely to make a fork expensive. The kernel
-stores any `kind` verbatim and validates only a card's shape; the shell
+stores whatever document the shell hands it, verbatim, and the shell's board
+model is the only thing that knows what a card is; the shell
 registers a kind with a single call:
 
 ```js
@@ -164,7 +170,7 @@ rejected by `-std=c89 -pedantic -Werror`.
 
 ### 8. Language intelligence is keyword colouring, and it lives in `langs/`
 
-The kernel knows about files, boards and processes — not about programming
+The kernel knows about files, documents and processes — not about programming
 languages. Language support lives in `langs/`, is served by the shell, and is
 **deletable**: `rm -rf langs/` leaves a kernel that still builds and a shell that
 still runs, rendering plain text. Yarn Spinner is the one language that must be
@@ -225,7 +231,7 @@ python tools/browser_smoke.py                        # renders the real window; 
 python tools/input_smoke.py                          # real clicks, keys, wheels and editor keys; 19 checks
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
-node langs/selftest.mjs                        # 92/92 checks passed
+node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 96/96 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
@@ -234,27 +240,63 @@ The mod suite reads the game's extracted `Mods` folder for its corpus checks and
 skips them (rather than failing) when it is not there; point it at your own copy
 with `node shell/mods/selftest.mjs --mods <dir>`.
 
-`make test` runs `check`, then `fullcheck`, then `probe`, then the JSON test and
-the three JavaScript self-tests **in that order**, so a `fullcheck` failure would
-stop the run before the self-tests are reached. `smoke` is separate because it
-needs a browser; on a clone that has no board yet it installs
-`examples/board.json` for the run and removes it again afterwards. As of this
-writing nothing fails.
+`make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
+`version-check`, then the JSON test and the three JavaScript self-tests **in that
+order**, so a `fullcheck` failure would stop the run before the self-tests are
+reached. `check`
+drives the bare kernel (`tools/e2e.py --kernel build/infantgod.exe`) and
+`fullcheck` the same suite through the shell
+(`--kernel-cmd "node shell/main.mjs rpc --workspace ."`), which is what keeps the
+protocol honest from both ends. `cli-check` is the protocol's **second
+consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
+workspace with no shell code involved, and that is what keeps the frozen contract
+honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
+ `smoke` is separate because it needs a
+browser: it renders the board (`browser_smoke.py`, 5 checks) and then drives it
+by hand -- Ctrl+Z and Ctrl+Shift+Z, a wheel over a card's own contents, and the
+editor card's own keys: Tab and Shift+Tab, Enter after an opener, Ctrl+F, the
+find bar's next-match button, replace-all, Escape, and that the textarea's own
+undo still holds those edits. Then it selects the whole board with Ctrl+A, takes
+one card out and puts it back with ctrl+click, draws a rubber band with
+shift+drag, drags one selected card and checks the whole set moved by one delta,
+runs `select all` on the command line, and deletes the set in one step that one
+Ctrl+Z brings back. Last it opens a file from outside the app — the test writes
+it with a plain file write, then again with different bytes — and checks the card
+notices on its own and reloads, that a card with unsaved edits is warned instead
+of overwritten, and that deleting the file under a card is reported with the text
+still in the card (`input_smoke.py`, 19 checks). On a clone that has no
+board yet both install `examples/board.json` for the run and remove it again
+afterwards. As of this writing nothing fails.
+
+**A file changed behind the app's back is noticed, on a timer.** The kernel emits
+`file.changed` for the writes it made itself and for nothing else, so a file
+touched by another program produces no notification at all. The shell therefore
+polls `file.stat` — one call per open editor card every 1.5 s, carrying no file
+text — and compares the revision it gets with the one the card read. A card with
+nothing unsaved reloads and says `reloaded from disk`; a card with unsaved edits
+keeps its text and says `changed on disk (rev N) — ^S overwrites`; a file that
+has gone says `gone from disk — ^S writes it back`. The decision table is pure
+and lives in `shell/web/watch.mjs`, so `node shell/web/selftest.mjs` covers it
+with no DOM. A fork that trims `file.stat` out of its kernel does not break the
+app: the watcher turns itself off with one log line
+([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
 
 **The protocol suite used to write to your board, and no longer does.** The board
-checks drive `board.save` against the workspace they were given, but they
+checks drive `view.save` against the workspace they were given, but they
 snapshot the whole document that was already there and restore it before the
 check returns — including when the check fails. A run against `.` leaves
 `./.infantgod/board.json` semantically identical; with the shipped starter board
-it comes back byte-identical too (3211 bytes, byte-for-byte, because the kernel
-writes every board and re-serialises the same way). If there was no board before
-a run, there is none after it either — and no empty `.infantgod/` directory left
-behind where the board used to be.
+it comes back byte-identical too, byte-for-byte, because the kernel writes the
+same canonical form back. If there was no board before a run, there is none after
+it either — and no empty `.infantgod/` directory left behind where the board used
+to be.
 
 **The board shipped for a fresh clone is verified, not assumed.** The `starter
-board` check saves `examples/board.json` through the real validator and requires
-cards, links and viewport to come back exactly, so a hand-edit the kernel would
-reject fails here rather than on a new user's first launch.
+board` check saves `examples/board.json` and requires cards, links and viewport
+to come back exactly, so a hand-edit the shell cannot read fails here rather than
+on a new user's first launch. The kernel does not judge the shape of that file
+(`docs/VIEWS.md`); the shell's board model is what reads it, and
+`node shell/web/selftest.mjs` is where the shape is tested.
 
 **Current state of the protocol suite:** both modes are green. Kernel mode
 (`check`) reports 9 passed, 0 failed, 3 skipped — the skips are the three
@@ -299,7 +341,7 @@ The kernel is usable with no UI at all:
 build/infantgod.exe help
 build/infantgod.exe version
 build/infantgod.exe modules
-build/infantgod.exe board show --root .
+build/infantgod.exe view show --path .infantgod/board.json --root .
 build/infantgod.exe rpc --root . --verbose
 ```
 
@@ -320,9 +362,9 @@ CHANGELOG.md            what is in this version, and what is not
 .gitattributes          the checkout is the repository's bytes: LF everywhere
 
 core/                   the kernel -- C89, no dependencies
-  include/              public headers: buf, vec, json, port, wksp, board, exec,
+  include/              public headers: buf, vec, json, port, wksp, view, exec,
                         serve, rpc, app, module, infantgod_cfg
-  src/                  one file per module: buf, vec, json, wksp, board, exec,
+  src/                  one file per module: buf, vec, json, wksp, view, exec,
                         rpc, serve, app, main
   port/                 the only OS-aware code: sys_win32.c, proc_win32.c
   tests/                test_json.c (JSON round-trip harness for the kernel)
@@ -357,14 +399,22 @@ tools/                  Python 3.12, standard library only
   kernel_probe.py       re-checks every bug in docs/BUGS.md, on a scratch workspace
   kernel_drive.py       the stdio JSON-RPC harness kernel_probe.py runs on
   browser_smoke.py      renders the board in a real browser and asserts the DOM
+  input_smoke.py        drives the real input paths: undo keys, wheel ownership,
+                        and a file rewritten behind the app's back
+  seide_cli.py          the protocol's second client -- hello, info, ls, cat,
+                        write, board, run, selfcheck
+  version.py            the one place a version number is decided (show/check/set)
   demo.py               installs examples/board.json as this workspace's board
   newlang.py            writes a conforming .lang descriptor
+  make_icon.py          draws electron/icon.ico from the palette, not by hand
+  sign.mjs              electron-builder with the local signing identity attached
   README.md             what each tool is for
 
 examples/               hello.yarn, sample.json (the shipped fixtures), and
                         board.json -- the starter board `tools/demo.py` installs
-docs/                   PARADIGM.md, ARCHITECTURE.md, PROTOCOL.md, SURFACES.md,
-                        MODS.md, PROJECT.md, TRIM.md, FORK.md, BUGS.md
+docs/                   PARADIGM.md, VIEWS.md, ARCHITECTURE.md, PROTOCOL.md,
+                        SURFACES.md, MODS.md, PROJECT.md, TRIM.md, FORK.md,
+                        BUGS.md
 ```
 
 Build artefacts (`build/`, and the workspace-local `.infantgod/`) are ignored by
@@ -404,8 +454,10 @@ Stated plainly, because a fork needs to know what it is inheriting.
 - **Links are straight lines.** No router, no obstacle avoidance, no automatic
   layout. Undo has the same limit: it takes back board edits, and does not
   reverse a pan, a zoom, or a "raise to front".
-- **The shell is the only client.** There is no second front end, so the protocol
-  has exactly one consumer to keep honest.
+- **The shell is the only *window*.** `tools/seide_cli.py` is a second protocol
+  client and `make cli-check` drives it, but it is a command line: every
+  rendering of a view still goes through `shell/web/`, so the drawn client has
+  exactly one consumer to keep honest.
 - **A file changed outside the app is noticed late, by up to ~1.5 s.** The shell
   polls `file.stat` for the paths its cards hold; the kernel does not watch the
   filesystem and the protocol does not promise an event. A card that held a file
@@ -432,7 +484,9 @@ The protocol is frozen (`docs/PROTOCOL.md`). Keep the JSON-RPC shape and you can
 replace every layer under it in any order.
 
 The docs, in reading order: [`docs/PARADIGM.md`](docs/PARADIGM.md) — why the
-board and not tabs; [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
+board and not tabs; [`docs/VIEWS.md`](docs/VIEWS.md) — what the kernel calls a
+view, and why it does not know what is in yours;
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — what each
 layer is; [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — the frozen wire;
 [`docs/SURFACES.md`](docs/SURFACES.md) — non-text cards and the card-kind hook;
 [`docs/PROJECT.md`](docs/PROJECT.md) — the workspace as one project;

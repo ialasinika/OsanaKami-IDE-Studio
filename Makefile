@@ -27,7 +27,7 @@ SRC = \
 	core/src/vec.c \
 	core/src/json.c \
 	core/src/wksp.c \
-	core/src/board.c \
+	core/src/view.c \
 	core/src/exec.c \
 	core/src/rpc.c \
 	core/src/serve.c \
@@ -106,7 +106,7 @@ fullcheck: $(BIN)
 
 # The kernel regression probe: every bug in docs/BUGS.md, checked after the fix.
 # It drives the kernel against a scratch workspace under build/, so it cannot
-# touch your board or your files.
+# touch your view document or your files.
 probe: $(BIN)
 	$(PYTHON) tools/kernel_probe.py
 
@@ -116,6 +116,13 @@ probe: $(BIN)
 # electron-builder stamps into the installer.
 version-check:
 	$(PYTHON) tools/version.py check
+
+# The second client: `tools/seide_cli.py`, against its own scratch workspace.
+# The reference shell is one consumer of the protocol and a board is one kind of
+# document, so this is the check that the frozen contract still stands on its
+# own -- no shell code involved, and no schema assumed.
+cli-check: $(BIN)
+	$(PYTHON) tools/seide_cli.py selfcheck
 
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM.  Then the same window with a
@@ -129,12 +136,12 @@ smoke: $(BIN)
 
 # Everything the project can prove about itself without a window: the C JSON
 # codec, the language layer, the browser modules, the mod layer, the fixed bugs,
-# the version copies, and both protocol modes.
+# the version copies, the second client, and both protocol modes.
 #
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe version-check $(JSONTEST)
+test: check fullcheck probe cli-check version-check $(JSONTEST)
 	$(JSONTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs

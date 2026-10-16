@@ -10,9 +10,12 @@ out.  A fresh clone therefore opens an empty canvas, and every screenshot and
 bug report in the docs becomes unreproducible.  This copies it into place.
 
 This deliberately does not talk to the kernel: it moves one file, and the app
-reads it on the next start.  Nothing is validated by the C validator here --
-`tools/e2e.py` does that, so the shipped board is known to be a board the
-kernel accepts.
+reads it on the next start.  That is still the right thing to do, because the
+kernel keeps a document without reading it and does not know this path at all --
+`.infantgod/board.json` is the *client's* convention, and this tool installs the
+bytes the client will look for.  Whether the starter board is one the client can
+read is checked where the client runs: `shell/web/selftest.mjs` and
+`make smoke`.
 
     python tools/demo.py                  # install into this checkout
     python tools/demo.py --root DIR       # ... into another workspace
@@ -56,9 +59,11 @@ def _fail(message, code=2):
 def check_shape(doc, path):
     """The minimum a board must be for the app to open it without surprises.
 
-    Not a second validator: the kernel owns that.  This catches a hand-edited
-    starter board before it is copied into someone's workspace, where a bad
-    board would look like a broken app rather than a bad fixture.
+    Not a second validator: the *client* owns the board schema, and
+    `shell/web/board.mjs` is where it lives.  This catches a hand-edited starter
+    board before it is copied into someone's workspace, where a bad board would
+    look like a broken app rather than a bad fixture -- the same reason
+    `tools/e2e.py` reads the shipped file.
     """
     if not isinstance(doc, dict):
         _fail(f"{path}: the board is not an object")

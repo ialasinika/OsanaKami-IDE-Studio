@@ -589,7 +589,7 @@ int sde_port_replace_file(const char *from, const char *to)
     /*
      * MoveFileEx with REPLACE_EXISTING is atomic enough for our purpose: a
      * reader either sees the whole old file or the whole new one, never a
-     * half-written board.
+     * half-written document.
      */
     if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING) != 0) {
         return 0;

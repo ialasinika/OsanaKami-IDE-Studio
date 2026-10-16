@@ -1,9 +1,10 @@
 /*
  * app.c - construction of the shared kernel state.
  *
- * Loading order matters: the board may be absent (first run) but a board
- * document that exists and does not parse is a hard error, because silently
- * discarding a user's layout would be worse than refusing to start.
+ * The kernel starts with an empty view: it reads no document until a client
+ * asks for one (`view.load`) and it has no opinion about what a document
+ * contains.  A client's file is therefore never a reason for the kernel to
+ * refuse to start, which is what a board that did not parse used to be.
  */
 #include "infantgod_cfg.h"
 
@@ -12,9 +13,9 @@
 #include <string.h>
 
 #include "app.h"
-#include "board.h"
 #include "exec.h"
 #include "port.h"
+#include "view.h"
 
 int sde_app_init(sde_app *app, const char *root, const char *exe_dir,
                  sde_emit_fn emit, void *ud, char *err, size_t errcap)
@@ -46,17 +47,10 @@ int sde_app_init(sde_app *app, const char *root, const char *exe_dir,
     }
     app->root = abs_root;
 
-    app->board = sde_board_new();
-    if (app->board == NULL) {
+    app->view = sde_view_new();
+    if (app->view == NULL) {
         if (err != NULL && errcap > 0) {
             snprintf(err, errcap, "out of memory");
-        }
-        sde_app_free(app);
-        return -1;
-    }
-    if (sde_board_load(app->board, app->root) != 0) {
-        if (err != NULL && errcap > 0) {
-            snprintf(err, errcap, "board document is not valid JSON");
         }
         sde_app_free(app);
         return -1;
@@ -83,8 +77,8 @@ void sde_app_free(sde_app *app)
     }
     free(app->root);
     app->root = NULL;
-    sde_board_free(app->board);
-    app->board = NULL;
+    sde_view_free(app->view);
+    app->view = NULL;
     sde_execset_free(app->execs);
     app->execs = NULL;
 }

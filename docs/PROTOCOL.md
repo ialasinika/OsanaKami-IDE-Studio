@@ -10,8 +10,13 @@ frame format; this document is the frozen reference for both.
   the `langs` member to `workspace.info`, and answers `lang.list` and
   `lang.tokenize` itself.
 
-A client that only needs files, boards and processes can target the kernel
+A client that only needs files, documents and processes can target the kernel
 endpoint directly. A client that wants colouring should target the shell.
+
+Two clients exist today: the view in `shell/web/` (a board) and the command-line
+client `tools/seide_cli.py`. The second one is there so this document has to
+stand on its own -- see [A second client](#a-second-client).
+
 
 ---
 
@@ -79,21 +84,20 @@ responses at any time. The event list is below.
 ## The kernel method table
 
 The authoritative table is `sde_methods[]` in `core/src/rpc.c`. With both
-compile-time switches on (`SDE_WITH_BOARD`, `SDE_WITH_EXEC`) there are eleven
-methods. `board.*` disappears when `SDE_WITH_BOARD` is 0; `exec.*` disappears
+compile-time switches on (`SDE_WITH_VIEW`, `SDE_WITH_EXEC`) there are eleven
+methods. `view.*` disappears when `SDE_WITH_VIEW` is 0; `exec.*` disappears
 when `SDE_WITH_EXEC` is 0.
 
 | method | parameters | result |
 | --- | --- | --- |
 | `hello` | none | `{protocol, protocol_name, kernel_version, root, pid}` |
-| `workspace.info` | none | `{root, name, file_count, board_path, board_revision, ignored}` |
+| `workspace.info` | none | `{root, name, file_count, view_path, view_revision, ignored}` |
 | `workspace.list` | `path?`, `glob?`, `limit?` | `{files, truncated, count}` |
 | `file.read` | `path` | `{path, text, revision, eol, size, mtime}` (+ `lang` from the shell) |
 | `file.write` | `path`, `text`, `base_revision?` | `{path, revision, eol, size}` |
 | `file.stat` | `path` | `{path, exists, dir, size, mtime, revision}` |
-| `board.load` | none | `{path, revision, document}` |
-| `board.save` | `document` or `board`, `base_revision?` | `{path, revision, saved}` |
-| `board.newId` | none | `{id}` |
+| `view.load` | `path` | `{path, revision, document}` |
+| `view.save` | `path`, `document`, `base_revision?` | `{path, revision, saved}` |
 | `exec.start` | `cmd`, `card_id?`, `cwd?` | `{run_id}` |
 | `exec.stop` | `run_id` | `{stopped}` |
 | `exec.list` | none | `{runs}` |
@@ -104,21 +108,30 @@ or mis-typing them produces `-32602 INVALID_PARAMS`.
 ### `hello`
 
 ```json
-{"protocol":1,"protocol_name":"infantgod/1","kernel_version":"0.1.0","root":"C:/codes/InfantGod Studio","pid":12345}
+{"protocol":2,"protocol_name":"infantgod/2","kernel_version":"0.1.0","root":"C:/codes/InfantGod Studio","pid":12345}
 ```
 
 `protocol` is the integer a client can compare; `protocol_name` is the same
 version spelled out for a human reading a log line.
 
+`infantgod/2` is the version that made the view document opaque: the kernel
+stores a client's document, hands it back, and has no opinion about what is
+inside it.  It is also the fork's second protocol version: `infantgod/1` named a
+board.  See `docs/VIEWS.md` for why that line is where it is.
+
 ### `workspace.info`
 
 ```json
-{"root":"C:/codes/InfantGod Studio","name":"InfantGod Studio","file_count":42,"board_path":"C:/codes/InfantGod Studio/.infantgod/board.json","board_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
+{"root":"C:/codes/InfantGod Studio","name":"InfantGod Studio","file_count":42,"view_path":".infantgod/board.json","view_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
 ```
 
-`name` is the last path segment of `root`. `board_path` is the absolute path of
-the board document (an empty string before the board has been loaded).
-`board_revision` is a number. `ignored` names the directories `workspace.list`
+`name` is the last path segment of `root`. `view_path` is the path of the
+document the kernel last read or wrote, relative to the root (an empty string
+before any call has handed it one). `view_revision` is a number: the revision of
+that document, or 0 when the kernel holds nothing. Both are a report of what the
+kernel did last, not a workspace setting -- the client names the path on every
+call, and a kernel that has read no document has no path to report. `ignored`
+names the directories `workspace.list`
 skips (see that section): absent rows look exactly like an empty directory, so a
 client that wants to explain a missing `build/` has to be told, and telling it
 here means the list is never written down twice.
@@ -181,13 +194,13 @@ Required parameter: `path` (non-empty string, relative to the workspace root).
 it is the token `file.write` checks. `eol` is `"crlf"` or `"lf"` (`"lf"` when
 the text contains no newline). A file that does not exist reports revision 0.
 
-A board's revision is a hash of the same kind, but taken over a **canonical**
+A document's revision is a hash of the same kind, but taken over a **canonical**
 rendering of the document: object members are sorted by name before hashing
-(`sde_json_write_canonical()` in `core/src/json.c`). Two boards with the same
+(`sde_json_write_canonical()` in `core/src/json.c`). Two documents with the same
 content therefore have the same revision no matter how the client spelled them,
 which is what makes `base_revision` safe to compare across clients. The canonical
 form exists only for hashing; the `document` the kernel hands back is the
-client's own arrangement, minus the defaults the validator filled in.
+client's own arrangement, exactly as it was stored.
 
 **The shell adds one more member to this result:**
 
@@ -283,51 +296,63 @@ On success the kernel emits a notification **before** the response is written:
 {"event":"file.changed","path":"examples/hello.yarn","revision":987654321}
 ```
 
-### `board.load`
-
-```json
-{"path":"C:/Users/PC/Documents/InfantGodStudio/.infantgod/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
-```
-
-`document` is a clone, so a client may keep and mutate it freely.
-
-### `board.save`
+### `view.load`
 
 | parameter | type | meaning |
 | --- | --- | --- |
-| `document` | object, required | the board document |
-| `board` | object | **accepted as an alias** for `document` |
-| `base_revision` | number, optional | the revision the client loaded |
-
-Both spellings are accepted on purpose: the protocol calls the member
-`document`, while the kernel's own load result also calls it `document`, and a
-client that round-trips one into the other should not have to rename it.
-
-Result: `{"path":"...","revision":3901234568,"saved":true}`, plus a notification:
+| `path` | string, required | the document, relative to the workspace root |
 
 ```json
-{"event":"board.changed","revision":3901234568}
+{"path":".infantgod/board.json","revision":3901234567,"document":{"version":1,"viewport":{"x":0,"y":0,"zoom":1},"cards":[],"links":[]}}
 ```
+
+A path that does not exist is not an error: the result is `"document":null` and
+`"revision":0`, which is what a first run looks like. `document` is a clone, so a
+client may keep and mutate it freely.
+
+Loading also makes that document the one the kernel holds -- it is what the
+next `view.save`'s `base_revision` is compared against, and what
+`workspace.info` reports. The kernel holds one document at a time: the last one
+a call read or wrote.
+
+### `view.save`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `path` | string, required | where the document goes, relative to the workspace root |
+| `document` | any JSON value except `null`, required | the document |
+| `base_revision` | number, optional | the revision the client last read |
+
+Result: `{"path":".infantgod/board.json","revision":3901234568,"saved":true}`,
+plus a notification:
+
+```json
+{"event":"view.changed","path":".infantgod/board.json","revision":3901234568}
+```
+
+The document is **opaque**: the kernel checks that it is JSON and that it is not
+`null`, and nothing else. An object, an array, a string, a number and a boolean
+all round-trip byte-for-byte, and the board schema below is not the kernel's
+business -- see `docs/VIEWS.md`.
 
 Failure modes, in the order the kernel checks them:
 
 | condition | code | name | message / data |
 | --- | --- | --- | --- |
-| `document` is absent or not an object | -32602 | `INVALID_PARAMS` | `` `document` must be an object `` |
-| `base_revision` present and ≠ current | 1001 | `STALE_REVISION` | `board changed since it was loaded`, data `{current_revision}` |
-| the document fails validation | 1004 | `INVALID_BOARD` | the validator's message, e.g. ``cards[0]: missing non-empty string `kind` `` |
-| the file could not be written | 1003 | `IO` | `cannot save board` |
+| `document` absent or `null` | -32602 | `INVALID_PARAMS` | `` `document` must be a JSON value, and not null `` |
+| `base_revision` present, not a number | -32602 | `INVALID_PARAMS` | `` `base_revision` must be a number when it is present `` |
+| `base_revision` present and ≠ current | 1001 | `STALE_REVISION` | `the view document changed since it was loaded`, data `{current_revision}` |
+| the file could not be written | 1003 | `IO` | the store's message, e.g. `cannot write the view document` |
 
-Validation is described below. The staleness check happens **before** the
-document is adopted, so a rejected save leaves the in-memory board untouched.
-
-### `board.newId`
-
-```json
-{"id":"c7"}
-```
-
-A fresh `cN` id that no card currently uses.
+"Current" means the revision of the document the kernel holds -- the last one a
+call read or wrote, so a client that has just loaded the file can pass that
+revision back. A different path, or no call at all, is not the same revision:
+`base_revision` guards *this* document, and a client that wants to overwrite
+something it never read should leave the member out and say why. The staleness
+check happens **before** anything is written, so a rejected save leaves both the
+file and the held document untouched. The write itself is atomic: a neighbour
+file is replaced into place, so a reader or a crash sees the whole old document
+or the whole new one.
 
 ### `exec.start`
 
@@ -367,7 +392,7 @@ Parameter: `run_id` (number; a non-number is `-32602` with
 | event | members | emitted when |
 | --- | --- | --- |
 | `file.changed` | `path`, `revision` | a successful `file.write` |
-| `board.changed` | `revision` | a successful `board.save` |
+| `view.changed` | `path`, `revision` | a successful `view.save` |
 | `exec.output` | `run_id`, `stream`, `data` | the pump read bytes from a child |
 | `exec.exit` | `run_id`, `code` | a child exited and every byte was consumed |
 | `log` | `message` | the transport dropped an oversized frame |
@@ -376,9 +401,11 @@ Parameter: `run_id` (number; a non-number is `-32602` with
 carries at most 8192 bytes (`SDE_EXEC_READ_MAX`), one read per run per 15 ms
 pass, which keeps a chatty process from starving the others.
 
-The shell's board UI reacts to `board.changed` by ignoring its own revision echo;
-if the board is dirty it warns, otherwise it re-runs `board.load` to adopt what
-is on disk.
+The shell's board UI reacts to `view.changed` by ignoring its own revision echo;
+if the board is dirty it warns, otherwise it re-runs `view.load` to adopt what
+is on disk. A second client writing the same document is exactly the case this
+covers: the event names the path, so a client that holds several documents can
+tell which one moved.
 
 `file.changed` is only ever emitted for a write **this kernel made**. A file
 changed by another program — an editor, a formatter, `git checkout` — produces no
@@ -390,6 +417,40 @@ itself and say so. The protocol deliberately does not promise the second one.
 The watcher is polled, so it is late by design: a card is told about somebody
 else's write within a second or so, not at the instant it lands. That is the
 trade for a kernel that never walks the workspace on a timer of its own.
+
+---
+
+## A second client
+
+A contract with one consumer is a contract nobody has tested, so the repository
+ships a second one: `tools/seide_cli.py`, a command-line client that speaks this
+document and imports nothing from `shell/`.
+
+```sh
+python tools/seide_cli.py hello                     # protocol, kernel version, root, pid
+python tools/seide_cli.py info                      # workspace.info
+python tools/seide_cli.py ls "**/*.py" --limit 20   # workspace.list
+python tools/seide_cli.py cat README.md --meta      # file.read; metadata on stderr
+python tools/seide_cli.py write notes.txt --text "hello\n"   # file.write
+python tools/seide_cli.py board                     # view.load, as a table
+python tools/seide_cli.py board --path notes.json   # the same, for any document
+python tools/seide_cli.py run "python tools/demo.py --help"
+python tools/seide_cli.py selfcheck                 # the client's own checks
+```
+
+Three things about it are the point:
+
+- It talks to the **kernel** endpoint. `lang.list` is a shell method, so the
+  client's self-check asserts the kernel still answers `-32601
+  METHOD_NOT_FOUND` for it -- the boundary in the first section of this document,
+  machine-checked.
+- It keeps the rails the protocol defines rather than inventing its own: `write`
+  refuses to replace an existing file unless it is given the `base_revision` it
+  last read (`--base-revision`) or told `--force`, and a stale revision comes
+  back as `1001 STALE_REVISION` with the file untouched.
+- Its checks run inside `make test` as `cli-check` (`make cli-check` on its own),
+  against a scratch workspace under `build/`, so the second consumer cannot rot
+  unnoticed.
 
 ---
 
@@ -407,10 +468,10 @@ trade for a kernel that never walks the workspace on a timer of its own.
 
 | code | name | when |
 | --- | --- | --- |
-| 1001 | `STALE_REVISION` | `file.write` or `board.save` with an out-of-date `base_revision`; carries `data.current_revision` |
+| 1001 | `STALE_REVISION` | `file.write` or `view.save` with an out-of-date `base_revision`; carries `data.current_revision` |
 | 1002 | `NOT_FOUND` | `file.read` on an absent file; `exec.stop` on an unknown run |
 | 1003 | `IO` | read/write/list/save failures not covered above |
-| 1004 | `INVALID_BOARD` | the submitted board document failed validation |
+| 1004 | *(retired)* | was `INVALID_BOARD`; the kernel no longer validates a document, so nothing emits it. The number stays reserved: a client that reads `1004` from an older kernel is looking at a fork or at `infantgod/1` |
 | 1005 | `EXEC` | a child process could not be started |
 
 `INVALID_PARAMS` messages are uniform: the helper that reads a required string
@@ -577,36 +638,44 @@ The editor card in the shell calls `lang.tokenize` with `{path, text}` on a
 
 ---
 
-## Board document validation
+## The view document
 
-The kernel validates before adopting a board. The rules, with their exact
-messages, from `core/src/board.c`:
+The kernel's whole contract for a document is: it is JSON, it is not `null`, it
+is stored verbatim, and it comes back with a revision. What is *inside* it is the
+client's business; `docs/VIEWS.md` argues why. What a client can rely on:
 
-- The document must be an object — `board document must be a JSON object`.
-- `version` must be a number — ``board `version` must be a number``.
-- `viewport` must be an object — ``board `viewport` must be an object``.
-- `cards` must be an array — ``board `cards` must be an array``.
-- `links` must be an array — ``board `links` must be an array``.
-- Each card must be an object (`card must be a JSON object`) with a non-empty
-  string `id` (``missing non-empty string `id` ``), a non-empty string `kind`
-  (``missing non-empty string `kind` ``), and numeric `x`, `y`, `w`, `h`
-  (checked in that order: ``missing numeric `x` ``, then `y`, `w`, `h`).
-- Ids must be unique — ``duplicate `id` ``.
-- Each link must be an object (`link must be a JSON object`) with string `from`
-  and `to` (``missing string `from` and `to` ``), both naming an existing card
-  (`` `from` names no card`` / `` `to` names no card``).
+- Any JSON value except `null` round-trips: an object, an array, a string, a
+  number, a boolean. `null` is refused because "no document" and "a document
+  whose value is null" have to stay distinguishable.
+- Nothing is repaired, reordered or dropped. What is stored is the canonical
+  form of what was sent, and `revision` is the hash of that canonical form, so
+  re-saving unchanged content does not move the revision.
+- The write is atomic -- a neighbour file is replaced into place -- so a crash or
+  a concurrent reader sees one whole document, not half of one.
+- The kernel does not read the file at start-up. A hand-edited or corrupt
+  document cannot stop the kernel from running; a client decides what to do with
+  a file it cannot parse.
+- A missing file is not an error anywhere: `view.load` says `document: null`,
+  `revision: 0`.
 
-Messages are prefixed with `cards[N]: ` or `links[N]: ` where applicable.
+**The board schema is a client convention.** `shell/web/board.mjs` owns it, and
+`docs/PARADIGM.md` describes what the shape is for. The rules it enforces when
+it serialises a document (`serialize:` messages, `shell/web/board.mjs`):
 
-**Missing defaults are filled before validation, but only on the load path.** A
-hand-written `board.json` therefore only has to be correct about the meaningful
-parts: absent `version`, `viewport`, `cards` and `links` are filled in, and a
-card's missing numeric `z` becomes `0`. A document arriving over the wire is
-held to a higher standard — it must carry `cards` and `links` itself, and a
-present member of the wrong type is never repaired. That asymmetry is
-deliberate: repairing a *missing* member helps a human editing a file by hand,
-while repairing a *mis-typed* one lets a client's bug silently replace the whole
-board (`docs/BUGS.md`, entry A).
+- a card is an object with a non-empty string `id`, a non-empty string `kind`
+  and numeric geometry; card ids are unique in the document;
+- a link is an object naming two existing cards, with a unique link id;
+- a document is a JSON object, and whatever a card carries beyond what the
+  client itself uses is kept **verbatim** -- the client does not interpret it
+  either, it only insists the document is something it can draw.
 
-Anything a card carries beyond `id`, `kind` and the geometry is stored
-**verbatim** — the kernel never interprets it.
+On load the client is more forgiving than on save: absent members are filled
+with defaults so a hand-written `board.json` only has to be right about the
+meaningful parts, while a *mis-typed* member is not repaired -- repairing a
+missing member helps a human editing a file by hand, repairing a wrong-typed one
+would let a bug silently replace the whole board (`docs/BUGS.md`, entry A).
+
+The kernel used to enforce those rules itself (`1004 INVALID_BOARD`,
+`core/src/board.c`). That module is gone with the `infantgod/2` protocol version,
+and with it the class of bug where a client's document is a reason for the kernel
+to refuse to work (`docs/BUGS.md`, entries N8 and N10).

@@ -20,7 +20,7 @@
  */
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
-import { createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
+import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE, ZOOM_MAX, ZOOM_MIN } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import {
   WATCH_GONE,
@@ -223,7 +223,7 @@ export function saveOutcomeMessage(outcome) {
       const revision = outcome.revision === undefined || outcome.revision === null
         ? "unknown"
         : outcome.revision;
-      return { level: "info", text: `board saved (rev ${revision}) → .infantgod/board.json${tail}` };
+      return { level: "info", text: `board saved (rev ${revision}) → ${BOARD_PATH}${tail}` };
     }
     case "unchanged":
       // Typing `save` and seeing nothing is indistinguishable from a save that
@@ -234,12 +234,12 @@ export function saveOutcomeMessage(outcome) {
     case "refused":
       return {
         level: "warn",
-        text: `board.save refused the ${force ? "forced overwrite" : "write"}${detail === "" ? "" : `: ${detail}`}`,
+        text: `save refused the ${force ? "forced overwrite" : "write"}${detail === "" ? "" : `: ${detail}`}`,
       };
     case "failed":
-      return { level: "error", text: `board.save failed${detail === "" ? "" : `: ${detail}`}` };
+      return { level: "error", text: `save failed${detail === "" ? "" : `: ${detail}`}` };
     case "offline":
-      return { level: "error", text: "board.save skipped: no kernel connection" };
+      return { level: "error", text: "save skipped: no kernel connection" };
     default:
       return null;
   }
@@ -727,11 +727,11 @@ function createApp() {
         reportSave({ status: "refused", force, auto, detail: err.message });
         return false;
       }
-      const params = { document: document_ };
+      const params = { path: BOARD_PATH, document: document_ };
       if (force) {
         // Re-read the current revision so the kernel accepts the overwrite.
         try {
-          const fresh = await client.call("board.load", {});
+          const fresh = await client.call("view.load", { path: BOARD_PATH });
           params.base_revision = fresh.revision;
           boardRevision = fresh.revision;
         } catch (err) {
@@ -745,7 +745,7 @@ function createApp() {
       } else if (boardRevision !== null) {
         params.base_revision = boardRevision;
       }
-      const result = await client.call("board.save", params);
+      const result = await client.call("view.save", params);
       boardRevision = result.revision;
       // A host that answers without a revision leaves the next save unguarded.
       // That is worth saying out loud, because the write itself succeeded and
@@ -1079,7 +1079,7 @@ function createApp() {
         viewportTouched();
       } else if (gesture.kind === "move") {
         // The card can vanish under the pointer -- another writer's
-        // board.changed, or a `delete`.  board.moveCard throws for an unknown
+        // view.changed, or a `delete`.  board.moveCard throws for an unknown
         // id, and an exception here would skip scheduleRender() and leave the
         // stage stale, so a dead gesture just ends.
         if (board.findCard(gesture.card.id) === null) {
@@ -1496,7 +1496,7 @@ function createApp() {
       }
       log(event.code === 0 ? "info" : "warn", `run ${event.run_id} finished (exit ${event.code})`);
     });
-    client.on("board.changed", (event) => {
+    client.on("view.changed", (event) => {
       if (event.revision === boardRevision) {
         return; // our own save echoing back
       }
@@ -1506,7 +1506,7 @@ function createApp() {
       }
       // Nothing local to lose, so follow the disk.
       adoptDiskBoard(`another writer moved the board to rev ${event.revision}`).catch(
-        (err) => log("error", `board.load failed: ${err.message}`),
+        (err) => log("error", `reloading the board failed: ${err.message}`),
       );
     });
   }
@@ -1678,7 +1678,7 @@ function createApp() {
   }
 
   async function adoptDiskBoard(reason) {
-    const loaded = await client.call("board.load", {});
+    const loaded = await client.call("view.load", { path: BOARD_PATH });
     boardRevision = loaded.revision;
     loadDocument(loaded.document);
     log("info", `reloaded the board (${reason})`);
@@ -1686,7 +1686,7 @@ function createApp() {
 
   /**
    * Put a document on the board.  `history` is "reset" for a board that came
-   * from somewhere else (boot, or another writer's `board.changed`): the undo
+   * from somewhere else (boot, or another writer's `view.changed`): the undo
    * stack is thrown away there, because undoing across somebody else's edit
    * would resurrect the cards they just deleted.  An undo or redo of our own
    * passes "keep", since it is the stack walking itself.
@@ -1771,7 +1771,7 @@ function createApp() {
 
     let loaded;
     try {
-      loaded = await client.call("board.load", {});
+      loaded = await client.call("view.load", { path: BOARD_PATH });
     } catch (err) {
       connected = false;
       setStatus("unreachable");

@@ -13,11 +13,11 @@
 #include <string.h>
 
 #include "app.h"
-#include "board.h"
 #include "exec.h"
 #include "json.h"
 #include "port.h"
 #include "rpc.h"
+#include "view.h"
 #include "wksp.h"
 
 typedef struct sde_call {
@@ -112,10 +112,14 @@ static void h_workspace_info(sde_call *c)
     snprintf(base, sizeof(base), "%s",
              slash == NULL ? c->app->root : slash + 1);
     sde_json_set(info, "name", sde_json_str(base));
-    sde_json_set(info, "board_path",
-                 sde_json_str(sde_board_path(c->app->board)));
-    sde_json_set(info, "board_revision",
-                 sde_json_rev(sde_board_revision(c->app->board)));
+    /*
+     * Where the client's document lives, and what revision it is at.  It is a
+     * report, not a configuration: the kernel holds whatever path the client
+     * last named, and nothing until then.
+     */
+    sde_json_set(info, "view_path", sde_json_str(sde_view_path(c->app->view)));
+    sde_json_set(info, "view_revision",
+                 sde_json_rev(sde_view_revision(c->app->view)));
 
     /* What `workspace.list` will never hand over, so a client can say why a
        directory it expects is missing instead of guessing. */
@@ -340,57 +344,83 @@ static void h_file_stat(sde_call *c)
 }
 
 /* ---------------------------------------------------------------------- */
-/* handlers: the board                                                    */
+/* handlers: the view document                                            */
 /* ---------------------------------------------------------------------- */
 
-#if SDE_WITH_BOARD
+#if SDE_WITH_VIEW
 
-static void h_board_load(sde_call *c)
+static void h_view_load(sde_call *c)
 {
-    sde_json *r = sde_json_obj();
-    sde_json *doc;
+    char        err[256];
+    const char *path = NULL;
+    sde_json   *r;
+    sde_json   *doc;
+    sde_json   *copy;
 
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
+    err[0] = '\0';
+    if (sde_view_load(c->app->view, c->app, path, err, sizeof(err)) != 0) {
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot load the view document");
+        return;
+    }
+    r = sde_json_obj();
     if (r == NULL) {
         fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
         return;
     }
-    doc = sde_json_clone(sde_board_document(c->app->board));
+    /*
+     * A first run has no document, and that is what the answer says: an
+     * explicit null, so a client can tell "nothing there yet" from a reply
+     * that forgot the member.
+     */
+    doc = sde_view_document(c->app->view);
     if (doc == NULL) {
-        sde_json_free(r);
-        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
-        return;
+        sde_json_set(r, "document", sde_json_null());
+    } else {
+        copy = sde_json_clone(doc);
+        if (copy == NULL) {
+            sde_json_free(r);
+            fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
+            return;
+        }
+        sde_json_set(r, "document", copy);
     }
-    sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
+    sde_json_set(r, "path", sde_json_str(sde_view_path(c->app->view)));
     sde_json_set(r, "revision",
-                 sde_json_rev(sde_board_revision(c->app->board)));
-    sde_json_set(r, "document", doc);
+                 sde_json_rev(sde_view_revision(c->app->view)));
     c->owned = r;
 }
 
-static void h_board_save(sde_call *c)
+static void h_view_save(sde_call *c)
 {
-    char                 err[256];
-    const sde_json      *doc;
-    sde_json            *copy;
-    int                  has_base;
-    double               base_num = 0.0;
-    unsigned long        base = 0;
-    unsigned long        prev;
-    sde_json            *r;
-    sde_json            *note;
+    char            err[256];
+    const char     *path = NULL;
+    const sde_json *doc;
+    sde_json       *copy;
+    int             has_base;
+    double          base_num = 0.0;
+    unsigned long   base = 0;
+    unsigned long   prev;
+    sde_json       *r;
+    sde_json       *note;
 
+    need_string(c, "path", &path);
+    if (c->code != 0) {
+        return;
+    }
     /*
-     * Both spellings are accepted: the protocol document calls the member
-     * `board`, while the kernel's own load result calls it `document`, and a
-     * client that round-trips one into the other should not have to rename it.
+     * The document is opaque, but it has to be *there*: "no document" and "a
+     * document" must stay distinguishable, so an absent member or an explicit
+     * null is a caller bug.  Any other JSON value is accepted -- object, array,
+     * string, number, boolean -- and round-trips exactly.
      */
     doc = sde_json_get(c->params, "document");
-    if (doc == NULL) {
-        doc = sde_json_get(c->params, "board");
-    }
-    if (doc == NULL || doc->type != SDE_JSON_OBJ) {
+    if (doc == NULL || doc->type == SDE_JSON_NULL) {
         fail(c, SDE_RPC_INVALID_PARAMS, "INVALID_PARAMS",
-             "`document` must be an object");
+             "`document` must be a JSON value, and not null");
         return;
     }
     copy = sde_json_clone(doc);
@@ -399,7 +429,7 @@ static void h_board_save(sde_call *c)
         return;
     }
 
-    prev = sde_board_revision(c->app->board);
+    prev = sde_view_revision(c->app->view);
     switch (opt_number(c->params, "base_revision", &base_num)) {
     case -1:
         sde_json_free(copy);
@@ -414,39 +444,32 @@ static void h_board_save(sde_call *c)
         has_base = 0;
         break;
     }
-    if (has_base) {
-        if (base != prev) {
-            sde_json *d = sde_json_obj();
-            if (d != NULL) {
-                sde_json_set(d, "current_revision", sde_json_rev(prev));
-            }
-            sde_json_free(copy);
-            fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
-                 "board changed since it was loaded");
-            c->data = d;
-            return;
+    if (has_base && base != prev) {
+        sde_json *d = sde_json_obj();
+        if (d != NULL) {
+            sde_json_set(d, "current_revision", sde_json_rev(prev));
         }
-    }
-
-    err[0] = '\0';
-    if (sde_board_adopt(c->app->board, copy, err, sizeof(err)) != 0) {
-        /* adopt() only takes ownership on success, so `copy` is still ours. */
         sde_json_free(copy);
-        fail(c, SDE_RPC_INVALID_BOARD, "INVALID_BOARD",
-             err[0] ? err : "board rejected");
+        fail(c, SDE_RPC_STALE_REVISION, "STALE_REVISION",
+             "the view document changed since it was loaded");
+        c->data = d;
         return;
     }
 
-    if (sde_board_save(c->app->board, err, sizeof(err)) != 0) {
-        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot save board");
+    err[0] = '\0';
+    if (sde_view_store(c->app->view, c->app, path, copy, err, sizeof(err)) != 0) {
+        /* store() only takes ownership on success, so `copy` is still ours. */
+        sde_json_free(copy);
+        fail(c, SDE_RPC_IO, "IO", err[0] ? err : "cannot save the view document");
         return;
     }
 
     note = sde_json_obj();
     if (note != NULL) {
-        sde_json_set(note, "event", sde_json_str("board.changed"));
+        sde_json_set(note, "event", sde_json_str("view.changed"));
+        sde_json_set(note, "path", sde_json_str(sde_view_path(c->app->view)));
         sde_json_set(note, "revision",
-                     sde_json_rev(sde_board_revision(c->app->board)));
+                     sde_json_rev(sde_view_revision(c->app->view)));
         (void) sde_app_notify(c->app, note);
     }
 
@@ -455,34 +478,14 @@ static void h_board_save(sde_call *c)
         fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
         return;
     }
-    sde_json_set(r, "path", sde_json_str(sde_board_path(c->app->board)));
+    sde_json_set(r, "path", sde_json_str(sde_view_path(c->app->view)));
     sde_json_set(r, "revision",
-                 sde_json_rev(sde_board_revision(c->app->board)));
+                 sde_json_rev(sde_view_revision(c->app->view)));
     sde_json_set(r, "saved", sde_json_bool(1));
     c->owned = r;
 }
 
-static void h_board_new_id(sde_call *c)
-{
-    char     *id = sde_board_next_id(c->app->board);
-    sde_json *r;
-
-    if (id == NULL) {
-        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
-        return;
-    }
-    r = sde_json_obj();
-    if (r == NULL) {
-        free(id);
-        fail(c, SDE_RPC_INTERNAL, "INTERNAL", "out of memory");
-        return;
-    }
-    sde_json_set(r, "id", sde_json_str(id));
-    free(id);
-    c->owned = r;
-}
-
-#endif /* SDE_WITH_BOARD */
+#endif /* SDE_WITH_VIEW */
 
 /* ---------------------------------------------------------------------- */
 /* handlers: running commands                                             */
@@ -583,10 +586,9 @@ static const sde_method sde_methods[] = {
     { "file.read",      h_file_read },
     { "file.write",     h_file_write },
     { "file.stat",      h_file_stat },
-#if SDE_WITH_BOARD
-    { "board.load",     h_board_load },
-    { "board.save",     h_board_save },
-    { "board.newId",    h_board_new_id },
+#if SDE_WITH_VIEW
+    { "view.load",      h_view_load },
+    { "view.save",      h_view_save },
 #endif
 #if SDE_WITH_EXEC
     { "exec.start",     h_exec_start },

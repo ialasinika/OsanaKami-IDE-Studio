@@ -2,21 +2,26 @@
  * board.mjs -- the board document and the operations the canvas performs.
  *
  * DELETE THIS FILE and InfantGod Studio stops being InfantGod Studio: it holds the only definition of
- * what a board *is* (cards, links, viewport) and the only place the layout is
- * assembled before `board.save`.  Without it there is nothing to render.
+ * what a board *is* (cards, links, viewport), where it lives in the workspace,
+ * and the only place the layout is assembled before `view.save`.  Without it
+ * there is nothing to render.
  *
  * It is deliberately UI-free: no `document`, no `window`, no timer.  The same
  * object is used by the browser and by `selftest.mjs` under Node, which is the
  * point -- the spatial model can be tested without a canvas.
  *
- * Two rules borrowed from the kernel so the UI never builds a document the
- * kernel will reject (`core/src/board.c`):
+ * This file owns the schema.  The kernel used to: `core/src/board.c` knew about
+ * cards, geometry and ids, and answered a malformed document with
+ * `1004 INVALID_BOARD`.  It no longer knows any of that.  A view document is
+ * opaque to the kernel -- it persists whatever JSON it is handed, at the path
+ * its client names (`view.load` / `view.save`) -- and the meaning of the fields
+ * is decided here.  So the two rules below are this file's rules now, enforced
+ * by `serialize()` before anything is sent:
  *
  *   - a card is an object with a non-empty unique string `id`, a non-empty
  *     string `kind`, and numeric `x`/`y`/`w`/`h`;
  *   - a link's `from`/`to` must name a card that exists, and its `id` (when it
- *     has one) must not repeat another link's -- `serialize` refuses to build a
- *     document the kernel would answer with `1004 INVALID_BOARD`.
+ *     has one) must not repeat another link's.
  *
  * Anything else a card carries (`file`, `cmd`, `text`, and any extra field a
  * fork invents) is stored verbatim, because the kernel stores it verbatim.
@@ -25,7 +30,7 @@
 /** The four card kinds. Fixed: there is no extension mechanism by design. */
 /**
  * The kinds `cards.mjs` ships renderers for.  Advisory only: this file stores
- * and clones any `kind` string, because the kernel validates a card's *shape*
+ * and clones any `kind` string, because this file validates a card's *shape*
  * (id, kind, geometry) and deliberately not its vocabulary.  The authoritative
  * list at runtime is `knownCardKinds()` in cards.mjs, which is what the
  * built-in renderers register themselves into.
@@ -36,6 +41,16 @@ export const CARD_KINDS = [
 ];
 
 export const BOARD_VERSION = 1;
+
+/**
+ * Where this document lives, relative to the workspace root.
+ *
+ * The kernel used to decide this (`SDE_BOARD_RELPATH` in `core/src/board.h`);
+ * now the client names the path on every `view.load`/`view.save`.  A fork can
+ * point it somewhere else, or keep a second document beside it, without the
+ * kernel knowing or caring.
+ */
+export const BOARD_PATH = ".infantgod/board.json";
 
 /** Default size per kind, used by `addCard`. */
 export const DEFAULT_SIZE = {
@@ -121,7 +136,7 @@ export function emptyDocument() {
   };
 }
 
-/** True for a card the kernel would accept. Geometry may be repaired later. */
+/** True for a card this document format accepts. Geometry may be repaired later. */
 export function isValidCard(card) {
   if (!isPlainObject(card)) {
     return false;
@@ -151,7 +166,7 @@ function normaliseCard(card) {
 /**
  * Repair a document into a loadable one.
  *
- * Cards the kernel would reject are dropped (with a report, so the caller can
+ * Cards this format cannot read are dropped (with a report, so the caller can
  * tell the user) rather than allowed to poison the board; links that lose an
  * endpoint go with them.  This mirrors `workspace.info` failing loudly: a
  * silently discarded *card* is worse than a visible message.
@@ -198,10 +213,10 @@ export function normaliseDocument(input) {
   const links = Array.isArray(doc.links) ? doc.links : [];
   /*
    * Link ids are unique board-wide.  A file can still carry the same id twice,
-   * and the kernel then refuses to save it back (`1004 INVALID_BOARD`,
-   * `links[N]: duplicate \`id\``), so a board that loaded fine would become
-   * unsaveable.  The edge is kept and given a fresh id instead: losing a
-   * connection the user can see is the worse repair.
+   * and `serialize()` then refuses to write it back (`links[N]: duplicate
+   * \`id\``), so a board that loaded fine would become unsaveable.  The edge is
+   * kept and given a fresh id instead: losing a connection the user can see is
+   * the worse repair.
    *
    * `reserved` holds every id the file already uses, so a replacement id never
    * steals one that a later link is entitled to keep.
@@ -273,8 +288,10 @@ export function createBoard(initial, options = {}) {
   }
 
   function makeId(prefix) {
-    // The host's `board.newId` is the authority when it is available; the local
-    // counter is the fallback so the board stays usable standalone.
+    // Ids are the client's business now: the kernel used to hand them out
+    // (`board.newId`) and no longer has an opinion.  A caller that wants a
+    // different source -- a fork resolving ids against something else -- passes
+    // `idFactory`; otherwise the local counter keeps the board standalone.
     if (idFactory !== null) {
       const id = idFactory(prefix);
       if (typeof id === "string" && id !== "") {
@@ -323,7 +340,7 @@ export function createBoard(initial, options = {}) {
     return card;
   }
 
-  /** Replace the whole document (e.g. from `board.load` or a save reply). */
+  /** Replace the whole document (e.g. from `view.load` or a save reply). */
   function load(next) {
     const result = normaliseDocument(next);
     document = result.document;
@@ -349,7 +366,7 @@ export function createBoard(initial, options = {}) {
     // A caller-supplied id is honoured as-is; otherwise the factory's answer is
     // taken and *then* checked, so a factory that repeats itself is caught.
     // `String(undefined)` would be the string "undefined", which is a valid
-    // kernel id, so the check is explicitly against `null`/`undefined`.
+    // card id, so the check is explicitly against `null`/`undefined`.
     const given = geometry === null || geometry === undefined ? null : geometry.id;
     const id = given === undefined || given === null ? takeId("c") : String(given);
     if (findCard(id)) {
@@ -422,7 +439,7 @@ export function createBoard(initial, options = {}) {
     return new Set(document.links.map((link) => link.id));
   }
 
-  /** The first free `lN`. Ids are local until a save hands them to the kernel. */
+  /** The first free `lN`. Ids are local: nothing outside this file allocates them. */
   function freeLinkId() {
     const used = usedLinkIds();
     let n = document.links.length + 1;
@@ -435,11 +452,11 @@ export function createBoard(initial, options = {}) {
   /**
    * Add one link under a caller-chosen id.
    *
-   * Link ids are unique across the whole board, because the kernel refuses a
-   * document that repeats one (`1004 INVALID_BOARD`, `links[N]: duplicate
-   * \`id\``) -- and because `unlink <id>` names exactly one edge.  Accepting a
-   * collision here would let the UI build a document its own backend will not
-   * save, so it is an error and not a second link.
+   * Link ids are unique across the whole board, because `serialize()` refuses a
+   * document that repeats one (`links[N]: duplicate \`id\``) -- and because
+   * `unlink <id>` names exactly one edge.  Accepting a collision here would let
+   * the UI build a document its own writer will not save, so it is an error and
+   * not a second link.
    *
    * @param {string} from  id of the source card
    * @param {string} to    id of the target card
@@ -533,9 +550,9 @@ export function createBoard(initial, options = {}) {
   }
 
   /**
-   * Plain JSON, ready for `board.save`. Always a copy: no aliasing into the model.
+   * Plain JSON, ready for `view.save`. Always a copy: no aliasing into the model.
    *
-   * Nothing is dropped silently.  A document the kernel would refuse is
+   * Nothing is dropped silently.  A document this format cannot express is
    * reported as an error that names the offending entry, instead of being
    * quietly trimmed: a trimmed save reports success while work is missing from
    * disk, which is the one outcome a board-first editor must never produce.
@@ -554,12 +571,12 @@ export function createBoard(initial, options = {}) {
     out.cards = out.cards.map((card, at) => {
       if (!isValidCard(card)) {
         throw new Error(`serialize: cards[${at}] is not a valid card`
-          + " -- the kernel needs a non-empty string id, a string kind and numeric x/y/w/h;"
+          + " -- a card needs a non-empty string id, a string kind and numeric x/y/w/h;"
           + " it was kept in the model rather than dropped from the document");
       }
       if (ids.has(card.id)) {
         throw new Error(`serialize: cards[${at}] repeats card id ${JSON.stringify(card.id)}`
-          + " -- the kernel refuses a document with duplicate card ids");
+          + " -- card ids must be unique in the document");
       }
       ids.add(card.id);
       const clean = cloneDocument(card);
@@ -581,7 +598,7 @@ export function createBoard(initial, options = {}) {
       if (typeof clean.id === "string" && clean.id !== "") {
         if (linkIds.has(clean.id)) {
           throw new Error(`serialize: links[${at}] repeats link id ${JSON.stringify(clean.id)}`
-            + " -- the kernel refuses a document with duplicate link ids");
+            + " -- link ids must be unique in the document");
         }
         linkIds.add(clean.id);
       }

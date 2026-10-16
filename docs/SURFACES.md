@@ -142,7 +142,7 @@ The model is pure and unit-tested without a DOM:
 `sheetSummary`, `sheetToTSV`, `nextSheetSelection`, `SHEET_TYPES`.
 
 ```
-node shell/web/selftest.mjs      # includes 13 checks over the hook and the sheet model
+node shell/web/selftest.mjs      # includes 11 checks over the hook and the sheet model
 ```
 
 A second worked example is in [`PROJECT.md`](PROJECT.md): the `project` card
@@ -153,7 +153,7 @@ kind can depend on *both* the filesystem and the board without changing either.
 
 | layer | guarantee | where |
 |---|---|---|
-| kernel (`core/`) | validates `id`/`kind`/`x`/`y`/`w`/`h` and stores every other field byte-for-byte | `core/src/board.c` |
+| kernel (`core/`) | stores the view document verbatim, whatever its shape — no field is read, no kind is known | `core/src/view.c` |
 | protocol | a card payload is arbitrary nested JSON; unknown kinds are never rejected | `docs/PROTOCOL.md` |
 | board model | deep-clones payloads (`cloneDocument`) and never interprets them | `shell/web/board.mjs` |
 | board UI | an unregistered kind renders as an "unknown card" that is **preserved, not deleted** | `renderUnknown` in `shell/web/cards.mjs` |

@@ -7,12 +7,45 @@ InfantGod Studio is a fork of seIDE at `v0.1.0-alpha`.  The kernel, the shell,
 the protocol and the tools are upstream's, renamed: `seIDE` becomes InfantGod
 Studio, `.seide/` becomes `.infantgod/`, `core/include/seide_cfg.h` becomes
 `core/include/infantgod_cfg.h`, the protocol name `seide/1` becomes
-`infantgod/1`.  The Brainfuck fixtures are retargeted to Yarn, so
+`infantgod/1` — the fork's first protocol version, replaced by `infantgod/2` in
+`## Unreleased` below.  The Brainfuck fixtures are retargeted to Yarn, so
 `examples/hello.yarn` is the fixture the suite reads.  The `v0.1.0-alpha`
 section below is inherited in that sense — upstream's work, as it stands in this
 tree.
 
 ## Unreleased
+
+### Kernel
+
+- The kernel no longer knows what a view **is**.  `board.load`, `board.save` and
+  `board.newId` are gone; `view.load {path}` and `view.save {path, document,
+  base_revision?}` replace them.  The kernel keeps *a JSON document* at a path the
+  caller names, hands it back verbatim, and never looks inside it: any JSON value
+  except `null` round-trips exactly — an object shaped like a board, an array, a
+  number — so `1004 INVALID_BOARD` is retired (the number stays reserved) and a
+  malformed document can no longer stop the kernel from starting, because the
+  kernel no longer reads one at startup.  `core/src/board.c` (`fill_defaults`,
+  `validate`, `check_links`, `board_id`) and `core/include/board.h` were deleted,
+  `core/src/view.c` and `core/include/view.h` took their place, and
+  `SDE_WITH_BOARD` became `SDE_WITH_VIEW`.  What survives is the part a client
+  cannot do for itself: the atomic neighbour-replace write, `base_revision`
+  staleness with `data.current_revision` (`1001 STALE_REVISION`), the
+  `view.changed` notification, and `workspace.info`'s `view_path` /
+  `view_revision` — which report the document the kernel last read or wrote, not
+  a workspace setting.  `SDE_PROTOCOL_VERSION` is **2**; the fork's protocol name
+  is `infantgod/2`, and the rename is breaking on purpose, so an
+  `infantgod/1` client is refused rather than half-served.  Reasoning, the
+  failures this avoids and the price are in the new `docs/VIEWS.md`.
+
+### Shell
+
+- `shell/web/board.mjs` now owns the board schema, the `.infantgod/board.json`
+  path (`BOARD_PATH`) and card ids (`makeId`, with `idFactory` left as a seam that
+  nothing supplies — the old `board.newId` had no production caller).  Its rules
+  are unchanged and still refuse what they always refused; the only difference is
+  that the refusal now happens in the process that can explain it.  `main.mjs`
+  names the path on every call and listens for `view.changed` instead of
+  `board.changed`.
 
 ### Undo and redo on the board
 
@@ -136,6 +169,18 @@ tree.
 
 ### Tools
 
+- `tools/seide_cli.py`, `tools/kernel_probe.py`, `tools/e2e.py` and
+  `tools/demo.py` speak `view.load` / `view.save`; the CLI's `new-id` verb is gone
+  with `board.newId` (the client allocates ids) and its `board` command prints
+  whatever `view.load` hands back, with a note — not an error — when the document
+  is not the board shape.  `tools/browser_smoke.py` and `tools/input_smoke.py`
+  need no change at all: `.infantgod/board.json` was always just a file to them, and
+  that is now the truth of it.  The probe stops pinning refusals the kernel no
+  longer makes and pins the opacity contract instead: a document the board schema
+  would reject is stored and handed back unchanged, a stale `base_revision` is
+  `1001` with `data.current_revision`, and a save with no `document` (or `null`)
+  is `-32602`.  The CLI selfcheck reads `SDE_PROTOCOL_VERSION` out of
+  `core/include/infantgod_cfg.h` rather than hard-coding a protocol number.
 - `tools/e2e.py` removes the empty `.infantgod/` directory left behind when the
   suite created the board and put it back: a test run should not leave a state
   directory nobody asked for.  `make test` in a fresh clone now ends with the
@@ -145,6 +190,33 @@ tree.
   place to fix when `serve`'s banner or the board path changes.  The board
   backup's "the clone had no board" branch is no longer guarded on the test
   having installed the starter board, because the host autosaves one anyway.
+
+### Docs
+
+- New `docs/VIEWS.md`: what the kernel defines (that a view exists — a place, a
+  value, a revision, an atomic write, a notification) against what a client
+  defines (what one is — the schema, the meaning, the path, the ids), the three
+  failures that follow from confusing the two, and what it costs.  `docs/BUGS.md`
+  entries A and E are kept as history with that context added.
+- `docs/PROTOCOL.md` documents the two new methods, the eleven-method table, the
+  retired `1004`, and `workspace.info`'s `view_path` / `view_revision`;
+  `docs/ARCHITECTURE.md`, `docs/PARADIGM.md`, `docs/TRIM.md`, `docs/SURFACES.md`,
+  `docs/FORK.md`, `docs/PROJECT.md`, `README.md`, `tools/README.md` and
+  `shell/web/README.md` now say that the board is the shell's convention and where
+  the schema lives.  The counts in README.md, tools/README.md and
+  docs/ARCHITECTURE.md follow the suites.
+
+### Checks
+
+- `make test` (e2e 12, kernel probe, cli-check, version-check, JSON, langs 91/91,
+  selftest 96/96, mods 84/84) and `make smoke` (browser smoke 5, input smoke 19)
+  are green.  Every
+  new promise was sabotaged to prove its check can fail (throwaway
+  `build/sabotage_view.py`): the kernel repairing a document, a stale save
+  accepted, a first-run answer that is `{}` instead of `null`, the client writing
+  a card its own model cannot read, and the client booting from a path of its own
+  invention.  All five were caught, and the three sources were restored
+  byte-identical.
 
 ### Licence
 
@@ -216,27 +288,31 @@ screen in the README.
 ### Kernel (`core/`, C89, no dependencies)
 
 - Newline-delimited JSON-RPC over stdio; `hello`, `workspace.info`,
-  `workspace.list`, `file.read`, `file.write`, `board.load`, `board.save`,
-  `board.newId`, `exec.start`, `exec.stop`, `exec.list`.
+  `workspace.list`, `file.read`, `file.write`, `file.stat`, `board.load`,
+  `board.save`, `board.newId`, `exec.start`, `exec.stop`, `exec.list`.  (That
+  list is the 0.1 state: `## Unreleased` above replaced the three `board.*`
+  methods with `view.load` / `view.save` and moved the schema into the shell.)
 - Modules are trimmable per line in the Makefile's `SRC` list; `infantgod
   modules` prints what each one costs.
 - The kernel knows no languages: `langs/` is served entirely by the shell.
 
 ### Languages (`langs/`, the shell's layer)
 
-- A descriptor grammar (`.lang`) with two **families**: `flat` and `sgml`.
-  Adding a language is one text file — no code.
+- A descriptor grammar (`.lang`): adding a language is one text file — no code.
+  (Upstream's grammar has two families, `flat` and `sgml`; this fork has no SGML
+  and ships the two descriptors below, one per language.)
 - `langs/yarn.lang` is the flat descriptor this fork ships: Yarn Spinner
   headers, builtins, `<<commands>>` and `#tags`.  `langs/json.lang` covers the
   game's ScriptableObject definition files.
 - `lang.tokenize` returns spans that tile the file with no gaps or overlaps, in
-  the same wire form for both families (`node langs/selftest.mjs`, 82 checks).
+  the same wire form for either language (`node langs/selftest.mjs`, 82 checks).
 
 ### Shell (`shell/`)
 
 - `infantgod rpc` (stdio) and `infantgod serve` (HTTP + SSE + the system browser
   in `--app=` mode).  No bundled Chromium, no npm dependencies.
-- Six card kinds: `editor`, `runner`, `note`, `files`, `sheet` and `project`.
+- Nine card kinds: `editor`, `runner`, `note`, `files`, `sheet` and `project`,
+  plus `mod`, `problems` and `docs` for the mod layer.
 - The `project` card answers "what is in this project, and what do I have open
   in it": the workspace listing folded by folder, merged with the open editors,
   with one panel per board and a filter.
@@ -256,7 +332,7 @@ screen in the README.
 
 Four adversarial probing rounds found 33 defects; 31 are fixed and each one is
 recorded in [`docs/BUGS.md`](docs/BUGS.md) with its symptom and root cause.  The
-worst were silent data loss in `board.save`, `file.write` ignoring a
+worst were silent data loss in the board save, `file.write` ignoring a
 wrong-typed `base_revision`, and validation that was quadratic in the number of
 cards (20 000 cards: 72.59 s → 0.81 s).
 

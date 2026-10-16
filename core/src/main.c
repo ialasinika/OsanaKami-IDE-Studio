@@ -22,13 +22,13 @@
 #include <string.h>
 
 #include "app.h"
-#include "board.h"
 #include "buf.h"
 #include "json.h"
 #include "module.h"
 #include "port.h"
 #include "rpc.h"
 #include "serve.h"
+#include "view.h"
 
 /* ---------------------------------------------------------------------- */
 /* trim manifest                                                          */
@@ -55,9 +55,9 @@ static const sde_module sde_module_table[] = {
       "workspace reads/writes, path containment, content revisions",
       "files can no longer be opened or saved; only the canvas remains",
       1 },
-    { "board",
-      "the board document: validation, atomic persistence, card ids",
-      "the canvas stops surviving restarts, which is the paradigm itself",
+    { "view",
+      "the client's view document: opaque JSON, atomic persistence, revisions",
+      "no document survives a restart; the client is left with what it holds",
       1 },
     { "exec",
       "child processes for `runner` cards, with streamed output",
@@ -135,8 +135,11 @@ static void usage(FILE *out)
     fprintf(out, "        Speak newline-delimited JSON-RPC on stdin/stdout\n");
     fprintf(out, "        until EOF.  This is the mode the shell drives.\n");
     fprintf(out, "\n");
-    fprintf(out, "  board show [--root DIR]\n");
-    fprintf(out, "        Print the persistent board document as JSON.\n");
+    fprintf(out, "  view show --path REL [--root DIR]\n");
+    fprintf(out, "        Print the JSON document a client keeps at REL.\n");
+    fprintf(out, "        The kernel holds no document of its own: the path is\n");
+    fprintf(out, "        the client's choice, and this command is a way to look\n");
+    fprintf(out, "        at one without a window.\n");
     fprintf(out, "\n");
     fprintf(out, "  modules\n");
     fprintf(out, "        List the kernel's source modules and what deleting\n");
@@ -184,31 +187,47 @@ static int cmd_rpc(int argc, char **argv)
     return code;
 }
 
-static int cmd_board_show(int argc, char **argv)
+static int cmd_view_show(int argc, char **argv)
 {
-    sde_app app;
-    sde_buf b;
-    char    err[256];
+    sde_app     app;
+    sde_buf     b;
+    char        err[256];
+    const char *path = opt_value(argc, argv, "--path");
+    sde_json   *doc;
 
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "infantgod: view show needs --path REL\n");
+        return 2;
+    }
     err[0] = '\0';
     if (sde_app_init(&app, opt_root(argc, argv), NULL, emit_discard, NULL,
                      err, sizeof(err)) != 0) {
         fprintf(stderr, "infantgod: %s\n", err[0] != '\0' ? err : "cannot start");
         return 1;
     }
+    if (sde_view_load(app.view, &app, path, err, sizeof(err)) != 0) {
+        fprintf(stderr, "infantgod: %s\n",
+                err[0] != '\0' ? err : "cannot read the view document");
+        sde_app_free(&app);
+        return 1;
+    }
 
+    doc = sde_view_document(app.view);
     sde_buf_init(&b);
-    if (sde_json_write_pretty(&b, sde_board_document(app.board), 2) != 0) {
+    if (doc == NULL) {
+        /* No file yet.  Say so in JSON rather than printing nothing. */
+        (void) sde_buf_adds(&b, "null");
+    } else if (sde_json_write_pretty(&b, doc, 2) != 0) {
         sde_buf_free(&b);
         sde_app_free(&app);
-        fprintf(stderr, "infantgod: cannot serialise the board\n");
+        fprintf(stderr, "infantgod: cannot serialise the view document\n");
         return 1;
     }
     (void) sde_buf_addc(&b, '\n');
-    (void) sde_port_stdout_write(b.data, b.len);
+    (void) sde_port_stdout_write(sde_buf_cstr(&b), b.len);
     sde_buf_free(&b);
 
-    fprintf(stderr, "board file: %s\n", sde_board_path(app.board));
+    fprintf(stderr, "view file: %s\n", sde_view_path(app.view));
     sde_app_free(&app);
     return 0;
 }
@@ -265,11 +284,11 @@ int main(int argc, char **argv)
         printf("infantgod %s protocol %s\n", SDE_VERSION, SDE_PROTOCOL);
         return 0;
     }
-    if (strcmp(cmd, "board") == 0) {
+    if (strcmp(cmd, "view") == 0) {
         if (argc > 2 && strcmp(argv[2], "show") == 0) {
-            return cmd_board_show(argc, argv);
+            return cmd_view_show(argc, argv);
         }
-        fprintf(stderr, "infantgod: board needs a subcommand (show)\n");
+        fprintf(stderr, "infantgod: view needs a subcommand (show)\n");
         return 2;
     }
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "--help") == 0

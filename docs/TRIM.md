@@ -43,7 +43,7 @@ SRC = \
 	core/src/vec.c \
 	core/src/json.c \
 	core/src/wksp.c \
-	core/src/board.c \
+	core/src/view.c \
 	core/src/exec.c \      <-- delete this line
 	core/src/rpc.c \
 	core/src/serve.c \
@@ -83,8 +83,8 @@ supports: instead of deleting the methods, flip the switch in
 #ifndef SDE_WITH_EXEC
 #define SDE_WITH_EXEC 1
 #endif
-#ifndef SDE_WITH_BOARD
-#define SDE_WITH_BOARD 1
+#ifndef SDE_WITH_VIEW
+#define SDE_WITH_VIEW 1
 #endif
 ```
 
@@ -94,7 +94,7 @@ the table at compile time and lets the linker drop the handlers — but you must
 compiled into the binary with no caller. The switch is what makes the
 `rpc.c` edit mechanical; the `SRC` edit is what makes the binary smaller.
 
-Two subsystems also touch other modules' initialisation. `wksp` and `board` are
+Two subsystems also touch other modules' initialisation. `wksp` and `view` are
 constructed in `core/src/app.c`; `exec` is created and bound there too:
 
 ```c
@@ -143,9 +143,9 @@ wksp     [optional]
          workspace reads/writes, path containment, content revisions
          cut it and: files can no longer be opened or saved; only the canvas remains
 
-board    [optional]
-         the board document: validation, atomic persistence, card ids
-         cut it and: the canvas stops surviving restarts, which is the paradigm itself
+view     [optional]
+         the client's view document: opaque JSON, atomic persistence, revisions
+         cut it and: no document survives a restart; the client is left with what it holds
 
 exec     [optional]
          child processes for `runner` cards, with streamed output
@@ -176,14 +176,14 @@ are whole subsystems.
 | `json` | required | JSON parse/serialise; the protocol's value type | nothing builds |
 | `port` | required | the platform boundary: files, paths, threads, processes | nothing builds; this is the layer a fork replaces to leave Win32 |
 | `wksp` | optional | workspace reads/writes, path containment, content revisions | files can no longer be opened or saved; only the canvas remains |
-| `board` | optional | the board document: validation, atomic persistence, card ids | the canvas stops surviving restarts, which is the paradigm itself |
+| `view` | optional | the client's view document: opaque JSON, atomic persistence, revisions | no document survives a restart; the client is left with what it holds |
 | `exec` | optional | child processes for `runner` cards, with streamed output | cards can no longer run anything |
 | `serve` | optional | newline-delimited JSON-RPC over stdin/stdout | the kernel has no way in; useful only as a linkable library |
 | `rpc` | required | the method table that turns frames into actions | nothing is callable; keep it and the kernel has no verbs |
 | `app` | required | constructs and owns the shared state modules are handed | nothing builds |
 
 Six required (`buf`, `vec`, `json`, `port`, `rpc`, `app`), four optional
-(`wksp`, `board`, `exec`, `serve`).
+(`wksp`, `view`, `exec`, `serve`).
 
 ---
 
@@ -207,27 +207,29 @@ the `#if SDE_WITH_EXEC` block in `rpc.c`, and the `sde_execset_new` /
 - **Survives:** files, the board, the whole editor, the whole language layer.
 - **Shell must change too:** yes, or the runner card is a control that fails.
 
-### Cutting `board` — a canvas that does not persist
+### Cutting `view` — a canvas that does not persist
 
-Delete `core/src/board.c`, `core/include/board.h`, its `SRC` line, its table
-entry, the `#if SDE_WITH_BOARD` block in `rpc.c`, and the board construction in
-`app.c`.
+Delete `core/src/view.c`, `core/include/view.h`, its `SRC` line, its table entry,
+the `#if SDE_WITH_VIEW` block in `rpc.c`, and the view construction in `app.c`.
 
-- Protocol loses `board.load`, `board.save`, `board.newId`, the `board.changed`
-  notification, and the `board_path` / `board_revision` members of
-  `workspace.info`.
-- `.infantgod/board.json` is no longer written or read.
-- **Verification note:** `tools/e2e.py` drives `board.save` against the workspace
-  it is pointed at. It snapshots whatever board was already there and restores it
-  when the check finishes, so a normal run leaves your layout in place — but the
-  checks themselves are meaningless without `board`, so once it is cut they have
-  to be dropped rather than adjusted. Another reason the cut costs more than it
-  looks.
+- Protocol loses `view.load`, `view.save`, the `view.changed` notification, and
+  the `view_path` / `view_revision` members of `workspace.info`.
+- No document is written or read at any path. The client keeps whatever it holds
+  in memory for the life of the process and nothing else, and `.infantgod/board.json`
+  is never opened.
+- **Verification note:** `tools/e2e.py` drives `view.save` against the workspace
+  it is pointed at. It snapshots whatever document was already there and restores
+  it when the check finishes, so a normal run leaves your layout in place — but
+  the checks themselves are meaningless without `view`, so once it is cut they
+  have to be dropped rather than adjusted. Another reason the cut costs more than
+  it looks.
 - **Survives:** files, processes, the protocol.
-- **What is lost is the paradigm itself:** the layout stops existing between
-  runs. Everything else still works; the reason to use InfantGod Studio does not.
+- **What is lost is persistence itself:** the layout stops existing between runs.
+  Everything else still works; the reason to use InfantGod Studio does not.
 - **Shell must change too:** yes and heavily — `board.mjs` and `main.mjs` both
-  assume `board.load` / `board.save` exist.
+  assume `view.load` / `view.save` exist, and every other client would have to
+  keep its own file. `tools/seide_cli.py`'s `board` verb is that second client:
+  with no document it prints only what it was handed.
 
 ### Cutting `wksp` — only the canvas
 

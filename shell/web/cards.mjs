@@ -268,7 +268,7 @@ function comparePaths(a, b) {
 /**
  * A `**\/*.yarn`-ish glob, as the `files` card's filter box uses it.
  * `**` crosses directories, `*` does not.  A plain substring also matches, so
- * typing `board` finds `core/src/board.c` without knowing the syntax.
+ * typing `view` finds `core/src/view.c` without knowing the syntax.
  */
 export function matchesFilter(path, filter) {
   const want = typeof filter === "string" ? filter.trim() : "";
