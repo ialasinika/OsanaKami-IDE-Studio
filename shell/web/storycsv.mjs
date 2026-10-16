@@ -137,6 +137,23 @@ export function setColumn(row, name, value) {
 }
 
 /**
+ * A row built from named columns, shaped exactly the way `parseCsv` shapes one.
+ *
+ * Used when a story gains a line and the table beside it owes a row: the row
+ * has to be indistinguishable from a parsed one -- eight fields in order, the
+ * names, the `lineId` -- or `serializeCsv` would write a table the next read
+ * could not give back.
+ */
+export function rowFor(columns) {
+  const source = columns === null || typeof columns !== "object" ? {} : columns;
+  const fields = CSV_COLUMNS.map((name) => {
+    const value = source[name];
+    return value === undefined || value === null ? "" : String(value);
+  });
+  return rowOf(fields);
+}
+
+/**
  * The whole table. `header`, the line ending and the byte order mark are kept
  * exactly as read, so `serializeCsv` can give the same bytes back.
  */

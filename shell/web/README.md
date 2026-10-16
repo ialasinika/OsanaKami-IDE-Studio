@@ -151,6 +151,11 @@ clear                    empty the log
 An unknown command prints one line in the log and moves on. Nothing is modal,
 nothing steals focus.
 
+`story` is the one command that can open two files: the `.yarn` and, when you
+name one, the translation table beside it. Saving writes the story, and writes
+the table only if the card put a row in it — which it does when you add a line
+to the story, because that line is a row the table owes.
+
 ---
 
 ## Files, and what deleting each one costs

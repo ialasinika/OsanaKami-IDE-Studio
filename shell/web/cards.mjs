@@ -55,9 +55,13 @@ import {
   storyNodes,
 } from "./story.mjs";
 import {
+  CSV_COLUMNS,
+  lockOf,
   parseCsv,
+  rowFor,
   rowState,
   rowsById,
+  serializeCsv,
 } from "./storycsv.mjs";
 
 /**
@@ -1155,6 +1159,90 @@ export function storySetSpeaker(story, nodeIndex, lineIndex, speaker) {
 export function storySetText(story, nodeIndex, lineIndex, text) {
   const node = storyNodeAt(story, nodeIndex);
   return node !== null && setLineText(node, lineIndex, text) !== null;
+}
+
+/**
+ * The words a translation table would hold for this line.
+ *
+ * A game table's `text` column is the whole spoken line -- `Aistalt: Hi.`, the
+ * speaker, the colon and the words -- while the parser splits those apart, so
+ * anything comparing the two has to put them back together the same way the
+ * game writes them.  A line with no speaker is its own words.
+ */
+export function storyLineText(line) {
+  const words = line === null || line === undefined || line.text === null
+    ? ""
+    : String(line.text);
+  const speaker = line === null || line === undefined ? null : line.speaker;
+  if (typeof speaker !== "string" || speaker === "") {
+    return words;
+  }
+  return `${speaker}: ${words}`;
+}
+
+/**
+ * The row a new line needs in the table that is open beside it.
+ *
+ * The id is the one the line was just given, which is the only thing the story
+ * and the table share.  `file` and `node` are copied from the rows already in
+ * the table, and `lineNumber` continues the highest one: the game writes the
+ * author's own absolute path into `file`, so a card on this machine has no
+ * honest way to invent it.  The text is the source words and the lock is the
+ * hash of exactly those, which is what makes the row read `untranslated` until
+ * somebody translates it and `stale` the day the line changes under it.
+ *
+ * Null when there is nothing to write: no table, no such line, no id.
+ */
+export function storyRowForLine(story, nodeIndex, lineIndex, table) {
+  if (table === null || typeof table !== "object" || !Array.isArray(table.rows)) {
+    return null;
+  }
+  const node = storyNodeAt(story, nodeIndex);
+  const lines = node === null ? [] : storyLines(node);
+  const line = lines[lineIndex];
+  if (line === undefined) {
+    return null;
+  }
+  const id = typeof line.id === "string" ? line.id : lineIdOf(line.raw);
+  if (typeof id !== "string" || id === "") {
+    return null;
+  }
+  const text = storyLineText(line);
+  const title = node.title === null || node.title === undefined ? "" : String(node.title);
+
+  let file = "";
+  let nodeName = "";
+  let lineNumber = 0;
+  let highest = 0;
+  for (const row of table.rows) {
+    const at = Number.parseInt(row.lineNumber, 10);
+    if (Number.isInteger(at) && at > highest) {
+      highest = at;
+    }
+    if (title === "" || row.node !== title) {
+      continue;
+    }
+    if (file === "") file = row.file;
+    if (nodeName === "") nodeName = row.node;
+    if (Number.isInteger(at) && at > lineNumber) lineNumber = at;
+  }
+  if (file === "" && table.rows.length > 0) {
+    file = table.rows[0].file;
+  }
+  if (file === "") {
+    file = table.file === undefined ? "" : String(table.file);
+  }
+
+  return {
+    language: table.rows.length > 0 ? table.rows[0].language : "",
+    id: `line:${id}`,
+    text,
+    file,
+    node: nodeName === "" ? title : nodeName,
+    lineNumber: lineNumber > 0 ? lineNumber + 1 : highest + 1,
+    lock: lockOf(text),
+    comment: "",
+  };
 }
 
 /**
@@ -3277,6 +3365,8 @@ function renderStory(card, ctx) {
     tablePath: typeof card.table === "string" ? card.table : "",
     table: null,
     tableById: null,
+    tableRevision: null,
+    tableDirty: false,
   };
 
   /** The parsed node the line list is showing, or null. */
@@ -3395,7 +3485,7 @@ function renderStory(card, ctx) {
     const row = state.tableById.get(`line:${id}`);
     return {
       text: row === undefined ? "" : row.text,
-      state: rowState({ text: line.text === null ? "" : line.text }, row),
+      state: rowState({ text: storyLineText(line) }, row),
     };
   }
 
@@ -3531,6 +3621,29 @@ function renderStory(card, ctx) {
     });
   }
 
+  /**
+   * A line the story gained is a line the table owes a row.
+   *
+   * The id the parser just minted is exactly what the game will look the line
+   * up by, so writing the row here is what keeps the two files agreeing.  The
+   * row is not written to disk here: `save` writes both files, and only when
+   * the card is asked to.
+   */
+  function appendTableRow() {
+    if (state.table === null) {
+      return false;
+    }
+    const row = storyRowForLine(state.story, state.nodeIndex, state.lineIndex, state.table);
+    if (row === null) {
+      return false;
+    }
+    state.table.rows.push(rowFor(row));
+    state.tableById = rowsById(state.table);
+    state.tableDirty = true;
+    app.log("info", `${state.tablePath}: a row for ${row.id} is waiting to be saved`);
+    return true;
+  }
+
   function addLine() {
     if (activeNode() === null) {
       app.log("warn", "story: this card has no node to add a line to");
@@ -3546,8 +3659,37 @@ function renderStory(card, ctx) {
     state.lineIndex = index;
     state.dirty = true;
     app.boardTouched(true);
+    appendTableRow();
     paint();
     focusLine(index);
+  }
+
+  /**
+   * The table is written only when the card put a row in it -- never because it
+   * was read.  The story is already on disk by the time this runs, so a failure
+   * here is said out loud rather than turned into a failed save.
+   */
+  async function saveTable() {
+    if (state.table === null || state.tablePath === "" || !state.tableDirty) {
+      return true;
+    }
+    const params = { path: state.tablePath, text: serializeCsv(state.table) };
+    if (state.tableRevision !== null) {
+      params.base_revision = state.tableRevision;
+    }
+    try {
+      const result = await client.call("file.write", params);
+      state.tableRevision = result.revision;
+      state.tableDirty = false;
+      app.log("info", `saved ${state.tablePath} (rev ${result.revision}) \u2014 the table has the new row`);
+      return true;
+    } catch (err) {
+      renderStatus(`the story was saved \u00b7 ${state.tablePath} was not`);
+      app.log("error",
+        `the story was saved but ${state.tablePath} was not: ` +
+        `${err.message} \u2014 save the table again, or the row and the line disagree`);
+      return false;
+    }
   }
 
   async function load(path, options = {}) {
@@ -3592,6 +3734,8 @@ function renderStory(card, ctx) {
     state.tablePath = path;
     state.table = parseCsv(result.text);
     state.tableById = rowsById(state.table);
+    state.tableRevision = result.revision;
+    state.tableDirty = false;
     paint();
     return true;
   }
@@ -3618,6 +3762,7 @@ function renderStory(card, ctx) {
       state.dirty = false;
       updateStatus("saved");
       app.log("info", `saved ${state.path} (rev ${result.revision})`);
+      await saveTable();
       return true;
     } catch (err) {
       state.saving = false;

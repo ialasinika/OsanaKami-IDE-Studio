@@ -65,8 +65,9 @@ the containment rules.
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
   window; see the WRY/Tauri note below.
-- **Not a Yarn compiler.** Yarn support is colouring, package validation,
-  diagnosis and completion. It does not run or type-check a story.
+- **Not a Yarn compiler.** The `story` card parses a `.yarn` file into nodes and
+  lines, writes it back line for line, and sets the translation tables beside it,
+  but nothing here runs, type-checks or compiles a story.
 - **Not an image editor.** The kernel reads and writes bytes
   (`file.read_bytes`/`file.write_bytes`) and can hand out a revision for any
   file, but no card draws a `.png` yet: nothing here encodes, decodes or scales
@@ -248,7 +249,7 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 177/177 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 183/183 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 

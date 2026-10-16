@@ -92,6 +92,12 @@ import {
   sheetCell,
   sheetSummary,
   sheetToTSV,
+  storyAddLine,
+  storyLineIds,
+  storyLineText,
+  storyRowForLine,
+  storySetSpeaker,
+  storySetText,
   unknownCardPlaceholder,
 } from "./cards.mjs";
 
@@ -173,6 +179,7 @@ import {
   looksLikeLock,
   metadataOf,
   parseCsv,
+  rowFor,
   rowsById,
   rowState,
   serializeCsv,
@@ -3260,11 +3267,107 @@ test("storycsv: the metadata table's five columns and LF endings are kept", () =
   assert.equal(serializeCsv(table), text);
 });
 
-test("storycsv: the module imports nothing, reads no clock and touches no DOM", async () => {
-  const code = await readFile(new URL("./storycsv.mjs", import.meta.url), "utf8");
+test("storycsv: the module imports nothing, reads no clock and touches no DOM", () => {
+  /*
+   * Read synchronously: the summary below runs at module load, so a bare
+   * `testAsync` here would record its failure after the `ok N/N` line -- or
+   * escape as an unhandled rejection and take the whole summary with it.
+   */
+  const code = readFileSync(new URL("./storycsv.mjs", import.meta.url), "utf8");
   assert.equal(/^\s*import\b/m.test(code), false, "no imports");
   assert.equal(/\bwindow\b|\bdocument\b|\blocalStorage\b/.test(code), false, "no DOM");
   assert.equal(/Math\.random|Date\.now|new Date\(/.test(code), false, "no clock, no randomness");
+});
+
+/* ------------------------------------------------------------------ */
+/* a line the story gains is a row the table owes                      */
+/* ------------------------------------------------------------------ */
+
+const ADD_TABLE = [
+  "language,id,text,file,node,lineNumber,lock,comment",
+  "en,line:1111111,Aistalt: Hi.,E:\\UnityProject\\Infant God\\Assets\\YarnScripts\\Logic\\1.Welcome.yarn,Welcome_Node,19,072a7a30,",
+  "en,line:2222222,Aistalt: Bye.,E:\\UnityProject\\Infant God\\Assets\\YarnScripts\\Logic\\1.Welcome.yarn,Welcome_Node,23,deadbeef,",
+].join("\r\n") + "\r\n";
+
+const ADD_STORY = [
+  "title: Welcome_Node",
+  "tags: hub",
+  "---",
+  "Aistalt: Hi. #line:1111111",
+  "Aistalt: Bye. #line:2222222",
+  "===",
+  "",
+].join("\n");
+
+/** The story with one line added after its first, re-read the way the card does. */
+function withAddedLine() {
+  const story = parseStory(ADD_STORY);
+  storyAddLine(story, 0, 1, "And again.");
+  return parseStory(serializeStory(story));
+}
+
+test("story card: a new line is given an id no line had, and moves no other id", () => {
+  const before = storyLineIds(parseStory(ADD_STORY));
+  const after = storyLineIds(withAddedLine());
+  assert.equal(before.length, 2);
+  assert.equal(after.length, 3);
+  assert.deepEqual(after.slice(0, 1), before.slice(0, 1));
+  assert.deepEqual(after.slice(2), before.slice(1));
+  assert.equal(before.includes(after[1]), false, "the new id was already in the file");
+});
+
+test("story card: a line's words are the ones a table's `text` column holds", () => {
+  const lines = storyLines(withAddedLine().nodes[0]);
+  assert.equal(storyLineText(lines[1]), "Aistalt: And again.");
+  /* A line with no speaker is its own words; a line with no text is empty. */
+  const option = storyLines(parseStory("title: T\n---\n-> Say nothing\n===\n").nodes[0]);
+  assert.equal(storyLineText(option[0]), "Say nothing");
+  assert.equal(storyLineText({ speaker: null, text: null }), "");
+});
+
+test("story card: the row for a new line names the id the line was given", () => {
+  const story = withAddedLine();
+  const table = parseCsv(ADD_TABLE);
+  const line = storyLines(story.nodes[0])[1];
+  const row = storyRowForLine(story, 0, 1, table);
+  assert.equal(row.id, `line:${line.id}`);
+  assert.equal(row.text, "Aistalt: And again.");
+  assert.equal(row.lock, lockOf(row.text));
+  assert.equal(row.language, "en");
+  /* The path the game writes is the author's, so it comes from the table. */
+  assert.equal(row.file, table.rows[0].file);
+  assert.equal(row.node, "Welcome_Node");
+  assert.equal(row.lineNumber, 24, "the node's highest line number, plus one");
+  assert.equal(row.comment, "");
+});
+
+test("story card: a line with no id is owed no row", () => {
+  const story = parseStory("title: T\n---\nAistalt: Hi.\n===\n");
+  assert.equal(storyRowForLine(story, 0, 0, parseCsv(ADD_TABLE)), null);
+  assert.equal(storyRowForLine(story, 0, 0, null), null);
+  assert.equal(storyRowForLine(story, 9, 0, parseCsv(ADD_TABLE)), null);
+});
+
+test("story card: the row a new line gets reads back as the row that was written", () => {
+  const table = parseCsv(ADD_TABLE);
+  table.rows.push(rowFor(storyRowForLine(withAddedLine(), 0, 1, table)));
+  const round = parseCsv(serializeCsv(table));
+  assert.equal(round.rows.length, 3);
+  assert.deepEqual(round.rows[2], table.rows[2]);
+  assert.equal(round.eol, "\r\n");
+  assert.equal(round.bom, false);
+  /* Every other row is still the bytes it was. */
+  assert.deepEqual(round.rows[0].fields, parseCsv(ADD_TABLE).rows[0].fields);
+});
+
+test("story card: a fresh row reads untranslated, and stale once the line changes", () => {
+  const story = withAddedLine();
+  const table = parseCsv(ADD_TABLE);
+  const row = rowFor(storyRowForLine(story, 0, 1, table));
+  const words = () => ({ text: storyLineText(storyLines(story.nodes[0])[1]) });
+  assert.equal(rowState(words(), row), "untranslated");
+  assert.equal(storySetText(story, 0, 1, "And again, changed."), true);
+  assert.equal(rowState(words(), row), "stale");
 });
 
 /* ------------------------------------------------------------------ */

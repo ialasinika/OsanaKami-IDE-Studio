@@ -213,6 +213,18 @@ tree.
   `untranslated`, `missing`).  A line with no marker draws no cell; a line the
   table has no row for draws `missing`, because a gap is exactly what a
   translator needs to see.
+- A line the story **gains** is a row the table owes, so `+ line` writes one:
+  the card mints the line's `#line:` id the way the parser does, then builds the
+  row for that id — the id as `line:<id>`, the text as the line's own words, and
+  `lock` as the hash of exactly that text, which is what makes the row read
+  `untranslated` until somebody translates it and `stale` the day the line
+  changes under it.  `node` is the node the line went into and `lineNumber`
+  continues that node's highest.  `file` is the one column the card refuses to
+  invent: the game writes the author's own absolute path there, so the row takes
+  the value the table's own rows already use — a card on another machine cannot
+  know it, and a guessed path is a path the game would fail to find.  Nothing is
+  written to disk until the card is saved, and a card that added no line writes
+  its table back not at all.
 
 ### Undo and redo on the board
 
@@ -388,7 +400,7 @@ tree.
 ### Checks
 
 - `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 177/177, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
+  selftest 183/183, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
@@ -425,7 +437,15 @@ tree.
   card's column four ways (the row looked up by the bare id instead of
   `line:<id>`, the cell showing the line's own words instead of the table's, the
   column never drawn, and the table read but its rows thrown away) and
-  `shell/web/cards.mjs` was restored byte-identical after each.  The corpus is the second half of the bar: 211 real `.yarn` files
+  `shell/web/cards.mjs` was restored byte-identical after each.  The row a new
+  line owes the table was put to it too (throwaway
+  `build/sabotage_story_sync.py`): a `lineNumber` that stops continuing the
+  node's, a row that forgets which node the line is in, a `lock` that is no
+  longer the hash of the text the row carries, a row that loses one of the eight
+  columns, a card that adds the line but never tells the table, and a table
+  rewritten even though the card added nothing — all six were caught, by
+  `shell/web/selftest.mjs` for the shape and by `build/storycard.probe.mjs` for
+  the wiring, and both files were restored byte-identical.  The corpus is the second half of the bar: 211 real `.yarn` files
   parse and re-serialise byte for byte, and the story card's own probe opens a
   real story with its real `NewProject_EN.csv` and edits through the card.
 
