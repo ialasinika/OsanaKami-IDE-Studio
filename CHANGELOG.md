@@ -61,10 +61,10 @@ tree.
   `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`, `CLASSIC_TAB_H` in
   `shell/web/classic.mjs`) and are measured in
   the board's own pixels, which is why `shell/web/selftest.mjs` pins them with no
-  DOM (12 new checks, **108** in all) and `tools/input_smoke.py` measures the tile
+  DOM (12 new checks, **118** in all) and `tools/input_smoke.py` measures the tile
   in a real window (4 new checks: the tiling and its parts, a tab click moving the
   code area to that file, the wheel leaving the viewport alone, and `mode board`
-  restoring the board exactly, **23** in all).  The wheel stays the board's
+  restoring the board exactly, **25** in all).  The wheel stays the board's
   gesture, so the classic view has no pan and no zoom, and the HUD says `no zoom`
   rather than quoting a number that no longer describes the screen.  The view
   came from upstream seIDE `564d51e`, applied on top of the fork's own shell;
@@ -90,6 +90,32 @@ tree.
   what a mode is named.  `shell/web/selftest.mjs` gained 10 checks (**118** in
   all); the tile was then measured in a real window over a real mod package
   (`Mods/SODefines`, 1306 files, 347 validator errors) before it was written up.
+- The editor has **line numbers**, and they are on when a file is opened: a gutter
+  of its own down the left of the text (`ed-gutter` in `shell/web/cards.mjs`)
+  holding a single `<pre>` of numbers (`ed-gutter-numbers`) that is rewritten only
+  when the number of lines changes -- never one element per line, so a 4000-line
+  file costs one string and scrolling costs no reflow at all.  The numbers share
+  the code's font, leading and line box, so they cannot drift out of step with it.
+  Clicking the gutter hides it and clicking it again brings it back
+  (`showGutter`, which flips `data-on` and the surface's `has-gutter`/`no-gutter`),
+  and hiding it hands its columns back to the code rather than leaving a hole.  It
+  is a **view, not a document**: the state lives in the card and starts on, so
+  `board.json` is not written and two windows need not agree.  The wheel still
+  belongs to the card's scroll region, so the gutter is not a second place where a
+  wheel means something else.  This came from upstream seIDE `e6ee30c` ("Prepare
+  0.4.1-alpha.1"), whose own note is the argument for the default -- *The editor
+  shows line numbers, and starts that way.*  `tools/input_smoke.py` checks both
+  halves in a real window, because neither is visible to a DOM-less test: that the
+  gutter holds one number per line with the last one matching the file, and that a
+  click turns it off and another turns it back on (**25** in all).
+- The HUD is **one line high**, whatever the selection says.  It was one line by
+  luck: `hud-brand` sets no `white-space` of its own, so a long path squeezed it
+  onto a second line, the strip grew from 30 px to 33 and every card under it
+  moved three pixels -- which the classic view's own tile check caught, because
+  it compares the board's rectangle before and after a click.  `.hud-item` now
+  carries the `min-width: 0` a flex item needs before it can ellipsize at all,
+  every item with a fixed width keeps it, and the selection is the one thing that
+  gives up room.
 
 ### Undo and redo on the board
 
@@ -265,14 +291,20 @@ tree.
 ### Checks
 
 - `make test` (e2e 12, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 108/108, mods 84/84) and `make smoke` (browser smoke 5, input smoke 23)
+  selftest 118/118, mods 84/84) and `make smoke` (browser smoke 5, input smoke 25)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
   accepted, a first-run answer that is `{}` instead of `null`, the client writing
   a card its own model cannot read, and the client booting from a path of its own
   invention.  All five were caught, and the three sources were restored
-  byte-identical.
+  byte-identical.  The editor's gutter was put to the same bar: a gutter that
+  paints nothing and a gutter whose click does not toggle were both caught by
+  `tools/input_smoke.py`, and `shell/web/cards.mjs` was restored byte-identical.
+  That file was also reading the current view out of `#mode-toggle`, the single
+  button the classic view introduced and the view switch replaced: the stale
+  lookup threw inside the classic block and took four checks down with it, which
+  is why it now finds the button marked `is-current` instead.
 
 ### Licence
 

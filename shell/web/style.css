@@ -281,10 +281,19 @@ body.is-mod .card[data-kind="problems"] {
   z-index: 10000;
 }
 
-.hud-brand { color: var(--fg); letter-spacing: 0.14em; text-transform: uppercase; font-size: 10.5px; }
+.hud-brand {
+  color: var(--fg); letter-spacing: 0.14em; text-transform: uppercase; font-size: 10.5px;
+  white-space: nowrap; flex: 0 0 auto;
+}
 .hud-sep { color: var(--fg-faint); }
 .hud-spacer { flex: 1; }
-.hud-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+/* `min-width: 0` is what lets a flex item ellipsize at all: without it the
+   automatic minimum is the content width, so the item refuses to shrink. */
+.hud-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; min-width: 0; }
+/* Only the selection gives up room.  Everything else keeps its width, so the
+   strip is one line high whatever the path is: a long one used to squeeze the
+   brand onto a second line, and the board under it dropped three pixels. */
+#hud-revision, #hud-dirty, #hud-zoom, #mode-switch, #kernel-status { flex: 0 0 auto; }
 #hud-selection { color: var(--fg); }
 #hud-dirty.is-dirty { color: var(--warn); }
 
@@ -525,6 +534,7 @@ body.is-mod .card[data-kind="problems"] {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  --ed-gutter-w: 52px;
 }
 
 .ed-scroll {
@@ -576,6 +586,44 @@ body.is-mod .card[data-kind="problems"] {
 
 .ed-input::selection { background: #6fb3ff44; }
 .ed-input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+
+/* The line-number gutter, on by default.  The numbers are one <pre> carrying
+   the code's own font, line height and top padding, right-aligned against the
+   rule, so line N sits on line N without a row per line; the gutter itself only
+   mirrors the textarea's vertical scroll (a transform, never a reflow).  A
+   click hides it and hands its columns back to the code. */
+.ed-gutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--ed-gutter-w);
+  overflow: hidden;
+  background: #14171c;
+  border-right: 1px solid #23272e;
+  cursor: pointer;
+}
+
+.ed-gutter-numbers {
+  margin: 0;
+  padding: var(--code-pad) 8px var(--code-pad) 0;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  line-height: var(--code-line);
+  text-align: right;
+  white-space: pre;
+  color: #59636f;
+  user-select: none;
+  will-change: transform;
+}
+
+.ed-surface.has-gutter .ed-scroll,
+.ed-surface.has-gutter .ed-input {
+  left: var(--ed-gutter-w);
+  width: calc(100% - var(--ed-gutter-w));
+}
+
+.ed-surface.no-gutter .ed-gutter { display: none; }
 
 /* Find and replace inside the card: a bar, not a browser dialog, because a
    dialog would swallow the caret and the board would lose its focus. */

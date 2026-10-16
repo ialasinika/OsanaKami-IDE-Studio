@@ -1415,7 +1415,23 @@ function renderEditor(card, ctx) {
     attrs: { spellcheck: "false", autocomplete: "off", wrap: "off" },
   });
   const scroller = h("div", "ed-scroll", { children: [pre] });
-  const surface = h("div", "ed-surface", { children: [scroller, area] });
+  /*
+   * Line numbers, on by default: the first thing anyone asks about a diagnostic
+   * is which line it is on, and that answer should not cost a click.  A click
+   * on the gutter turns them off for the sessions where the columns matter
+   * more.  The numbers are one text node in a <pre> carrying the code's own
+   * font, line height and top padding, so line N lands on line N with no
+   * per-row layout at all -- only the textarea's vertical scroll is mirrored.
+   */
+  const gutterNumbers = h("pre", "ed-gutter-numbers", { attrs: { "aria-hidden": "true" } });
+  const gutter = h("div", "ed-gutter", {
+    attrs: {
+      "data-role": "gutter", "data-on": "on", "data-lines": "1", "aria-hidden": "true",
+      title: "line numbers \u2014 click to hide",
+    },
+    children: [gutterNumbers],
+  });
+  const surface = h("div", "ed-surface has-gutter", { children: [gutter, scroller, area] });
 
   /* The find bar.  It is part of the card, not a browser dialog: everything
      here has to keep working offline, and a modal would swallow the caret. */
@@ -1476,6 +1492,10 @@ function renderEditor(card, ctx) {
     findOpen: false,
     hits: [],
     hitIndex: -1,
+    // The line-number gutter: on unless the reader hid it, and the line count
+    // the numbers were painted for.
+    gutterOn: true,
+    gutterLines: 0,
   };
 
   const shell = cardShell(card, body);
@@ -1503,8 +1523,43 @@ function renderEditor(card, ctx) {
     status.textContent = bits.join(" · ");
   }
 
+  /**
+   * The numbers are one text node.  A file's line count only changes when a
+   * newline is added or removed, so the string is rebuilt then and not on every
+   * keystroke; the gutter never lays out a row per line.
+   */
+  function paintGutter() {
+    const lines = area.value === "" ? 1 : area.value.split("\n").length;
+    if (state.gutterLines !== lines) {
+      let text = "1";
+      for (let n = 2; n <= lines; n++) {
+        text += `\n${n}`;
+      }
+      gutterNumbers.textContent = text;
+      state.gutterLines = lines;
+    }
+    gutter.dataset.lines = String(lines);
+  }
+
+  function showGutter(on) {
+    state.gutterOn = on === true;
+    gutter.dataset.on = state.gutterOn ? "on" : "off";
+    // Hiding the gutter hands its columns back to the code, so the scroller and
+    // the textarea move left again -- they are inset behind it, one width.
+    surface.classList.toggle("has-gutter", state.gutterOn);
+    surface.classList.toggle("no-gutter", !state.gutterOn);
+    gutter.title = state.gutterOn ? "line numbers \u2014 click to hide" : "line numbers \u2014 click to show";
+  }
+
+  gutter.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    showGutter(!state.gutterOn);
+    app.log("info", `line numbers ${state.gutterOn ? "on" : "off"}`);
+  });
+
   function repaint() {
     paintTokens(pre, area.value, state.tokens, state.hits, state.hitIndex);
+    paintGutter();
     syncScroll();
   }
 
@@ -1568,6 +1623,9 @@ function renderEditor(card, ctx) {
   function syncScroll() {
     scroller.scrollTop = area.scrollTop;
     scroller.scrollLeft = area.scrollLeft;
+    // The numbers ride the same offset.  A transform keeps the gutter out of
+    // the layout, so a scroll costs one compositor step and no reflow.
+    gutterNumbers.style.transform = `translateY(${-area.scrollTop}px)`;
   }
 
   area.addEventListener("scroll", syncScroll);

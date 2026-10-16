@@ -245,6 +245,33 @@ The arithmetic is pure and exported — `indentSelection`, `indentAfterEnter`,
 `findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits` — and
 `shell/web/selftest.mjs` checks it with no DOM at all.
 
+### Line numbers
+
+The editor draws a gutter down its left: one number per line, `1` at the top, and
+it is **on** when a file is opened — the answer to "where am I" should not have to
+be asked for first. Clicking the gutter hides it, clicking it again brings it
+back, and hiding it hands its columns to the code rather than leaving a gap.
+
+The numbers live in one `<pre>` (`ed-gutter-numbers`) whose text is rewritten only
+when the number of lines changes, not in one element per line: `paintGutter` sets
+`gutter.dataset.lines` and returns early when that is what it already was, so a
+four-thousand-line file costs one string and a scroll costs no reflow. The numbers
+share the code's font, leading and line box (`ed-gutter-numbers` and the `pre`
+behind the textarea are the same box), so they cannot drift out of step with the
+text they count.
+
+It is a **view, not a document**. The state (`state.gutterOn`) lives in the card,
+starts on, and is never written to `board.json`: no card moves, nothing joins the
+undo ring, and two windows may disagree about the gutter without either being
+wrong. `showGutter` flips `data-on` on the gutter, `has-gutter`/`no-gutter` on the
+surface and the gutter's own `title`, so a reader who hovers it is told what a
+click will do. The wheel still belongs to the card's scroll region, so the gutter
+is not a second place where a wheel means something else.
+
+`tools/input_smoke.py` reads the gutter back out of a real window — one number per
+line, the last one matching the file — and clicks it off and back on, because
+neither the painted height nor a click is visible to a DOM-less test.
+
 ### The same cards as a code area: `mode classic`
 
 `mode classic` — or the `Classic` button in the HUD's view switch, whose buttons

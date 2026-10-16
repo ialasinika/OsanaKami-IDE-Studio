@@ -90,7 +90,7 @@ for the reason it exists: it never wrote to the document. `shell/web/classic.mjs
 is one pure module imported only by `main.mjs`; the rest of the cut is the
 `mode` row and its `COMMAND_HELP` line in `shell/web/cards.mjs`, the classic
 branches in `renderStage`/`renderCards`/`renderHud` plus `renderTabs`/
-`renderSideHint`/`installView`, the `#tabs` and `#mode-toggle` elements in
+`renderSideHint`/`installView`, the `#tabs` and `#mode-switch` elements in
 `index.html` and their rules in `style.css`. No `.infantgod/board.json` changes
 and no card loses a field, because the view was drawn from the board document
 and saved nowhere — which is the whole reason a fork can throw it away.

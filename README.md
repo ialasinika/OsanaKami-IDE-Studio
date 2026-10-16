@@ -221,7 +221,7 @@ Run the checks:
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 9 passed, 0 failed, 3 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 12 passed, 0 failed, 0 skipped
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 23 checks, 0 failed
+C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 25 checks, 0 failed
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
 ```
@@ -238,12 +238,12 @@ python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys and the classic view: 23 checks
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the classic view: 25 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 108/108 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 118/118 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 84/84 checks passed
 ```
 
@@ -271,8 +271,10 @@ edits. Last it opens a file from outside the app — the test writes it with a
 plain file write, then again with different bytes — and checks the card notices
 on its own and reloads, that a card with unsaved edits is warned instead of
 overwritten, and that deleting the file under a card is reported with the text
-still in the card, and that `mode classic` draws the tile it promises and
-`mode board` puts every card back (`input_smoke.py`, 23 checks). On a clone that
+still in the card, that the editor's gutter holds one number per line and that a
+click on it hides it and another brings it back, and that `mode classic` draws the
+tile it promises while `mode board` puts every card back (`input_smoke.py`, 25
+checks). On a clone that
 has no
 board yet both install `examples/board.json` for the run and remove it again
 afterwards. As of this writing nothing fails.

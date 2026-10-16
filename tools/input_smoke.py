@@ -39,7 +39,9 @@ reach into the iframe and do what a person does:
    ``Escape`` -- and read the buffer and the painted hits back out of the DOM.
    The last check is the one only a real browser can make: the card's own edits
    go in through ``document.execCommand("insertText")``, so ``Ctrl+Z`` still has
-   them, and a card that assigned to ``value`` would fail it;
+   them, and a card that assigned to ``value`` would fail it, and read the
+   line-number gutter: one number per line, on by default, hidden by a click on
+   it and back by a second one;
 9. type ``mode classic`` and measure the tile in the board's own pixels: the tab
    strip under the HUD, the code area filling the right column down to the bottom
    edge, the sidebar on the left, every other card hidden; click a tab and check
@@ -500,6 +502,26 @@ async function main() {
       const restoredByUndo = area.value === beforeUndo;
       editorOk = editorOk && typed && undid === true && restoredByUndo;
       say("editor-undo: typed=" + typed + " command=" + undid + " restored=" + restoredByUndo);
+
+      /* The line-number gutter: on by default, one number per line of the
+         buffer, and a click on it hides it without losing the numbers. */
+      const gutter = cardNode.querySelector('[data-role="gutter"]');
+      const gutterRows = gutter === null ? [] : String(gutter.textContent || "").split("\\n");
+      const gutterLines = area.value.split("\\n").length;
+      const gutterOn = gutter !== null && gutter.dataset.on === "on" && gutter.offsetWidth > 0;
+      say("editor-gutter: " + (gutter !== null) + " on=" + (gutter === null ? "" : String(gutter.dataset.on))
+        + " rows=" + gutterRows.length + " lines=" + gutterLines
+        + " first=" + JSON.stringify(gutterRows.length > 0 ? gutterRows[0] : "")
+        + " last=" + JSON.stringify(gutterRows.length > 0 ? gutterRows[gutterRows.length - 1] : ""));
+      let gutterToggled = false;
+      if (gutter !== null) {
+        gutter.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        gutterToggled = gutter.dataset.on === "off" && gutter.offsetWidth === 0;
+        gutter.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      }
+      say("editor-gutter-toggle: " + gutterToggled
+        + " back=" + (gutter === null ? "" : String(gutter.dataset.on)));
+      editorOk = editorOk && gutterOn && gutterToggled && gutterRows.length === gutterLines;
     }
   } catch (error) {
     editorOk = false;
@@ -545,7 +567,11 @@ async function main() {
     runLine("mode classic");
     await waitUntil(() => doc.body.classList.contains("is-classic"), 40, 100);
     const isClassic = doc.body.classList.contains("is-classic");
-    const modeText = (doc.getElementById("mode-toggle").textContent || "").trim();
+    const modeText = (() => {
+      const switchNode = doc.getElementById("mode-switch");
+      const current = switchNode === null ? null : switchNode.querySelector("button.is-current");
+      return current === null ? "" : (current.textContent || "").trim();
+    })();
     const buttons = tabButtons();
     const shownCards = cardsNow().filter(drawn);
     const areaNode = shownCards.find((node) => node.dataset.kind === "editor") || null;
@@ -592,6 +618,7 @@ async function main() {
        the previous one had, and selects it -- the route `focus` takes. */
     let tabClick = false;
     let clickedId = "";
+    let tabWhy = "no second tab to click";
     if (buttons.length >= 2 && areaRect !== null) {
       const other = buttons.find((button) => button.dataset.cardId !== areaNode.dataset.cardId);
       clickedId = other.dataset.cardId;
@@ -600,14 +627,23 @@ async function main() {
       const moved = cardsNow().find((node) => node.dataset.cardId === clickedId);
       const movedRect = moved.getBoundingClientRect();
       const active = strip().querySelector("button.is-active");
-      tabClick = drawn(moved) && near(relLeft(movedRect), relLeft(areaRect))
+      /* Split the verdict so a failure says which of the three it was: the box,
+         the strip's own idea of the current tab, or the selection line. */
+      const sameBox = drawn(moved) && near(relLeft(movedRect), relLeft(areaRect))
         && near(relTop(movedRect), relTop(areaRect))
-        && near(movedRect.width, areaRect.width) && near(movedRect.height, areaRect.height)
-        && active !== null && active.dataset.cardId === clickedId
-        && selectionLine().indexOf(clickedId) !== -1;
+        && near(movedRect.width, areaRect.width) && near(movedRect.height, areaRect.height);
+      const isActive = active !== null && active.dataset.cardId === clickedId;
+      const selected = selectionLine().indexOf(clickedId) !== -1;
+      tabClick = sameBox && isActive && selected;
+      tabWhy = "box=" + sameBox + " drawn=" + drawn(moved) + " active=" + isActive
+        + " selected=" + selected
+        + " at=" + Math.round(relLeft(movedRect)) + "," + Math.round(relTop(movedRect))
+        + "+" + Math.round(movedRect.width) + "x" + Math.round(movedRect.height)
+        + " area=" + Math.round(relLeft(areaRect)) + "," + Math.round(relTop(areaRect))
+        + "+" + Math.round(areaRect.width) + "x" + Math.round(areaRect.height);
     }
     say("classic-tab: clicked=" + JSON.stringify(clickedId) + " moved=" + tabClick
-      + " selection=" + JSON.stringify(selectionLine()));
+      + " selection=" + JSON.stringify(selectionLine()) + " -- " + tabWhy);
 
     /* The wheel is the board's gesture and the board is not on screen: neither a
        ctrl+wheel over the code area nor a plain wheel over the strip may move the
@@ -763,6 +799,9 @@ def parse_editor(body: str) -> dict:
         ("next", r'editor-find-next: count="([^"]*)" current=(\d+)'),
         ("replace", r'editor-replace: "([^"]*)" closed=(\w+)'),
         ("undo", r"editor-undo: typed=(\w+) command=(\w+) restored=(\w+)"),
+        ("gutter", r'editor-gutter: (true|false) on=(\w+) rows=(\d+) lines=(\d+)'
+                   r' first="([^"]*)" last="([^"]*)"'),
+        ("gutter_toggle", r"editor-gutter-toggle: (true|false) back=(\w+)"),
     )
     for key, pattern in patterns:
         match = re.search(pattern, body)
@@ -810,7 +849,7 @@ def main(argv=None) -> int:
         edge = find_edge(args.edge)
     except DriverError as exc:
         print(f"[SKIP] no browser available: {exc}")
-        print("summary: 0 passed, 0 failed, 23 skipped (no browser)")
+        print("summary: 0 passed, 0 failed, 25 skipped (no browser)")
         return 0
 
     # Deliberately *not* install_if_absent(): the counts below are deltas, so the
@@ -943,6 +982,15 @@ def main(argv=None) -> int:
     results.check("a card's own edits are in the browser's undo stack, not just the buffer",
                   bool(undo) and undo == ("true", "true", "true"),
                   editor_detail("undo"))
+    gutter = editor.get("gutter")
+    results.check("line numbers are on by default, one per line of the buffer",
+                  bool(gutter) and gutter[0] == "true" and gutter[1] == "on"
+                  and gutter[2] == gutter[3] and gutter[4] == "1",
+                  editor_detail("gutter"))
+    toggled = editor.get("gutter_toggle")
+    results.check("a click on the gutter hides the numbers and a second click brings them back",
+                  bool(toggled) and toggled[0] == "true" and toggled[1] == "on",
+                  editor_detail("gutter_toggle"))
 
     watch = parse_watch(body)
 
@@ -995,7 +1043,7 @@ def main(argv=None) -> int:
                   bool(mode) and mode[0] == "true" and int(mode[2]) >= 1
                   and int(mode[1]) == int(mode[2]) and mode[3] != ""
                   and mode[4] == "true" and mode[5] == "true" and int(mode[6]) >= 20
-                  and mode[7].strip('"') == "board view" and mode[8].strip('"') == "no zoom",
+                  and mode[7].strip('"') == "Classic" and mode[8].strip('"') == "no zoom",
                   f"tabs={mode[1]} editors={mode[2]} shown={mode[3]} places={mode[4]} "
                   f"tile={mode[5]} strip={mode[6]}px button={mode[7]} zoom={mode[8]}"
                   if mode else classic_detail("mode"))
