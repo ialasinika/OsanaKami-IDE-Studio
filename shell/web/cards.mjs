@@ -34,6 +34,32 @@
  * and that the pre must be scrolled in lockstep with the textarea.
  */
 
+/*
+ * The story card is built on `story.mjs` rather than on a copy of it.  That
+ * parser is the only thing here that knows what a `.yarn` line *is* -- it is
+ * verified byte-for-byte against the game's own mod tree -- and a second
+ * reading of the format is a second answer that drifts.
+ *
+ * It is the file's only import: everything else a card needs arrives through
+ * `ctx`, which is what keeps a card from reaching past the board.
+ */
+import {
+  lineIdOf,
+  nextLineId,
+  parseStory,
+  serializeStory,
+  setLineSpeaker,
+  setLineText,
+  storyAbout,
+  storyLines,
+  storyNodes,
+} from "./story.mjs";
+import {
+  parseCsv,
+  rowState,
+  rowsById,
+} from "./storycsv.mjs";
+
 /**
  * Kinds the wire may carry, mapped to the class suffix `style.css` styles.
  * `ws` and `ident` are emitted by `langs/tokenize.mjs` even though the contract
@@ -717,6 +743,7 @@ export const COMMAND_HELP = [
   "open <path>              open a file in a new editor card",
   "note <text>              drop a note card",
   "sheet [title]            drop a structured-data card (typed cells, not text)",
+  "story <path>             open a .yarn file as nodes and lines, not text",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
@@ -1067,6 +1094,130 @@ export function nextSheetSelection(doc, selection, dRow, dColumn) {
   row = Math.min(rowCount - 1, Math.max(0, row + (Number(dRow) || 0)));
   column = Math.min(columnCount - 1, Math.max(0, column + (Number(dColumn) || 0)));
   return { row, column };
+}
+
+/* -------------------- story -------------------- */
+
+/*
+ * The story card's model, exported for the same reason the sheet's is: a card's
+ * edit paths have to be able to run under Node, with no DOM, or they are only
+ * ever checked by a person clicking.  The renderer below calls these and never
+ * reaches into the parsed tree itself.
+ */
+
+/** The node at `nodeIndex`, or null when there is no such node. */
+function storyNodeAt(story, nodeIndex) {
+  const nodes = story !== null && typeof story === "object" && Array.isArray(story.nodes)
+    ? story.nodes
+    : [];
+  const index = Number(nodeIndex);
+  const inside = Number.isInteger(index) && index >= 0 && index < nodes.length;
+  return inside ? nodes[index] : null;
+}
+
+/**
+ * Every `#line:` id in the file, in file order.
+ *
+ * The game finds a line's text by hashing its id, so "did this edit move an id"
+ * is the question that decides whether a save is safe -- and it can only be
+ * asked of all of them at once.  The view reports an id only where the parser
+ * recognised the tag run; an id sitting in the line's bytes is taken just the
+ * same, and a new line must not be handed it.
+ */
+export function storyLineIds(story) {
+  const ids = [];
+  const nodes = story !== null && typeof story === "object" && Array.isArray(story.nodes)
+    ? story.nodes
+    : [];
+  for (const node of nodes) {
+    for (const line of storyLines(node)) {
+      const id = typeof line.id === "string" ? line.id : lineIdOf(line.raw);
+      if (typeof id === "string") {
+        ids.push(id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Replace one line's speaker, keeping its colon and everything after it.
+ *
+ * False for a line that is not dialogue: a speaker is a dialogue line's, and
+ * renaming one that is not there would rewrite text nobody pointed at.
+ */
+export function storySetSpeaker(story, nodeIndex, lineIndex, speaker) {
+  const node = storyNodeAt(story, nodeIndex);
+  return node !== null && setLineSpeaker(node, lineIndex, speaker) !== null;
+}
+
+/** Replace one dialogue line's text, keeping its indent, tags and comment. */
+export function storySetText(story, nodeIndex, lineIndex, text) {
+  const node = storyNodeAt(story, nodeIndex);
+  return node !== null && setLineText(node, lineIndex, text) !== null;
+}
+
+/**
+ * The dialogue line a new line borrows its shape from: the nearest one at or
+ * above `at`, else the nearest one below it, else none.
+ */
+function storyAnchorLine(node, at) {
+  const lines = storyLines(node);
+  for (let index = Math.min(lines.length - 1, at - 1); index >= 0; index -= 1) {
+    if (lines[index].kind === "dialogue") {
+      return lines[index];
+    }
+  }
+  for (let index = Math.max(0, at); index < lines.length; index += 1) {
+    if (lines[index].kind === "dialogue") {
+      return lines[index];
+    }
+  }
+  return null;
+}
+
+/**
+ * The characters a new line needs before its speaker: the indentation and, on
+ * an option line, the `=>`.  The view does not carry the arrow as a field of
+ * its own, and reading it back off the raw line is how the file already reads.
+ */
+function storyLineHead(line) {
+  if (line === null) {
+    return "";
+  }
+  const rest = line.raw.slice(line.indent.length);
+  const arrow = /^(=>\s*)/.exec(rest);
+  return `${line.indent}${arrow === null ? "" : arrow[1]}`;
+}
+
+/**
+ * Insert one dialogue line at `at`, with an id no line in the file already has.
+ *
+ * `story.mjs` has no insert -- a line is its text plus the id it was written
+ * with -- so this writes that text into the node's body and lets the caller
+ * re-parse it.  Serialising and parsing again is the identity for every line
+ * the user did not touch, and hand-building the entry record here would be a
+ * second, drifting idea of what a line is.
+ *
+ * Returns the index the line landed on, or -1 when the node is not there.
+ */
+export function storyAddLine(story, nodeIndex, at, text = "") {
+  const node = storyNodeAt(story, nodeIndex);
+  if (node === null || !Array.isArray(node.bodyLines)) {
+    return -1;
+  }
+  const count = node.bodyLines.length;
+  const index = Math.min(Math.max(Number.isInteger(at) ? at : count, 0), count);
+  const anchor = storyAnchorLine(node, index);
+  const id = nextLineId(storyLineIds(story));
+  const head = storyLineHead(anchor);
+  const speaker = anchor === null || anchor.speaker === null
+    ? "Narrator"
+    : anchor.speaker;
+  const body = String(text) === "" ? "" : ` ${String(text)}`;
+  const raw = `${head}${speaker}:${body} #line:${id}`;
+  node.bodyLines.splice(index, 0, { raw, edit: null });
+  return index;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3071,6 +3222,478 @@ function renderSheet(card, ctx) {
   };
 }
 
+/* -------------------- story -------------------- */
+
+/**
+ * The dialogue card.
+ *
+ * Its state is the parsed `.yarn` file, not a string.  The card draws a node
+ * list on one side and, for the node that is on, that node's lines: the kind,
+ * the speaker, the text and the `#line:` id the game looks each one up by.
+ * Editing a speaker or a text edits one span of one line, and saving writes
+ * `serializeStory` of the tree the card has been holding -- so opening a story
+ * and saving it untouched puts the same bytes back, which is the only reason a
+ * modder can trust it with a real mod's files.
+ */
+function renderStory(card, ctx) {
+  const { client, app } = ctx;
+
+  const nodeList = h("div", "story-nodes", { attrs: { "data-role": "story-nodes" } });
+  const lineList = h("div", "story-lines", { attrs: { "data-role": "story-lines" } });
+  const panes = h("div", "story-panes", { children: [nodeList, lineList] });
+  const tools = h("div", "story-tools", { attrs: { "data-role": "story-tools" } });
+  const status = makeStatus();
+  const body = h("div", "card-body card-body-story", {
+    children: [panes, tools, status],
+  });
+  const shell = cardShell(card, body);
+
+  const addLineButton = h("button", "story-tool", {
+    attrs: {
+      type: "button", "data-role": "story-add-line",
+      title: "add a line below the one that is on",
+    },
+    text: "+ line",
+  });
+  const saveButton = h("button", "story-tool", {
+    attrs: {
+      type: "button", "data-role": "story-save", title: "write the file back (Ctrl+S)",
+    },
+    text: "save",
+  });
+  const tableLabel = h("span", "story-table", {
+    attrs: { "data-role": "story-table" },
+  });
+  tools.append(addLineButton, saveButton, tableLabel);
+
+  const state = {
+    path: typeof card.file === "string" ? card.file : "",
+    baseRevision: null,
+    dirty: false,
+    saving: false,
+    story: null,
+    nodeIndex: 0,
+    lineIndex: 0,
+    tablePath: typeof card.table === "string" ? card.table : "",
+    table: null,
+    tableById: null,
+  };
+
+  /** The parsed node the line list is showing, or null. */
+  function activeNode() {
+    return storyNodeAt(state.story, state.nodeIndex);
+  }
+
+  function updateLabel() {
+    shell.label.textContent = state.path === "" ? "(no file)" : state.path;
+  }
+
+  /**
+   * The status line speaks for the file, not for the card: `storyAbout` is the
+   * one sentence that says how much story is open, and the dirty mark is the
+   * only thing added to it.
+   */
+  function updateStatus(prefix = null) {
+    const about = state.story === null ? "no file" : storyAbout(state.story);
+    const parts = prefix === null ? [] : [prefix];
+    parts.push(state.dirty ? `${about} \u00b7 unsaved in the card` : about);
+    status.textContent = parts.join(" \u00b7 ");
+    tableLabel.textContent = state.tablePath === ""
+      ? "no translation table"
+      : `${state.tablePath} \u00b7 ${state.table === null ? 0 : state.table.rows.length} rows`;
+    updateLabel();
+  }
+
+  function renderStatus(message) {
+    status.textContent = message;
+  }
+
+  function paint() {
+    paintNodes();
+    paintLines();
+    updateStatus();
+  }
+
+  function paintNodes() {
+    nodeList.textContent = "";
+    const nodes = state.story === null ? [] : storyNodes(state.story);
+    if (nodes.length === 0) {
+      nodeList.append(h("p", "story-empty", {
+        text: state.story === null ? "no file" : "no nodes",
+      }));
+      return;
+    }
+    for (const info of nodes) {
+      const meta = [`${info.lineCount} lines`];
+      if (info.when !== null && info.when !== undefined && info.when !== "") {
+        meta.push(`when: ${info.when}`);
+      }
+      const row = h("button", "story-node", {
+        attrs: {
+          type: "button", "data-role": "story-node", "data-node": String(info.index),
+        },
+        children: [
+          h("span", "story-node-title", {
+            text: info.title === null || info.title === undefined || info.title === ""
+              ? "(untitled)"
+              : info.title,
+          }),
+          h("span", "story-node-meta", { text: meta.join(" \u00b7 ") }),
+        ],
+      });
+      if (info.subtitle !== null && info.subtitle !== undefined && info.subtitle !== "") {
+        row.append(h("span", "story-node-tags", { text: info.subtitle }));
+      }
+      if (info.tags.length > 0) {
+        row.append(h("span", "story-node-tags", { text: info.tags.join(" ") }));
+      }
+      if (info.index === state.nodeIndex) {
+        row.classList.add("is-on");
+      }
+      row.addEventListener("click", () => {
+        state.nodeIndex = info.index;
+        state.lineIndex = 0;
+        paint();
+      });
+      nodeList.append(row);
+    }
+  }
+
+  function paintLines() {
+    lineList.textContent = "";
+    const node = activeNode();
+    if (node === null) {
+      lineList.append(h("p", "story-empty", { text: "no node to show" }));
+      return;
+    }
+    const lines = storyLines(node);
+    if (lines.length === 0) {
+      lineList.append(h("p", "story-empty", {
+        text: "this node is empty \u2014 \u201c+ line\u201d starts it",
+      }));
+      return;
+    }
+    lines.forEach((line, index) => {
+      lineList.append(lineRow(line, index));
+    });
+  }
+
+  /**
+   * The line's translation, found by the only thing the story file and a
+   * translation table share: the `#line:` id.  Null means no table is open,
+   * so no column is drawn -- an empty column would only be a lie about the
+   * file.  The state is `storycsv.mjs`'s word for the row, not the card's.
+   */
+  function translationOf(line) {
+    if (state.tableById === null) {
+      return null;
+    }
+    const id = line.id === null ? lineIdOf(line.raw) : line.id;
+    if (id === null) {
+      return null;
+    }
+    const row = state.tableById.get(`line:${id}`);
+    return {
+      text: row === undefined ? "" : row.text,
+      state: rowState({ text: line.text === null ? "" : line.text }, row),
+    };
+  }
+
+  /** One body line, drawn as the editor the file is edited in. */
+  function lineRow(line, index) {
+    const row = h("div", `story-line story-line-${line.kind}`, {
+      attrs: {
+        "data-role": "story-line", "data-line": String(index), "data-kind": line.kind,
+      },
+    });
+    if (index === state.lineIndex) {
+      row.classList.add("is-on");
+    }
+    row.append(h("span", "story-kind", { text: line.kind }));
+
+    if (line.kind === "dialogue") {
+      const speaker = h("input", "story-speaker", {
+        attrs: {
+          type: "text", value: line.speaker === null ? "" : line.speaker,
+          spellcheck: "false", autocomplete: "off",
+          "data-role": "story-speaker", "aria-label": `speaker of line ${index + 1}`,
+        },
+      });
+      const text = h("input", "story-text", {
+        attrs: {
+          type: "text", value: line.text === null ? "" : line.text,
+          spellcheck: "false", autocomplete: "off",
+          "data-role": "story-text", "aria-label": `text of line ${index + 1}`,
+        },
+      });
+      /* The card rewrites the model as the words arrive but never repaints the
+         row: the input being typed in is the one element that must survive the
+         keystroke.  Ids cannot move here, so there is nothing a repaint would
+         show that the row does not already say. */
+      speaker.addEventListener("input", () => {
+        storySetSpeaker(state.story, state.nodeIndex, index, speaker.value);
+        markEdited(index);
+      });
+      text.addEventListener("input", () => {
+        storySetText(state.story, state.nodeIndex, index, text.value);
+        markEdited(index);
+      });
+      stopTypingKeys(speaker);
+      stopTypingKeys(text);
+      row.append(speaker, h("span", "story-colon", { text: ":" }), text);
+    } else if (line.kind === "option") {
+      row.append(h("span", "story-option", { text: line.raw.trim() }));
+    } else if (line.kind === "command") {
+      row.append(h("span", "story-command", { text: line.raw.trim() }));
+    } else if (line.kind !== "blank") {
+      /* A comment, a lone tag run or a line no rule fits: shown as it is, so
+         the file is never hiding a line from the person editing it. */
+      row.append(h("span", "story-raw", { text: line.raw }));
+    }
+
+    /* Every tag the file wrote, so nothing on the line is hidden from the
+       person editing it.  The id is the one exception: it gets its own badge,
+       and the parser does not always recognise it as a tag. */
+    const tags = line.tags.filter((tag) => !tag.startsWith("#line:"));
+    if (tags.length > 0) {
+      row.append(h("span", "story-tags", { text: tags.join(" ") }));
+    }
+    const id = line.id === null ? lineIdOf(line.raw) : line.id;
+    if (id !== null) {
+      row.append(h("span", "story-id", { text: `#line:${id}` }));
+    }
+    const translation = translationOf(line);
+    if (translation !== null) {
+      row.append(h("span", `story-translation is-${translation.state}`, {
+        attrs: {
+          "data-role": "story-translation", "data-state": translation.state,
+          title: `translation: ${translation.state}`,
+        },
+        text: translation.text === "" ? translation.state : translation.text,
+      }));
+    }
+    if (line.comment !== null) {
+      row.append(h("span", "story-comment", { text: `// ${line.comment}` }));
+    }
+    row.addEventListener("click", (event) => {
+      state.lineIndex = index;
+      markSelection();
+      if (!(event.target instanceof HTMLInputElement)) {
+        focusLine(index);
+      }
+    });
+    return row;
+  }
+
+  /** Move the "on" line without rebuilding the list the inputs live in. */
+  function markSelection() {
+    for (const row of lineList.querySelectorAll('[data-role="story-line"]')) {
+      const at = Number(row.getAttribute("data-line"));
+      row.classList.toggle("is-on", at === state.lineIndex);
+    }
+  }
+
+  function focusLine(index) {
+    const row = lineList.querySelector(`[data-line="${index}"]`);
+    if (row === null) {
+      return;
+    }
+    const target = row.querySelector('[data-role="story-text"]')
+      || row.querySelector('[data-role="story-speaker"]');
+    if (target !== null) {
+      target.focus();
+      if (typeof target.select === "function") {
+        target.select();
+      }
+    }
+  }
+
+  function markEdited(index) {
+    state.lineIndex = index;
+    state.dirty = true;
+    app.boardTouched(true);
+    updateStatus();
+  }
+
+  /* The board listens for keys on the document -- delete, undo, the command
+     line's own Enter -- and a caret in a line is not the board. */
+  function stopTypingKeys(control) {
+    control.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        control.blur();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        save();
+        return;
+      }
+      event.stopPropagation();
+    });
+  }
+
+  function addLine() {
+    if (activeNode() === null) {
+      app.log("warn", "story: this card has no node to add a line to");
+      return;
+    }
+    const index = storyAddLine(state.story, state.nodeIndex, state.lineIndex + 1);
+    if (index < 0) {
+      return;
+    }
+    /* The parser decides what the line is -- kind, tags, id -- so the card
+       re-reads its own text instead of inventing a second entry shape. */
+    state.story = parseStory(serializeStory(state.story));
+    state.lineIndex = index;
+    state.dirty = true;
+    app.boardTouched(true);
+    paint();
+    focusLine(index);
+  }
+
+  async function load(path, options = {}) {
+    const confirmDiscard = options.confirmDiscard !== false;
+    if (state.dirty && confirmDiscard && !app.confirmDiscard(state.path)) {
+      return false;
+    }
+    shell.label.textContent = path;
+    let result;
+    try {
+      result = await client.call("file.read", { path });
+    } catch (err) {
+      renderStatus(`could not read ${path}`);
+      app.log("error", `file.read ${path}: ${err.message}`);
+      return false;
+    }
+    state.path = path;
+    card.file = path;
+    state.baseRevision = result.revision;
+    state.story = parseStory(result.text);
+    state.nodeIndex = 0;
+    state.lineIndex = 0;
+    state.dirty = false;
+    paint();
+    return true;
+  }
+
+  /**
+   * The translation table is a second file, read the same way the story is, and
+   * kept read-only: the card shows what the table says about the open story and
+   * refuses to guess at it.  Saving a table belongs to whoever writes tables.
+   */
+  async function loadTable(path) {
+    let result;
+    try {
+      result = await client.call("file.read", { path });
+    } catch (err) {
+      renderStatus(`could not read ${path}`);
+      app.log("error", `file.read ${path}: ${err.message}`);
+      return false;
+    }
+    state.tablePath = path;
+    state.table = parseCsv(result.text);
+    state.tableById = rowsById(state.table);
+    paint();
+    return true;
+  }
+
+  async function save() {
+    if (state.path === "" || state.story === null) {
+      app.log("warn",
+        "story: nothing to save \u2014 open a .yarn file with `story <path>`");
+      return false;
+    }
+    if (state.saving) {
+      return false;
+    }
+    state.saving = true;
+    renderStatus("saving\u2026");
+    const params = { path: state.path, text: serializeStory(state.story) };
+    if (state.baseRevision !== null) {
+      params.base_revision = state.baseRevision;
+    }
+    try {
+      const result = await client.call("file.write", params);
+      state.saving = false;
+      state.baseRevision = result.revision;
+      state.dirty = false;
+      updateStatus("saved");
+      app.log("info", `saved ${state.path} (rev ${result.revision})`);
+      return true;
+    } catch (err) {
+      state.saving = false;
+      if (client.isStaleRevision(err)) {
+        const current = err.data && err.data.current_revision !== undefined
+          ? err.data.current_revision
+          : null;
+        renderStatus(`stale \u2014 the file changed on disk (rev ${current})`);
+        const choice = await app.resolveStale({
+          path: state.path, current, cardId: card.id,
+        });
+        if (choice === "reload") {
+          return load(state.path, { confirmDiscard: false });
+        }
+        if (choice === "overwrite") {
+          state.baseRevision = current;
+          return save();
+        }
+        app.log("warn", `${state.path} not saved; your lines are still in the card`);
+        return false;
+      }
+      renderStatus(`could not write ${state.path}`);
+      app.log("error", `file.write ${state.path}: ${err.message}`);
+      return false;
+    }
+  }
+
+  addLineButton.addEventListener("click", () => addLine());
+  saveButton.addEventListener("click", () => save());
+
+  if (state.path !== "") {
+    load(state.path, { confirmDiscard: false }).then((opened) => {
+      if (opened && state.tablePath !== "") {
+        loadTable(state.tablePath);
+      }
+    });
+  } else {
+    paint();
+    renderStatus("no file yet \u2014 open one with `story <path>`");
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "story",
+      save,
+      load,
+      loadTable,
+      repaint: paint,
+      get path() {
+        return state.path;
+      },
+      get tablePath() {
+        return state.tablePath;
+      },
+      get dirty() {
+        return state.dirty;
+      },
+      get revision() {
+        return state.baseRevision;
+      },
+      hasPath(path) {
+        return state.path !== "" && state.path === path;
+      },
+      /** What a save would write -- the card's own text, for a caller or a test. */
+      text() {
+        return state.story === null ? "" : serializeStory(state.story);
+      },
+      focus() {
+        focusLine(state.lineIndex);
+      },
+    },
+    destroy() {},
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* 《幼神》 mod surfaces                                                  */
 /* ------------------------------------------------------------------ */
@@ -3632,6 +4255,14 @@ registerCardKind({
   describe: (card) => `sheet ${card.title !== "" && card.title !== undefined ? card.title : sheetSummary(card.doc)}`,
   create: () => ({ title: "", doc: emptySheet() }),
   render: renderSheet,
+});
+
+registerCardKind({
+  kind: "story",
+  title: "Story",
+  describe: (card) => `story ${card.file || "(no file)"}`,
+  create: () => ({ file: "" }),
+  render: renderStory,
 });
 
 /* -- the three 幼神 surfaces ------------------------------------------ */

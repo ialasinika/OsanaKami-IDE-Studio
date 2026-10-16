@@ -36,7 +36,7 @@
  * built-in renderers register themselves into.
  */
 export const CARD_KINDS = [
-  "editor", "runner", "note", "files", "project", "sheet",
+  "editor", "runner", "note", "files", "project", "sheet", "story",
   "mod", "problems", "docs",
 ];
 
@@ -59,6 +59,7 @@ export const DEFAULT_SIZE = {
   note: { w: 300, h: 180 },
   files: { w: 300, h: 520 },
   sheet: { w: 460, h: 320 },
+  story: { w: 600, h: 480 },
   project: { w: 340, h: 580 },
   mod: { w: 420, h: 520 },
   problems: { w: 520, h: 420 },

@@ -285,6 +285,7 @@ const HINT_TEXT = [
   "those keys undo the typing, as they do anywhere else.",
   "",
   "幼神 Mod 面板 / Mod surfaces:",
+  "  story <path.yarn> [translation.csv]  edit a story beside its translations",
   "  mod <dir>       open a mod package (defines, Yarn, sprites)",
   "  problems <dir>  validate it; click a row to open the file",
   "  docs [query]    search the game's own 136 commands / 63 functions",
@@ -1602,6 +1603,46 @@ function createApp() {
           doc: emptySheet(),
         });
         log("info", `sheet card added${title === "" ? "" : ` (${title})`} — a grid of typed cells, not text`);
+        return;
+      }
+      case "story": {
+        /* The translation table is the one optional second word, and it is
+           always a .csv -- so `story a b.yarn` stays a path with a space in it
+           while `story a.yarn zh.csv` reads as the pair it is. */
+        const rest = line.replace(/^\s*story\s*/i, "").trim();
+        const words = rest.split(/\s+/);
+        let table = "";
+        if (words.length > 1 && /\.csv$/i.test(words[words.length - 1])) {
+          table = words.pop().replace(/\\/g, "/");
+        }
+        const wanted = words.join(" ").replace(/\\/g, "/");
+        if (wanted === "") {
+          log("warn", "usage: story <path.yarn> [translation.csv]");
+          return;
+        }
+        /* One card per file: a second story card on the same path would be two
+           editors saving over each other, and both would look right. */
+        for (const entry of mounted.values()) {
+          if (entry.handle.kind !== "story" || !entry.handle.hasPath) {
+            continue;
+          }
+          if (entry.handle.hasPath(wanted)) {
+            if (table !== "" && entry.handle.tablePath !== table) {
+              entry.handle.loadTable(table);
+            }
+            focusCard(entry.card.id);
+            centreOn(entry.card);
+            return;
+          }
+        }
+        const size = DEFAULT_SIZE.story;
+        const centre = centreWorld();
+        addCard("story", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
+          file: wanted,
+          table,
+        }, size);
+        log("info",
+          `story card added (${wanted}) \u2014 nodes, lines and translations, not the raw file`);
         return;
       }
       case "run": {

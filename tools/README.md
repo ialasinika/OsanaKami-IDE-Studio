@@ -83,8 +83,8 @@ python tools/e2e.py --kernel-cmd "node shell/main.mjs rpc --workspace ."
   does not judge the shape, so this is a storage check, and the board schema's
   own check is `shell/web/selftest.mjs`), and `exec.start` streamed to
   `exec.exit`. Kernel mode skips the three language checks, so a green kernel run
-  reads `9 passed, 0 failed, 3 skipped`; a green full run reads
-  `12 passed, 0 failed, 0 skipped`. Both exit `0`.
+  reads `13 passed, 0 failed, 3 skipped`; a green full run reads
+  `16 passed, 0 failed, 0 skipped`. Both exit `0`.
 * The `exec.start` check runs a **real child process** and asserts its streamed
   `exec.output` and its `exec.exit` code — the kernel spawning itself is the
   simplest command that exists on every checkout, and it needs no interpreter on

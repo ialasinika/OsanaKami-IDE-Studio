@@ -513,6 +513,7 @@ body.is-mod .card[data-kind="problems"] {
 .card-body-project { padding: 0; }
 .card-body-note { padding: 0; background: #1a1d22; }
 .card-body-sheet { padding: 0; background: #1a1d22; }
+.card-body-story { padding: 0; background: #1a1d22; }
 .card-body-unknown { padding: 2px; }
 
 .card-status {
@@ -1180,6 +1181,186 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
   color: var(--fg-faint);
   font-style: italic;
 }
+
+/* ------------------------------------------------------------------ */
+/* story: the node list, and the lines of the node that is on            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The file is not one text field here: the nodes and the lines are the file's
+ * own structure, and only a dialogue line's speaker and text ever look like
+ * something to type into -- which is the whole difference between this card
+ * and opening the .yarn file in the editor.  It borrows the sheet's tools and
+ * palette, so the two structured editors read as one family.
+ */
+
+.story-panes {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.story-nodes {
+  flex: 0 0 172px;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  border-right: 1px solid var(--line-soft);
+}
+
+.story-node {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--fg-dim);
+  font: 11px/1.45 var(--mono-font);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.story-node:hover { background: var(--card-hi); color: var(--fg); }
+.story-node.is-on { border-left-color: var(--accent); color: var(--fg); }
+
+.story-node-title,
+.story-node-meta,
+.story-node-tags {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.story-node-meta,
+.story-node-tags { color: var(--fg-faint); }
+
+.story-lines {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+/* A blank line is a line: it gets the row's height so the file's spacing is
+   visible, and no control, because there is nothing on it to edit. */
+.story-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px 1px 6px;
+  border-left: 2px solid transparent;
+  font: var(--code-size)/var(--code-line) var(--mono-font);
+}
+.story-line.is-on {
+  border-left-color: var(--accent-dim);
+  background: var(--bg-deep);
+}
+.story-line-blank { min-height: var(--code-line); }
+
+.story-kind {
+  flex: 0 0 58px;
+  color: var(--fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The two editable spans.  An underline on focus is the whole affordance:
+   a boxed input per line would put a wall of borders through the dialogue. */
+.story-speaker,
+.story-text {
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  color: var(--fg);
+  font: inherit;
+  padding: 0 2px;
+}
+.story-speaker { flex: 0 0 108px; color: var(--accent); }
+.story-text { flex: 1 1 auto; }
+.story-speaker:focus,
+.story-text:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+  background: var(--bg-deep);
+}
+
+.story-colon { color: var(--fg-faint); }
+.story-option { color: var(--ok); white-space: pre-wrap; }
+.story-command { color: var(--warn); white-space: pre-wrap; }
+.story-raw { color: var(--fg-dim); white-space: pre-wrap; }
+.story-tags,
+.story-comment,
+.story-id {
+  color: var(--fg-faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.story-id { color: var(--fg-dim); }
+.story-comment { font-style: italic; }
+
+/* The translation of one line, by its `#line:` id.  It sits after the id so a
+   row reads: kind, speaker, text, tags, id, translation. */
+.story-translation {
+  color: var(--fg);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34%;
+  opacity: 0.85;
+}
+.story-translation.is-stale {
+  color: var(--warn);
+  text-decoration: line-through;
+  opacity: 1;
+}
+.story-translation.is-missing,
+.story-translation.is-untranslated {
+  color: var(--fg-faint);
+  font-style: italic;
+  opacity: 1;
+}
+.story-table {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font: 10px/1 var(--mono-font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+  align-self: center;
+}
+
+.story-empty {
+  margin: 0;
+  padding: 6px 8px;
+  font: 11px/1.5 var(--mono-font);
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.story-tools {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.story-tool {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.story-tool:hover { color: var(--fg); border-color: var(--accent-dim); }
 
 /* ------------------------------------------------------------------ */
 /* the 幼神 surfaces: mod, problems, docs                                */

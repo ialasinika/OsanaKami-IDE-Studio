@@ -182,6 +182,38 @@ tree.
   notice is not drawn at all, because advice is worth less than the first two
   lines of the file you just opened.
 
+### A story editor, and the tables beside it
+
+- The shell reads the mod's own Yarn rather than only the file as text.
+  `shell/web/story.mjs` parses a `.yarn` file into nodes and body lines
+  (dialogue, `->` options, `<<commands>>`, comments, tags, blanks) and writes it
+  back line for line.  The rule the corpus had to settle is that a header cannot
+  be recognised by its shape: 7,397 body lines in this mod look exactly like
+  `key: value`, so a line is a header only when it carries no `#line:` marker
+  *and* its key is one of the ten the game uses (`title`, `subtitle`, `when`,
+  `tags`, `permission`, `position`, `tracking`, `Character`, `Topic`).  A
+  line's `#line:` id is what the game looks it up by, so the parser never
+  invents one: `nextLineId` is FNV-1a over the ids already taken, with no clock
+  and no `Math.random`.  All **211 `.yarn` files** in the mod parse and
+  re-serialise byte for byte, which is the property the parser is held to.
+- The `story` card (`shell/web/cards.mjs`) draws those nodes and lines, edits a
+  speaker or a line's text in place, and adds a line beside the one that is on.
+  The card's own code path proves two things the module alone cannot: an edit
+  moves no other line's `#line:` id, and a card nobody touched saves its file
+  back unchanged.
+- The translation tables the game keeps beside a story are read too:
+  `shell/web/storycsv.mjs` parses and writes the eight-column CSV, keeps its
+  BOM, its CRLF and its five-field `metadata` rows, and *derives* the `lock`
+  column rather than trusting it.  `lock` is the first four bytes of SHA-256 of
+  the source text, hex, big-endian, read off the mod's own tables and confirmed
+  on all 18,609 rows that carry one; that is what lets a row be called `stale`
+  rather than merely different.  `story <path.yarn> [table.csv]` then puts the
+  column beside the story: a line is joined to its row by its `#line:` id, and
+  the cell shows the table's words with the row's state (`ok`, `stale`,
+  `untranslated`, `missing`).  A line with no marker draws no cell; a line the
+  table has no row for draws `missing`, because a gap is exactly what a
+  translator needs to see.
+
 ### Undo and redo on the board
 
 - `Ctrl+Z` takes back the last board edit and `Ctrl+Shift+Z` puts it back; both
@@ -356,7 +388,7 @@ tree.
 ### Checks
 
 - `make test` (e2e 16, kernel probe, cli-check, version-check, JSON, langs 91/91,
-  selftest 120/120, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
+  selftest 177/177, mods 84/84) and `make smoke` (browser smoke 5, input smoke 26)
   are green.  Every
   new promise was sabotaged to prove its check can fail (throwaway
   `build/sabotage_view.py`): the kernel repairing a document, a stale save
@@ -382,7 +414,20 @@ tree.
   the shared `base_revision` guard skipped, and a `size` counted in characters
   instead of bytes — all four were caught, by `tools/e2e.py` for the first, third
   and fourth and by `tools/kernel_probe.py` for the second, and `core/src/wksp.c`
-  was restored byte-identical.
+  was restored byte-identical.  The story editor was held to it the same way.
+  `build/sabotage_storycsv.py` changed eleven things about the translation
+  tables -- quoting that ignores commas and quotes, a `lock` written
+  little-endian, rows split on every comma, the line ending not detected, the
+  byte order mark dropped, a stale translation not reported, an untranslated row
+  called translated, a missing row not reported, metadata tags dropped, an edit
+  not written back, and speakers not collected -- and all eleven were caught by
+  the storycsv checks, with `shell/web/storycsv.mjs` restored byte-identical.  `build/sabotage_story_column.py` then broke the
+  card's column four ways (the row looked up by the bare id instead of
+  `line:<id>`, the cell showing the line's own words instead of the table's, the
+  column never drawn, and the table read but its rows thrown away) and
+  `shell/web/cards.mjs` was restored byte-identical after each.  The corpus is the second half of the bar: 211 real `.yarn` files
+  parse and re-serialise byte for byte, and the story card's own probe opens a
+  real story with its real `NewProject_EN.csv` and edits through the card.
 
 ### Licence
 
