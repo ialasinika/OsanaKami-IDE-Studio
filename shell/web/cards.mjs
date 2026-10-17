@@ -813,6 +813,7 @@ export const COMMAND_HELP = [
   "rig <path.skel.bytes>    show a Spine rig: bones, skins, animation timeline",
   "new <type> <dir> <name>  create a file from the game's own schemas",
   "import <from> <dir> [to] copy a file into a package (byte for byte), then open it",
+  "example [name]           copy the demo package into the mods folder and open it",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",

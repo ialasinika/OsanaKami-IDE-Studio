@@ -16,6 +16,38 @@ stands in this tree.
 
 ## Unreleased
 
+### The demo that ships is reachable, and the install ships only the demo
+
+- The installed payload no longer carries the checkout's test scaffolding:
+  `package.json`'s `examples` resource keeps `Mods/Lantern` and
+  `Mods/Lantern_Tests` and filters out `hello.yarn` (the tokenizer fixture),
+  `board.json` (the screenshot board) and `sample.json`.  Those files stay in the
+  repository, where the suites read them; they were never a user's example.
+- The two `examples/` fixtures that named the product's own content were rewritten:
+  `examples/hello.yarn` is an invented story (same Yarn surface — a node header,
+  comments, indentation, a `<<wait>>`, an `if`/`elseif`/`else`, two choices — which
+  is what `tools/e2e.py` and `tools/kernel_probe.py` need, and still the only
+  non-ASCII script the tokenizer is measured on), and `examples/board.json`'s
+  runner card runs `node shell/main.mjs --help` instead of the local e2e driver.
+- `shell/mods/examples.js` adds the two verbs that make the demo usable:
+  `mod.examples` answers what ships (`{root, source, present, packages[],
+  default}`) and `mod.example {name?}` copies one package into the mods folder
+  byte for byte, answering `installed: false` when it is already there and
+  refusing a directory that holds anything else rather than replacing it.  The
+  copy is not a convenience: every `mod.*` verb is bounded by the mods folder, so
+  a package beside the editor cannot be opened where it ships.
+- Reachable without typing: File → **打开示例 Mod** (`electron/examples.js`, the
+  same one-frame shape as the new-mod shortcut), and `example [name]` on the
+  command line, which opens the copy with the ordinary `mod` card so it is
+  editable like any user's package.
+- Evidence: `shell/mods/selftest.mjs` is 431 checks (was 407): thirteen cover
+  the listing, the byte-identical copy, the copy being openable where the
+  original was not, the idempotent second call and both refusals, and eleven
+  cover `electron/examples.js` (the frame's exact bytes, a trimmed name, the
+  shell's own refusal carrying its code, and the `?mod=` address the new-mod
+  shortcut already uses). The refusal and listing checks were watched red before
+  they were kept.
+
 ### A file can be made from the game's schema, or brought in from outside
 
 - `shell/mods/newfile.js` and `mod.newFile {dir, type, name, overwrite?}` grow a

@@ -2022,6 +2022,28 @@ function createApp() {
         addCard("mod", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { dir }, size);
         return;
       }
+      case "example": {
+        /*
+         * The demo package ships beside the editor, which is outside the mods
+         * folder and therefore outside what any card may open.  So this command
+         * asks the shell to copy it in first, then opens it exactly like `mod`
+         * would -- which is also why it stays editable.
+         */
+        const wanted = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
+        const openInstalled = (answer) => {
+          log(answer.installed ? "info" : "warn",
+            answer.installed
+              ? `example ${answer.dir}: ${answer.files} file(s) copied into the mods folder`
+              : `example ${answer.dir}: already in the mods folder`);
+          runCommand("mod " + answer.dir).catch((err) => {
+            log("error", `example: ${err.message}`);
+          });
+        };
+        client.call("mod.example", wanted === "" ? {} : { name: wanted }).then(openInstalled, (err) => {
+          log("warn", `example: ${err.message}`);
+        });
+        return;
+      }
       case "problems": {
         const root = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
         const size = DEFAULT_SIZE.problems;

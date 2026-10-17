@@ -285,8 +285,8 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 249/249 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 407/407 checks passed
+node shell/web/selftest.mjs                    # ok 284/284 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 431/431 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -492,7 +492,7 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 407 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 431 checks, no kernel
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs,
                         views.mjs, history.mjs, rpc.mjs, watch.mjs, classic.mjs,
                         modview.mjs, main.mjs, story.mjs, storycsv.mjs, ysls.mjs,

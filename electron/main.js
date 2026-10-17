@@ -27,6 +27,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const newMod = require("./newmod.js");
+const examples = require("./examples.js");
 
 /* ------------------------------------------------------------------ */
 /* paths                                                              */
@@ -402,6 +403,30 @@ async function flushBoardBeforeNavigation() {
 }
 
 /**
+ * File -> "打开示例 Mod": copy the bundled demo package into the mods folder and
+ * show it.
+ *
+ * The demo ships beside the editor, which is outside the mods folder, and the
+ * shell refuses to open a mod outside it (`resolveArg` is a containment rule, not
+ * a convenience).  So the menu asks `mod.example` to copy the package in -- which
+ * also leaves the user with a copy they can edit -- and then navigates the same
+ * `?mod=` way the new-mod shortcut does.
+ */
+async function openExample() {
+  if (session === null) return;
+  try {
+    const answer = await examples.install({ endpoint: session.url });
+    log(answer.installed
+      ? `example: ${answer.dir} (${answer.files} files) copied into ${answer.modRoot}`
+      : `example: ${answer.dir} is already in ${answer.modRoot}`);
+    await flushBoardBeforeNavigation();
+    if (win !== null) await win.loadURL(examples.openUrl(session, answer.modRoot));
+  } catch (err) {
+    reportFailure("打开示例 Mod 失败", err);
+  }
+}
+
+/**
  * File -> "新建模组…": a save dialog names the folder, then the shell's own
  * `mod.scaffold` -- over the endpoint this window is already talking to --
  * writes the template.  Nothing here reads `shell/mods/` directly: a packaged
@@ -506,6 +531,12 @@ function buildMenu() {
         { label: "Choose Workspace…", accelerator: "CmdOrCtrl+O", click: () => pickWorkspace().catch((e) => reportFailure("切换工作区失败", e)) },
         { label: "Choose Mods Folder…", accelerator: "CmdOrCtrl+M", click: () => pickModsRoot().catch((e) => reportFailure("切换 Mods 目录失败", e)) },
         ...newModItems,
+        {
+          label: "打开示例 Mod",
+          click: () => {
+            openExample();
+          },
+        },
         { type: "separator" },
         {
           label: "Open Workspace Folder",

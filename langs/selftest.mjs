@@ -179,10 +179,10 @@ check(
   yarnSpans.filter((s) => s[2] === "command").length === 66,
   String(yarnSpans.filter((s) => s[2] === "command").length),
 );
-check("exactly two comment spans", commentSpans.length === 2, JSON.stringify(commentSpans));
+check("exactly three comment spans", commentSpans.length === 3, JSON.stringify(commentSpans));
 check(
-  "a block comment spans the marker to the closer, excluding the newline",
-  JSON.stringify(commentSpans[0]) === '[86,114,"comment"]',
+  "a line comment spans its marker to the end of the line, excluding the newline",
+  JSON.stringify(commentSpans[0]) === '[89,118,"comment"]',
   JSON.stringify(commentSpans[0]),
 );
 check(
@@ -215,7 +215,7 @@ check("number recognized", cSpans.some((s) => s[2] === "number"), JSON.stringify
 const lineGroups = tokenizeLines(inlineLang, yarnSrc);
 check(
   "line grouping covers every line",
-  Array.isArray(lineGroups) && lineGroups.length === 27,
+  Array.isArray(lineGroups) && lineGroups.length === 28,
   Array.isArray(lineGroups) ? String(lineGroups.length) : "no line groups",
 );
 check(
@@ -353,8 +353,8 @@ check(
   wideInlineSpans.map(([s, e]) => wideInline.slice(s, e)).join("") === wideInline,
 );
 
-/* The shipped fixture, read from disk rather than re-typed: 632 code units and
- * 807 bytes as committed, so a drifted fixture shows up in the failure detail. */
+/* The shipped fixture, read from disk rather than re-typed: 657 code units and
+ * 921 bytes as committed, so a drifted fixture shows up in the failure detail. */
 const fixtureTiling = assertTiles(fixtureSrc, fixtureSpans);
 const fixtureLast = fixtureSpans[fixtureSpans.length - 1];
 check("the shipped non-ASCII fixture tiles", fixtureTiling === null, fixtureTiling);

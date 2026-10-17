@@ -1,26 +1,27 @@
 title: Live_Node
 when: always
 tags: #hub #reach
-subtitle: 开场直播节点
+subtitle: 一个最小的直播节点
 tracking: always
 ---
-/* 游戏本体 · 直播间节点：Live_Node */
-<<declare $Fan_Join = false>>
+// 本仓库自带的示例脚本：台词是自造的，不来自游戏本体。
+// 它故意把 Yarn 的每种行都写一遍，测试拿它当"真实脚本"样本。
+<<declare $Joined = false>>
 <<StartDanmaku>>
-Speaker: 嗨，大家好。欢迎来到本游戏的直播间。 #line:0630975 #state:Idle
-Echo: 「今晚的灯，好像比昨天亮。」 #line:0630976 #state:Smile
-<<wait 2>> // 给弹幕一点时间滚过屏幕
-<<if $Fan_Join>>
-  Speaker: 你回来了。 #line:0630977 #state:Idle
+Host: 晚上好，欢迎来到这盏灯的直播间。 #line:0a1b001 #state:Idle
+Listener: 「今天的灯，好像比昨天亮。」 #line:0a1b002 #state:Smile
+<<wait 2>> // 留一点时间给弹幕滚过去
+<<if $Joined>>
+  Host: 你回来了。 #line:0a1b003 #state:Idle
   <<jump Live_Hub>>
 <<elseif $Trust > 3>>
-  Speaker: 先别急着走。 #line:0630978 #state:Serious
-  <<set $Fan_Join = true>>
+  Host: 先别急着走。 #line:0a1b004 #state:Serious
+  <<set $Joined = true>>
 <<else>>
   <<EmitDanmakuTypeBurst "Welcome" 20>>
 <<endif>>
 -> 继续观看
-   Speaker: 那就再坐一会儿吧。 #line:0630979 #state:Idle
+   Host: 那就再坐一会儿吧。 #line:0a1b005 #state:Idle
 -> 转身离开
-   Speaker: 晚安。 #line:0630980 #state:Idle
+   Host: 晚安。 #line:0a1b006 #state:Idle
 ===

@@ -353,9 +353,10 @@ define through its own picker and imports a PNG that reads back byte for byte
 
 | — | `node shell/mods/selftest.mjs` | the mod layer without a browser: discovery order (setting, environment, the platform's Steam defaults, the named no-knowledge state) and `describeDiscovery`, scaffolding, package validation and every `D`/`M`/`E` code, the Yarn parser's diagnostics, the tag sources, the knowledge base's resolution order and the derivation into the user directory when no file ships, the knowledge generator's `--check` and `--diff`, a facts-only knowledge base keeping the sprite and reference fields the checker looks at (down to a `validatePackage` run on one), the language service's position and completion cores, creating one file from a
 schema for all 51 definition types (each validating clean), importing a file
-byte for byte with its validations and refusals, and `config.get`/`config.set`
-keeping a real API key off the wire (407 checks) |
-| — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment (72 checks) |
+byte for byte with its validations and refusals, the demo packages' listing and
+byte-identical copy (openable only where it was copied), and `config.get`/`config.set`
+keeping a real API key off the wire (431 checks) |
+| — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.
 

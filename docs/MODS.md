@@ -64,19 +64,22 @@ new <type> <dir> <name>
                     create one file from the game's own schema, then open it
 import <from> <dir> [to]
                     copy a file into a package (byte for byte), then open it
+example [name]      copy the demo package into the mods folder, then open it
 problems <dir>      open a validation card and run it
 docs [query]        open the knowledge-base card
 ```
 
 `mod` behaves like `project`: there is one mod panel, so a second `mod`
-re-points the card you already have instead of stacking a duplicate.
+re-points the card you already have instead of stacking a duplicate. `example`
+re-points the same card, because the copy it opens is simply a mod like any
+other.
 
 ## The `mod.*` verbs
 
 Every verb is answered by `dispatch()` in `shell/main.mjs` from the
 `MOD_METHODS` table, before the kernel is ever consulted. All of them are
-synchronous except `mod.scaffold`, `mod.newFile` and `mod.importFile`, which
-write files.
+synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile` and
+`mod.example`, which write files.
 
 | verb | params | returns |
 | --- | --- | --- |
@@ -91,6 +94,8 @@ write files.
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
 | `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, writes one file |
 | `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
+| `mod.examples` | — | `{root, source, present, packages[{name, dir, hasManifest}], default}` — what ships beside the editor |
+| `mod.example` | `name?` | `{installed, name, dir, modRoot, file, files, source, message}` — **async**, copies a demo package into the mods folder |
 | `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
 | `mod.docFor` | `kind`, `name` | markdown string |
 | `mod.suggest` | `prefix`, `context?` | `[{label, kind, detail, insertText, documentation}]` |
@@ -436,6 +441,23 @@ with no 幼神 install at all, and it is what `--mods-root examples/Mods` above
 opens. Since the game's own data is not part of this checkout (G26), it is also
 the only package here that exercises every file kind the mod layer can read.
 
+Two things follow from where it lives, and both are deliberate.
+
+- **The install ships only the two demo packages**, never the checkout's other
+  fixtures: `package.json`'s `extraResources` for `examples/` filters out
+  `hello.yarn` (the tokenizer fixture), `board.json` (the screenshot board) and
+  `sample.json`. A user's install holds a mod they can open, not the test
+  scaffolding that proves the editor works.
+- **A demo cannot be opened where it ships, so it is copied first.** The
+  containment rule in the section above bounds every `mod.*` call to the mods
+  folder; `<resources>/examples/Mods` is outside it. `mod.examples` answers what
+  ships and `mod.example` copies one package into the mods folder, byte for byte,
+  answering `installed: false` when it is already there and refusing a directory
+  that holds anything else instead of replacing it. The copy is what makes the
+  demo editable, and it is the same package on the same terms as any user's mod.
+  Reachable three ways: the File menu's **打开示例 Mod**, the `example` command,
+  and the two verbs over the protocol.
+
 | file | what it is for |
 | --- | --- |
 | `mod.json` | the manifest: `name`, `version`, `gameVersion`, `loadOrder`, `author`, `description` |
@@ -490,7 +512,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 407 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 431 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

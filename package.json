@@ -55,7 +55,13 @@
       },
       {
         "from": "examples",
-        "to": "examples"
+        "to": "examples",
+        "filter": [
+          "**/*",
+          "!hello.yarn",
+          "!board.json",
+          "!sample.json"
+        ]
       }
     ],
     "win": {

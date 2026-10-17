@@ -37,7 +37,7 @@
       "h": 200,
       "z": 3,
       "title": "runner",
-      "cmd": "python tools/e2e.py --kernel build/infantgod.exe",
+      "cmd": "node shell/main.mjs --help",
       "cwd": "."
     },
     {
@@ -106,7 +106,7 @@
             "id": "r3",
             "cells": {
               "kind": "speaker",
-              "example": "Speaker: …",
+              "example": "Host: …",
               "lines": 11,
               "command": false
             }
@@ -124,7 +124,7 @@
             "id": "r5",
             "cells": {
               "kind": "comment",
-              "example": "// 给弹幕一点时间滚过屏幕",
+              "example": "// 留一点时间给弹幕滚过去",
               "lines": 2,
               "command": false
             }

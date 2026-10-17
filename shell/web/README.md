@@ -182,6 +182,7 @@ project [glob]           open the project panel (the workspace as one project)
 mod <dir>                open a mod package card
 new <type> <dir> <name>  create one file from the game's own schema, then open it
 import <from> <dir> [to]  copy a file into a package (byte for byte), then open it
+example [name]           copy the demo package into the mods folder, then open it
 problems <dir>           open a validation card and run it
 docs [query]             open the knowledge-base card
 settings                 the AI provider, the view a window opens in, the poll interval
@@ -611,6 +612,17 @@ found by walking up for `mod.json`), and both open the file they wrote: pixels i
 the pixel card, everything else as text. The command line has the same two verbs
 (`new <type> <dir> <name>`, `import <from> <dir> [to]`), so the menu and the typed
 command cannot drift apart.
+
+### The demo package, which has to be copied before it can be opened
+
+The editor ships a worked example (`examples/Mods/Lantern`), but it ships
+*before* the mods folder — and every `mod.*` call is bounded by the mods folder,
+so the card cannot open the package where it sits. `example [name]` asks the
+shell to copy it in (`mod.example`), then opens the copy with the ordinary `mod`
+card. The copy is byte for byte, never overwrites a directory that holds
+something else, and reports "already in the mods folder" on a second call rather
+than copying again. File → **打开示例 Mod** is the same two steps for the
+window, and `mod.examples` answers what ships without writing anything.
 
 ### Known limitations (deliberate, documented rather than hidden)
 

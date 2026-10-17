@@ -34,7 +34,7 @@ CORE/SRC/
   ○  board.c                                24K 30s
      rpc.c                                  31K 30s
 EXAMPLES/
-     hello.yarn                             807B 3d
+     hello.yarn                             921B 3d
 6 files · 1 folders · 2 open · 1 unsaved
 ```
 

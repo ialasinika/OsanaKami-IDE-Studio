@@ -609,8 +609,9 @@ function optionalString(params, name) {
 
 /*
  * Every `mod.*` verb, in one table, so adding one is a row and not a branch.
- * The facade behind these is synchronous; `mod.scaffold` and `mod.newFile`
- * write files, and are the two with a side effect.
+ * The facade behind these is synchronous; `mod.scaffold`, `mod.newFile`,
+ * `mod.importFile` and `mod.example` write files, and are the four with a side
+ * effect.
  */
 const MOD_METHODS = {
   "mod.stats": (_params, mods) => mods.stats(),
@@ -652,6 +653,13 @@ const MOD_METHODS = {
     to: optionalString(params, "to") ?? undefined,
     name: optionalString(params, "name") ?? undefined,
     overwrite: params.overwrite === true,
+  }),
+  // G35: the demo packages beside the editor cannot be opened where they ship
+  // (a card's `dir` never leaves the mods folder), so `mod.examples` lists them
+  // and `mod.example` copies one in, which also makes it editable.
+  "mod.examples": (_params, mods) => mods.examples(),
+  "mod.example": (params, mods) => mods.example({
+    name: optionalString(params, "name") ?? undefined,
   }),
   "mod.search": (params, mods) => mods.search({
     query: typeof params.query === "string" ? params.query : "",

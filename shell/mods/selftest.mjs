@@ -1118,6 +1118,114 @@ if (!CAN_SPAWN_SHELL) {
 }
 
 /* ------------------------------------------------------------------ */
+/* the File menu's "打开示例 Mod" (electron/examples.js)                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The demo package cannot be opened where it ships -- a card's `dir` never
+ * leaves the mods folder -- so the menu item asks `mod.example` to copy it in
+ * first and then navigates the same `?mod=` way the new-mod shortcut does.  As
+ * with newmod.js, the frame and the address are the parts that can be wrong
+ * without a window, and both are pure here.
+ */
+
+section('the File menu: "打开示例 Mod"');
+
+const examplesMenu = require(join(ROOT, "electron", "examples.js"));
+
+function answering(body, status = 200) {
+  return async () => ({ status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) });
+}
+function reply(result) {
+  return { jsonrpc: "2.0", id: 1, result };
+}
+
+check("the item is one frame and one address, nothing else",
+  JSON.stringify(Object.keys(examplesMenu).sort()) === JSON.stringify(["install", "openUrl"]),
+  JSON.stringify(Object.keys(examplesMenu).sort()));
+
+const frames = [];
+try {
+  const answer = await examplesMenu.install({
+    endpoint: "http://127.0.0.1:9/",
+    fetchImpl: async (url, init) => {
+      frames.push({ url, init });
+      return { status: 200, text: async () => JSON.stringify(reply({ installed: true, dir: "Lantern", modRoot: "mods/Lantern", files: 22 })) };
+    },
+  });
+  check("install posts to <endpoint>/rpc", frames.length === 1 && frames[0].url === "http://127.0.0.1:9/rpc", JSON.stringify(frames.map((one) => one.url)));
+  check("with POST and a JSON body",
+    frames[0].init.method === "POST" && frames[0].init.headers["content-type"] === "application/json",
+    JSON.stringify(frames[0].init.method));
+  check("the body is the exact mod.example frame",
+    frames[0].init.body === '{"jsonrpc":"2.0","id":1,"method":"mod.example","params":{}}',
+    frames[0].init.body);
+  check("the reply's result is what the menu navigates with",
+    answer.dir === "Lantern" && answer.files === 22, JSON.stringify(answer));
+} catch (err) {
+  check("install posts to <endpoint>/rpc", false, String(err));
+}
+
+try {
+  let body = null;
+  await examplesMenu.install({
+    endpoint: "http://127.0.0.1:9",
+    name: "  Lantern_Tests  ",
+    fetchImpl: async (_url, init) => {
+      body = init.body;
+      return { status: 200, text: async () => JSON.stringify(reply({ installed: false, dir: "Lantern_Tests", modRoot: "mods/Lantern_Tests", files: 0 })) };
+    },
+  });
+  check("a typed name is trimmed into the params",
+    body === '{"jsonrpc":"2.0","id":1,"method":"mod.example","params":{"name":"Lantern_Tests"}}',
+    body);
+} catch (err) {
+  check("a typed name is trimmed into the params", false, String(err));
+}
+
+let serverSaid = null;
+try {
+  await examplesMenu.install({
+    endpoint: "http://127.0.0.1:9",
+    fetchImpl: answering({ jsonrpc: "2.0", id: 1, error: { code: -32603, name: "RpcError", message: 'example: no demo package named "Nope"' } }),
+  });
+} catch (err) {
+  serverSaid = err;
+}
+check("the shell's refusal is the menu's message, with its code",
+  serverSaid instanceof Error && serverSaid.message === 'example: no demo package named "Nope"' && serverSaid.code === -32603,
+  serverSaid === null ? "no error" : `${serverSaid.message} / ${serverSaid.code}`);
+
+let noDir = null;
+try {
+  await examplesMenu.install({
+    endpoint: "http://127.0.0.1:9",
+    fetchImpl: answering(reply({ installed: true, files: 22 })),
+  });
+} catch (err) {
+  noDir = err.message;
+}
+check("a reply with no directory is refused, not navigated to",
+  typeof noDir === "string" && noDir.includes("没有可打开的目录"), noDir);
+
+let noEndpoint = null;
+try {
+  await examplesMenu.install({ endpoint: "   ", fetchImpl: answering(reply({ dir: "Lantern" })) });
+} catch (err) {
+  noEndpoint = err.message;
+}
+check("a session without an endpoint is refused before any request",
+  typeof noEndpoint === "string" && noEndpoint.includes("还没有 shell 端点"), noEndpoint);
+
+const openShell = { url: "http://127.0.0.1:9/", workspace: ROOT, modsRoot: join(ROOT, "examples", "Mods") };
+check("the address is the new-mod shortcut's, so one channel does both",
+  examplesMenu.openUrl === undefined || examplesMenu.openUrl(openShell, "mods/Lantern") === newMod.openModUrl(openShell, "mods/Lantern"),
+  examplesMenu.openUrl(openShell, "mods/Lantern"));
+check("and it carries the package in ?mod=",
+  examplesMenu.openUrl(openShell, "mods/Lantern").includes("?mod=mods%2FLantern"),
+  examplesMenu.openUrl(openShell, "mods/Lantern"));
+
+/* ------------------------------------------------------------------ */
 /* finding the game: a setting, the environment, or discovery          */
 /* ------------------------------------------------------------------ */
 
@@ -2569,6 +2677,121 @@ section("import a file into a mod package: mod.importFile");
   } finally {
     rmSync(sandbox, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* the demo packages beside the editor: mod.examples / mod.example     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * G35.  The demo ships beside the editor and `mod.open` refuses everything
+ * outside `modsRoot`, so the only reachable demo is a copied one.  These checks
+ * pin both halves: what ships is found by name, and the copy is byte-identical,
+ * openable, idempotent and never overwrites a directory someone made.
+ */
+
+section("the demo packages the install ships");
+
+{
+  const examplesCore = require(join(HERE, "examples.js"));
+  const listing = examplesCore.listExamples();
+  check("examples/Mods is found beside the shell",
+    listing.present && listing.source === "bundled" && listing.root.endsWith(join("examples", "Mods")),
+    JSON.stringify({ root: listing.root, source: listing.source, present: listing.present }));
+  check("the two demo packages are listed, with Lantern as the default",
+    listing.packages.map((one) => one.dir).join(",") === "Lantern,Lantern_Tests" && listing.default === "Lantern",
+    JSON.stringify(listing.packages.map((one) => one.dir)));
+
+  const countFiles = (dir) => {
+    let total = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) total += countFiles(join(dir, entry.name));
+      else if (entry.isFile()) total += 1;
+    }
+    return total;
+  };
+  const shippedRoot = join(listing.root, "Lantern");
+  const shippedFiles = countFiles(shippedRoot);
+
+  const sandbox = mkdtempSync(join(tmpdir(), "infantgod-example-"));
+  const occupied = mkdtempSync(join(tmpdir(), "infantgod-example-occupied-"));
+  const nothing = mkdtempSync(join(tmpdir(), "infantgod-example-nothing-"));
+  try {
+    const fresh = createMods({ modsRoot: sandbox });
+    check("the facade answers what ships, with the same listing",
+      fresh.examples().packages.length === listing.packages.length, JSON.stringify(fresh.examples().packages.map((one) => one.dir)));
+
+    const copied = fresh.example({});
+    check("`mod.example` copies the demo into the mods folder",
+      copied.installed === true && copied.dir === "Lantern" &&
+      copied.modRoot === join(sandbox, "Lantern") && copied.files === shippedFiles,
+      JSON.stringify({ dir: copied.dir, files: copied.files, shippedFiles }));
+    check("the copied package is byte-identical to the one that ships",
+      Buffer.compare(readFileSync(join(copied.modRoot, "mod.json")), readFileSync(join(shippedRoot, "mod.json"))) === 0,
+      copied.file);
+    check("the copy is openable, which the bundled original never was",
+      fresh.openMod({ dir: "Lantern" }).manifest.name === "Lantern",
+      JSON.stringify(fresh.openMod({ dir: "Lantern" }).manifest));
+    const again = fresh.example({ name: "Lantern" });
+    check("asking twice reports `already installed` and copies nothing",
+      again.installed === false && again.files === 0, JSON.stringify(again));
+
+    const refused = (params) => {
+      try {
+        fresh.example(params);
+        return "";
+      } catch (err) {
+        return err.message;
+      }
+    };
+    check("an unknown demo name is refused by name, with the list",
+      refused({ name: "Nope" }).startsWith("example: no demo package named") &&
+      refused({ name: "Nope" }).includes("Lantern"),
+      refused({ name: "Nope" }));
+
+    mkdirSync(join(occupied, "Lantern_Tests"), { recursive: true });
+    writeFileSync(join(occupied, "Lantern_Tests", "notes.txt"), "mine\n");
+    const busy = createMods({ modsRoot: occupied });
+    let clash = "";
+    try {
+      busy.example({ name: "Lantern_Tests" });
+    } catch (err) {
+      clash = err.message;
+    }
+    check("the refusal names the directory and says why",
+      clash.includes("already holds files") && clash.startsWith("example: "), clash);
+    check("the refused directory keeps its file",
+      readFileSync(join(occupied, "Lantern_Tests", "notes.txt"), "utf8") === "mine\n");
+
+    check("with no mods folder the copy is refused, not sent somewhere",
+      (() => {
+        try {
+          createMods({}).example({});
+          return "";
+        } catch (err) {
+          return err.message;
+        }
+      })().startsWith("example: there is no mods folder"),
+      "createMods({}) has no modsRoot");
+
+    const empty = examplesCore.listExamples({ examplesDir: nothing });
+    check("a build with no demo packages reports the state, not an error",
+      empty.present === false && empty.default === null, JSON.stringify(empty));
+    check("installing from a build with no demo packages says so",
+      (() => {
+        try {
+          examplesCore.installExample({ examplesRoot: nothing, modsRoot: sandbox });
+          return "";
+        } catch (err) {
+          return err.message;
+        }
+      })().includes("no demo package is installed beside the editor"),
+      nothing);
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+    rmSync(occupied, { recursive: true, force: true });
+    rmSync(nothing, { recursive: true, force: true });
   }
 }
 

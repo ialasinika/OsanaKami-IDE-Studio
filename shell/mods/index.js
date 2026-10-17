@@ -32,6 +32,7 @@ const gamepath = require('./gamepath.js');
 const knowledgeBuild = require('./knowledge-build.js');
 const newfileCore = require('./newfile.js');
 const importfileCore = require('./importfile.js');
+const examplesCore = require('./examples.js');
 
 /** knowledge.json 的位置（本模块同目录；发布物里可能不带，见下面的解析顺序）。 */
 const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
@@ -1421,6 +1422,38 @@ function createMods(options) {
     return imported;
   }
 
+  /* ---------------- 自带示例包（G35） ---------------- */
+
+  /**
+   * The demo packages shipped beside the editor (`examples/Mods`).
+   *
+   * `mod.open` may only open a directory under `modsRoot` (`resolveArg`), and a
+   * bundled demo sits outside it by construction -- so the demo cannot be opened
+   * where it ships.  This verb answers what ships; `mod.example` copies one into
+   * the mods folder, where every other verb can reach it and the user can edit
+   * it without the install noticing.
+   */
+  function examples() {
+    return examplesCore.listExamples();
+  }
+
+  /**
+   * Copy one demo package into the mods folder (G35).
+   *
+   * params `{ name? }`; idempotent -- a package already there is answered as
+   * `installed: false` and never replaced.  `dir` in the answer is the
+   * mod-relative name to hand to `mod.open` or the `mod` command.
+   */
+  function example(params) {
+    const p = params && typeof params === "object" ? params : {};
+    const installed = examplesCore.installExample({
+      modsRoot: modsRoot,
+      name: typeof p.name === "string" && p.name.trim() !== "" ? p.name.trim() : undefined,
+    });
+    if (installed.installed) invalidateForRoot();
+    return installed;
+  }
+
   /** 模板摘要：[{ id, title, files }]。 */
   function templates() {
     return (scaffoldCore.MOD_TEMPLATES || []).map((t) => ({
@@ -1565,6 +1598,8 @@ function createMods(options) {
     scaffold: scaffold,
     newFile: newFile,
     importFile: importFileInto,
+    examples: examples,
+    example: example,
     templates: templates,
     search: search,
     docFor: docFor,

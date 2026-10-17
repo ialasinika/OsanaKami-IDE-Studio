@@ -212,7 +212,7 @@ client's own arrangement, exactly as it was stored.
 **The shell adds one more member to this result:**
 
 ```json
-{"path":"examples/hello.yarn","text":"...","revision":1873099737,"eol":"lf","size":807,"mtime":1700000000,"lang":"yarn"}
+{"path":"examples/hello.yarn","text":"...","revision":1873099737,"eol":"lf","size":921,"mtime":1700000000,"lang":"yarn"}
 ```
 
 `lang` is the language the shell detected from the path, or `null` when nothing
@@ -248,7 +248,7 @@ rejects `absolute paths are not allowed: <path>` and
 Required parameter: `path` (non-empty string, relative to the workspace root).
 
 ```json
-{"path":"examples/hello.yarn","exists":true,"dir":false,"size":807,"mtime":1700000000,"revision":1873099737}
+{"path":"examples/hello.yarn","exists":true,"dir":false,"size":921,"mtime":1700000000,"revision":1873099737}
 ```
 
 `revision` is the same number `file.read` would report for those bytes — it is

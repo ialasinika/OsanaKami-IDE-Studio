@@ -96,6 +96,7 @@ the mod verbs are bounded by the workspace, exactly as on the command line.
 | File | Choose Workspace… | `Ctrl+O` — pick a directory, restart the endpoint on it |
 | File | Choose Mods Folder… | `Ctrl+M` — pick the game's `Mods` folder |
 | File | 新建模组… | `Ctrl+N` — scaffold a template into a folder (最小可加载 / 对话剧情 / 定义包 / 完整工程) |
+| File | 打开示例 Mod | copy the bundled demo package into the mods folder and open it |
 | File | Open Workspace / Mods Folder | reveal it in Explorer |
 | View | Reload, DevTools, zoom, fullscreen | the Electron roles |
 | Help | About / Endpoint… | the live URLs and the settings path |
@@ -122,6 +123,15 @@ make the mod's parent the workspace instead.
 There is no `Edit` menu: the board's canvas has no clipboard model of its own,
 and the roles Electron would add (`cut`/`copy`/`paste`) apply to the focused
 `<textarea>` anyway.
+
+**File → 打开示例 Mod** is the new-mod item's sibling and the same rule: the demo
+ships in `<resources>/examples/Mods`, which is outside the mods folder and
+therefore outside what any card may open, so the menu asks `mod.example` to copy
+the package into the mods folder (byte for byte, never over an existing
+directory, answering "already there" on a second click) and then navigates with
+the same `?mod=` address. The code is `electron/examples.js`, kept beside
+`newmod.js` for the same reason: one frame, no `require` of `shell/`, a Node test
+can drive it without Electron.
 
 ## The icon
 
