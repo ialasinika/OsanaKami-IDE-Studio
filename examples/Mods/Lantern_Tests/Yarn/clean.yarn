@@ -1,0 +1,7 @@
+title: ZzClean
+when: always
+---
+ZzSpeaker: 干净的一句话。 #line:10 #state:Idle
+ZzSpeaker: 再来一句。 #line:11 #Topic:ZzTopic
+-> 选项文字 #Topic:ZzTopic
+===

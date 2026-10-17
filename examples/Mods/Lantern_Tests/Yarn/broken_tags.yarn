@@ -1,0 +1,9 @@
+title: ZzTagStart
+---
+ZzSpeaker: 台词一。 #Nope #line:1
+ZzSpeaker: 台词二。 #topic:ZzSomething #line:2
+ZzSpeaker: 台词三。 #stateIdle #line:3
+ZzSpeaker: 台词四。 #Check #line:4
+ZzSpeaker: 台词五。 #state:ZzNotAState #line:5
+-> 选项文字 #后面跟着普通文字
+===

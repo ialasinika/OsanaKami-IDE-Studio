@@ -204,6 +204,101 @@ The menu is Electron's: a browser tab opened by `serve` alone has no 新建模�
 item, and the same four templates are reachable there over the protocol as
 `mod.scaffold`.
 
+## Diagnostic codes
+
+Every code the mod layer can emit, its level, and where its condition comes from.
+`03-诊断规则目录.md` (the reverse-engineered VS Code plugin spec) is the authority
+for the Yarn rules: a code marked with a `CR-` id is that rule, with its level and
+condition taken from the spec. A code marked **我们自有、规格无此条** is our own
+check that the spec does not have; those are listed so that no error-level finding
+exists without a spec counterpart.
+
+### Yarn (`shell/mods/yarn.js`)
+
+| code | level | spec | condition |
+| --- | --- | --- | --- |
+| Y001 | error | CR-001 | unknown command / statement name in `<<…>>` |
+| Y002 | error | CR-101 | `jump`/`detour` target node does not exist |
+| Y003 | warning | 我们自有、规格无此条 | unbalanced block structure (`if`/`once` stack) |
+| Y005 | warning | 我们自有、规格无此条 | a node header has no `===` terminator |
+| Y006 | warning | 我们自有、规格无此条 | `<<set>>` writes a variable nothing declared |
+| Y007 | warning | 我们自有、规格无此条 | `<<` is never closed |
+| Y101 | warning | CR-103 | reads a variable nothing declares |
+| Y102 | info / warning | CR-111 | wrong argument count (too few is info, too many is warning) |
+| Y103 | info | 我们自有、规格无此条 | a spoken line carries no `#line:` id |
+| Y104 | warning | CR-109 | `#state:` value is not in the state table (states the two possibilities) |
+| Y105 | info | 我们自有、规格无此条 | unknown function name (§11.10 says function existence is not reported) |
+| Y106 | warning | 我们自有、规格无此条 | an option line's text is empty |
+| Y107 | info | 我们自有、规格无此条 | the same `#line:` id twice in one file (CR-403 only covers cross-file) |
+| Y108 | error | CR-102 | `visited("…")` names a node that does not exist |
+| Y109 | error | CR-104 | `declare` of a variable first declared in another file |
+| Y110 | error | CR-113 | a tag that needs a parameter has none (`#line` is exempt) |
+| Y111 | error | CR-114 | a `Character:` line names someone who is not a character |
+| Y112 | error | CR-105 | unknown tag |
+| Y113 | error | CR-106 | unknown tag that differs from a known one only by case |
+| Y114 | error | CR-107 | `#state` with the colon missing |
+| Y115 | error | CR-108 | `#state:` value differs from a state name only by case |
+| Y116 | error | CR-115 | a member of a node group (same title, ≥2 members, some `when:`) has no `subtitle` |
+| Y117 | error | CR-116 | two members of one node group share a `subtitle` (reported on the later one) |
+| Y118 | error | CR-201 | a certain start/end command pair has its start but never its end |
+| Y119 | info | CR-202 | a suspicious start/end pair has its start but never its end (message starts `可疑：`) |
+| Y120 | error | CR-203 | a certain pair has its end but never its start |
+| Y121 | error | CR-501 | an option line's `#` is followed by plain text |
+| Y900 | error | internal | the Yarn parser threw; a failure of ours, not of the file |
+
+### Defines (`shell/mods/validate.js`)
+
+`D001`–`D007` and `M001`–`M008` predate this spec and check the JSON package
+against `knowledge.json`'s schemas; they are not part of the Yarn rule set and are
+unchanged. `D005` (a `TechName reference to …` points at nothing) and `D006` (a
+`Relative path to …` file is missing) have the same conditions as spec CR-301 and
+CR-302; the rest of the D/M family has no spec counterpart and is local to us.
+
+### What of §11 is implemented
+
+- **§11.1** switches and empty-index silence: `checkDefines`/`checkVariables`/
+  `checkNodes` gate CR-108/109/114, CR-103/104/112 and CR-101/102 respectively;
+  an empty tag vocabulary, state table, character set or node index silences that
+  family instead of reporting every value as unknown. The switches are a `ctx.checks`
+  seam (`shell/mods/index.js`) with the shipped default "all on"; wiring them to a
+  settings UI is the shell's job, not this module's.
+- **§11.2** slot yielding: a `【…】` inside the checked token suppresses every rule
+  except CR-502 (which needs the block library we do not ship, so it is not
+  implemented); we treat every `【…】` as a slot, which over-yields on purpose —
+  under-reporting beats inventing slots.
+- **§11.3** the 500-diagnostics-per-document cap and the 13-step generation order
+  (tags at step 5, pairs at step 6 by file sort, node groups at step 12).
+- **§11.4** related positions: emitted as a `related[]` member when a rule has one
+  (first declaration, earlier group member); the web panel does not render them yet.
+- **§11.5** the current text's nodes/variables join the index before checking;
+  unsaved *other* files cannot exist in a headless library.
+- **§11.7** dedupe keys: pairs by (mod, pair, direction), CR-104 by (file, variable),
+  CR-115/116 per group member, the rest per occurrence.
+- **§11.10** the do-not-report list: speaker lines, the `when:` expression, comments,
+  JSON syntax, and command-name case are not judged; the codes marked 我们自有 above
+  are the deliberate exceptions this fork keeps, and all of them are warning/info
+  except the two structural ones that stay warnings by decision (Y003, Y005, Y006).
+
+Two deviations from the spec's data, both because the data is absent from this
+repo: the state table is the game's own 16 state names (`knowledge.json`), not the
+130 `Defines/CharacterState` names the reverse-engineering saw; and the command-pair
+table is derived from `knowledge.json`'s own command names and verb families
+(start/stop, enable/disable, add/remove, install/uninstall, equip/unequip, open/close,
+show/hide) rather than read from a `模块.json` that does not exist here. Which
+families are "certain" and which are "suspicious" follows that derivation, so CR-202
+ships with the state-ish pairs (start/stop, show/hide, play/stop, start/end) and
+CR-201/203 with the resource-ish ones.
+
+The 177-check count includes a block for the L1 diagnostic rules taken from
+`03-诊断规则目录.md`: each rule gets a bad fixture that must produce exactly that
+code, a clean fixture that must produce none, and the shared behaviours (§11.1
+empty-index silence and its three switches, §11.2 slot yielding, §11.3 the 500
+cap and generation order, §11.5 the current text joining the index, §11.7 dedupe,
+§11.10 the do-not-report list) get checks of their own. The fixtures are written
+into a temporary directory when the suite runs; the deliberately broken package
+they are modelled on ships as `examples/Mods/Lantern_Tests`, so the rules can be
+seen firing in the editor without it becoming the default `--mods-root` package.
+
 ## Data facts worth knowing
 
 These are properties of the game's own shipped data, not defects in this fork:
@@ -303,7 +398,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 81 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 177 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

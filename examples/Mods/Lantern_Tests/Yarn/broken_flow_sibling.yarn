@@ -1,0 +1,6 @@
+title: ZzFlowSibling
+---
+<<declare $zed>>
+<<DisableDanmaku>>
+ZzSpeaker: 重复声明，并且只有收尾。 #line:9
+===

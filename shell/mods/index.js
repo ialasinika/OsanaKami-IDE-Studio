@@ -49,6 +49,38 @@ const STATE_TAGS = [
 /** Yarn 行内元数据的已知键（原 api.js:288）。 */
 const KNOWN_META_KEYS = ['line', 'state', 'vo'];
 
+/**
+ * 行内标签词表（CR-105/106/107 的「合法标签」）。
+ * 内建标签是语法关键字；结果标识与人格标签从 knowledge.json 的基线库派生（不写死游戏名）。
+ */
+const BUILTIN_TAGS = [
+  'line', 'state', 'Topic', 'Check', 'Modify', 'reach', 'hub',
+  'vo', 'reveal', 'checkpoint', 'resume', 'validator_ignore'
+];
+
+/** 必须带参数的标签（CR-113；`line` 单独豁免）。 */
+const TAG_NEEDS_PARAM = ['state', 'Topic', 'Check', 'Modify'];
+
+/**
+ * 配对命令的动词族（CR-201/202/203 的配对表来源，不写死具体命令名）。
+ * 规格的配对表（02 §5.2 模块.json 的 `pairs[].certain`）不在仓库里，这里按动词族派生：
+ * 资源分配型（Add/Remove、Enable/Disable、Install/Uninstall、Equip/Unequip）→ certain，
+ * 漏收尾一定会留下泄漏，报 CR-201/203（error）；
+ * 状态持续型（Show/Hide、Start/Stop、Start/End、Play/Stop、Open/Close）→ 可疑，
+ * 作者可能有意让状态保持到场景结束，只报 CR-202（info，带「可疑：」前缀）。
+ */
+const PAIR_VERBS = [
+  { a: 'Add', b: 'Remove', certain: true },
+  { a: 'Enable', b: 'Disable', certain: true },
+  { a: 'Install', b: 'Uninstall', certain: true },
+  { a: 'Equip', b: 'Unequip', certain: true },
+  { a: 'Open', b: 'Close', certain: false },
+  { a: 'Show', b: 'Hide', certain: false },
+  { a: 'Start', b: 'Stop', certain: false },
+  { a: 'Start', b: 'End', certain: false },
+  { a: 'Play', b: 'Stop', certain: false }
+];
+
 const IGNORE_DIRS = new Set(['.git', '.svn', '.node_modules', 'node_modules', '__pycache__', '.vs', '.idea']);
 
 const MAX_DEPTH = 24;
@@ -223,7 +255,9 @@ function createMods(options) {
     root: null,
     manifest: null,
     mod: null,
-    nodeTitlesByRoot: new Map()
+    nodeTitlesByRoot: new Map(),
+    modIndexByRoot: new Map(),
+    pairs: null
   };
 
   /* ---------------- 路径护栏 ---------------- */
@@ -548,9 +582,8 @@ function createMods(options) {
             'Yarn file cannot be read as UTF-8: ' + r.error));
           continue;
         }
-        for (const m of r.text.matchAll(/^[ \t]*title[ \t]*:[ \t]*(.+?)[ \t]*$/gm)) {
-          const t = m[1].trim();
-          if (t && !nodeSeen.has(t)) { nodeSeen.add(t); nodeTitles.push(t); }
+        for (const name of nodeNamesFromText(r.text)) {
+          if (name && !nodeSeen.has(name)) { nodeSeen.add(name); nodeTitles.push(name); }
         }
         continue;
       }
@@ -657,6 +690,31 @@ function createMods(options) {
     return cache.root;
   }
 
+  /**
+   * 一段 .yarn 文本里声明的节点名：title，或 title.subtitle（规格 §3「节点」条）。
+   * 只收 title 会让 `visited("Title.Sub")` / `jump Title.Sub` 这类引用被误判成缺节点。
+   */
+  function nodeNamesFromText(text) {
+    const out = [];
+    const lines = String(text || '').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^[ \t]*title[ \t]*:[ \t]*(.+?)[ \t]*$/.exec(lines[i]);
+      if (!m) continue;
+      const t = m[1].trim();
+      if (!t) continue;
+      let sub = null;
+      for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j].trim();
+        if (/^-{3,}\s*$/.test(l)) break;
+        const sm = /^subtitle[ \t]*:[ \t]*(.*)$/.exec(l);
+        if (sm) { sub = sm[1].trim() || null; break; }
+      }
+      if (sub) out.push(t, t + '.' + sub);
+      else out.push(t);
+    }
+    return out;
+  }
+
   /** 某个 root 下所有 .yarn 声明过的节点标题（按 root 缓存）。 */
   function localNodeTitles(root) {
     if (!root) return [];
@@ -670,18 +728,155 @@ function createMods(options) {
       if (!/\.yarn$/i.test(f.rel)) continue;
       const r = readText(f.abs);
       if (!r.ok) continue;
-      for (const m of r.text.matchAll(/^[ \t]*title[ \t]*:[ \t]*(.+?)[ \t]*$/gm)) {
-        const t = m[1].trim();
-        if (t && !seen.has(t)) { seen.add(t); titles.push(t); }
+      for (const name of nodeNamesFromText(r.text)) {
+        if (name && !seen.has(name)) { seen.add(name); titles.push(name); }
       }
     }
     cache.nodeTitlesByRoot.set(root, titles);
     return titles;
   }
 
+  /** 读一个 .yarn 节点头里的 subtitle / when（CR-115/116 的组成员数据）。 */
+  function nodeHeaderInfo(text, headerLine) {
+    const lines = String(text || '').split(/\r?\n/);
+    const out = { subtitle: null, subtitleLine: 0, when: null };
+    for (let i = (headerLine || 1) - 1; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (i > (headerLine || 1) - 1 && /^-{3,}\s*$/.test(t)) break;
+      let m = /^subtitle\s*:\s*(.*)$/.exec(t);
+      if (m) { out.subtitle = m[1].trim() || null; out.subtitleLine = i + 1; continue; }
+      m = /^when\s*:\s*(.*)$/.exec(t);
+      if (m) out.when = m[1].trim() || null;
+    }
+    return out;
+  }
+
+  /**
+   * 一个 Mod 包内的跨文件索引（按 root 缓存）：
+   *   declarations {name:{file,line}}、nodeGroups Map(title → members)、
+   *   commands [{name,file,line,args}]、characters Set(techName)、modNames []。
+   * 供 CR-104 / CR-115 / CR-116 / CR-201..203 / CR-114 / CR-105 使用。
+   */
+  function localModIndex(root) {
+    if (!root) return null;
+    if (cache.modIndexByRoot.has(root)) return cache.modIndexByRoot.get(root);
+    const files = [];
+    const errs = [];
+    collectFiles(root, files, errs, 0, '');
+    files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    const declarations = {};
+    const groups = new Map();
+    const commands = [];
+    const characters = new Set();
+    for (const f of files) {
+      if (/\.yarn$/i.test(f.rel)) {
+        const r = readText(f.abs);
+        if (!r.ok) continue;
+        let parsed = null;
+        try { parsed = yarnCore.parseYarn(r.text, { fileName: f.rel }); } catch { parsed = null; }
+        if (!parsed) continue;
+        for (const node of parsed.nodes || []) {
+          if (!node || !node.title) continue;
+          const head = nodeHeaderInfo(r.text, node.headerLine);
+          if (!groups.has(node.title)) groups.set(node.title, []);
+          groups.get(node.title).push({
+            file: f.rel,
+            line: node.headerLine,
+            subtitleLine: head.subtitleLine || node.headerLine,
+            subtitle: head.subtitle,
+            when: head.when
+          });
+          for (const d of node.declarations || []) {
+            if (d && d.name && !Object.prototype.hasOwnProperty.call(declarations, d.name)) {
+              declarations[d.name] = { file: f.rel, line: d.line };
+            }
+          }
+          for (const c of node.commands || []) {
+            commands.push({ name: c.name, file: f.rel, line: c.line, args: c.args || '' });
+          }
+        }
+      } else if (/^Defines\/Character\/[^/]+\.json$/i.test(f.rel)) {
+        try {
+          const obj = JSON.parse(stripBom(fs.readFileSync(f.abs, 'utf8')));
+          if (obj && typeof obj.techName === 'string' && obj.techName) characters.add(obj.techName);
+        } catch {
+          /* 坏 JSON 由 validate 报，这里静默 */
+        }
+      }
+    }
+    // 同级目录名也是合法标签（`#MyMod` 这类 mod 命名空间标签）
+    const modNames = [];
+    try {
+      for (const e of fs.readdirSync(path.dirname(root), { withFileTypes: true })) {
+        if (e.isDirectory() && !e.name.startsWith('.')) modNames.push(e.name);
+      }
+    } catch {
+      /* 读不到父目录就算了 */
+    }
+    const info = { declarations, groups, commands, characters, modNames };
+    cache.modIndexByRoot.set(root, info);
+    return info;
+  }
+
+  /** 由基线库派生结果标识标签（`Result_X` → `X`）与人格标签（`Attr` 名 + `W_` 前缀）。 */
+  function tagVocabulary(kb) {
+    const baseline = (kb && kb.baseline) || {};
+    const result = (baseline.Result || [])
+      .map((n) => String(n).replace(/^Result_/, ''))
+      .filter(Boolean);
+    const attr = (baseline.Attr || []).map((n) => String(n)).filter(Boolean);
+    const personality = attr.concat(attr.map((n) => 'W_' + n));
+    return { builtin: BUILTIN_TAGS.slice(), result, personality };
+  }
+
+  /** 角色名集合：基线库 Character ∪ 本地化角色表 ∪ 本 Mod 自己定义的 Character。 */
+  function characterNames(kb, idx) {
+    const set = new Set();
+    const baseline = (kb && kb.baseline) || {};
+    for (const n of baseline.Character || []) set.add(String(n));
+    const locChars = kb && kb.localization ? kb.localization.characters : null;
+    if (Array.isArray(locChars)) {
+      for (const c of locChars) {
+        if (typeof c === 'string') set.add(c);
+        else if (c && typeof c === 'object' && c.name) set.add(String(c.name));
+      }
+    } else if (locChars && typeof locChars === 'object') {
+      for (const k of Object.keys(locChars)) set.add(k);
+    }
+    if (idx && idx.characters) for (const n of idx.characters) set.add(n);
+    return Array.from(set);
+  }
+
+  /**
+   * 配对命令表（CR-201/202/203）：用动词族在 knowledge.json 的命令名里找成对命令，
+   * 不写死任何具体命令名。确定型/可疑型由动词族决定（见 PAIR_VERBS 注释）。
+   */
+  function commandPairs(kb) {
+    if (cache.pairs) return cache.pairs;
+    const names = new Set();
+    for (const c of (kb && kb.commands) || []) if (c && c.name) names.add(c.name);
+    for (const c of (kb && kb.undocumentedCommands) || []) if (c && c.name) names.add(c.name);
+    const out = [];
+    const seen = new Set();
+    for (const verb of PAIR_VERBS) {
+      for (const n of names) {
+        if (n.slice(0, verb.a.length) !== verb.a) continue;
+        const partner = verb.b + n.slice(verb.a.length);
+        if (!names.has(partner)) continue;
+        const key = n + '\u0000' + partner;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ start: n, end: partner, certain: verb.certain, why: verb.a + '/' + verb.b });
+      }
+    }
+    out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+    cache.pairs = out;
+    return out;
+  }
+
   /* ---------------- Yarn 诊断 ---------------- */
 
-  function buildDiagnoseContext(kb, fileName) {
+  function buildDiagnoseContext(kb, fileName, root) {
     const commands = {};
     for (const c of kb.commands || []) commands[c.name] = c;
     for (const c of kb.undocumentedCommands || []) {
@@ -694,6 +889,21 @@ function createMods(options) {
     for (const v of kb.undeclaredVariables || []) if (!variables[v.name]) variables[v.name] = 'number';
     const nodeIndex = {};
     for (const n of kb.nodes || []) nodeIndex[n.title] = n.file;
+
+    // 跨文件索引（本 Mod 包）：声明、节点组、命令用法、角色名
+    const idx = localModIndex(root);
+
+    // CR-104：全局声明索引 = 游戏基线（knowledge.json 的 variables）∪ 本 Mod 的 declare
+    const declarations = {};
+    for (const v of kb.variables || []) {
+      if (v && v.name) declarations[v.name] = { file: '', line: 0 };
+    }
+    if (idx) {
+      for (const name of Object.keys(idx.declarations)) {
+        declarations[name] = idx.declarations[name];
+      }
+    }
+
     return {
       fileName: fileName,
       commands: commands,
@@ -701,7 +911,15 @@ function createMods(options) {
       variables: variables,
       nodeIndex: nodeIndex,
       stateTags: STATE_TAGS.slice(),
-      knownMetaKeys: KNOWN_META_KEYS.slice()
+      knownMetaKeys: KNOWN_META_KEYS.slice(),
+      characters: characterNames(kb, idx),
+      tagVocabulary: tagVocabulary(kb),
+      modNames: idx ? idx.modNames : [],
+      declarations: declarations,
+      nodeGroups: idx ? idx.groups : null,
+      modCommands: idx ? idx.commands : null,
+      pairs: commandPairs(kb),
+      checks: { defines: true, variables: true, nodes: true }
     };
   }
 
@@ -720,7 +938,21 @@ function createMods(options) {
     if (rootArg != null && String(rootArg).trim() !== '') root = resolveArg(rootArg, 'root');
 
     const kb = knowledge();
-    const ctx = buildDiagnoseContext(kb, fileName);
+    const ctx = buildDiagnoseContext(kb, fileName, root);
+    // 磁盘索引里存的是 Mod 内相对路径；把调用方给的（可能是绝对的）fileName 归一成同一把钥匙，
+    // 否则「当前文件」会被误当成另一个文件而重复计入节点组/命令/声明（§11.5 的并入语义）。
+    if (root) {
+      const rel = path.relative(root, fileName);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        ctx.fileKey = rel.split(path.sep).join('/');
+      }
+    }
+    // 宿主/测试可以覆盖任意上下文（例如 §11.1 开关、空索引夹具）
+    if (p.context && typeof p.context === 'object') {
+      for (const k of Object.keys(p.context)) ctx[k] = p.context[k];
+    } else if (p.checks && typeof p.checks === 'object') {
+      ctx.checks = Object.assign({ defines: true, variables: true, nodes: true }, p.checks);
+    }
     for (const t of localNodeTitles(root)) {
       if (!ctx.nodeIndex[t]) ctx.nodeIndex[t] = '';
     }
@@ -729,6 +961,7 @@ function createMods(options) {
     try {
       nodes = (yarnCore.parseYarn(text, { fileName: fileName }).nodes || []).map((n) => ({
         title: n.title,
+        subtitle: n.subtitle || null,
         tags: n.tags,
         line: n.headerLine,
         endLine: n.bodyEndLine
@@ -737,7 +970,10 @@ function createMods(options) {
       /* 解析失败时只保留诊断 */
     }
     for (const n of nodes) {
-      if (n.title && !ctx.nodeIndex[n.title]) ctx.nodeIndex[n.title] = fileName;
+      if (!n.title) continue;
+      if (!ctx.nodeIndex[n.title]) ctx.nodeIndex[n.title] = fileName;
+      const full = n.subtitle ? n.title + '.' + n.subtitle : null;
+      if (full && !ctx.nodeIndex[full]) ctx.nodeIndex[full] = fileName;
     }
 
     let diagnostics = [];

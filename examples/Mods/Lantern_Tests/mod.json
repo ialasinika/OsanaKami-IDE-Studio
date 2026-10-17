@@ -1,0 +1,9 @@
+{
+  "name": "Lantern_Tests",
+  "displayName": "Lantern Tests（故意写坏）",
+  "version": "0.1.0",
+  "gameVersion": "1.0",
+  "loadOrder": 6,
+  "author": "InfantGodIDE examples",
+  "description": "A deliberately broken package used as the negative fixture for the L1 diagnostic rules. Every file in it is written to fail exactly one rule; Yarn/clean.yarn is the control that must report nothing. It is not the default example（默认示例是 ../Lantern）。"
+}

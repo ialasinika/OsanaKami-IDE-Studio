@@ -384,6 +384,219 @@ section("a package that references its own defines and files");
     JSON.stringify(stale.diagnostics.map((d) => d.code)));
 }
 
+/* ------------------------------------------------------------------ */
+/* the L1 diagnostic rules from 03-诊断规则目录.md                     */
+/* ------------------------------------------------------------------ */
+
+section("the L1 diagnostic rules (03 规格)");
+
+{
+  const L1_ROOT = join(specTemp("infantgod-l1-"), "Lantern_Tests");
+  const plain = (title, body) => "title: " + title + "\n---\n" + body + "\n===\n";
+  const headed = (title, header, body) => "title: " + title + "\n" + header + "---\n" + body + "\n===\n";
+  const line = "台词。 #line:9";
+  let seq = 0;
+
+  function l1Run(where, files, mainRel, context) {
+    const dir = join(L1_ROOT, where);
+    for (const rel of Object.keys(files)) specWrite(join(dir, rel), files[rel]);
+    specMods.openMod({ dir });
+    const params = { text: files[mainRel], fileName: mainRel, root: dir };
+    if (context) params.context = context;
+    return specMods.diagnoseYarn(params).diagnostics.map((d) => d.code);
+  }
+
+  function l1Rule(label, code, bad, good) {
+    seq += 1;
+    const badCodes = l1Run("bad-" + seq, bad.files, bad.main, bad.context);
+    const goodCodes = l1Run("good-" + seq, good.files, good.main, good.context);
+    const badHits = badCodes.filter((c) => c === code).length;
+    const goodHits = goodCodes.filter((c) => c === code).length;
+    check(label, badHits === 1 && goodHits === 0,
+      "bad=" + JSON.stringify(badCodes) + " good=" + JSON.stringify(goodCodes));
+  }
+
+  // CR-102 / Y108：visited 的目标节点不存在
+  l1Rule("Y108 CR-102: visited 的目标节点不存在", "Y108",
+    { files: { "Yarn/main.yarn": plain("ZzStart", '<<if visited("ZzGhost")>>\n' + line + "\n<<endif>>") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", '<<if visited("ZzStart")>>\n' + line + "\n<<endif>>") }, main: "Yarn/main.yarn" });
+
+  // CR-104 / Y109：跨文件重复 declare
+  l1Rule("Y109 CR-104: 跨文件重复 declare", "Y109",
+    { files: {
+      "Yarn/a.yarn": plain("ZzA", "<<declare $zed>>"),
+      "Yarn/main.yarn": plain("ZzB", "<<declare $zed>>")
+    }, main: "Yarn/main.yarn" },
+    { files: {
+      "Yarn/a.yarn": plain("ZzA", "<<declare $other>>"),
+      "Yarn/main.yarn": plain("ZzB", "<<declare $zed>>")
+    }, main: "Yarn/main.yarn" });
+
+  // CR-105 / Y112：未知标签
+  l1Rule("Y112 CR-105: 未知标签", "Y112",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #Nope #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #Topic:ZzTopic #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-106 / Y113：标签只差大小写
+  l1Rule("Y113 CR-106: 标签名大小写不对", "Y113",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #topic:Zz #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #Topic:Zz #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-113 / Y110：需要参数的标签缺参数（`line` 豁免）
+  l1Rule("Y110 CR-113: 需要参数的标签缺参数", "Y110",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #Check #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #Check:Zz:1:Zz #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-107 / Y114：`#state` 漏了冒号
+  l1Rule("Y114 CR-107: #state 漏了冒号", "Y114",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #stateIdle #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:Idle #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-108 / Y115：`#state:` 的值只差大小写
+  l1Rule("Y115 CR-108: #state 值大小写不对", "Y115",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:idle #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:Idle #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-109 / Y104：`#state:` 的值不存在（warning，规格依赖数据不完整）
+  l1Rule("Y104 CR-109: #state 的值不存在（warning）", "Y104",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:ZzNope #line:9") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:Idle #line:9") }, main: "Yarn/main.yarn" });
+
+  // CR-114 / Y111：`Character:` 行里的名字不是角色
+  l1Rule("Y111 CR-114: Character: 行里的名字不是角色", "Y111",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "Character:ZzGhost\n" + line) }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "Character:ZzProbe\n" + line) }, main: "Yarn/main.yarn",
+      context: { characters: ["ZzProbe"] } });
+
+  // CR-115 / Y116：节点组成员缺 subtitle
+  l1Rule("Y116 CR-115: 节点组成员缺 subtitle", "Y116",
+    { files: {
+      "Yarn/main.yarn": headed("ZzPair", "when: always\n", line),
+      "Yarn/b.yarn": headed("ZzPair", "subtitle: ZzOne\nwhen: always\n", line)
+    }, main: "Yarn/main.yarn" },
+    { files: {
+      "Yarn/main.yarn": headed("ZzPair", "subtitle: ZzTwo\nwhen: always\n", line),
+      "Yarn/b.yarn": headed("ZzPair", "subtitle: ZzOne\nwhen: always\n", line)
+    }, main: "Yarn/main.yarn" });
+
+  // CR-116 / Y117：节点组里 subtitle 撞车（报后一个成员）
+  l1Rule("Y117 CR-116: 节点组里 subtitle 重复", "Y117",
+    { files: {
+      "Yarn/a.yarn": headed("ZzPair", "subtitle: ZzSame\nwhen: always\n", line),
+      "Yarn/b.yarn": headed("ZzPair", "subtitle: ZzSame\nwhen: always\n", line)
+    }, main: "Yarn/b.yarn" },
+    { files: {
+      "Yarn/a.yarn": headed("ZzPair", "subtitle: ZzSame\nwhen: always\n", line),
+      "Yarn/b.yarn": headed("ZzPair", "subtitle: ZzOther\nwhen: always\n", line)
+    }, main: "Yarn/b.yarn" });
+
+  // CR-201 / Y118：确定型配对只有起手（配对表由 knowledge.json 的动词族派生）
+  l1Rule("Y118 CR-201: 确定型配对只有起手", "Y118",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<EnableDanmaku>>") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<EnableDanmaku>>\n<<DisableDanmaku>>") }, main: "Yarn/main.yarn" });
+
+  // CR-202 / Y119：可疑型配对只有起手（info，带「可疑：」前缀）
+  l1Rule("Y119 CR-202: 可疑型配对只有起手（info）", "Y119",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<StartGibberish>>") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<StartGibberish>>\n<<StopGibberish>>") }, main: "Yarn/main.yarn" });
+
+  // CR-203 / Y120：确定型配对只有收尾
+  l1Rule("Y120 CR-203: 确定型配对只有收尾", "Y120",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<DisableDanmaku>>") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "<<EnableDanmaku>>\n<<DisableDanmaku>>") }, main: "Yarn/main.yarn" });
+
+  // CR-501 / Y121：选项行 `#` 后面混了普通文字
+  l1Rule("Y121 CR-501: 选项行 # 后混普通文字", "Y121",
+    { files: { "Yarn/main.yarn": plain("ZzStart", "-> 选项文字 #后面跟着普通文字") }, main: "Yarn/main.yarn" },
+    { files: { "Yarn/main.yarn": plain("ZzStart", "-> 选项文字 #Topic:ZzTopic") }, main: "Yarn/main.yarn" });
+
+  // §11.1 索引为空时该族静默（空数据 ≠ 名字都错）
+  const emptyTags = l1Run("empty-tags", { "Yarn/main.yarn": plain("ZzStart", "台词。 #Nope #line:9") },
+    "Yarn/main.yarn", { tagVocabulary: { builtin: [], result: [], personality: [] }, modNames: [] });
+  check("§11.1 空标签词表时标签族静默",
+    emptyTags.every((c) => c !== "Y112" && c !== "Y113"), JSON.stringify(emptyTags));
+
+  const emptyStates = l1Run("empty-states", { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:idle #line:9") },
+    "Yarn/main.yarn", { stateTags: [] });
+  check("§11.1 空状态表时 #state 值检查静默",
+    emptyStates.every((c) => c !== "Y104" && c !== "Y115"), JSON.stringify(emptyStates));
+
+  const emptyChars = l1Run("empty-chars", { "Yarn/main.yarn": plain("ZzStart", "Character:ZzGhost\n" + line) },
+    "Yarn/main.yarn", { characters: [] });
+  check("§11.1 空角色表时 CR-114 静默",
+    emptyChars.every((c) => c !== "Y111"), JSON.stringify(emptyChars));
+
+  const offDefines = l1Run("off-defines", { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:idle #line:9") },
+    "Yarn/main.yarn", { checks: { defines: false } });
+  check("§11.1 关掉 checkDefines 后 #state 检查静默",
+    offDefines.every((c) => c !== "Y104" && c !== "Y115"), JSON.stringify(offDefines));
+
+  const offVars = l1Run("off-vars", {
+    "Yarn/a.yarn": plain("ZzA", "<<declare $zed>>"),
+    "Yarn/main.yarn": plain("ZzB", "<<declare $zed>>")
+  }, "Yarn/main.yarn", { checks: { variables: false } });
+  check("§11.1 关掉 checkVariables 后重复 declare 静默",
+    offVars.every((c) => c !== "Y109"), JSON.stringify(offVars));
+
+  const offNodes = l1Run("off-nodes", { "Yarn/main.yarn": plain("ZzStart", '<<if visited("ZzGhost")>>\n' + line + "\n<<endif>>") },
+    "Yarn/main.yarn", { checks: { nodes: false } });
+  check("§11.1 关掉 checkNodes 后 visited 检查静默",
+    offNodes.every((c) => c !== "Y108"), JSON.stringify(offNodes));
+
+  // §11.2 槽位让路：`【…】` 让除了 CR-502 以外的规则全部让路
+  const slotTags = l1Run("slot-tags", { "Yarn/main.yarn": plain("ZzStart", "台词。 #state:【状态】 #line:9") },
+    "Yarn/main.yarn");
+  check("§11.2 槽位让路：标签族不报",
+    slotTags.every((c) => c !== "Y104" && c !== "Y110" && c !== "Y112" && c !== "Y115"), JSON.stringify(slotTags));
+
+  const slotOpt = l1Run("slot-opt", { "Yarn/main.yarn": plain("ZzStart", "-> 选项【名字】 #普通文字") },
+    "Yarn/main.yarn");
+  check("§11.2 槽位让路：选项行不报 CR-501",
+    slotOpt.every((c) => c !== "Y121"), JSON.stringify(slotOpt));
+
+  // §11.3 生成顺序：step5 的标签诊断排在 step6 的配对诊断之前
+  const order = l1Run("order", { "Yarn/main.yarn": plain("ZzStart", "<<EnableDanmaku>>\n台词。 #Nope #line:9") },
+    "Yarn/main.yarn");
+  check("§11.3 生成顺序：标签诊断先于配对诊断",
+    order.indexOf("Y112") >= 0 && order.indexOf("Y118") >= 0 && order.indexOf("Y112") < order.indexOf("Y118"),
+    JSON.stringify(order));
+
+  // §11.3 单文档 500 条上限
+  const tags600 = [];
+  for (let i = 0; i < 600; i++) tags600.push("#Nope" + i);
+  const capped = l1Run("cap", { "Yarn/main.yarn": plain("ZzStart", "台词。 " + tags600.join(" ") + " #line:9") },
+    "Yarn/main.yarn");
+  check("§11.3 单文档 500 条上限", capped.length === 500, String(capped.length));
+
+  // §11.7 去重：跨文件的重复 declare 在一个文件里只报一次
+  const dedupe = l1Run("dedupe", {
+    "Yarn/a.yarn": plain("ZzA", "<<declare $zed>>"),
+    "Yarn/main.yarn": plain("ZzB", "<<declare $zed>>\n<<declare $zed>>\n<<declare $zed>>")
+  }, "Yarn/main.yarn");
+  check("§11.7 去重：同文件多次 declare 只报一次",
+    dedupe.filter((c) => c === "Y109").length === 1, JSON.stringify(dedupe));
+
+  // §11.10 明确不报清单：when 表达式、说话者名字、注释都不判
+  const quiet = l1Run("quiet", {
+    "Yarn/main.yarn": "title: ZzStart\nwhen: 1 +* 2\n---\nCustomSpeaker: 台词。 #line:9\n// #Nope 在注释里\n===\n"
+  }, "Yarn/main.yarn");
+  check("§11.10 明确不报：when 表达式 / 说话者名 / 注释",
+    quiet.length === 0, JSON.stringify(quiet));
+
+  // §11.5 未保存文档并入：jump 到同一文本里的节点不算缺失
+  const unsaved = l1Run("unsaved", {
+    "Yarn/main.yarn": "title: ZzStart\n---\n<<jump ZzTarget>>\n台词。 #line:9\n===\ntitle: ZzTarget\n---\n台词。 #line:10\n===\n"
+  }, "Yarn/main.yarn");
+  check("§11.5 未保存文本里的节点能被 jump 找到",
+    unsaved.every((c) => c !== "Y002"), JSON.stringify(unsaved));
+
+  // 干净夹具：一条诊断都不该有
+  const cleanAll = l1Run("clean", {
+    "Yarn/main.yarn": plain("ZzClean", "ZzSpeaker: 干净的一句话。 #line:10 #state:Idle\nZzSpeaker: 再来一句。 #line:11 #Topic:ZzTopic")
+  }, "Yarn/main.yarn");
+  check("L1 干净夹具零诊断", cleanAll.length === 0, JSON.stringify(cleanAll));
+}
+
 section("a package that is missing or unreadable");
 
 {

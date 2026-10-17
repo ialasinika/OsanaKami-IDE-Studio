@@ -1,0 +1,8 @@
+title: ZzFlowStart
+---
+<<declare $zed>>
+<<if visited("ZzGhostNode")>>
+<<EnableDanmaku>>
+ZzSpeaker: 起手有，收尾没有。 #line:8
+<<endif>>
+===
