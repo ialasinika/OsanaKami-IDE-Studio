@@ -778,6 +778,39 @@ stands in this tree.
   cover the tag sources and `--diff`.  Nine breaks and four breaks respectively each
   turned their own check red, and every file came back byte-identical.
 
+### The mod checker learns the compiler's rules, and stops guessing
+
+- The Yarn diagnostics were rebuilt against a specification reverse-engineered
+  from the game's own editor extension, read as truth about the file format
+  rather than as a feature list.  Fifteen rules the game rejects a whole mod over
+  are new: a `visited()` target that does not exist (`Y108`), a `<<declare>>`
+  whose first declarer is another file (`Y109`), a tag that needs a parameter and
+  has none (`Y110`), a `Character:` line naming someone unknown (`Y111`), unknown
+  and wrong-case tags and a `#state` missing its colon (`Y112`/`Y113`/`Y114`), a
+  `#state` value in the wrong case (`Y115`), a node group member without its
+  subtitle or with a duplicate one (`Y116`/`Y117`), paired commands that start and
+  never end (`Y118`/`Y119`/`Y120`), and a shortcut option whose `#` runs into
+  plain text (`Y121`).  Every error code we emit now has an error in the
+  specification behind it; `Y103` and `Y105` became info, `Y003`/`Y005`/`Y006`
+  became warnings, `Y000` was removed and `Y004` retired into `Y117`.
+- The shared behaviours from the specification's section 11 are what make the
+  checks usable at scale: a family goes silent when its index is empty instead of
+  calling every value unknown; a `【…】` placeholder suppresses everything but the
+  slot rule; 500 findings per file in the specification's generation order;
+  per-group and per-pair dedupe; and an explicit do-not-report list (speaker
+  names, `when:` expressions, function names, a lone `#line`).  Suggestions are
+  deterministic — candidates from the current index only, a case-only difference
+  wins, ties by code point.
+- `examples/Mods/Lantern_Tests/` is the negative fixture: eight files, one rule
+  per file, and a clean control file that must stay silent.  It is deliberately
+  not the default example and carries no game data.
+- The mod suite went 148 → 177 checks (one per rule, positive and negative); the
+  real corpus (211 `.yarn` files through the production path) went 191 → 200
+  findings, and each new one was read by hand: a `visited(" …")` with a leading
+  space, `#Idle:`, `#troll`, six lowercase `#state:` values, two MyMod command
+  pairs that start and never end.  Fifteen breaks, one rule muted at a time, each
+  turned exactly its own check red, and `yarn.js` came back byte-identical.
+
 ### A language service we can build on
 
 - `shell/mods/positions.js` is the offset layer everything else in the language
@@ -801,7 +834,10 @@ stands in this tree.
   there is still one fuzzy matcher and one knowledge base.  Built-in commands
   (`jump`, `detour`, `visited`, …) are answered from the parser's own list because
   they are not in the knowledge base.  Fifty-three checks over the real index:
-  136 commands, 63 functions, 678 variables, 1221 nodes, 53 characters.
+  136 commands, 63 functions, 678 variables, 1221 nodes, 53 characters.  Both
+  sets started as scratch files under `build/` and now run as two sections of
+  `node shell/mods/selftest.mjs` (290 checks), because a check that only exists
+  on the machine that wrote it is not a check.
 - `docs/LANGUAGE.md` writes down what was taken from the reference specification
   and what was deliberately left: the L1 rules, the L2 verbs and the position
   contract are in; the VS Code host contract (a `package.json` `engines` field, 30
@@ -879,7 +915,7 @@ stands in this tree.
 
 - `make test` (e2e 22/22 in full mode, and 19 passed + 3 skipped against the kernel
   alone, kernel probe, cli-check, version-check, JSON, blob 130/130, langs 91/91,
-  selftest 227/227, mods 148/148) and `make smoke` (browser smoke 11, input smoke
+  selftest 227/227, mods 290/290) and `make smoke` (browser smoke 11, input smoke
   43) are green.  The blob layer was held to the same bar rather than
   to "it compiles": ten breaks in `build/sabotage_blob.py` — a stale base not
   compared, a session table that answers to any id, an idle reaper that closes

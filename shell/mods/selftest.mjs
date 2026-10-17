@@ -1448,6 +1448,276 @@ section("nothing shipped under shell/ names a machine");
 
 /* ------------------------------------------------------------------ */
 
+/*
+ * 语言服务的位置层（docs/LANGUAGE.md §2）。位置是纯函数，不需要浏览器也不需要
+ * 语料：行从 1 数，列与 UTF-16 offset 从 0 数，CRLF 与裸 CR 各算一种行尾，区间
+ * 从不跨行。这里钉的是"屏幕要什么"，错一个偏移就是选错一个字符。
+ */
+section("language service: positions");
+{
+  const {
+    lineStarts, lineCount, offsetToPosition, positionToOffset, columnAt, lineText,
+    rangeBetween, rangeOfLineCols, diagnosticRange, wordAt, isRangeInText, shiftRange, formatRange,
+  } = require(join(HERE, "positions.js"));
+  const eq = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected),
+    `got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+
+  eq("empty text has one empty line", lineStarts(""), [0]);
+  eq("empty text counts as one line", lineCount(""), 1);
+  eq("one line, no terminator", lineStarts("abc"), [0]);
+  eq("LF starts a line", lineStarts("a\nb"), [0, 2]);
+  eq("a trailing LF opens a last empty line", lineStarts("a\n"), [0, 2]);
+  eq("CRLF counts as two code units", lineStarts("a\r\nb"), [0, 3]);
+  eq("CRLF line count", lineCount("a\r\nb"), 2);
+  eq("a lone CR is a line ending too", lineStarts("a\rb"), [0, 2]);
+  eq("blank lines", lineStarts("\n\n"), [0, 1, 2]);
+  eq("trailing CRLF", lineStarts("a\r\n"), [0, 3]);
+
+  eq("offset 0", offsetToPosition("abc", 0), { line: 1, character: 0 });
+  eq("offset 2", offsetToPosition("abc", 2), { line: 1, character: 2 });
+  eq("the end of the text is a position", offsetToPosition("abc", 3), { line: 1, character: 3 });
+  eq("past an LF", offsetToPosition("a\nb", 2), { line: 2, character: 0 });
+  eq("past a CRLF", offsetToPosition("a\r\nb", 3), { line: 2, character: 0 });
+  // The \r itself belongs to line 1, character 1.
+  eq("the CR is still line 1", offsetToPosition("a\r\nb", 1), { line: 1, character: 1 });
+  eq("offset past a trailing LF", offsetToPosition("a\n", 2), { line: 2, character: 0 });
+  eq("an offset past the end clamps", offsetToPosition("abc", 99), { line: 1, character: 3 });
+  eq("a negative offset clamps", offsetToPosition("abc", -5), { line: 1, character: 0 });
+  eq("a NaN offset clamps", offsetToPosition("abc", NaN), { line: 1, character: 0 });
+
+  // A smiley is TWO UTF-16 code units: the screen counts what the string counts.
+  const smiley = "\u{1F600}";
+  eq("a smiley is two code units", smiley.length, 2);
+  eq("the middle of a pair is a position", offsetToPosition(smiley + "x", 1), { line: 1, character: 1 });
+  eq("after a pair", offsetToPosition(smiley + "x", 2), { line: 1, character: 2 });
+  eq("column counts code units", columnAt(smiley + "x", 2), 2);
+
+  eq("position to offset 0", positionToOffset("abc", { line: 1, character: 0 }), 0);
+  eq("position to offset 2", positionToOffset("abc", { line: 1, character: 2 }), 2);
+  eq("a character past the line clamps to its end", positionToOffset("abc", { line: 1, character: 99 }), 3);
+  eq("line 2 begins after the LF", positionToOffset("a\nb", { line: 2, character: 0 }), 2);
+  eq("a line past the end clamps to the text end", positionToOffset("a\nb", { line: 9, character: 0 }), 3);
+  eq("line 0 still lands inside the text", positionToOffset("a\nb", { line: 0, character: 1 }), 1);
+  eq("line 2 of a CRLF file", positionToOffset("a\r\nb", { line: 2, character: 1 }), 4);
+
+  const text = "第一行\nsecond line\r\nthird\tline\n\n\u{1F600} emoji end";
+  let roundTrips = true;
+  for (let i = 0; i <= text.length; i += 1) {
+    if (positionToOffset(text, offsetToPosition(text, i)) !== i) { roundTrips = false; break; }
+  }
+  check("every offset survives the round trip", roundTrips);
+
+  eq("lineText strips a CRLF", lineText("a\r\nb", 1), "a");
+  eq("lineText, second line", lineText("a\r\nb", 2), "b");
+  eq("lineText past the end is empty", lineText("a\n", 5), "");
+
+  const range = rangeBetween("a\nbc\nd", 2, 4);
+  eq("range start", range.start, { line: 2, character: 0 });
+  eq("range end", range.end, { line: 2, character: 2 });
+  eq("range offsets", [range.startOffset, range.endOffset], [2, 4]);
+  eq("a backwards range is normalised", rangeBetween("abc", 3, 1).startOffset, 1);
+  eq("a range prints as line:col-line:col", formatRange(rangeBetween("abc", 1, 3)), "1:1-1:3");
+
+  const byLineCols = rangeOfLineCols("xx\nalpha beta\n", 2, 1, 6);
+  eq("line/column to offsets", [byLineCols.startOffset, byLineCols.endOffset], [3, 8]);
+  const toLineEnd = rangeOfLineCols("xx\nalpha beta\n", 2, 7, 7);
+  eq("a column range that runs to the end stops at the line end", [toLineEnd.startOffset, toLineEnd.endOffset], [9, 13]);
+  const onEmptyLine = rangeOfLineCols("a\n\nb", 2, 1, 1);
+  eq("an empty line has a zero-width range", [onEmptyLine.startOffset, onEmptyLine.endOffset], [2, 2]);
+
+  const diagText = "xx\n  <<jump Nowhere>>\n";
+  const withLength = diagnosticRange(diagText, { line: 2, col: 3, length: 14 });
+  eq("a diagnostic with a length", [withLength.startOffset, withLength.endOffset], [5, 19]);
+  const toEnd = diagnosticRange(diagText, { line: 2, col: 3 });
+  eq("a diagnostic without a length runs to the line end", [toEnd.startOffset, toEnd.endOffset], [5, 21]);
+  const noCol = diagnosticRange(diagText, { line: 2 });
+  eq("a diagnostic without a column starts at the line start", noCol.startOffset, 3);
+
+  eq("word at a command name", wordAt("  <<jump Nowhere>>", 8).text, "jump");
+  eq("word at an argument", wordAt("  <<jump Nowhere>>", 13).text, "Nowhere");
+  eq("word at a boundary", wordAt("abc def", 3).text, "abc");
+  eq("word after a space", wordAt("abc def", 4).text, "def");
+  eq("word with CJK and underscore", wordAt("节点: 灯笼_Awake", 5).text, "灯笼_Awake");
+  eq("no word in empty text", wordAt("", 0).text, "");
+
+  check("a range inside the text is accepted", isRangeInText("abcdef", { startOffset: 1, endOffset: 3 }));
+  check("a range outside the text is rejected", !isRangeInText("abcdef", { startOffset: 1, endOffset: 99 }));
+  check("a zero-width range is not a range in the text", !isRangeInText("abcdef", { startOffset: 2, endOffset: 2 }));
+  eq("shifting a range", shiftRange({ startOffset: 1, endOffset: 3 }, 10), { startOffset: 11, endOffset: 13 });
+  eq("a NaN shift leaves the range alone", shiftRange({ startOffset: 1, endOffset: 3 }, NaN), { startOffset: 1, endOffset: 3 });
+
+  const yarnText = "title: Demo\n---\n<<jump Missing>>\n\tWarden: Hello #line:abc1234\n";
+  const realRange = diagnosticRange(yarnText, { line: 3, col: 1, length: 16 });
+  eq("a real Yarn diagnostic lands on line 3", realRange.start.line, 3);
+  eq("a real Yarn diagnostic starts at column 1", realRange.start.character, 0);
+  eq("and covers the command", yarnText.slice(realRange.startOffset, realRange.endOffset), "<<jump Missing>>");
+}
+
+/*
+ * 补全与悬停（docs/LANGUAGE.md §3-§5）。两个函数都只读索引、不写盘：补全说
+ * "这里能写什么"，悬停说"这个词是什么"，没有把握时返回 null 而不是编一个。
+ */
+section("language service: completion and hover");
+{
+  const search = require(join(HERE, "search.js"));
+  const lang = require(join(HERE, "complete.js"));
+  const index = search.buildIndex(JSON.parse(readFileSync(KNOWLEDGE_PATH, "utf8")), {});
+  const eq = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected),
+    `got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+  const at = (text) => text.length;
+  const labels = (result, n) => result.items.slice(0, n || 5).map((i) => i.label);
+
+  {
+    const text = "<<jum";
+    const ctx = lang.classify(text, at(text));
+    eq("a command context", ctx.kind, "command");
+    eq("its prefix", ctx.prefix, "jum");
+    eq("its replace range", [ctx.replace.startOffset, ctx.replace.endOffset], [2, 5]);
+    const result = lang.complete(text, at(text), index);
+    check("it offers jump", labels(result, 30).includes("jump"), JSON.stringify(labels(result, 30)));
+    const jump = result.items.find((i) => i.label === "jump");
+    check("a command inserts with a trailing space", jump && jump.insertText === "jump ", JSON.stringify(jump && jump.insertText));
+  }
+  {
+    const text = "<<jum>>";
+    eq("mid-word replaces only the word", [lang.classify(text, 5).replace.startOffset, lang.classify(text, 5).replace.endOffset], [2, 5]);
+  }
+  {
+    const text = "<<jump ";
+    const ctx = lang.classify(text, at(text));
+    eq("an argument context", ctx.kind, "argument");
+    eq("the command it belongs to", ctx.command, "jump");
+    eq("the argument index", ctx.argIndex, 0);
+    eq("a node-name argument", ctx.context, "node");
+    const result = lang.complete(text, at(text), index);
+    check("arguments come back as labelled items", result.items.length > 0 && result.items.every((i) => typeof i.label === "string"));
+  }
+  {
+    const text = '<<jump "Init';
+    const ctx = lang.classify(text, at(text));
+    eq("a quoted argument is still an argument", ctx.kind, "argument");
+    eq("the quote is not part of the prefix", ctx.prefix, "Init");
+    eq("the replace range stays inside the quotes", [ctx.replace.startOffset, ctx.replace.endOffset], [8, 12]);
+    const result = lang.complete(text, at(text), index);
+    check("a quoted prefix matches a node", result.items.some((i) => i.label === "Initial"), JSON.stringify(labels(result, 5)));
+  }
+  {
+    const text = "<<AdvanceTime ";
+    eq("a builtin with no known argument context", lang.classify(text, at(text)).context, "");
+    eq("so it offers nothing", lang.complete(text, at(text), index).items.length, 0);
+  }
+  {
+    const text = "#sta";
+    const ctx = lang.classify(text, at(text));
+    eq("a tag context", ctx.kind, "tag");
+    eq("its prefix", ctx.prefix, "sta");
+    const result = lang.complete(text, at(text), index);
+    check("it offers state", labels(result, 10).includes("state"), JSON.stringify(labels(result, 10)));
+    const state = result.items.find((i) => i.label === "state");
+    eq("a tag inserts its colon", state && state.insertText, "state:");
+  }
+  {
+    const text = "Warden: hi #line";
+    const ctx = lang.classify(text, at(text));
+    eq("a tag after text", ctx.kind, "tag");
+    eq("and its prefix", ctx.prefix, "line");
+  }
+  {
+    check("C# is not a tag", lang.classify("See C#", 6).kind === "none");
+  }
+  {
+    const text = "#state:";
+    const ctx = lang.classify(text, at(text));
+    eq("a tag value context", ctx.kind, "tagvalue");
+    eq("the tag it belongs to", ctx.tag, "state");
+    eq("its values are the index's state names",
+      lang.complete(text, at(text), index).items.length, (index.emotionTags || []).length);
+  }
+  {
+    const text = "#state:Cal";
+    const ctx = lang.classify(text, at(text));
+    eq("a tag value prefix", ctx.prefix, "Cal");
+    eq("and its replace range ends at the caret", ctx.replace.endOffset, 10);
+  }
+  {
+    const text = "#vo:";
+    const ctx = lang.classify(text, at(text));
+    eq("#vo is a tag value with no index behind it", [ctx.kind, ctx.tag, ctx.context], ["tagvalue", "vo", ""]);
+    eq("so it offers nothing", lang.complete(text, at(text), index).items.length, 0);
+  }
+  {
+    const text = "  $Achi";
+    const ctx = lang.classify(text, at(text));
+    eq("a variable context", ctx.kind, "variable");
+    eq("its prefix", ctx.prefix, "Achi");
+    const result = lang.complete(text, at(text), index);
+    const hit = result.items.find((i) => String(i.label).toLowerCase() === "achievement_sooooboring");
+    check("a variable inserts with its real casing and a dollar", hit && hit.insertText === "$Achievement_SOOOOBORING", hit && hit.insertText);
+  }
+  {
+    const known = index.characters[0].name;
+    const text = known.slice(0, 2);
+    const ctx = lang.classify(text, at(text));
+    eq("a speaker context", ctx.kind, "character");
+    eq("its prefix is what was typed", ctx.prefix, text);
+    const result = lang.complete(text, at(text), index);
+    check("the speaker is offered", labels(result, 30).includes(known), JSON.stringify(labels(result, 30)));
+  }
+  {
+    const text = "Ward: hello";
+    const ctx = lang.classify(text, 4);
+    eq("a speaker mid-line", ctx.kind, "character");
+    eq("with the name typed so far", ctx.prefix, "Ward");
+  }
+  {
+    eq("an empty line is not a speaker", lang.classify("", 0).kind, "none");
+  }
+  {
+    const text = "<<jum";
+    check("a partial command has no hover", lang.hover(text, at(text), index) === null);
+  }
+  {
+    const text = "<<jump>>";
+    const hover = lang.hover(text, 4, index);
+    check("a command hovers", hover && hover.kind === "command", JSON.stringify(hover && hover.kind));
+    check("the hover says the command's name", hover && hover.contents[0].value.includes("jump"), hover && hover.contents[0].value.slice(0, 40));
+  }
+  {
+    const text = "$Achievement_SOOOOBORING";
+    const hover = lang.hover(text, 4, index);
+    check("a variable hovers", hover && hover.kind === "variable", JSON.stringify(hover && hover.kind));
+    check("the hover says the variable's type", hover && hover.contents[0].value.includes("bool"), hover && hover.contents[0].value);
+  }
+  {
+    const hover = lang.hover("#state:", 3, index);
+    check("a tag hovers", hover && hover.kind === "tag" && hover.name === "state", JSON.stringify(hover && hover.name));
+  }
+  {
+    const hover = lang.hover("A sentence with Initial inside it.", 17, index);
+    check("a node name in prose hovers", hover && hover.kind === "node", JSON.stringify(hover && hover.kind));
+  }
+  {
+    const text = "<<";
+    const first = JSON.stringify(lang.complete(text, at(text), index));
+    const second = JSON.stringify(lang.complete(text, at(text), index));
+    check("completion is deterministic", first === second);
+    check("completion is bounded", lang.complete(text, at(text), index).items.length <= 200,
+      String(lang.complete(text, at(text), index).items.length));
+  }
+  {
+    eq("a closed command is not a command context", lang.classify("<<jump>>", 8).kind, "none");
+  }
+  {
+    const text = "title: X\r\n---\r\n<<jum";
+    const ctx = lang.classify(text, at(text));
+    eq("a CRLF document still finds the command", ctx.kind, "command");
+    eq("on the right line", ctx.line, 3);
+    eq("with the right prefix", ctx.prefix, "jum");
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
 section("results");
 
 const total = checks;

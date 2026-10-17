@@ -139,7 +139,8 @@ guess this document exists to forbid.
 
 ## 6. Checks
 
-The two cores are covered by scratch verifiers under `build/` (gitignored):
-`_positions_check.mjs` (60 checks) and `_complete_check.mjs` (53 checks, real
-knowledge base, real Yarn text). Their checks are meant to move into
-`shell/mods/selftest.mjs` when the RPC verbs land, so the suite keeps them.
+Both cores are covered by `node shell/mods/selftest.mjs`: the `positions` section
+(60 checks) and the `completion and hover` section (53 checks, run against the
+real knowledge base and real Yarn text). They started as scratch verifiers under
+`build/` and moved into the shipped suite the same week, because a check that
+only exists on the machine that wrote it is not a check.
