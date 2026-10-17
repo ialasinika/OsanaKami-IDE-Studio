@@ -63,6 +63,39 @@ stands in this tree.
 - History: the entries below that say "CC BY 4.0" record what the licence was at
   the time; they are not rewritten.
 
+### The Yarn card asks the language service while you type
+
+- `mod.complete` and `mod.hover` are verbs on the shell's RPC surface now
+  (`MOD_METHODS` in `shell/main.mjs`, backed by `completeYarn`/`hoverYarn` in
+  `shell/mods/index.js`), and the Yarn card uses them. Typing `<<` opens a menu of
+  at most eight commands, functions, variables and nodes, ranked by the same
+  search index the Tools panel uses; `Up`/`Down`/`Tab` move, `Enter` takes a row,
+  `Esc` closes, `Ctrl+Space` asks at once. A taken row replaces the whole `<<`
+  prefix and leaves the placeholders its signature needs. The menu does not open
+  inside `{ }` or inside quotes, and when the shell cannot answer the card goes
+  quiet after the first failure instead of asking on every keystroke.
+- The line under the cursor explains itself, with the hover text the language
+  service already produces: a tag or a command name is explained where it is
+  written. `tools/browser_smoke.py` (51 checks) and `shell/web/selftest.mjs`
+  drive the menu and the hover line in the real window and in the pure model, and
+  `docs/VIEWS.md` says what the two views now do with them.
+
+### The translation table keeps its bytes
+
+- The game's own tables (`NewProject*.csv`) open with a UTF-8 byte-order mark. The
+  table card read them through a streaming `TextDecoder`, which ate the mark, so a
+  read-modify-write handed the game a table without it. The same decoder was
+  lenient: bytes that were not UTF-8 became U+FFFD, and the next save wrote those
+  replacement characters over the modder's own text.
+- `readTextInChunks()` now decodes with `{ stream: true, ignoreBOM: true, fatal:
+  true }`, reports the mark as a `bom` fact separate from the text, and refuses
+  invalid bytes with `the bytes at byte N are not UTF-8 text` instead of guessing.
+  `writeTextInChunks()` puts the mark back when the caller asks for it
+  (`bom: true`), and the story card carries it from the load to the save -- the
+  idiom `shell/web/story.mjs` already used for a `.yarn` file's mark. Four checks
+  in `shell/web/selftest.mjs` (249/249) pin the round trip with real bytes: a
+  lenient decoder turns them red.
+
 ### A regenerated knowledge base cannot switch the checks off
 
 - `tools/gen_knowledge.mjs` drops every `description`, because those sentences are

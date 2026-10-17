@@ -4245,16 +4245,18 @@ function tableKernel(files, options = {}) {
       const record = { method, params };
       calls.push(record);
       if (method === "file.read") {
-        const text = files[params.path];
-        if (typeof text !== "string") throw new Error(`no stub file at ${params.path}`);
+        const raw = files[params.path];
+        if (raw === undefined) throw new Error(`no stub file at ${params.path}`);
+        const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
         const bytes = Buffer.from(text, "utf8");
         if (bytes.length > cap) throw new Error(`${params.path} is too large to open`);
         record.result = { text, revision: 5, eol: "crlf", size: bytes.length };
         return record.result;
       }
       if (method === "file.blobOpen") {
-        const text = files[params.path];
-        if (params.mode === "read" && typeof text !== "string") {
+        const raw = files[params.path];
+        const asBuffer = Buffer.isBuffer(raw);
+        if (params.mode === "read" && typeof raw !== "string" && !asBuffer) {
           throw new Error(`no stub file at ${params.path}`);
         }
         if (params.mode === "write" && options.stale === true) {
@@ -4265,14 +4267,19 @@ function tableKernel(files, options = {}) {
           sessions.set(session, {
             path: params.path,
             mode: params.mode,
-            bytes: params.mode === "read" ? Buffer.from(text, "utf8") : Buffer.from("", "utf8"),
+            asBuffer,
+            bytes: params.mode === "read"
+              ? (asBuffer ? Buffer.from(raw) : Buffer.from(raw, "utf8"))
+              : Buffer.from("", "utf8"),
             offset: 0,
           });
         }
         record.result = {
           session,
           path: params.path,
-          size: Buffer.byteLength(typeof text === "string" ? text : "", "utf8"),
+          size: params.mode === "read"
+            ? (asBuffer ? raw.length : Buffer.byteLength(raw, "utf8"))
+            : 0,
           revision: params.mode === "write" ? 9 : 5,
         };
         return record.result;
@@ -4326,7 +4333,7 @@ function tableKernel(files, options = {}) {
         if (params.total_size !== open.bytes.length) {
           throw new Error(`${open.path}: the commit says ${params.total_size} bytes and ${open.bytes.length} were appended`);
         }
-        files[open.path] = open.bytes.toString("utf8");
+        files[open.path] = open.asBuffer ? open.bytes : open.bytes.toString("utf8");
         revision += 1;
         record.result = { path: open.path, size: open.bytes.length, revision, replaced: true };
         return record.result;
@@ -4695,6 +4702,81 @@ await testAsync("table write: a refused open leaves the file exactly as it was",
   assert.equal(kernel.files[TABLE_PATH], "old contents", "nothing was published");
   assert.equal(kernel.calls.filter((call) => call.method === "file.blobAppend").length, 0);
   assert.equal(kernel.calls.filter((call) => call.method === "file.blobCommit").length, 0);
+});
+
+/*
+ * The table's bytes are the table (G42).  The game's own tables open with a
+ * byte-order mark; a read that ate it and a write that did not put it back would
+ * hand the game a different file.  And a lenient decode turns a table that is not
+ * UTF-8 into U+FFFD, which the next save writes over the modder's own
+ * characters.  Both are pinned with real bytes, not strings.
+ */
+const SMALL_TABLE = "id,text\r\nen,line:1,a\r\n";
+function withBom(text) {
+  return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]);
+}
+
+await testAsync("table read: a byte-order mark is a fact about the file, not a character of it", async () => {
+  const bytes = withBom(SMALL_TABLE);
+  const kernel = tableKernel({ [TABLE_PATH]: bytes });
+  const read = await readTextInChunks(kernel.client, TABLE_PATH);
+
+  assert.equal(read.bom, true, "the mark is reported");
+  assert.equal(read.text, SMALL_TABLE, "and it is not part of the table's text");
+  assert.equal(read.size, bytes.length, "the size still counts the mark");
+  assert.equal(parseCsv(read.text).bom, false, "the parser was handed text without a mark");
+  assert.equal(serializeCsv(parseCsv(read.text)), SMALL_TABLE, "so the rows are what the parser was given");
+});
+
+await testAsync("table write: the mark the reader reported comes back byte for byte", async () => {
+  const bytes = withBom(SMALL_TABLE);
+  const kernel = tableKernel({ [TABLE_PATH]: bytes });
+  const read = await readTextInChunks(kernel.client, TABLE_PATH);
+  await writeTextInChunks(kernel.client, TABLE_PATH, read.text, {
+    baseRevision: read.revision,
+    bom: read.bom,
+  });
+
+  const after = kernel.files[TABLE_PATH];
+  assert.ok(Buffer.isBuffer(after), "the stub recorded bytes");
+  assert.deepEqual(Array.from(after.subarray(0, 3)), [0xef, 0xbb, 0xbf], "the mark is the first thing in the file");
+  assert.ok(after.equals(bytes), "the file that comes back is the file that was read");
+});
+
+await testAsync("table read: bytes that are not UTF-8 are refused, not replaced", async () => {
+  const bytes = Buffer.from([0x69, 0x64, 0x2c, 0xff, 0xfe, 0x0d, 0x0a]);
+  const kernel = tableKernel({ [TABLE_PATH]: bytes });
+  await assert.rejects(
+    () => readTextInChunks(kernel.client, TABLE_PATH),
+    /not UTF-8/,
+  );
+  assert.equal(kernel.aborted.length, 1, "the session was given back");
+  assert.equal(kernel.sessions.size, 0, "no session was left open");
+});
+
+await testAsync("table: the card keeps the mark across a read and a write", async () => {
+  const dom = stubTableDom();
+  try {
+    const tableBytes = withBom(ADD_TABLE);
+    const kernel = tableKernel({ [TABLE_STORY_PATH]: TABLE_STORY, [TABLE_PATH]: tableBytes });
+    const mounted = renderCard(
+      { id: "bom-table", kind: "story", file: TABLE_STORY_PATH, table: TABLE_PATH },
+      kernel,
+    );
+    await mounted.handle.load(TABLE_STORY_PATH);
+    await tick(20);
+    mounted.el.querySelector('[data-role="story-add-line"]').dispatch("click");
+    assert.equal(await mounted.handle.save(), true, "the save goes through");
+
+    const after = kernel.files[TABLE_PATH];
+    assert.ok(Buffer.isBuffer(after), "the table was written as bytes");
+    assert.deepEqual(Array.from(after.subarray(0, 3)), [0xef, 0xbb, 0xbf],
+      "the card's table still opens with the mark it was read with");
+    assert.equal(parseCsv(after.toString("utf8").slice(1)).rows.length,
+      parseCsv(ADD_TABLE).rows.length + 1, "and the new row is in it");
+  } finally {
+    dom.restore();
+  }
 });
 
 await testAsync("table write: the card saves a new row through a write session, not a whole-file write", async () => {

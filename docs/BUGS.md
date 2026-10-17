@@ -248,6 +248,17 @@ Regression evidence for this wave lives in
   than a diagnostic.  The kernel no longer reads a document at startup at all
   (a client's file is never a reason to refuse to start); `sde_view_load()`
   skips a leading BOM when a client asks for the file.
+- **N11 — the translation table card lost the table's byte-order mark, and bytes
+  that were not UTF-8 were replaced with U+FFFD and then written back.** The
+  game's own tables (`NewProject*.csv`) open with a BOM; a streaming
+  `TextDecoder` ate it, so one read-modify-write handed the game a file without
+  it. The same decoder replaced invalid bytes instead of refusing them, so a
+  save could overwrite a modder's own characters. `readTextInChunks()` now
+  decodes with `{ stream: true, ignoreBOM: true, fatal: true }`, reports the mark
+  as `bom`, and throws `the bytes at byte N are not UTF-8 text`;
+  `writeTextInChunks()` writes the mark back when asked (`bom: true`), and the
+  story card carries it from the read to the save (`shell/web/cards.mjs`, four
+  checks in `shell/web/selftest.mjs`).
 - **N6 — a board large enough to exceed the shell's 30 s call timeout could not
   be saved, and was reported as a failure while the kernel kept writing.**  Two
   independent halves.  The kernel's board validation was O(n²) (20000 cards took

@@ -1454,17 +1454,27 @@ function chunkBytesOf(options) {
  * replacement mark, and the final `decode()` flushes the character the last
  * frame may have left open.
  *
- * Returns `{ text, size, revision, chunks }`.  Every way this can go wrong -- a
- * missing file or a refused frame, a session the kernel has forgotten, a frame
- * served from the wrong offset, a frame longer than one may be -- throws an
- * Error whose message is the sentence to show.  There is no partial result: the
- * caller either gets the whole file or gets nothing, because half a translation
- * table shown as the table is the card lying about the mod.
+ * Two details are not left to the decoder.  A byte-order mark is kept as a fact
+ * rather than silently eaten: the decoder is told not to interpret it, the mark
+ * is reported as `bom` and taken off the text, and a caller that writes the
+ * text back passes the flag on so the table round-trips byte for byte.  And the
+ * decode is strict, because a lenient one would turn a table that is not UTF-8
+ * into one with U+FFFD in it and the next save would write those replacements
+ * over the modder's own characters; a file that will not decode is refused
+ * while the mistake is still a sentence.
+ *
+ * Returns `{ text, bom, size, revision, chunks }`.  Every way this can go wrong
+ * -- a missing file or a refused frame, a session the kernel has forgotten, a
+ * frame served from the wrong offset, a frame longer than one may be, bytes
+ * that are not UTF-8 -- throws an Error whose message is the sentence to show.
+ * There is no partial result: the caller either gets the whole file or gets
+ * nothing, because half a translation table shown as the table is the card
+ * lying about the mod.
  */
 export async function readTextInChunks(client, path, options = {}) {
   const chunkBytes = chunkBytesOf(options);
   const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
-  const decoder = new TextDecoder("utf-8", { stream: true });
+  const decoder = new TextDecoder("utf-8", { stream: true, ignoreBOM: true, fatal: true });
   const parts = [];
 
   /* `want_revision` is how a table's base revision is learned: `file.stat`
@@ -1517,7 +1527,11 @@ export async function readTextInChunks(client, path, options = {}) {
         throw new Error(`the read stopped at byte ${offset} of ${size}`);
       }
 
-      parts.push(decoder.decode(bytes, { stream: true }));
+      try {
+        parts.push(decoder.decode(bytes, { stream: true }));
+      } catch (err) {
+        throw new Error(`the bytes at byte ${offset} are not UTF-8 text`);
+      }
       offset += bytes.length;
       chunks += 1;
       onProgress(offset, size);
@@ -1538,8 +1552,19 @@ export async function readTextInChunks(client, path, options = {}) {
   }
 
   /* Flush: the last frame may have ended in the middle of a character. */
-  parts.push(decoder.decode());
-  return { text: parts.join(""), size, revision: opened.revision, chunks };
+  try {
+    parts.push(decoder.decode());
+  } catch (err) {
+    throw new Error(`the last bytes of ${path} are not UTF-8 text`);
+  }
+  let text = parts.join("");
+  /* The mark is a fact about the file, named here so a write can put it back;
+     it is not a character of the table. */
+  const bom = text.charCodeAt(0) === 0xfeff;
+  if (bom) {
+    text = text.slice(1);
+  }
+  return { text, bom, size, revision: opened.revision, chunks };
 }
 
 /**
@@ -1555,11 +1580,16 @@ export async function readTextInChunks(client, path, options = {}) {
  *
  * Returns `{ size, revision, replaced, chunks }`; `revision` is the next
  * `base_revision` for the file, the number `file.read` would report for it.
+ *
+ * `options.bom` puts the byte-order mark back in front of the text.  The reader
+ * reports the mark as a fact rather than a character, so the writer is where it
+ * returns: a table read with a mark and written without one is a different file,
+ * and the game's own tables are compared by bytes.
  */
 export async function writeTextInChunks(client, path, text, options = {}) {
   const chunkBytes = chunkBytesOf(options);
   const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
-  const bytes = new TextEncoder().encode(text);
+  const bytes = new TextEncoder().encode(options.bom === true ? "\ufeff" + text : text);
   const params = { path, mode: "write" };
   if (options.baseRevision !== undefined && options.baseRevision !== null) {
     params.base_revision = options.baseRevision;
@@ -4109,6 +4139,7 @@ function renderStory(card, ctx) {
     table: null,
     tableById: null,
     tableRevision: null,
+    tableBom: false,
     tableDirty: false,
     schemaPath: typeof card.schema === "string" ? card.schema : "",
     schema: null,
@@ -4589,6 +4620,7 @@ function renderStory(card, ctx) {
     try {
       const written = await writeTextInChunks(client, state.tablePath, text, {
         baseRevision: state.tableRevision === null ? undefined : state.tableRevision,
+        bom: state.tableBom,
       });
       state.tableRevision = written.revision;
       state.tableDirty = false;
@@ -4657,6 +4689,7 @@ function renderStory(card, ctx) {
     state.table = parseCsv(read.text);
     state.tableById = rowsById(state.table);
     state.tableRevision = read.revision;
+    state.tableBom = read.bom === true;
     state.tableDirty = false;
     paint();
     return true;
