@@ -1876,3 +1876,82 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   white-space: nowrap;
 }
 
+/* -- the spine card's edit mode -------------------------------------- */
+
+/* The list column is now a column of two parts: the bones (which keep their
+   own scroll) and, while editing, the inspector under them. */
+.spine-side {
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.spine-side .spine-bones {
+  flex: 0 1 45%;
+  min-height: 60px;
+}
+
+.spine-edit {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 6px 6px;
+  border-top: 1px solid var(--line-soft);
+}
+.spine-edit[hidden] { display: none; }
+
+.spine-edit-title {
+  margin: 5px 0 2px;
+  color: var(--fg-faint);
+  font: 9.5px/1 var(--mono-font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.spine-edit-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.spine-field {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.spine-field-wide { margin-top: 3px; }
+
+.spine-field-name {
+  overflow: hidden;
+  color: var(--fg-faint);
+  font: 10px/1 var(--mono-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spine-num {
+  width: 100%;
+  min-width: 0;
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 4px;
+}
+.spine-num:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+/* A key row is a row in the same list language as the bones: clicking it moves
+   the playhead, and the × at its end removes it. */
+.spine-keys .mod-row,
+.spine-attachments .mod-row { cursor: pointer; }
+
+.spine-canvas.is-editing { cursor: crosshair; }
+.spine-canvas.is-editing:active { cursor: grabbing; }

@@ -90,6 +90,9 @@ class Reader {
     this.pos = 0;
     this.label = label || "skeleton";
     this.strings = [];
+    // The 1-based index used by the most recent stringRef(); the writer needs the
+    // raw index back because the string table can hold duplicate values.
+    this.lastStringRef = 0;
   }
 
   fail(message) {
@@ -183,6 +186,7 @@ class Reader {
   stringRef() {
     const start = this.pos;
     const index = this.count();
+    this.lastStringRef = index;
     if (index === 0) return null;
     const value = this.strings[index - 1];
     if (value === undefined) {
@@ -308,12 +312,22 @@ function readAttachment(r, slotIndex, key, nonessential) {
   const flags = r.u8();
   // The attachment's own name is only stored when it differs from the skin key.
   const declaredName = (flags & 8) !== 0 ? r.stringRef() : key;
+  const declaredNameRef = (flags & 8) !== 0 ? r.lastStringRef : 0;
   const type = ATTACHMENT_TYPES[flags & 0x7];
-  const base = { slotIndex, name: key, declaredName, type, path: null };
+  // `flags` is kept raw: a writer cannot always recompute it, because a
+  // present-but-default field (a white colour, a zero rotation) looks the same in
+  // the model as an absent one. `pathRef`/`parentRef`/`declaredNameRef` are the raw
+  // 1-based string-table indices for the same reason: the table can hold duplicate
+  // strings, so the value alone does not pin the index the file used.
+  const base = {
+    slotIndex, name: key, declaredName, type, flags, declaredNameRef,
+    path: null, pathRef: 0, parentRef: 0,
+  };
 
   switch (type) {
     case "region": {
       base.path = (flags & 16) !== 0 ? r.stringRef() : null;
+      base.pathRef = (flags & 16) !== 0 ? r.lastStringRef : 0;
       base.color = (flags & 32) !== 0 ? colorFromRgba(r.i32()) : [1, 1, 1, 1];
       base.sequence = (flags & 64) !== 0 ? readSequence(r) : null;
       base.rotation = (flags & 128) !== 0 ? r.f32() : 0;
@@ -336,6 +350,7 @@ function readAttachment(r, slotIndex, key, nonessential) {
     }
     case "mesh": {
       base.path = (flags & 16) !== 0 ? r.stringRef() : declaredName;
+      base.pathRef = (flags & 16) !== 0 ? r.lastStringRef : 0;
       base.color = (flags & 32) !== 0 ? colorFromRgba(r.i32()) : [1, 1, 1, 1];
       base.sequence = (flags & 64) !== 0 ? readSequence(r) : null;
       base.hullLength = r.count();
@@ -358,11 +373,13 @@ function readAttachment(r, slotIndex, key, nonessential) {
     }
     case "linkedmesh": {
       base.path = (flags & 16) !== 0 ? r.stringRef() : declaredName;
+      base.pathRef = (flags & 16) !== 0 ? r.lastStringRef : 0;
       base.color = (flags & 32) !== 0 ? colorFromRgba(r.i32()) : [1, 1, 1, 1];
       base.sequence = (flags & 64) !== 0 ? readSequence(r) : null;
       base.inheritTimelines = (flags & 128) !== 0;
       base.skinIndex = r.count();
       base.parent = r.stringRef();
+      base.parentRef = r.lastStringRef;
       base.width = nonessential ? r.f32() : 0;
       base.height = nonessential ? r.f32() : 0;
       return base;
@@ -511,8 +528,9 @@ const PHYSICS_TIMELINE_TYPES = {
 function readAnimation(r, name, eventDataList, slotCount) {
   const timelines = [];
   // The file starts each animation with a hint at how many timelines follow; it is
-  // only a capacity hint, not needed to read the animation.
-  r.count();
+  // only a capacity hint, not needed to read the animation, but a byte-for-byte
+  // writer has to reproduce it, so keep it on the model.
+  const timelineCountHint = r.count();
 
   // 1. Slot timelines (attachment + colour).
   for (let i = 0, n = r.count(); i < n; i++) {
@@ -524,31 +542,38 @@ function readAnimation(r, name, eventDataList, slotCount) {
         case SLOT_ATTACHMENT: {
           const frames = [];
           for (let frame = 0; frame < frameCount; frame++) {
-            frames.push({ time: r.f32(), name: r.stringRef(), curve: null });
+            const time = r.f32();
+            const frameName = r.stringRef();
+            frames.push({ time, name: frameName, nameRef: r.lastStringRef, curve: null });
           }
           timelines.push({ type: "attachment", slotIndex, frames });
           break;
         }
-        case SLOT_RGBA:
-          r.count(); // bezier count, implied by the per-frame curve bytes
-          timelines.push({ type: "color", slotIndex, frames: readColorTimeline(r, frameCount, 4) });
+        case SLOT_RGBA: {
+          const bezierCount = r.count();
+          timelines.push({ type: "color", slotIndex, bezierCount, frames: readColorTimeline(r, frameCount, 4) });
           break;
-        case SLOT_RGB:
-          r.count();
-          timelines.push({ type: "color", slotIndex, frames: readColorTimeline(r, frameCount, 3) });
+        }
+        case SLOT_RGB: {
+          const bezierCount = r.count();
+          timelines.push({ type: "color", slotIndex, bezierCount, frames: readColorTimeline(r, frameCount, 3) });
           break;
-        case SLOT_RGBA2:
-          r.count();
-          timelines.push({ type: "color", slotIndex, frames: readColorTimeline(r, frameCount, 7) });
+        }
+        case SLOT_RGBA2: {
+          const bezierCount = r.count();
+          timelines.push({ type: "color", slotIndex, bezierCount, frames: readColorTimeline(r, frameCount, 7) });
           break;
-        case SLOT_RGB2:
-          r.count();
-          timelines.push({ type: "color", slotIndex, frames: readColorTimeline(r, frameCount, 6) });
+        }
+        case SLOT_RGB2: {
+          const bezierCount = r.count();
+          timelines.push({ type: "color", slotIndex, bezierCount, frames: readColorTimeline(r, frameCount, 6) });
           break;
-        case SLOT_ALPHA:
-          r.count();
-          timelines.push({ type: "alpha", slotIndex, frames: readColorTimeline(r, frameCount, 1) });
+        }
+        case SLOT_ALPHA: {
+          const bezierCount = r.count();
+          timelines.push({ type: "alpha", slotIndex, bezierCount, frames: readColorTimeline(r, frameCount, 1) });
           break;
+        }
         default:
           r.fail(`unknown slot timeline type ${type}`);
       }
@@ -573,12 +598,13 @@ function readAnimation(r, name, eventDataList, slotCount) {
         timelines.push({ type: "inherit", boneIndex, frames });
         continue;
       }
-      r.count(); // bezier count
+      const bezierCount = r.count();
       switch (type) {
         case BONE_ROTATE:
           timelines.push({
             type: "rotate",
             boneIndex,
+            bezierCount,
             frames: readTimeline1(r, frameCount).map((f) => ({ time: f.time, angle: f.value, curve: f.curve || null })),
           });
           break;
@@ -586,7 +612,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         case BONE_SCALE:
         case BONE_SHEAR: {
           const kind = type === BONE_TRANSLATE ? "translate" : type === BONE_SCALE ? "scale" : "shear";
-          timelines.push({ type: kind, boneIndex, frames: readTimeline2(r, frameCount) });
+          timelines.push({ type: kind, boneIndex, bezierCount, frames: readTimeline2(r, frameCount) });
           break;
         }
         case BONE_TRANSLATEX:
@@ -594,6 +620,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
           timelines.push({
             type: type === BONE_TRANSLATEX ? "translateX" : "translateY",
             boneIndex,
+            bezierCount,
             frames: readTimeline2(r, frameCount),
           });
           break;
@@ -602,6 +629,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
           timelines.push({
             type: type === BONE_SCALEX ? "scaleX" : "scaleY",
             boneIndex,
+            bezierCount,
             frames: readTimeline1(r, frameCount).map((f) => ({ time: f.time, scale: f.value, curve: f.curve || null })),
           });
           break;
@@ -610,6 +638,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
           timelines.push({
             type: type === BONE_SHEARX ? "shearX" : "shearY",
             boneIndex,
+            bezierCount,
             frames: readTimeline1(r, frameCount).map((f) => ({ time: f.time, shear: f.value, curve: f.curve || null })),
           });
           break;
@@ -623,7 +652,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
   for (let i = 0, n = r.count(); i < n; i++) {
     const index = r.count();
     const frameCount = r.count();
-    r.count(); // bezier count
+    const bezierCount = r.count();
     const frames = [];
     let flags = r.u8();
     let time = r.f32();
@@ -634,6 +663,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         time,
         mix,
         softness,
+        flags,
         bendDirection: (flags & 8) !== 0 ? 1 : -1,
         compress: (flags & 16) !== 0,
         stretch: (flags & 32) !== 0,
@@ -655,14 +685,14 @@ function readAnimation(r, name, eventDataList, slotCount) {
       mix = mix2;
       softness = softness2;
     }
-    timelines.push({ type: "ik", ikIndex: index, frames });
+    timelines.push({ type: "ik", ikIndex: index, bezierCount, frames });
   }
 
   // 4. Transform constraint timelines.
   for (let i = 0, n = r.count(); i < n; i++) {
     const index = r.count();
     const frameCount = r.count();
-    r.count(); // bezier count
+    const bezierCount = r.count();
     const frames = [];
     const readFrameValues = () => ({
       time: r.f32(),
@@ -689,7 +719,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
       }
       values = next;
     }
-    timelines.push({ type: "transform", transformIndex: index, frames });
+    timelines.push({ type: "transform", transformIndex: index, bezierCount, frames });
   }
 
   // 5. Path constraint timelines.
@@ -698,7 +728,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
     for (let ii = 0, nn = r.count(); ii < nn; ii++) {
       const type = r.u8();
       const frameCount = r.count();
-      r.count(); // bezier count
+      const bezierCount = r.count();
       if (type === PATH_POSITION || type === PATH_SPACING) {
         const frames = readTimeline1(r, frameCount).map((f) => ({
           time: f.time,
@@ -708,6 +738,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         timelines.push({
           type: type === PATH_POSITION ? "pathPosition" : "pathSpacing",
           pathIndex: index,
+          bezierCount,
           frames,
         });
         continue;
@@ -730,7 +761,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         }
         mix = next;
       }
-      timelines.push({ type: "pathMix", pathIndex: index, frames });
+      timelines.push({ type: "pathMix", pathIndex: index, bezierCount, frames });
     }
   }
 
@@ -746,7 +777,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         timelines.push({ type: "physicsReset", physicsIndex: index, frames });
         continue;
       }
-      r.count(); // bezier count
+      const bezierCount = r.count();
       const kind = PHYSICS_TIMELINE_TYPES[type];
       if (!kind) r.fail(`unknown physics timeline type ${type}`);
       const frames = readTimeline1(r, frameCount).map((f) => ({
@@ -754,7 +785,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         value: f.value,
         curve: f.curve || null,
       }));
-      timelines.push({ type: kind, physicsIndex: index, frames });
+      timelines.push({ type: kind, physicsIndex: index, bezierCount, frames });
     }
   }
 
@@ -765,10 +796,11 @@ function readAnimation(r, name, eventDataList, slotCount) {
       const slotIndex = r.count();
       for (let iii = 0, nnn = r.count(); iii < nnn; iii++) {
         const attachmentName = r.stringRef();
+        const attachmentNameRef = r.lastStringRef;
         const type = r.u8();
         const frameCount = r.count();
         if (type === ATTACHMENT_DEFORM) {
-          r.count(); // bezier count
+          const bezierCount = r.count();
           const frames = [];
           let time = r.f32();
           for (let frame = 0; ; frame++) {
@@ -793,7 +825,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
               entry.curve = curve;
             }
           }
-          timelines.push({ type: "deform", skinIndex, slotIndex, attachmentName, frames });
+          timelines.push({ type: "deform", skinIndex, slotIndex, attachmentName, attachmentNameRef, bezierCount, frames });
           continue;
         }
         if (type !== ATTACHMENT_SEQUENCE) r.fail(`unknown attachment timeline type ${type}`);
@@ -803,13 +835,14 @@ function readAnimation(r, name, eventDataList, slotCount) {
           const modeAndIndex = r.i32();
           frames.push({
             time,
+            modeAndIndex,
             mode: SEQUENCE_MODES[modeAndIndex & 0xf] ?? null,
             index: modeAndIndex >> 4,
             delay: r.f32(),
             curve: null,
           });
         }
-        timelines.push({ type: "sequence", skinIndex, slotIndex, attachmentName, frames });
+        timelines.push({ type: "sequence", skinIndex, slotIndex, attachmentName, attachmentNameRef, frames });
       }
     }
   }
@@ -855,6 +888,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
       const intValue = r.sint(); // readInt(false): zigzag variable-length
       const floatValue = r.f32();
       let stringValue = r.string();
+      const stringValueNull = stringValue === null;
       if (stringValue === null) stringValue = eventData.stringValue;
       let volume = 1;
       let balance = 0;
@@ -862,7 +896,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
         volume = r.f32();
         balance = r.f32();
       }
-      frames.push({ time, eventIndex, intValue, floatValue, stringValue, volume, balance, curve: null });
+      frames.push({ time, eventIndex, intValue, floatValue, stringValue, stringValueNull, volume, balance, curve: null });
     }
     timelines.push({ type: "events", frames });
   }
@@ -870,7 +904,7 @@ function readAnimation(r, name, eventDataList, slotCount) {
   let duration = 0;
   for (const timeline of timelines) duration = Math.max(duration, lastTime(timeline.frames));
 
-  return { name, duration, timelines };
+  return { name, duration, timelines, timelineCountHint };
 }
 
 // ---------------------------------------------------------------------------
@@ -955,9 +989,10 @@ export function readSkeletonBinary(input) {
     const darkColorValue = r.i32();
     const darkColor = darkColorValue === -1 ? null : colorFromRgb(darkColorValue);
     const attachmentName = r.stringRef();
+    const attachmentNameRef = r.lastStringRef;
     const blendMode = enumValue(BLEND_MODES, r.count(), r, "blend mode");
     const visible = nonessential ? r.bool() : true;
-    slots.push({ index: i, name, boneIndex, color, darkColor, attachmentName, blendMode, visible });
+    slots.push({ index: i, name, boneIndex, color, darkColor, attachmentName, attachmentNameRef, blendMode, visible });
   }
 
   // IK constraints.
@@ -975,6 +1010,7 @@ export function readSkeletonBinary(input) {
       order,
       boneIndices,
       targetIndex,
+      flags,
       skinRequired: (flags & 1) !== 0,
       bendDirection: (flags & 2) !== 0 ? 1 : -1,
       compress: (flags & 4) !== 0,
@@ -1003,6 +1039,7 @@ export function readSkeletonBinary(input) {
       order,
       boneIndices,
       targetIndex,
+      flags,
       skinRequired: (flags & 1) !== 0,
       local: (flags & 2) !== 0,
       relative: (flags & 4) !== 0,
@@ -1032,6 +1069,7 @@ export function readSkeletonBinary(input) {
     if ((flags & 16) !== 0) constraint.mixScaleX = r.f32();
     if ((flags & 32) !== 0) constraint.mixScaleY = r.f32();
     if ((flags & 64) !== 0) constraint.mixShearY = r.f32();
+    constraint.flags2 = flags;
     transform.push(constraint);
   }
 
@@ -1052,6 +1090,7 @@ export function readSkeletonBinary(input) {
       skinRequired,
       boneIndices,
       targetSlotIndex,
+      flags,
       positionMode: enumValue(POSITION_MODES, flags & 1, r, "path position mode"),
       spacingMode: enumValue(SPACING_MODES, (flags >> 1) & 3, r, "path spacing mode"),
       rotateMode: enumValue(ROTATE_MODES, (flags >> 3) & 3, r, "path rotate mode"),
@@ -1083,6 +1122,7 @@ export function readSkeletonBinary(input) {
       name,
       order,
       boneIndex,
+      flags,
       skinRequired: (flags & 1) !== 0,
       x: 0,
       y: 0,
@@ -1113,6 +1153,7 @@ export function readSkeletonBinary(input) {
     if ((flags & 32) !== 0) constraint.shearX = r.f32();
     constraint.limit = (flags & 64) !== 0 ? r.f32() : 5000;
     const stepDivisor = r.u8();
+    constraint.stepDivisor = stepDivisor;
     constraint.step = stepDivisor === 0 ? 0 : 1 / stepDivisor;
     constraint.inertia = r.f32();
     constraint.strength = r.f32();
@@ -1129,6 +1170,7 @@ export function readSkeletonBinary(input) {
     constraint.gravityGlobal = (flags2 & 32) !== 0;
     constraint.mixGlobal = (flags2 & 64) !== 0;
     constraint.mix = (flags2 & 128) !== 0 ? r.f32() : 1;
+    constraint.flags2 = flags2;
     physics.push(constraint);
   }
 
@@ -1138,14 +1180,17 @@ export function readSkeletonBinary(input) {
   const skins = [];
   const defaultSlotCount = r.count();
   if (defaultSlotCount !== 0) {
-    const skin = { name: "default", color: null, bones: [], constraints: [], attachments: [] };
+    const skin = { name: "default", isDefault: true, color: null, bones: [], constraints: [], attachments: [] };
     // readSkin already consumed the slot count; read its contents from here.
     for (let i = 0; i < defaultSlotCount; i++) {
       const slotIndex = r.count();
       const attachmentCount = r.count();
       for (let ii = 0; ii < attachmentCount; ii++) {
         const key = r.stringRef();
-        skin.attachments.push(readAttachment(r, slotIndex, key, nonessential));
+        const keyRef = r.lastStringRef;
+        const attachment = readAttachment(r, slotIndex, key, nonessential);
+        attachment.nameRef = keyRef;
+        skin.attachments.push(attachment);
       }
     }
     skins.push(skin);
@@ -1168,7 +1213,10 @@ export function readSkeletonBinary(input) {
       const slotIndex = r.count();
       for (let iii = 0, attachmentCount = r.count(); iii < attachmentCount; iii++) {
         const key = r.stringRef();
-        skin.attachments.push(readAttachment(r, slotIndex, key, nonessential));
+        const keyRef = r.lastStringRef;
+        const attachment = readAttachment(r, slotIndex, key, nonessential);
+        attachment.nameRef = keyRef;
+        skin.attachments.push(attachment);
       }
     }
     skins.push(skin);

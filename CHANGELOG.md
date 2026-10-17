@@ -38,15 +38,15 @@ stands in this tree.
   skin is six hair meshes and would draw an empty body.  A named skin still shows
   exactly that skin.
 - `spine <path.skel.bytes>` opens it as a command, and opening either half of the
-  pair as a file opens the card too.  Nothing is written yet: the card is a
-  viewer, and the board keeps `file`, `animation`, `skin` and `bones` so the
+  pair as a file opens the card too.  At this commit nothing is written: the card
+  is a viewer, and the board keeps `file`, `animation`, `skin` and `bones` so the
   choice survives a save and a reload.
 - Evidence, measured.  A throw-away probe under `build/` parsed all 37 rigs in the
   game's `Spine/` folder and consumed every skeleton to its last byte -- 1199
   bones, 394 slots, 321 skins, 1077 attachments, 1038 atlas regions.  The game's
   files are not in this repository, so that probe is not a suite check.  What the
   suite does check is the arithmetic (`spine frame:` and `mergedSkins` in
-  `shell/web/selftest.mjs`, 271 checks) and, in a real headless browser, three
+  `shell/web/selftest.mjs`) and, in a real headless browser, three
   rigs end to end: `Cop` (2 bones, 3 regions) paints 200509 pixels; `Journalist`
   (28 bones) paints 178337 pixels from 4 region attachments and counts its 6 mesh
   attachments as not drawn; `Aistalt` (110 bones, 7 regions) paints 231814 pixels.
@@ -60,7 +60,62 @@ stands in this tree.
   card round trip is a suite check now: `tools/browser_smoke.py` opens a synthetic
   one-bone rig (written in the test, to the layout the reader documents -- the
   game's own rigs stay out of the repository) through `spine rig.skel.bytes` and
-  reaches the card as a tab in both tiles (55 checks).
+  reaches the card as a tab in both tiles (55 checks at this commit).
+
+### A Spine rig is edited where it was read
+
+- `shell/web/spineedit.mjs` is the edit model, and it is pure: an edit is a set of
+  setup numbers per bone, a setup attachment per slot, a duration per animation,
+  and keyed frames per bone and slot.  Editing a bone's rotation for the first
+  time copies that bone's timeline out of the file first, so the keys the author
+  did not touch keep their curves; a key time is clamped against the animation's
+  duration by the module, not by the caller.  `applyEdits` returns a new skeleton
+  and never touches the parsed one, which is why Reset is one call.
+- `shell/web/spinewrite.mjs` writes a parsed skeleton back as 4.2 binary.  The
+  proof is byte identity, not plausibility: all 37 rigs the game ships round-trip
+  through `writeSkeletonBinary(readSkeletonBinary(bytes))` to the same bytes --
+  500206 bytes compared, per-file counts printed by a probe under `build/` that
+  was warmed up by making it fail on purpose (dropping the attachment flag bits
+  turned 32 of 37 files red at byte offset 12224; dropping the physics timeline's
+  index bias turned 2 red at offset 6950).  Byte identity needs data the decoded
+  model does not show: whether a default-valued field was present or absent, and
+  which of two identical strings the table index pointed at.  So `spine.mjs` now
+  also keeps those raw fields (attachment flags and string refs, bezier counts,
+  the physics step divisor, null-versus-empty event strings, the default-skin
+  marker); its decoding and its rejection offsets did not change.  A model built
+  by hand instead of by the reader still writes, but it is canonicalised, and the
+  result is a rig the reader accepts rather than the same bytes.
+- The card can edit.  Edit turns the canvas into a posing surface: dragging the
+  selected bone turns it, Shift+dragging moves it, three number inputs in the
+  inspector do the same from the keyboard, Key and Unkey write and remove keys at
+  the playhead, the key list jumps to a key or deletes one, and a slot's
+  attachment picker chooses what it shows.  With an animation selected those
+  numbers become keys at the playhead; with none they are the setup pose.  The
+  status line says what is edited (`· edited: 1 bone, 2 keys`) instead of leaving
+  the author to remember.
+- Save writes the rig the canvas is showing back to the `.skel.bytes` it came
+  from, with `base_revision` attached so a file that moved on disk is never
+  overwritten silently (the answer to a moved file is the same overwrite / reload
+  / cancel question an editor card asks).  Ctrl+S does the same from the keyboard.
+  A clean card answers "nothing to save" and writes nothing, and a save of an
+  unedited rig would be byte-identical by construction.  Only that one file is
+  written -- the atlas and its PNG are untouched -- and mesh attachments are still
+  read and counted but not drawn.
+- Evidence.  In a real headless browser, on real rigs, with the files copied into a
+  throw-away workspace: typing 25 degrees into `Cop`'s selected bone and pressing
+  Save changed `Cop.skel.bytes` from 570 to 583 bytes, and the file read back
+  contains one new timeline, `rotate@1[115]` -- the 90 degree setup angle plus the
+  25 typed in -- with `round_trip_identical: True`; the same on `Journalist` went
+  from 13349 to 13362 bytes (12 timelines: the file's 11 plus the new rotate),
+  round-trip identical.  A second save with no edit, and a save after Reset, both
+  said "nothing to save".  The suite (282 checks) covers the writer on the one rig
+  it owns, a 135-byte synthetic skeleton it embeds for the purpose: reading it and
+  writing it back is that same byte array, and a setup-pose edit survives a write
+  and a re-read.  `tools/browser_smoke.py` grew the card's round trip into a suite
+  check as well -- it poses that synthetic rig through the inspector, presses Save,
+  reads the file the browser wrote back through the same parser and demands the
+  typed angle, then presses Save again on the clean card and demands the refusal --
+  and stands at 57 checks.
 
 ### The completion menu cannot outlive the caret
 

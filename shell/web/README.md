@@ -90,7 +90,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `files` | a workspace listing, filtered | `filter` |
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
-| `spine` | a Spine rig from the game: bones, skins, an animation timeline | `file`, `animation`, `skin`, `bones` |
+| `spine` | a Spine rig from the game: bones, skins, an animation timeline, edit and save back | `file`, `animation`, `skin`, `bones` |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`:
@@ -511,14 +511,16 @@ The game ships its characters as a Spine 4.2 export: a `.skel.bytes` skeleton, a
 `.atlas.txt` page description and a PNG per page. `spine <path.skel.bytes>` opens
 the three together, and opening either half of the pair as a file does the same.
 
-Three modules do the work, and only the first one knows the file format:
+Four modules do the work, and only the first and the last know the file format:
 `spine.mjs` parses the binary skeleton and the text atlas (a *layout* parser — it
 draws nothing, so it runs in Node too, and a buffer it refuses is refused with
 the byte offset that broke it); `spinepose.mjs` turns a skeleton and a time into
 world transforms and the four corners of every region attachment; `spineframe.mjs`
 maps those corners onto the atlas's rectangles, where a trimmed region's `offsets`
-and its quarter-turned `rotate` have to be undone. All three are pure, so
-`selftest.mjs` pins them with no DOM.
+and its quarter-turned `rotate` have to be undone; `spineedit.mjs` is the edit
+model (setup numbers, keyed frames, slot attachments) and `spinewrite.mjs` writes
+an edited model back as 4.2 binary. All of them are pure, so `selftest.mjs` pins
+them with no DOM.
 
 **No skin selected means every skin merged, in skin order.** These rigs split a
 character across skins — body in `Body/*`, eyes in `Eyes/*`, mouth in `Mouth/*` —
@@ -527,15 +529,31 @@ meshes and would draw a bodyless head. Merging is what makes the card useful, an
 picking a named skin still narrows the picture to exactly that skin, which is the
 point of the picker.
 
-The rest is a viewer: a selectable bones overlay, an animation picker, a timeline
-that also steps (`←`/`→`), playback at 0.25×–2× (`Space`), wheel zoom, drag pan,
-and a click that picks the nearest bone. It draws region attachments only — a
-mesh, a path, a point, a bounding box or a clipping attachment is counted in the
-status line as *not drawn* rather than skipped silently — and it applies a slot's
-alpha but not (yet) its colour tint or blend mode. Nothing is written back: the
-document keeps `file`, `animation`, `skin` and `bones`, the pose time and the
-camera stay local, and a closing card is not asked about unsaved work because
-there is none.
+The rest is a viewer until Edit is pressed: a selectable bones overlay, an
+animation picker, a timeline that also steps (`←`/`→`), playback at 0.25×–2×
+(`Space`), wheel zoom, drag pan, and a click that picks the nearest bone. It draws
+region attachments only — a mesh, a path, a point, a bounding box or a clipping
+attachment is counted in the status line as *not drawn* rather than skipped
+silently — and it applies a slot's alpha but not (yet) its colour tint or blend
+mode.
+
+Edit poses the rig in memory: dragging the selected bone turns it, Shift+drag
+moves it, the inspector's `x`/`y`/`rotation` inputs write the same numbers, Key
+and Unkey write or remove keys at the playhead, the key list jumps or deletes, and
+a slot's attachment picker chooses what it shows. With an animation selected a
+number becomes a key at the playhead, with none it is the setup pose. The status
+line counts the edit (`· edited: 1 bone, 2 keys`); Reset throws it away.
+
+Save (or `Ctrl+S`) writes the rig the canvas is showing back to its
+`.skel.bytes` — that file and nothing else, so the atlas and its PNG are untouched
+— with the revision it was read at, and answers a file that moved on disk with the
+same overwrite/reload/cancel question an editor card asks. A clean card says
+"nothing to save": an unedited rig would be written byte for byte as it already
+is. The board still keeps `file`, `animation`, `skin` and `bones`, so the view
+survives a save and a reload; the pose time, the camera and the edit itself stay
+local, and closing a card with an unsaved edit asks nothing, because the edit was
+never on disk to lose. Mesh attachments are still read and counted but not drawn,
+so a saved file that carries them keeps them untouched.
 
 ### Known limitations (deliberate, documented rather than hidden)
 

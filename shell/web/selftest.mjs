@@ -239,6 +239,7 @@ import {
   bezierValue,
   easeFraction,
   frameWindow,
+  localPoses,
   mergedSkins,
   regionCorners,
   sceneAt,
@@ -246,6 +247,27 @@ import {
   slotColorAt,
   worldTransforms,
 } from "./spinepose.mjs";
+
+import {
+  applyEdits,
+  attachmentsForSlot,
+  attachmentFramesFor,
+  clearAttachment,
+  clearBone,
+  cloneEdits,
+  durationOf,
+  editCounts,
+  emptyEdits,
+  framesFor,
+  hasEdits,
+  removeAttachmentFrame,
+  removeFrame,
+  setAttachment,
+  setAttachmentFrame,
+  setBone,
+  setDuration,
+  setFrame,
+} from "./spineedit.mjs";
 
 import {
   atlasPage,
@@ -266,6 +288,9 @@ import {
   pixelAt,
   setPixelAt,
 } from "./pixelpng.mjs";
+
+import { readSkeletonBinary } from "./spine.mjs";
+import { writeSkeletonBinary } from "./spinewrite.mjs";
 
 /* ------------------------------------------------------------------ */
 /* the smallest useful test harness                                    */
@@ -5337,6 +5362,20 @@ test("spine pose: a rotate timeline is read halfway between its frames", () => {
   assert.ok(near(world[1].f, Math.sin(Math.PI / 4) * 10));
 });
 
+test("spine pose: the local pose is the number a drag edits, before parents compose it", () => {
+  const rig = spineRig([spineBone("root", -1), spineBone("child", 0, { x: 10 })]);
+  const animation = { name: "a", duration: 1, timelines: [
+    { type: "rotate", boneIndex: 0, frames: [{ time: 0, angle: 0 }, { time: 1, angle: 90 }] },
+  ] };
+  const pose = localPoses(rig, animation, 0.5);
+  assert.equal(pose.length, 2);
+  assert.equal(Math.round(pose[0].rotation), 45, "halfway between the frames");
+  assert.equal(pose[1].x, 10, "a bone the animation does not touch keeps its setup numbers");
+  assert.deepEqual(localPoses(rig, null, 0)[0], {
+    rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+  });
+});
+
 test("spine pose: a stepped frame holds its value, a linear one moves", () => {
   assert.equal(easeFraction({ stepped: true }, 0.9), 0);
   assert.equal(easeFraction(null, 0.25), 0.25);
@@ -5588,6 +5627,212 @@ test("spine frame: the four names a rig's files wear", () => {
   assert.equal(spinePagePath(atlas, "Cop.png"), "Mods/Cop/Cop.png");
   assert.equal(spinePagePath("Cop.atlas.txt", "Cop.png"), "Cop.png");
   assert.equal(spineAtlasPath("Mods\\Cop\\Cop.skel.bytes"), atlas, "a Windows path is still a path");
+});
+
+/* ------------------------------------------------------------------ */
+/*
+ * Spine's edits, before the card that makes them.
+ *
+ * An edit is applied by handing `spinepose.mjs` a skeleton whose timelines have
+ * been replaced, so these tests ask the pose code what the edited rig looks
+ * like: a keyed bone moves at its time, a key does not quietly delete the
+ * frames the file had, and the parsed skeleton is still the file's afterwards.
+ */
+function spineSlot(name, boneIndex, attachmentName) {
+  return { name, boneIndex, color: [1, 1, 1, 1], darkColor: null, attachmentName, blendMode: 0 };
+}
+
+function editedScene(rig, edits, animationName, time) {
+  const skeleton = applyEdits(rig, edits);
+  const animation = animationName === null
+    ? null
+    : skeleton.animations.find((entry) => entry.name === animationName) ?? null;
+  return sceneAt(skeleton, animation, time, { skin: mergedSkins(skeleton) });
+}
+
+function spineRegion(slotIndex, name) {
+  return {
+    slotIndex,
+    name,
+    type: "region",
+    path: name,
+    width: 4,
+    height: 4,
+    x: 0,
+    y: 0,
+    rotation: 0,
+    scaleX: 1,
+    scaleY: 1,
+  };
+}
+
+function spineAnimatedRig(frames = [{ time: 0, angle: 0 }, { time: 1, angle: 90 }]) {
+  return spineRig([spineBone("root", -1), spineBone("child", 0, { x: 10 })], {
+    animations: [{ name: "a", duration: 1, timelines: [{ type: "rotate", boneIndex: 0, frames }] }],
+  });
+}
+
+test("spine edit: an edit that changes nothing is the parsed skeleton itself", () => {
+  const rig = spineRig([spineBone("root", -1)]);
+  assert.equal(applyEdits(rig, emptyEdits()), rig, "no copy is made when nothing is edited");
+  assert.equal(hasEdits(emptyEdits()), false);
+  assert.deepEqual(editCounts(emptyEdits()), { bones: 0, slots: 0, animations: 0, frames: 0 });
+});
+
+test("spine edit: a held bone's numbers are the setup pose, and the file stays the file", () => {
+  const rig = spineRig([spineBone("root", -1), spineBone("child", 0, { x: 10 })]);
+  const edits = setBone(emptyEdits(), 0, { rotation: 90 });
+  const world = worldTransforms(applyEdits(rig, edits), null, 0);
+  assert.ok(near(world[1].e, 0), `child x was ${world[1].e}`);
+  assert.ok(near(world[1].f, 10), `child y was ${world[1].f}`);
+  assert.equal(rig.bones[0].rotation, 0, "the parsed skeleton is not the edit's to change");
+  assert.equal(clearBone(edits, 0).bones["0"], undefined, "clearing forgets the bone");
+});
+
+test("spine edit: a key seeds the file's frames instead of forgetting them", () => {
+  const rig = spineAnimatedRig([
+    { time: 0, angle: 0, curve: { stepped: true } },
+    { time: 1, angle: 90 },
+  ]);
+  const edits = setFrame(emptyEdits(), rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 0.5, value: { angle: 45 },
+  });
+  const frames = framesFor(edits, rig, "a", 0, "rotate");
+  assert.deepEqual(frames.map((frame) => frame.time), [0, 0.5, 1]);
+  assert.equal(frames[1].angle, 45);
+  assert.deepEqual(frames[0].curve, { stepped: true }, "the curve that opens a segment survives a key inside it");
+  // 0.75 is halfway between 45 and 90: the child turns to an angle of 67.5 degrees.
+  const world = worldTransforms(applyEdits(rig, edits), applyEdits(rig, edits).animations[0], 0.75);
+  assert.ok(near(world[1].e, Math.cos((67.5 * Math.PI) / 180) * 10), `child x was ${world[1].e}`);
+  assert.ok(near(world[1].f, Math.sin((67.5 * Math.PI) / 180) * 10), `child y was ${world[1].f}`);
+});
+
+test("spine edit: a key at a time already keyed replaces it, it does not stack", () => {
+  const rig = spineAnimatedRig();
+  const edits = setFrame(emptyEdits(), rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 0.5, value: { angle: 45 },
+  });
+  const again = setFrame(edits, rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 0.50001, value: { angle: 60 },
+  });
+  const frames = framesFor(again, rig, "a", 0, "rotate");
+  assert.equal(frames.length, 3, "the near-identical time is the same key");
+  assert.equal(frames[1].angle, 60);
+});
+
+test("spine edit: deleting a key leaves the frames the file had", () => {
+  const rig = spineRig([spineBone("root", -1)], {
+    animations: [{
+      name: "a",
+      duration: 1,
+      timelines: [{ type: "rotate", boneIndex: 0, frames: [{ time: 0, angle: 0 }, { time: 0.5, angle: 45 }, { time: 1, angle: 90 }] }],
+    }],
+  });
+  const edits = removeFrame(emptyEdits(), rig, { animation: "a", boneIndex: 0, type: "rotate", time: 0.5 });
+  assert.deepEqual(framesFor(edits, rig, "a", 0, "rotate").map((frame) => frame.time), [0, 1]);
+});
+
+test("spine edit: a key past the end needs a longer animation first", () => {
+  const rig = spineAnimatedRig();
+  const clamped = setFrame(emptyEdits(), rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 4, value: { angle: 180 },
+  });
+  assert.deepEqual(
+    framesFor(clamped, rig, "a", 0, "rotate").map((frame) => frame.time),
+    [0, 1],
+    "a key at 4 s of a 1 s animation is clamped to the end it could play",
+  );
+  const longer = setFrame(setDuration(emptyEdits(), "a", 5), rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 4, value: { angle: 180 },
+  });
+  assert.equal(durationOf(rig, "a", longer), 5);
+  assert.deepEqual(framesFor(longer, rig, "a", 0, "rotate").map((frame) => frame.time), [0, 1, 4]);
+  assert.equal(applyEdits(rig, longer).animations[0].duration, 5, "the applied animation is long enough to hold the key");
+});
+
+test("spine edit: a slot can show another skin's attachment, held or keyed", () => {
+  const rig = {
+    version: "4.2.43",
+    bones: [spineBone("root", -1)],
+    slots: [spineSlot("body", 0, "Idle")],
+    skins: [{ name: "Body/Normal", attachments: [spineRegion(0, "Idle"), spineRegion(0, "Open")] }],
+    animations: [{
+      name: "a",
+      duration: 1,
+      timelines: [{ type: "attachment", slotIndex: 0, frames: [{ time: 0, name: "Idle" }, { time: 1, name: "Open" }] }],
+    }],
+  };
+  assert.deepEqual(attachmentsForSlot(rig, 0), ["Idle", "Open"], "the names come from the skins, once each");
+  const held = setAttachment(emptyEdits(), 0, "Open");
+  assert.equal(editedScene(rig, held, null, 0).items[0].name, "Open", "with no animation the held attachment shows");
+  assert.equal(editedScene(rig, emptyEdits(), "a", 0).items[0].name, "Idle");
+  const keyed = setAttachmentFrame(emptyEdits(), rig, { animation: "a", slotIndex: 0, time: 0.5, name: "Open" });
+  assert.equal(editedScene(rig, keyed, "a", 0.5).items[0].name, "Open", "a keyed attachment switches at its frame");
+  assert.equal(editedScene(rig, keyed, "a", 0.75).items[0].name, "Open", "an attachment is stepped, never mixed");
+  assert.deepEqual(
+    attachmentFramesFor(keyed, rig, "a", 0).map((frame) => frame.name),
+    ["Idle", "Open", "Open"],
+    "the file's own attachment frames are still the timeline",
+  );
+  assert.equal(removeAttachmentFrame(keyed, rig, { animation: "a", slotIndex: 0, time: 0.5 })
+    .animations.a.slots["0"].attachment.length, 2);
+  assert.equal(clearAttachment(held, 0).slots["0"], undefined);
+});
+
+test("spine edit: editing answers a new edit and never touches the one it was asked from", () => {
+  const rig = spineAnimatedRig();
+  const before = JSON.stringify(rig);
+  const edits = emptyEdits();
+  const once = setFrame(edits, rig, {
+    animation: "a", boneIndex: 0, type: "rotate", time: 0.5, value: { angle: 45 },
+  });
+  const twice = setBone(once, 0, { rotation: 30 });
+  assert.deepEqual(edits, emptyEdits(), "the edit it was asked from is untouched");
+  assert.equal(hasEdits(once), true);
+  const counts = editCounts(twice);
+  assert.deepEqual(counts, { bones: 1, slots: 0, animations: 1, frames: 3 });
+  assert.equal(JSON.stringify(rig), before, "the parsed skeleton is the file's, before and after");
+  const copy = cloneEdits(twice);
+  copy.bones["0"].rotation = 999;
+  assert.equal(twice.bones["0"].rotation, 30, "a clone is a copy, not the same object");
+  assert.throws(
+    () => setFrame(edits, rig, { animation: "a", boneIndex: 0, type: "nope", time: 0, value: {} }),
+    /unknown bone timeline/,
+  );
+});
+
+/*
+ * The writer, against the one rig this suite owns: a 135-byte synthetic
+ * skeleton (one bone "root", one slot "body", one region attachment) that
+ * `tools/browser_smoke.py` builds for the spine card's check. It is embedded
+ * here as base64 because a test that needs the game's install cannot run in
+ * the suite, and the writer's real proof -- all 37 shipped rigs, byte for byte
+ * -- lives in `build/_verify_spinewrite.mjs`.
+ */
+const SPINE_FIXTURE = "AAAAAAAAAAAHNC4yLjQzAAAAAAAAAABCgAAAQoAAAD+AAAAAAQVib2R5AQVyb290AAAAAAAAAAAAAAAAP4AAAD+AAAAAAAAAAAAAAELIAAAAAAEFYm9keQD//////////wEAAAAAAAEAAQEAAAAAAAAAAAA/gAAAP4AAAEKAAABCgAAAAAAA";
+
+function spineFixtureBytes() {
+  return Uint8Array.from(atob(SPINE_FIXTURE), (character) => character.charCodeAt(0));
+}
+
+test("spine write: the rig the reader just read writes back as the same bytes", () => {
+  const bytes = spineFixtureBytes();
+  assert.equal(bytes.length, 135, "the fixture is the 135-byte rig the browser check uses");
+  const skeleton = readSkeletonBinary(bytes);
+  const written = writeSkeletonBinary(skeleton);
+  assert.equal(written.length, bytes.length, "a reader-produced model carries every byte it read");
+  assert.deepEqual([...written], [...bytes]);
+});
+
+test("spine write: an edited setup pose survives a write and a re-read", () => {
+  const skeleton = readSkeletonBinary(spineFixtureBytes());
+  const edited = applyEdits(skeleton, setBone(emptyEdits(), 0, { rotation: 30 }));
+  const again = readSkeletonBinary(writeSkeletonBinary(edited));
+  assert.equal(again.bones.length, 1);
+  assert.equal(again.bones[0].rotation, 30, "the number the editor wrote is the number the reader reads");
+  assert.equal(again.slots[0].name, "body");
+  assert.equal(again.skins[0].attachments[0].name, "body");
+  assert.equal(again.skins[0].attachments[0].width, 64, "the attachment's atlas-measured rectangle is still there");
 });
 
 /* ------------------------------------------------------------------ */

@@ -174,13 +174,13 @@ function applyTimeline(timeline, time, apply) {
 }
 
 /**
- * Every bone's world transform at `time` of `animation`, in skeleton order.
+ * Every bone's local pose at `time` of `animation`, in skeleton order.
  *
- * Returns an array (indexed like `skeleton.bones`) of
- * `{ a, b, c, d, e, f, worldX, worldY, rotation }` where `a..f` is the affine
- * matrix mapping a point in the bone's local space to world space.
+ * This is the array an editor changes: `rotation`, `x`, `y`, `scaleX`, `scaleY`,
+ * `shearX`, `shearY` per bone, in skeleton order.  `worldTransforms` composes it;
+ * a card that is editing a pose asks for it to know what number a drag adds to.
  */
-export function worldTransforms(skeleton, animation, time) {
+export function localPoses(skeleton, animation, time) {
   const bones = skeleton.bones;
   const pose = bones.map((_, index) => boneSetupPose(skeleton, index));
   const timelines = animation !== null && animation !== undefined && Array.isArray(animation.timelines)
@@ -219,6 +219,19 @@ export function worldTransforms(skeleton, animation, time) {
         break;
     }
   }
+  return pose;
+}
+
+/**
+ * Every bone's world transform at `time` of `animation`, in skeleton order.
+ *
+ * Returns an array (indexed like `skeleton.bones`) of
+ * `{ a, b, c, d, e, f, worldX, worldY, rotation }` where `a..f` is the affine
+ * matrix mapping a point in the bone's local space to world space.
+ */
+export function worldTransforms(skeleton, animation, time) {
+  const bones = skeleton.bones;
+  const pose = localPoses(skeleton, animation, time);
 
   const out = new Array(bones.length);
   for (let i = 0; i < bones.length; i += 1) {
