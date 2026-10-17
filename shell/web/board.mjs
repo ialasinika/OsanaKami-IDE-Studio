@@ -37,7 +37,7 @@
  */
 export const CARD_KINDS = [
   "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-  "spine", "mod", "problems", "docs",
+  "rig", "mod", "problems", "docs",
 ];
 
 export const BOARD_VERSION = 1;
@@ -61,7 +61,7 @@ export const DEFAULT_SIZE = {
   sheet: { w: 460, h: 320 },
   story: { w: 600, h: 480 },
   pixel: { w: 560, h: 500 },
-  spine: { w: 660, h: 560 },
+  rig: { w: 660, h: 560 },
   project: { w: 340, h: 580 },
   mod: { w: 420, h: 520 },
   problems: { w: 520, h: 420 },
@@ -157,7 +157,10 @@ export function isValidCard(card) {
 function normaliseCard(card) {
   const cleaned = cloneDocument(card);
   cleaned.id = card.id;
-  cleaned.kind = card.kind;
+  // A board written while this card was still called `spine` says so in
+  // `kind`; `spine` names the format, the card is a rig.  Map it rather than
+  // drop it: a card the user can see must not vanish on load.
+  cleaned.kind = card.kind === "spine" ? "rig" : card.kind;
   cleaned.x = card.x;
   cleaned.y = card.y;
   cleaned.w = card.w;

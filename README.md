@@ -162,11 +162,11 @@ registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
 The shell registers twelve kinds — `editor`, `runner`, `note`, `files`,
-`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `spine`,
+`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `rig`,
 `mod`, `problems` and `docs` — `sheet` being a structured-data grid (typed cells,
 rows, columns, TSV export) that exists to prove nothing downstream assumes text,
 `project` being the workspace as one project: what the project contains, merged
-with what the document has open, and `spine` being a skeleton and its atlas read
+with what the document has open, and `rig` being a skeleton and its atlas read
 from the game's own bytes. See [`docs/SURFACES.md`](docs/SURFACES.md) and
 [`docs/PROJECT.md`](docs/PROJECT.md).
 

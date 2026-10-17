@@ -90,7 +90,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `files` | a workspace listing, filtered | `filter` |
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
-| `spine` | a Spine rig from the game: bones, skins, an animation timeline, edit and save back | `file`, `animation`, `skin`, `bones` |
+| `rig` | a Spine rig from the game: bones, skins, an animation timeline, edit and save back | `file`, `animation`, `skin`, `bones` |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`:
@@ -174,7 +174,7 @@ sheet [title]            drop a structured-data card (typed cells, not text)
 story <path> [table.csv] [commands.json]
                          edit a story beside its translations, with completion
 pixel <path.png> [w] [h] draw a PNG: the pixels are the file, not the board
-spine <path.skel.bytes>  a Spine rig: its bones, skins and animation timeline
+rig <path.skel.bytes>     a Spine rig: its bones, skins and animation timeline
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)
@@ -505,10 +505,10 @@ or write a Yarn file — those are the cards' jobs (`mod`, `problems`, `docs`), 
 the view only decides where they are drawn. It has no keyboard shortcut, for the
 same reason the classic view has none: a hidden keystroke is not discoverable.
 
-### The Spine card reads the rig's own bytes
+### The rig card reads the Spine rig's own bytes
 
 The game ships its characters as a Spine 4.2 export: a `.skel.bytes` skeleton, a
-`.atlas.txt` page description and a PNG per page. `spine <path.skel.bytes>` opens
+`.atlas.txt` page description and a PNG per page. `rig <path.skel.bytes>` opens
 the three together, and opening either half of the pair as a file does the same.
 
 Four modules do the work, and only the first and the last know the file format:

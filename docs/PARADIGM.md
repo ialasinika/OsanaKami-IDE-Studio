@@ -124,7 +124,7 @@ The shell ships twelve kinds:
 | `sheet` | structured data: typed cells in a grid, not text | `title`, `doc` |
 | `story` | a Yarn story beside its translation table | `file`, `table`, `schema` |
 | `pixel` | a PNG canvas: the pixels are the file, not the board | `file`, `width`, `height`, `palette` |
-| `spine` | a Spine rig: bones, skins, an animation timeline; posable, and the pose saves back to the rig file | `file`, `animation`, `skin`, `bones` |
+| `rig` | a Spine rig: bones, skins, an animation timeline; posable, and the pose saves back to the rig file | `file`, `animation`, `skin`, `bones` |
 | `mod` | one Mod package: its manifest and diagnostics | `dir` |
 | `problems` | the diagnostics of one Mod, as a list | `root` |
 | `docs` | the game's knowledge base, searched | `query` |

@@ -1322,7 +1322,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 #: Every one of them has to be reachable in both tiles.
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
-    "sheet", "story", "pixel", "spine", "mod", "problems", "docs",
+    "sheet", "story", "pixel", "rig", "mod", "problems", "docs",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1339,7 +1339,7 @@ CARD_COMMANDS = (
     "sheet smoke sheet",
     "story main.yarn",
     "pixel icon.png",
-    "spine rig.skel.bytes",
+    "rig rig.skel.bytes",
     "mod NewMod",
     "problems",
     "docs",
@@ -1382,15 +1382,15 @@ LANG_CHECK_KEYS = (
 )
 LANG_CHECK_COUNT = len(LANG_CHECK_KEYS)
 
-#: The spine card's own round trip -- edit, save, and a second save that must
+#: The rig card's own round trip -- edit, save, and a second save that must
 #: refuse -- is two facts past the reachability sweep.
-SPINE_SAVE_CHECK_COUNT = 2
+RIG_SAVE_CHECK_COUNT = 2
 
 #: One assertion per (view, kind), plus the one that every mounted card is
-#: reachable somewhere, plus the spine save facts, the close facts and the
+#: reachable somewhere, plus the rig save facts, the close facts and the
 #: language-strip facts.  Used by the "browser is not installed" summary line.
 CARD_CHECK_COUNT = (
-    len(CARD_KINDS) * len(CARD_VIEWS) + 1 + SPINE_SAVE_CHECK_COUNT
+    len(CARD_KINDS) * len(CARD_VIEWS) + 1 + RIG_SAVE_CHECK_COUNT
     + CLOSE_CHECK_COUNT + LANG_CHECK_COUNT
 )
 
@@ -1527,20 +1527,20 @@ pre{white-space:pre-wrap}
         say("reach_" + view, "total=" + cards.length + " reachable=" + reachable);
       }
 
-      /* ---------------- the spine card writes back what it shows ---------------- */
+      /* ---------------- the rig card writes back what it shows ---------------- */
       {
-        const spineRoot = rootOf("spine");
-        say("spine_card", "root=" + (spineRoot !== null ? 1 : 0));
-        if (spineRoot !== null) {
+        const rigRoot = rootOf("rig");
+        say("rig_card", "root=" + (rigRoot !== null ? 1 : 0));
+        if (rigRoot !== null) {
           const statusOf = () => {
-            const el = spineRoot.querySelector(".card-status");
+            const el = rigRoot.querySelector(".card-status");
             return el === null ? "" : el.textContent.trim();
           };
           const settled = await waitFor(() => {
             const text = statusOf();
             return text !== "" && text.indexOf("reading") !== 0 ? text : "";
           }, 200);
-          say("spine_before", "settled=" + (settled === null ? 0 : 1));
+          say("rig_before", "settled=" + (settled === null ? 0 : 1));
           const rpc = async (method, params) => {
             const reply = await fetch("/rpc", {
               method: "POST",
@@ -1553,18 +1553,18 @@ pre{white-space:pre-wrap}
           };
           const readRig = async () => String((await rpc("file.read_bytes", { path: "rig.skel.bytes" })).base64 || "");
           const clickIn = (selector) => {
-            const el = spineRoot.querySelector(selector);
+            const el = rigRoot.querySelector(selector);
             if (el === null) { return false; }
             el.dispatchEvent(new (win().MouseEvent)("click", { bubbles: true }));
             return true;
           };
           const before = await readRig();
-          const opened = clickIn('[data-role="spine-edit"]');
+          const opened = clickIn('[data-role="rig-edit"]');
           await sleep(180);
-          const rows = Array.from(spineRoot.querySelectorAll(".spine-bones .mod-row"));
+          const rows = Array.from(rigRoot.querySelectorAll(".rig-bones .mod-row"));
           if (rows.length > 0) { rows[0].dispatchEvent(new (win().MouseEvent)("click", { bubbles: true })); }
           await sleep(180);
-          const rotation = spineRoot.querySelector('[data-role="spine-rotation"]');
+          const rotation = rigRoot.querySelector('[data-role="rig-rotation"]');
           const from = rotation === null ? "" : rotation.value;
           const typed = String(Number(from || 0) + 15);
           if (rotation !== null) {
@@ -1573,7 +1573,7 @@ pre{white-space:pre-wrap}
           }
           await sleep(220);
           const edited = statusOf();
-          const pressed = clickIn('[data-role="spine-save"]');
+          const pressed = clickIn('[data-role="rig-save"]');
           const saved = pressed ? await waitFor(() => {
             const text = statusOf();
             return text.indexOf("saved") === 0 || text.indexOf("save failed") === 0 ? text : "";
@@ -1594,19 +1594,19 @@ pre{white-space:pre-wrap}
           } catch (err) {
             back = "error=" + String(err && err.message ? err.message : err);
           }
-          say("spine_back", back);
-          say("spine_edit", "opened=" + (opened ? 1 : 0) + " rows=" + rows.length
+          say("rig_back", back);
+          say("rig_edit", "opened=" + (opened ? 1 : 0) + " rows=" + rows.length
             + " from=" + (from === "" ? "none" : from)
             + " typed=" + typed
             + " edited=" + (edited.indexOf("edited:") >= 0 ? 1 : 0));
-          say("spine_save", "pressed=" + (pressed ? 1 : 0)
+          say("rig_save", "pressed=" + (pressed ? 1 : 0)
             + " written=" + (saved === null ? 0 : 1)
             + " changed=" + (before !== after ? 1 : 0)
             + " b64_before=" + before.length + " b64_after=" + after.length);
           /* A rig with no edit must not be written a second time. */
-          clickIn('[data-role="spine-save"]');
+          clickIn('[data-role="rig-save"]');
           await sleep(250);
-          say("spine_again", "refused=" + (statusOf().indexOf("nothing to save") === 0 ? 1 : 0));
+          say("rig_again", "refused=" + (statusOf().indexOf("nothing to save") === 0 ? 1 : 0));
         }
       }
 
@@ -2174,7 +2174,7 @@ def _cards_workspace(sandbox: Path) -> None:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
         )
     )
-    # The spine card reads three files beside each other: the skeleton, its
+    # The rig card reads three files beside each other: the skeleton, its
     # atlas, and the page image the atlas names.
     rig, atlas = _spine_rig()
     (sandbox / "rig.skel.bytes").write_bytes(rig)
@@ -2331,35 +2331,35 @@ def define_card_checks(facts: dict) -> list:
 
     checks.append(("G29: every open card is reachable in both views", every_card_reachable))
 
-    def spine_saves_what_it_shows():
-        require(facts.get("spine_card"), "the wrapper page reported no line for the spine card")
+    def rig_saves_what_it_shows():
+        require(facts.get("rig_card"), "the wrapper page reported no line for the rig card")
         require(
-            _split_fact_line(facts["spine_card"]).get("root") == "1",
-            "no spine card root was mounted, so the save round trip could not run",
+            _split_fact_line(facts["rig_card"]).get("root") == "1",
+            "no rig card root was mounted, so the save round trip could not run",
         )
-        edit = _split_fact_line(facts.get("spine_edit", ""))
-        save = _split_fact_line(facts.get("spine_save", ""))
-        require(facts.get("spine_edit"), "the wrapper page reported no spine edit line")
-        require(edit.get("opened") == "1", "the spine card has no Edit button to press")
+        edit = _split_fact_line(facts.get("rig_edit", ""))
+        save = _split_fact_line(facts.get("rig_save", ""))
+        require(facts.get("rig_edit"), "the wrapper page reported no rig edit line")
+        require(edit.get("opened") == "1", "the rig card has no Edit button to press")
         require(
             edit.get("rows", "").isdigit() and int(edit["rows"]) >= 1,
-            f"the spine card listed no bones (facts {facts.get('spine_edit')!r})",
+            f"the rig card listed no bones (facts {facts.get('rig_edit')!r})",
         )
         require(
             edit.get("edited") == "1",
-            "typing a number into the spine inspector did not mark the rig edited",
+            "typing a number into the rig inspector did not mark the rig edited",
         )
-        require(facts.get("spine_save"), "the wrapper page reported no spine save line")
+        require(facts.get("rig_save"), "the wrapper page reported no rig save line")
         require(
             save.get("written") == "1",
-            f"pressing Save on the spine card never reported a save (facts {facts.get('spine_save')!r})",
+            f"pressing Save on the rig card never reported a save (facts {facts.get('rig_save')!r})",
         )
         require(
             save.get("changed") == "1",
             "the rig file on disk was byte-identical after saving an edit, so nothing was written",
         )
-        require(facts.get("spine_back"), "the wrapper page never read the saved file back")
-        back = _split_fact_line(facts["spine_back"])
+        require(facts.get("rig_back"), "the wrapper page never read the saved file back")
+        back = _split_fact_line(facts["rig_back"])
         require(
             back.get("rotation") == edit.get("typed"),
             "the saved file does not carry the angle typed into the inspector "
@@ -2371,18 +2371,18 @@ def define_card_checks(facts: dict) -> list:
             f"bone 0 rotation {back.get('rotation')}"
         )
 
-    checks.append(("G29: the spine card saves the pose it is showing back to the rig", spine_saves_what_it_shows))
+    checks.append(("G29: the rig card saves the pose it is showing back to the rig", rig_saves_what_it_shows))
 
-    def spine_refuses_a_clean_save():
-        require(facts.get("spine_again"), "the wrapper page reported no second spine save line")
-        again = _split_fact_line(facts["spine_again"])
+    def rig_refuses_a_clean_save():
+        require(facts.get("rig_again"), "the wrapper page reported no second rig save line")
+        again = _split_fact_line(facts["rig_again"])
         require(
             again.get("refused") == "1",
-            "a spine card with no edit saved the file again instead of answering 'nothing to save'",
+            "a rig card with no edit saved the file again instead of answering 'nothing to save'",
         )
-        return "a clean spine card answers 'nothing to save' and leaves the file alone"
+        return "a clean rig card answers 'nothing to save' and leaves the file alone"
 
-    checks.append(("G29: the spine card refuses to write a rig with no edit", spine_refuses_a_clean_save))
+    checks.append(("G29: the rig card refuses to write a rig with no edit", rig_refuses_a_clean_save))
 
     ask_labels = ("保存并关闭", "不保存，关闭", "取消")
 

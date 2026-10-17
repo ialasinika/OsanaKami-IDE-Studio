@@ -85,7 +85,7 @@ import {
   setPixelAt,
 } from "./pixelpng.mjs";
 /*
- * The Spine card is three headless layers plus this file's canvas: the binary
+ * The rig card is three headless layers plus this file's canvas: the binary
  * and atlas reader (`spine.mjs`), the pose math (`spinepose.mjs`) and the
  * atlas mapping (`spineframe.mjs`).  Keeping them out of the renderer is what
  * lets `selftest.mjs` check all three without a browser.
@@ -810,7 +810,7 @@ export const COMMAND_HELP = [
   "sheet [title]            drop a structured-data card (typed cells, not text)",
   "story <path>             open a .yarn file as nodes and lines, not text",
   "pixel <path.png> [w] [h]     draw a PNG: pixels are the file, not the board",
-  "spine <path.skel.bytes>  show a Spine rig: bones, skins, animation timeline",
+  "rig <path.skel.bytes>    show a Spine rig: bones, skins, animation timeline",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
@@ -5990,7 +5990,7 @@ function renderPixel(card, ctx) {
 }
 
 /* ------------------------------------------------------------------ */
-/* the spine card                                                      */
+/* the rig card                                                       */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -6055,14 +6055,14 @@ export function spinePagePath(atlasPath, pageName) {
 }
 
 /** How far one frame may advance playback, in seconds. */
-const SPINE_MAX_STEP = 0.1;
+const RIG_MAX_STEP = 0.1;
 
 /** Playback speeds the toolbar offers. */
-const SPINE_SPEEDS = [0.25, 0.5, 1, 2];
+const RIG_SPEEDS = [0.25, 0.5, 1, 2];
 
 /** Zoom limits, in device pixels per skeleton unit. */
-const SPINE_ZOOM_MIN = 0.02;
-const SPINE_ZOOM_MAX = 40;
+const RIG_ZOOM_MIN = 0.02;
+const RIG_ZOOM_MAX = 40;
 
 /** `requestAnimationFrame` where it exists, a timer where it does not. */
 function scheduleFrame(fn) {
@@ -6085,10 +6085,10 @@ function cancelFrame(handle) {
 }
 
 /**
- * The spine card.  `handle` exposes the loaded model and the pose controls so
+ * The rig card.  `handle` exposes the loaded model and the pose controls so
  * the app (and a probe) can drive the card without synthesising clicks.
  */
-function renderSpine(card, ctx) {
+function renderRig(card, ctx) {
   const { client, app } = ctx;
 
   const state = {
@@ -6143,45 +6143,45 @@ function renderSpine(card, ctx) {
 
   /* -- the chrome ---------------------------------------------------- */
 
-  const tools = h("div", "spine-tools", { attrs: { "data-role": "spine-tools" } });
+  const tools = h("div", "rig-tools", { attrs: { "data-role": "rig-tools" } });
 
-  const fileInput = h("input", "spine-file", {
+  const fileInput = h("input", "rig-file", {
     attrs: {
       type: "text",
       spellcheck: "false",
       placeholder: "path/to/Rig.skel.bytes",
-      "data-role": "spine-file",
+      "data-role": "rig-file",
       title: "the skeleton to show; its atlas and page are read beside it",
     },
   });
   fileInput.value = state.file;
 
-  const animSelect = h("select", "spine-select", {
-    attrs: { "data-role": "spine-animation", title: "the animation to pose" },
+  const animSelect = h("select", "rig-select", {
+    attrs: { "data-role": "rig-animation", title: "the animation to pose" },
   });
-  const skinSelect = h("select", "spine-select", {
-    attrs: { "data-role": "spine-skin", title: "the skin to show" },
+  const skinSelect = h("select", "rig-select", {
+    attrs: { "data-role": "rig-skin", title: "the skin to show" },
   });
-  const playButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-play", title: "play or pause the animation" },
+  const playButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-play", title: "play or pause the animation" },
     text: "Play",
   });
-  const speedSelect = h("select", "spine-select spine-select-speed", {
-    attrs: { "data-role": "spine-speed", title: "playback speed" },
+  const speedSelect = h("select", "rig-select rig-select-speed", {
+    attrs: { "data-role": "rig-speed", title: "playback speed" },
   });
-  for (const speed of SPINE_SPEEDS) {
+  for (const speed of RIG_SPEEDS) {
     speedSelect.append(h("option", "", {
       attrs: { value: String(speed) },
       text: `${speed}x`,
     }));
   }
   speedSelect.value = "1";
-  const bonesButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-bones-toggle", title: "show or hide the bones" },
+  const bonesButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-bones-toggle", title: "show or hide the bones" },
     text: "Bones",
   });
-  const fitButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-fit", title: "frame the whole rig" },
+  const fitButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-fit", title: "frame the whole rig" },
     text: "Fit",
   });
   /*
@@ -6190,43 +6190,43 @@ function renderSpine(card, ctx) {
    * shows; Save is the one button in this card that writes a file, and it writes
    * the rig the canvas is showing, byte for byte, through `spinewrite.mjs`.
    */
-  const editButton = h("button", "spine-button", {
+  const editButton = h("button", "rig-button", {
     attrs: {
       type: "button",
-      "data-role": "spine-edit",
+      "data-role": "rig-edit",
       "aria-pressed": "false",
       title: "edit the pose in memory, then Save writes it",
     },
     text: "Edit",
   });
-  const keyButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-key", title: "key the selected bone at this time" },
+  const keyButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-key", title: "key the selected bone at this time" },
     text: "Key",
   });
-  const unkeyButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-unkey", title: "remove the selected bone's keys at this time" },
+  const unkeyButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-unkey", title: "remove the selected bone's keys at this time" },
     text: "Unkey",
   });
-  const resetButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-reset", title: "throw every edit away and draw the file again" },
+  const resetButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-reset", title: "throw every edit away and draw the file again" },
     text: "Reset",
   });
-  const saveButton = h("button", "spine-button", {
-    attrs: { type: "button", "data-role": "spine-save", title: "write the edited rig back to its own .skel.bytes (Ctrl+S)" },
+  const saveButton = h("button", "rig-button", {
+    attrs: { type: "button", "data-role": "rig-save", title: "write the edited rig back to its own .skel.bytes (Ctrl+S)" },
     text: "Save",
   });
-  const timeRange = h("input", "spine-time", {
+  const timeRange = h("input", "rig-time", {
     attrs: {
       type: "range",
       min: "0",
       max: "0",
       step: "0.001",
       value: "0",
-      "data-role": "spine-time",
+      "data-role": "rig-time",
       title: "the pose time",
     },
   });
-  const timeLabel = h("span", "spine-time-label", { text: "0.00 / 0.00 s" });
+  const timeLabel = h("span", "rig-time-label", { text: "0.00 / 0.00 s" });
 
   tools.append(
     fileInput,
@@ -6245,9 +6245,9 @@ function renderSpine(card, ctx) {
     saveButton,
   );
 
-  const canvas = h("canvas", "spine-canvas", {
+  const canvas = h("canvas", "rig-canvas", {
     attrs: {
-      "data-role": "spine-canvas",
+      "data-role": "rig-canvas",
       tabindex: "0",
       title: "wheel zooms, drag pans, click picks a bone, space plays; with Edit on a drag turns the selected bone",
     },
@@ -6257,37 +6257,37 @@ function renderSpine(card, ctx) {
    * slot pickers.  It is built once and re-seeded, never rebuilt from scratch,
    * so a drag that re-renders the list cannot eat a half-typed number.
    */
-  const numberInput = (role, title) => h("input", "spine-num", {
+  const numberInput = (role, title) => h("input", "rig-num", {
     attrs: { type: "number", step: "1", "data-role": role, title: title },
   });
-  const xInput = numberInput("spine-x", "the selected bone's local x at this time");
-  const yInput = numberInput("spine-y", "the selected bone's local y at this time");
-  const rotationInput = numberInput("spine-rotation", "the selected bone's local rotation, in degrees");
-  const keysList = h("div", "spine-keys", { attrs: { "data-role": "spine-keys" } });
-  const attachmentsList = h("div", "spine-attachments", { attrs: { "data-role": "spine-attachments" } });
-  const editPanel = h("div", "spine-edit", {
-    attrs: { "data-role": "spine-edit-panel", hidden: "" },
+  const xInput = numberInput("rig-x", "the selected bone's local x at this time");
+  const yInput = numberInput("rig-y", "the selected bone's local y at this time");
+  const rotationInput = numberInput("rig-rotation", "the selected bone's local rotation, in degrees");
+  const keysList = h("div", "rig-keys", { attrs: { "data-role": "rig-keys" } });
+  const attachmentsList = h("div", "rig-attachments", { attrs: { "data-role": "rig-attachments" } });
+  const editPanel = h("div", "rig-edit", {
+    attrs: { "data-role": "rig-edit-panel", hidden: "" },
     children: [
-      h("div", "spine-edit-title", { text: "Bone" }),
-      h("div", "spine-edit-row", {
+      h("div", "rig-edit-title", { text: "Bone" }),
+      h("div", "rig-edit-row", {
         children: [
-          h("label", "spine-field", { children: [h("span", "spine-field-name", { text: "x" }), xInput] }),
-          h("label", "spine-field", { children: [h("span", "spine-field-name", { text: "y" }), yInput] }),
-          h("label", "spine-field", { children: [h("span", "spine-field-name", { text: "rot" }), rotationInput] }),
+          h("label", "rig-field", { children: [h("span", "rig-field-name", { text: "x" }), xInput] }),
+          h("label", "rig-field", { children: [h("span", "rig-field-name", { text: "y" }), yInput] }),
+          h("label", "rig-field", { children: [h("span", "rig-field-name", { text: "rot" }), rotationInput] }),
         ],
       }),
-      h("div", "spine-edit-title", { text: "Keys" }),
+      h("div", "rig-edit-title", { text: "Keys" }),
       keysList,
-      h("div", "spine-edit-title", { text: "Attachments" }),
+      h("div", "rig-edit-title", { text: "Attachments" }),
       attachmentsList,
     ],
   });
-  const bonesList = h("div", "spine-bones", { attrs: { "data-role": "spine-bones" } });
-  const side = h("div", "spine-side", { children: [bonesList, editPanel] });
-  const stage = h("div", "spine-stage", { children: [canvas] });
-  const main = h("div", "spine-main", { children: [stage, side] });
+  const bonesList = h("div", "rig-bones", { attrs: { "data-role": "rig-bones" } });
+  const side = h("div", "rig-side", { children: [bonesList, editPanel] });
+  const stage = h("div", "rig-stage", { children: [canvas] });
+  const main = h("div", "rig-main", { children: [stage, side] });
   const status = makeStatus();
-  const body = h("div", "card-body card-body-spine", { children: [tools, main, status] });
+  const body = h("div", "card-body card-body-rig", { children: [tools, main, status] });
   const shell = cardShell(card, body);
 
   /* -- state helpers ------------------------------------------------- */
@@ -6497,16 +6497,16 @@ function renderSpine(card, ctx) {
     const name = animationName();
     const bone = state.selectedBone;
     if (name === "") {
-      keysList.append(h("div", "spine-bones-empty", { text: "pick an animation to key" }));
+      keysList.append(h("div", "rig-bones-empty", { text: "pick an animation to key" }));
       return;
     }
     if (bone < 0) {
-      keysList.append(h("div", "spine-bones-empty", { text: "pick a bone to key" }));
+      keysList.append(h("div", "rig-bones-empty", { text: "pick a bone to key" }));
       return;
     }
     const frames = framesFor(state.edits, state.skeleton, name, bone, "rotate");
     if (frames.length === 0) {
-      keysList.append(h("div", "spine-bones-empty", { text: "no keys for this bone" }));
+      keysList.append(h("div", "rig-bones-empty", { text: "no keys for this bone" }));
       return;
     }
     fillRows(keysList, frames.map((frame) => {
@@ -6559,7 +6559,7 @@ function renderSpine(card, ctx) {
     const skeleton = workingSkeleton();
     const bone = state.selectedBone;
     if (skeleton === null || bone < 0) {
-      attachmentsList.append(h("div", "spine-bones-empty", { text: "pick a bone to edit its slots" }));
+      attachmentsList.append(h("div", "rig-bones-empty", { text: "pick a bone to edit its slots" }));
       return;
     }
     const slots = Array.isArray(skeleton.slots) ? skeleton.slots : [];
@@ -6570,14 +6570,14 @@ function renderSpine(card, ctx) {
       }
     }
     if (mine.length === 0) {
-      attachmentsList.append(h("div", "spine-bones-empty", { text: "this bone has no slots" }));
+      attachmentsList.append(h("div", "rig-bones-empty", { text: "this bone has no slots" }));
       return;
     }
     for (const index of mine) {
       const slot = slots[index];
-      const select = h("select", "spine-select", {
+      const select = h("select", "rig-select", {
         attrs: {
-          "data-role": "spine-attachment",
+          "data-role": "rig-attachment",
           "data-slot": String(index),
           title: "what this slot shows",
         },
@@ -6587,9 +6587,9 @@ function renderSpine(card, ctx) {
         select.append(h("option", "", { attrs: { value: name }, text: name }));
       }
       select.value = currentAttachmentOf(index);
-      attachmentsList.append(h("label", "spine-field spine-field-wide", {
+      attachmentsList.append(h("label", "rig-field rig-field-wide", {
         children: [
-          h("span", "spine-field-name", { text: typeof slot.name === "string" ? slot.name : `slot ${index}` }),
+          h("span", "rig-field-name", { text: typeof slot.name === "string" ? slot.name : `slot ${index}` }),
           select,
         ],
       }));
@@ -6627,7 +6627,7 @@ function renderSpine(card, ctx) {
     const bones = state.skeleton !== null && Array.isArray(state.skeleton.bones) ? state.skeleton.bones : [];
     bonesList.textContent = "";
     if (bones.length === 0) {
-      bonesList.append(h("div", "spine-bones-empty", { text: "no bones" }));
+      bonesList.append(h("div", "rig-bones-empty", { text: "no bones" }));
       return;
     }
     fillRows(bonesList, bones.map((bone, index) => {
@@ -6767,7 +6767,7 @@ function renderSpine(card, ctx) {
     const skeletonPath = spineSkeletonPath(wanted);
     const atlasPath = spineAtlasPath(wanted);
     if (skeletonPath === "") {
-      return fail(`spine: ${wanted === "" ? "(no file)" : wanted} is not a .skel.bytes or .atlas.txt path`);
+      return fail(`rig: ${wanted === "" ? "(no file)" : wanted} is not a .skel.bytes or .atlas.txt path`);
     }
     state.busy = true;
     state.error = null;
@@ -7015,7 +7015,7 @@ function renderSpine(card, ctx) {
     if (state.destroyed || !state.playing) {
       return;
     }
-    const elapsed = state.lastTick === 0 ? 0 : Math.min(SPINE_MAX_STEP, Math.max(0, (now - state.lastTick) / 1000));
+    const elapsed = state.lastTick === 0 ? 0 : Math.min(RIG_MAX_STEP, Math.max(0, (now - state.lastTick) / 1000));
     state.lastTick = now;
     advance(elapsed * state.speed);
     paint();
@@ -7251,7 +7251,7 @@ function renderSpine(card, ctx) {
     const offsetX = event.clientX - rect.left - rect.width / 2;
     const offsetY = event.clientY - rect.top - rect.height / 2;
     const factor = Math.exp(-event.deltaY * 0.0015);
-    const scale = Math.min(SPINE_ZOOM_MAX, Math.max(SPINE_ZOOM_MIN, state.camera.scale * factor));
+    const scale = Math.min(RIG_ZOOM_MAX, Math.max(RIG_ZOOM_MIN, state.camera.scale * factor));
     const worldX = state.camera.tx + offsetX / state.camera.scale;
     const worldY = state.camera.ty - offsetY / state.camera.scale;
     state.camera = { scale, tx: worldX - offsetX / scale, ty: worldY + offsetY / scale };
@@ -7286,7 +7286,7 @@ function renderSpine(card, ctx) {
       return false;
     }
     if (state.file === "") {
-      say("no file to write — open one with `spine <path.skel.bytes>`", "warn");
+      say("no file to write — open one with `rig <path.skel.bytes>`", "warn");
       return false;
     }
     if (!hasEdits(state.edits)) {
@@ -7511,7 +7511,7 @@ function renderSpine(card, ctx) {
   if (state.file !== "") {
     load(state.file);
   } else {
-    say("no skeleton yet: open one with `spine <path.skel.bytes>`");
+    say("no skeleton yet: open one with `rig <path.skel.bytes>`");
   }
   paint();
 
@@ -7528,7 +7528,7 @@ function renderSpine(card, ctx) {
   return {
     el: shell.el,
     handle: {
-      kind: "spine",
+      kind: "rig",
       hasPath(path) {
         return state.file === path;
       },
@@ -8402,13 +8402,13 @@ registerCardKind({
 });
 
 registerCardKind({
-  kind: "spine",
-  title: "Spine",
-  describe: (card) => `spine ${card.file || "(no skeleton)"}`,
+  kind: "rig",
+  title: "Rig",
+  describe: (card) => `rig ${card.file || "(no skeleton)"}`,
   // The document keeps what a reopening card should come back to; the pose time
   // and the camera do not belong to the board.
   create: () => ({ file: "", animation: "", skin: "", bones: true }),
-  render: renderSpine,
+  render: renderRig,
 });
 
 /* -- the three game surfaces ------------------------------------------ */

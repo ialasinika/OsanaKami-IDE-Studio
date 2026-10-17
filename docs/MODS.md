@@ -481,5 +481,5 @@ two deliberate ones, with the three audio references earning nothing at all
 (G21). Each was falsified once -- a sabotaged package fails exactly the check it
 should and nothing else -- before being trusted.  `tools/browser_smoke.py` is 57
 checks over the same example (the views' tabs and tiles, a tab that closes after
-asking, the completion menu and the hover line, and a spine card that saves the
+asking, the completion menu and the hover line, and a rig card that saves the
 pose it is showing).

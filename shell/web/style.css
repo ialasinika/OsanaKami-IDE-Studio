@@ -1761,7 +1761,7 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
 }
 .mod-row-extra:hover { color: var(--accent); border-color: var(--accent); }
 
-/* -- the spine card --------------------------------------------------- */
+/* -- the rig card --------------------------------------------------- */
 
 /* A rig is a picture with a list beside it: the canvas takes the room, the
    bones take a fixed column so the picture does not resize as the list grows. */
@@ -1771,7 +1771,7 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   min-height: 0;
 }
 
-.spine-tools {
+.rig-tools {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
@@ -1781,13 +1781,13 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   border-bottom: 1px solid var(--line-soft);
 }
 
-.spine-main {
+.rig-main {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
 }
 
-.spine-stage {
+.rig-stage {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -1795,7 +1795,7 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   border-right: 1px solid var(--line-soft);
 }
 
-.spine-canvas {
+.rig-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1805,16 +1805,16 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   cursor: grab;
   touch-action: none;
 }
-.spine-canvas:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
-.spine-canvas.is-panning { cursor: grabbing; }
+.rig-canvas:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+.rig-canvas.is-panning { cursor: grabbing; }
 
-.spine-bones {
+.rig-bones {
   flex: 0 0 150px;
   overflow: auto;
   padding: 2px 0;
 }
 
-.spine-bones-empty {
+.rig-bones-empty {
   padding: 6px 8px;
   color: var(--fg-faint);
   font-style: italic;
@@ -1822,14 +1822,14 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
 
 /* A selected bone is a line on the picture and a row in the list, so both say
    which one: the canvas colours the line, the list marks the row. */
-.spine-bones .mod-row.is-selected {
+.rig-bones .mod-row.is-selected {
   background: var(--accent-dim);
   color: var(--fg);
 }
 
-.spine-file,
-.spine-select,
-.spine-button {
+.rig-file,
+.rig-select,
+.rig-button {
   background: var(--card-hi);
   border: 1px solid var(--line);
   border-radius: 3px;
@@ -1838,70 +1838,70 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   padding: 3px 6px;
 }
 
-.spine-file {
+.rig-file {
   flex: 1 1 160px;
   min-width: 0;
   color: var(--fg);
 }
 
-.spine-file:focus,
-.spine-select:focus {
+.rig-file:focus,
+.rig-select:focus {
   outline: none;
   border-color: var(--accent-dim);
   box-shadow: inset 0 0 0 1px var(--accent-dim);
 }
 
-.spine-select { max-width: 150px; }
-.spine-select-speed { max-width: 60px; }
+.rig-select { max-width: 150px; }
+.rig-select-speed { max-width: 60px; }
 
-.spine-button { cursor: pointer; }
-.spine-button:hover { color: var(--fg); border-color: var(--accent-dim); }
-.spine-button.is-on {
+.rig-button { cursor: pointer; }
+.rig-button:hover { color: var(--fg); border-color: var(--accent-dim); }
+.rig-button.is-on {
   color: var(--bg-deep);
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 600;
 }
 
-.spine-time {
+.rig-time {
   flex: 1 1 90px;
   min-width: 60px;
   accent-color: var(--accent);
 }
 
-.spine-time-label {
+.rig-time-label {
   flex: 0 0 auto;
   color: var(--fg-faint);
   font: 10.5px/1 var(--mono-font);
   white-space: nowrap;
 }
 
-/* -- the spine card's edit mode -------------------------------------- */
+/* -- the rig card's edit mode -------------------------------------- */
 
 /* The list column is now a column of two parts: the bones (which keep their
    own scroll) and, while editing, the inspector under them. */
-.spine-side {
+.rig-side {
   flex: 0 0 190px;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.spine-side .spine-bones {
+.rig-side .rig-bones {
   flex: 0 1 45%;
   min-height: 60px;
 }
 
-.spine-edit {
+.rig-edit {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 2px 6px 6px;
   border-top: 1px solid var(--line-soft);
 }
-.spine-edit[hidden] { display: none; }
+.rig-edit[hidden] { display: none; }
 
-.spine-edit-title {
+.rig-edit-title {
   margin: 5px 0 2px;
   color: var(--fg-faint);
   font: 9.5px/1 var(--mono-font);
@@ -1909,22 +1909,22 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   text-transform: uppercase;
 }
 
-.spine-edit-row {
+.rig-edit-row {
   display: flex;
   align-items: flex-end;
   gap: 4px;
 }
 
-.spine-field {
+.rig-field {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
-.spine-field-wide { margin-top: 3px; }
+.rig-field-wide { margin-top: 3px; }
 
-.spine-field-name {
+.rig-field-name {
   overflow: hidden;
   color: var(--fg-faint);
   font: 10px/1 var(--mono-font);
@@ -1932,7 +1932,7 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   white-space: nowrap;
 }
 
-.spine-num {
+.rig-num {
   width: 100%;
   min-width: 0;
   background: var(--card-hi);
@@ -1942,7 +1942,7 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
   font: 10.5px/1 var(--mono-font);
   padding: 3px 4px;
 }
-.spine-num:focus {
+.rig-num:focus {
   outline: none;
   border-color: var(--accent-dim);
   box-shadow: inset 0 0 0 1px var(--accent-dim);
@@ -1950,8 +1950,8 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
 
 /* A key row is a row in the same list language as the bones: clicking it moves
    the playhead, and the × at its end removes it. */
-.spine-keys .mod-row,
-.spine-attachments .mod-row { cursor: pointer; }
+.rig-keys .mod-row,
+.rig-attachments .mod-row { cursor: pointer; }
 
-.spine-canvas.is-editing { cursor: crosshair; }
-.spine-canvas.is-editing:active { cursor: grabbing; }
+.rig-canvas.is-editing { cursor: crosshair; }
+.rig-canvas.is-editing:active { cursor: grabbing; }

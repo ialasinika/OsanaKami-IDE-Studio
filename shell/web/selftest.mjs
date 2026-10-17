@@ -1917,7 +1917,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 test("hook: the built-in kinds register in a known order", () => {
   assert.deepEqual(knownCardKinds(), [
     "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-    "spine", "mod", "problems", "docs",
+    "rig", "mod", "problems", "docs",
   ]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
@@ -2219,6 +2219,18 @@ test("protocol: the document's card check is shape, not vocabulary", () => {
   assert.equal(shape.document.cards.length, 1);
   assert.equal(shape.droppedCards.length, 3);
   assert.deepEqual(shape.document.cards[0].doc, { anything: true });
+});
+
+test("protocol: a board that says `spine` loads the card that is now called `rig`", () => {
+  /* The card is renamed before any release, but a board written during
+     development still carries the format's name in `kind`.  Dropping it
+     would look like the card had been deleted, so the loader maps it. */
+  const shape = normaliseDocument({
+    cards: [{ id: "s1", kind: "spine", x: 0, y: 0, w: 660, h: 560, file: "Cop.skel.bytes" }],
+  });
+  assert.equal(shape.document.cards.length, 1);
+  assert.equal(shape.document.cards[0].kind, "rig");
+  assert.equal(shape.document.cards[0].file, "Cop.skel.bytes");
 });
 
 /* ------------------------------------------------------------------ */
@@ -2784,7 +2796,7 @@ const ALL_CARD_KINDS = knownCardKinds();
 test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
   assert.deepEqual(
     [...CARD_KINDS].sort(),
-    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "spine", "mod", "problems", "docs"].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs"].sort(),
     "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
   );
   for (const kind of CARD_KINDS) {
@@ -5804,7 +5816,7 @@ test("spine edit: editing answers a new edit and never touches the one it was as
 /*
  * The writer, against the one rig this suite owns: a 135-byte synthetic
  * skeleton (one bone "root", one slot "body", one region attachment) that
- * `tools/browser_smoke.py` builds for the spine card's check. It is embedded
+ * `tools/browser_smoke.py` builds for the rig card's check. It is embedded
  * here as base64 because a test that needs the game's install cannot run in
  * the suite, and the writer's real proof -- all 37 shipped rigs, byte for byte
  * -- lives in `build/_verify_spinewrite.mjs`.

@@ -30,17 +30,21 @@ stands in this tree.
   corners onto atlas rectangles, which is where a trimmed region's `offsets` and a
   quarter-turned `rotate` live.  Both are pure, so `shell/web/selftest.mjs`
   checks them without a browser.
-- The `spine` card is those three layers plus a canvas, a selectable bones
+- The `rig` card is those three layers plus a canvas, a selectable bones
   overlay, a skin picker, an animation picker, a timeline, playback at four
   speeds, and wheel zoom / drag pan / click-to-pick-bone.  Choosing no skin means
   *every* skin merged in skin order: these rigs keep the body, the eyes and the
   mouth in separate skins and the game stacks them, so `Journalist`'s single setup
   skin is six hair meshes and would draw an empty body.  A named skin still shows
   exactly that skin.
-- `spine <path.skel.bytes>` opens it as a command, and opening either half of the
+- `rig <path.skel.bytes>` opens it as a command, and opening either half of the
   pair as a file opens the card too.  At this commit nothing is written: the card
   is a viewer, and the board keeps `file`, `animation`, `skin` and `bones` so the
   choice survives a save and a reload.
+- The card is called `rig`, not `spine`: `spine` names the format, and the
+  module names keep it, while the card shows one rig.  A `board.json` written
+  under the old kind name is mapped on load instead of dropped, and
+  `shell/web/selftest.mjs` checks that.
 - Evidence, measured.  A throw-away probe under `build/` parsed all 37 rigs in the
   game's `Spine/` folder and consumed every skeleton to its last byte -- 1199
   bones, 394 slots, 321 skins, 1077 attachments, 1038 atlas regions.  The game's
@@ -59,7 +63,7 @@ stands in this tree.
   the status line counts those meshes as not drawn instead of pretending.  The
   card round trip is a suite check now: `tools/browser_smoke.py` opens a synthetic
   one-bone rig (written in the test, to the layout the reader documents -- the
-  game's own rigs stay out of the repository) through `spine rig.skel.bytes` and
+  game's own rigs stay out of the repository) through `rig rig.skel.bytes` and
   reaches the card as a tab in both tiles (55 checks at this commit).
 
 ### A Spine rig is edited where it was read
@@ -108,7 +112,7 @@ stands in this tree.
   25 typed in -- with `round_trip_identical: True`; the same on `Journalist` went
   from 13349 to 13362 bytes (12 timelines: the file's 11 plus the new rotate),
   round-trip identical.  A second save with no edit, and a save after Reset, both
-  said "nothing to save".  The suite (282 checks) covers the writer on the one rig
+  said "nothing to save".  The suite (283 checks) covers the writer on the one rig
   it owns, a 135-byte synthetic skeleton it embeds for the purpose: reading it and
   writing it back is that same byte array, and a setup-pose edit survives a write
   and a re-read.  `tools/browser_smoke.py` grew the card's round trip into a suite
