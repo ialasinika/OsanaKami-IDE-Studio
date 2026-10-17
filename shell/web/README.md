@@ -1,4 +1,4 @@
-# `shell/web/` — the InfantGod Studio front end
+# `shell/web/` — the OsanaKami IDE Studio front end
 
 This directory is the entire front end. It is served straight off disk by
 `node shell/main.mjs serve` on `http://127.0.0.1:<port>/`, with no build step
@@ -234,7 +234,7 @@ that arrives after you typed again is discarded.
 
 The revision returned by `file.read` is remembered and sent back as
 `base_revision` on every write. If another writer got there first the kernel
-answers `STALE_REVISION`, and InfantGod Studio does **not** silently overwrite:
+answers `STALE_REVISION`, and OsanaKami IDE Studio does **not** silently overwrite:
 
 * the card's status line says the file changed on disk, and
 * a row of buttons appears above the command line — *reload from disk*,

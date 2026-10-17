@@ -3,17 +3,42 @@
 What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
-InfantGod Studio is a fork of seIDE at `v0.1.0-alpha`.  The kernel, the shell,
-the protocol and the tools are upstream's, renamed: `seIDE` becomes InfantGod
-Studio, `.seide/` becomes `.infantgod/`, `core/include/seide_cfg.h` becomes
-`core/include/infantgod_cfg.h`, the protocol name `seide/1` becomes
-`infantgod/1` — the fork's first protocol version, replaced by `infantgod/2` in
-`## Unreleased` below.  The Brainfuck fixtures are retargeted to Yarn, so
-`examples/hello.yarn` is the fixture the suite reads.  The `v0.1.0-alpha`
-section below is inherited in that sense — upstream's work, as it stands in this
-tree.
+OsanaKami IDE Studio is a fork of seIDE at `v0.1.0-alpha`.  It carried the name
+InfantGod Studio (幼神工坊) until the rename recorded in `## Unreleased` below; the
+kernel, the shell, the protocol and the tools are upstream's, renamed: `seIDE`
+becomes OsanaKami IDE Studio, `.seide/` becomes `.infantgod/`,
+`core/include/seide_cfg.h` becomes `core/include/infantgod_cfg.h`, the protocol
+name `seide/1` becomes `infantgod/1` — the fork's first protocol version,
+replaced by `infantgod/2` in `## Unreleased` below.  The Brainfuck fixtures are
+retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  The
+`v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
+stands in this tree.
 
 ## Unreleased
+
+### The name
+
+- The product is **OsanaKami IDE Studio**.  The previous name was InfantGod Studio
+  (幼神工坊).
+- The version is still **0.1.0**: the product, the shell and the kernel's header all
+  name 0.1.0, and the shipped kernel binary is compiled at 0.1.0 — this change was
+  made on a machine with no C toolchain, so bumping the version would leave the
+  sources disagreeing with the binary that ships (`python tools/kernel_probe.py`
+  fails on exactly that).  After a `make` on a machine with a C89 compiler,
+  `python tools/version.py set 0.1.1-alpha.1` finishes the bump everywhere.
+- Renamed: `package.json` name / productName / author / publisherName, appId and
+  uninstall key (`com.osanakami.idestudio`), the window title and the about box,
+  the HUD brand, the `.lang` descriptor header, the generator line a new mod's
+  README receives, the first-run workspace (`Documents/OsanaKamiIDEStudio`), the
+  installer's product name and output file, the EULA, README, licenses and docs,
+  and the code-signing identity (rebuilt as `CN=OsanaKami IDE Studio`).
+- Deliberately unchanged: the kernel binary (`resources/infantgod.exe`), the
+  workspace state directory `.infantgod/`, the protocol name `infantgod/2` and the
+  `INFANTGOD_*` macros.  They are internal identifiers rather than product text,
+  and this environment has no C toolchain, so the shipped kernel binary cannot be
+  rebuilt: renaming them would put the sources and the binary out of step.
+- The game's own names are still used only descriptively, and the disclaimer from
+  the previous entry (not affiliated, no trademark claim) is unchanged.
 
 ### One document, two views -- the canvas is gone
 
@@ -674,7 +699,7 @@ tree.
   and a replaced one — so the toolchain was never the problem; the chained wrapper
   was.
 - The replacement is `tools/installer.nsi` (166 lines, MUI2, Unicode, per-user
-  `$LOCALAPPDATA\Programs\InfantGod Studio`, Start Menu shortcut, an uninstall entry
+  `$LOCALAPPDATA\Programs\OsanaKami IDE Studio`, Start Menu shortcut, an uninstall entry
   and a working uninstaller) driven by `tools/make-installer.mjs` (one `makensis`
   call over a frozen payload, then sign and verify, then a JSON summary in
   `build/make-installer.json`).  `package.json`'s `dist` is electron-builder
@@ -707,10 +732,13 @@ tree.
   sandboxed session does not reproduce (exit 0 in one second, nothing installed,
   while the identical copy in `build/` installs in eight); the artifact is
   byte-identical by sha256, so this is a session/environment effect, not the
-  package.  The installer rebuilt from the final tree was checked again the same
-  way, out of `build/`, against its own payload (`build/e2e-final-lead2.out`):
-  install, all 127 files, the three licence files, the shortcut, both keys, then
-  uninstall — exit 0 throughout, nothing left behind.
+  package.  The final package — rebuilt under the new name, `OsanaKami IDE Studio
+  Setup 0.1.0.exe`, sha256 `e0ab79e5…50604b`, signed `CN=OsanaKami IDE Studio` —
+  was checked the same way out of `build/`, against its own payload
+  (`build/_lead_verify_final.log`): install, all 127 files, the three licence
+  files, the shortcut, both renamed keys (`com.osanakami.idestudio`,
+  `Software\OsanaKami IDE Studio`), then uninstall — 19/19, exit 0 throughout,
+  nothing left behind.
 
 ### A knowledge base that can be rebuilt, and a machine with no game
 

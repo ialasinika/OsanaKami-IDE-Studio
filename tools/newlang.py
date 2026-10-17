@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""newlang.py -- scaffold a InfantGod Studio ``.lang`` language descriptor.
+"""newlang.py -- scaffold a OsanaKami IDE Studio ``.lang`` language descriptor.
 
     python tools/newlang.py --id ID --ext .EXT [--title T] [--comment CHAR]
                             [--string TOKEN] [--block-comment-open TOKEN]
@@ -7,11 +7,11 @@
                             [--keywords "a,b,c"] [--keyword TOKEN]
                             [--out DIR] [--force]
 
-The written file uses exactly the grammar the InfantGod Studio descriptor parser accepts
+The written file uses exactly the grammar the OsanaKami IDE Studio descriptor parser accepts
 (``langs/lang.mjs``, loaded by the shell -- languages are not part of the C
 kernel)::
 
-    # InfantGod Studio language descriptor
+    # OsanaKami IDE Studio language descriptor
     id yarn
     title Yarn
     ext .yarn
@@ -262,7 +262,7 @@ def render(
     block_close: str = "",
 ) -> str:
     """Render the descriptor text (always LF-terminated, exactly one final LF)."""
-    lines = ["# InfantGod Studio language descriptor", f"id {language_id}", f"title {title}"]
+    lines = ["# OsanaKami IDE Studio language descriptor", f"id {language_id}", f"title {title}"]
     lines.extend(f"ext {extension}" for extension in extensions)
     if block_open:
         lines.append(f"block_comment_open {escape_token(block_open)}")

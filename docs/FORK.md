@@ -1,6 +1,6 @@
 # Fork playbook
 
-You are forking InfantGod Studio into your own IDE. This is the order of work, cheapest
+You are forking OsanaKami IDE Studio into your own IDE. This is the order of work, cheapest
 first, with what each step touches and what it costs.
 
 Read `docs/TRIM.md` first if you have not: trimming is step 2 and it is the
@@ -218,7 +218,7 @@ python tools/newlang.py --id mylang --ext .ml \
 ```
 
 The generated file follows the frozen grammar in `docs/PROTOCOL.md`
-(`# InfantGod Studio language descriptor`, `id`, `title`, `ext`, optional `line_comment` /
+(`# OsanaKami IDE Studio language descriptor`, `id`, `title`, `ext`, optional `line_comment` /
 `block_comment_open` / `block_comment_close` / `string`, and
 `kind <kindname> "<token>" ...`). An unknown key or an unquoted token is a hard
 error — `parseDescriptor` throws `LangError` with `source` and a 1-based `line`,

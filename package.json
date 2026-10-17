@@ -1,11 +1,11 @@
 {
-  "name": "infantgod-studio",
-  "productName": "InfantGod Studio",
+  "name": "osanakami-ide-studio",
+  "productName": "OsanaKami IDE Studio",
   "version": "0.1.0",
   "private": true,
-  "description": "幼神工坊 — a board-shaped mod IDE for 《幼神》",
+  "description": "OsanaKami IDE Studio — a board-shaped mod IDE for 《幼神》",
   "license": "MIT",
-  "author": "InfantGod Studio",
+  "author": "OsanaKami IDE Studio",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
@@ -20,8 +20,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.infantgod.studio",
-    "productName": "InfantGod Studio",
+    "appId": "com.osanakami.idestudio",
+    "productName": "OsanaKami IDE Studio",
     "directories": {
       "output": "dist"
     },
@@ -67,7 +67,7 @@
       ],
       "icon": "electron/icon.ico",
       "signtoolOptions": {
-        "publisherName": "InfantGod Studio"
+        "publisherName": "OsanaKami IDE Studio"
       }
     },
     "nsis": {

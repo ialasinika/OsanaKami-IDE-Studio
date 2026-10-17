@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""e2e.py -- end-to-end driver for the InfantGod Studio kernel protocol.
+"""e2e.py -- end-to-end driver for the OsanaKami IDE Studio kernel protocol.
 
     python tools/e2e.py [--kernel PATH | --kernel-cmd CMD]
                         [--timeout SEC] [--keep-going] [--json]
@@ -890,7 +890,7 @@ def define_checks(h: Harness) -> list:
             )
         except Exception as exc:  # noqa: BLE001 -- a restore may never raise
             sys.stderr.write(
-                f"InfantGod Studio e2e: could not restore {ctx['fixture_path']}: {exc}\n"
+                f"OsanaKami IDE Studio e2e: could not restore {ctx['fixture_path']}: {exc}\n"
             )
 
     def file_write():
@@ -2102,7 +2102,7 @@ def report(results, style: Style, stream, extra: str = "") -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="e2e.py",
-        description="Drive the InfantGod Studio kernel RPC scenario. Exit codes: 0 pass, 1 fail, 2 driver error, 3 usage.",
+        description="Drive the OsanaKami IDE Studio kernel RPC scenario. Exit codes: 0 pass, 1 fail, 2 driver error, 3 usage.",
     )
     parser.add_argument(
         "--kernel",
@@ -2161,7 +2161,7 @@ def main(argv=None) -> int:
     }
 
     if not args.json:
-        print(style.bold(f"InfantGod Studio e2e [{mode} mode]: {' '.join(argv_infantgod)}"))
+        print(style.bold(f"OsanaKami IDE Studio e2e [{mode} mode]: {' '.join(argv_infantgod)}"))
         print(style.dim(f"fixture   : {fixture['path']} ({ctx['source_units']} units)"))
         print(style.dim(f"exec cmd  : {ctx['cmd']}"))
         if mode == "kernel":

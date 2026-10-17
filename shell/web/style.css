@@ -1,4 +1,4 @@
-/* style.css -- the entire look of InfantGod Studio.
+/* style.css -- the entire look of OsanaKami IDE Studio.
  *
  * One dark surface, four accents, and a dot grid.  Nothing here is decorative
  * for its own sake: the grid makes the board read as a continuous plane (so it
@@ -241,7 +241,7 @@ body.is-mod .card[data-kind="problems"] {
 .hud-button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dim); }
 
 /* The log's door, and what it says when the strip is shut.  The log is the whole
-   of InfantGod Studio's dialog system and therefore has to be reachable, but it is
+   of OsanaKami IDE Studio's dialog system and therefore has to be reachable, but it is
    not worth a permanent strip: closed, this button counts what arrived and says
    so.  `is-hot` is a warning waiting under a closed lid, `is-error` one that was
    an error -- the strip stays shut either way, the button is the tell. */
@@ -901,7 +901,7 @@ body.is-mod .card[data-kind="problems"] {
 #command::placeholder { color: var(--fg-faint); }
 .bar-hint { color: var(--fg-faint); font: 10.5px/1 var(--mono-font); white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
 
-/* An inline choice strip -- InfantGod Studio's replacement for a dialog. */
+/* An inline choice strip -- OsanaKami IDE Studio's replacement for a dialog. */
 .ask {
   display: flex;
   align-items: center;

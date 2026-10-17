@@ -1,6 +1,6 @@
 # The board paradigm
 
-This document explains the one design decision that makes InfantGod Studio unlike every
+This document explains the one design decision that makes OsanaKami IDE Studio unlike every
 IDE you have used: **the cards are a persistent document, and every arrangement
 you look at is a projection of it.**
 
@@ -25,7 +25,7 @@ below: what is open, and what is linked to what, survives a view.
 
 ---
 
-## The two things InfantGod Studio removes
+## The two things OsanaKami IDE Studio removes
 
 ### No tabs
 
@@ -35,7 +35,7 @@ moment you open the fifth file you begin managing the tab strip instead of the
 code. Closed tabs are gone; the only way back is the file tree and your memory of
 the path.
 
-In InfantGod Studio, opening a file creates a **card in the board document**.
+In OsanaKami IDE Studio, opening a file creates a **card in the board document**.
 Nothing closes when you open something else, and the card you opened yesterday is
 still in the document, next to the note where you wrote down why you opened it.
 
@@ -59,7 +59,7 @@ answer "which files am I working on, and what is the relationship between
 them?" — that question is answered by the filesystem's directory layout, which
 is an accident of history.
 
-InfantGod Studio puts the tree in a card, not in the frame: the `files` card is a
+OsanaKami IDE Studio puts the tree in a card, not in the frame: the `files` card is a
 filterable listing you can open (and the `project` card answers the same question
 with what is already open merged in), and `workspace.list` is underneath. Neither
 view's column is the repository: it is the first `project`/`files`/`mod` card the
@@ -198,7 +198,7 @@ remembers which cards are open, where the reader put them and what is linked to
 what; the views are recomputed from it and never written back into it. Two
 developers with different board files are working on different projects in a way
 no `.gitignore`d editor state can express. Commit it or ignore it — but decide on
-purpose, because InfantGod Studio's `.gitignore` ignores all of `.infantgod/` and
+purpose, because OsanaKami IDE Studio's `.gitignore` ignores all of `.infantgod/` and
 you may want your fork to keep `board.json`.
 
 ---
@@ -272,7 +272,7 @@ it never becomes unusable because the thing you need is buried.
 
 ## Contrast with mainstream IDEs, concretely
 
-| concern | mainstream IDE | InfantGod Studio |
+| concern | mainstream IDE | OsanaKami IDE Studio |
 | --- | --- | --- |
 | Where is my file? | in the tree, at its path | in the document; the tree is a `files` card, and both views' columns are a `project`/`files`/`mod` card |
 | Which files am I working on? | the open tabs | the cards in the document; the tab strip is those cards, drawn |
@@ -285,7 +285,7 @@ it never becomes unusable because the thing you need is buried.
 | What is persisted? | editor settings, open-tab session | the whole document, as `board.json` |
 
 The comparison that matters: in a tabbed IDE, the layout is a **transient view**
-of the filesystem. In InfantGod Studio, the layout is **part of the work** — the
+of the filesystem. In OsanaKami IDE Studio, the layout is **part of the work** — the
 document is the thing that persists, and both views are drawn from it.
 
 ---

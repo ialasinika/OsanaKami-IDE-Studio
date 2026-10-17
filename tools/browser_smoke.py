@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""browser_smoke.py -- the real-browser smoke test for the InfantGod Studio board UI.
+"""browser_smoke.py -- the real-browser smoke test for the OsanaKami IDE Studio board UI.
 
     python tools/browser_smoke.py [--port N] [--edge PATH] [--timeout S] [--keep]
 
@@ -1302,7 +1302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="browser_smoke.py",
         description=(
-            "Drive the InfantGod Studio board UI in the real browser and assert on the dumped DOM. "
+            "Drive the OsanaKami IDE Studio board UI in the real browser and assert on the dumped DOM. "
             "Exit codes: 0 pass or skipped, 1 a check failed, 2 could not run, 3 usage."
         ),
     )
@@ -1468,7 +1468,7 @@ def main(argv=None) -> int:
         print(f"summary: 0 passed, 0 failed, {5 + NEWMOD_CHECK_COUNT} skipped (no browser)")
         return 0
 
-    show("InfantGod Studio browser smoke", str(REPO_ROOT))
+    show("OsanaKami IDE Studio browser smoke", str(REPO_ROOT))
     show("browser", str(edge))
     show("kernel", f"{SHELL_MAIN.relative_to(REPO_ROOT)} (node)")
 

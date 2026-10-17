@@ -1,7 +1,7 @@
 # The Electron wrapper
 
 This directory is the only part of the project that knows Electron exists. It
-turns InfantGod Studio into a desktop application: a real window, a real taskbar
+turns OsanaKami IDE Studio into a desktop application: a real window, a real taskbar
 entry, an installer, and no dependency on whatever browser happens to be
 installed.
 
@@ -41,7 +41,7 @@ the filesystem.
 ## How it boots
 
 ```
-electron .                                       InfantGod Studio.exe (or electron)
+electron .                                       OsanaKami IDE Studio.exe (or electron)
   └─ main.js
        ├─ reads <userData>/settings.json         { workspace, modsRoot }
        ├─ spawns process.execPath                the shell, under ELECTRON_RUN_AS_NODE=1
@@ -71,11 +71,11 @@ There is no settings UI. Settings live in Electron's per-user directory:
 
 | platform | path |
 | --- | --- |
-| Windows | `%APPDATA%\InfantGod Studio\settings.json` |
+| Windows | `%APPDATA%\OsanaKami IDE Studio\settings.json` |
 
 ```json
 {
-  "workspace": "C:\\Users\\you\\Documents\\InfantGodStudio",
+  "workspace": "C:\\Users\\you\\Documents\\OsanaKamiIDEStudio",
   "modsRoot": "D:\\Games\\Infant God\\StreamingAssets\\Mods"
 }
 ```
@@ -83,7 +83,7 @@ There is no settings UI. Settings live in Electron's per-user directory:
 A packaged app has no meaningful working directory, and `--workspace .` would
 resolve to the inside of a read-only install, so the workspace has to be an
 explicit writable directory. On first run it defaults to
-`Documents/InfantGodStudio`, which is created if it is missing; **File → Choose
+`Documents/OsanaKamiIDEStudio`, which is created if it is missing; **File → Choose
 Workspace…** moves it, and the choice is remembered.
 
 `modsRoot` is optional and only narrows what `mod.*` may touch. Leave it out and
@@ -156,7 +156,7 @@ real `cwd`, and a path inside `app.asar` is not a directory — the failure is
 `ENOENT`, which reads like "the executable is missing" and sends you looking in
 the wrong place. (That is exactly how this was found: the packed app booted,
 printed its endpoint, and then died with
-`spawn …\InfantGod Studio.exe ENOENT`.) Node's ESM loader also reaches for `fs`
+`spawn …\OsanaKami IDE Studio.exe ENOENT`.) Node's ESM loader also reaches for `fs`
 in ways Electron's asar shim does not cover, so keeping the shell outside the
 archive removes the whole class of problem rather than one instance of it.
 
@@ -172,8 +172,8 @@ npm run dist                                 # NSIS installer in dist/
 produces something you can run directly. To check the installer too:
 
 ```sh
-"dist/InfantGod Studio Setup 0.1.0.exe" /S   # silent, per-user
-%LOCALAPPDATA%\Programs\InfantGod Studio\InfantGod Studio.exe
+"dist/OsanaKami IDE Studio Setup 0.1.0.exe" /S   # silent, per-user
+%LOCALAPPDATA%\Programs\OsanaKami IDE Studio\OsanaKami IDE Studio.exe
 ```
 
 ### If npm cannot reach its registry
@@ -269,10 +269,10 @@ DigiCert's RFC 3161 responder, which is what keeps the signature verifiable afte
 the certificate expires in 2029.
 
 ```
-> Get-AuthenticodeSignature "dist\InfantGod Studio Setup 0.1.0.exe"
+> Get-AuthenticodeSignature "dist\OsanaKami IDE Studio Setup 0.1.0.exe"
 
 Status  Valid
-Signer  CN=InfantGod Studio
+Signer  CN=OsanaKami IDE Studio
 ```
 
 ### What a self-signed signature does and does not buy
@@ -294,7 +294,7 @@ sibling step — or skip all of this and set the environment directly:
 CSC_LINK=C:\path\to\real.pfx CSC_KEY_PASSWORD=... npm run dist
 ```
 
-`win.signtoolOptions.publisherName` in `package.json` is `InfantGod Studio` and
+`win.signtoolOptions.publisherName` in `package.json` is `OsanaKami IDE Studio` and
 must match the certificate's subject, or the NSIS installer will refuse to build.
 (An older electron-builder wanted this key at `win.publisherName` and warns when
 it finds it there.)

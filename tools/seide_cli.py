@@ -573,7 +573,7 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="seide_cli.py",
-        description="A second client for the InfantGod Studio kernel protocol: read, write, "
+        description="A second client for the OsanaKami IDE Studio kernel protocol: read, write, "
                     "list, run and inspect a document without opening the window.",
     )
     parser.add_argument("--root", default=".", metavar="DIR",

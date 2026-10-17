@@ -15,7 +15,7 @@
  * time, so one makensis pass is enough and nothing is executed while building.
  * This script drives that pass, then signs the result with the project identity.
  *
- *   node tools/make-installer.mjs                       # signed dist/InfantGod Studio Setup 0.1.0.exe
+ *   node tools/make-installer.mjs                       # signed dist/OsanaKami IDE Studio Setup 0.1.0.exe
  *   node tools/make-installer.mjs --no-sign --out build/control.exe
  *   node tools/make-installer.mjs --payload build/tiny-payload --out build/tiny.exe --no-sign
  *
@@ -101,7 +101,7 @@ const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
 const APP_NAME = pkg.productName || pkg.name;
 const APP_VERSION = pkg.version;
 const APP_EXE = `${APP_NAME}.exe`;
-const APP_ID = pkg.build?.appId || "com.infantgod.studio";
+const APP_ID = pkg.build?.appId || "com.osanakami.idestudio";
 const APP_PUBLISHER = pkg.author || APP_NAME;
 
 const abs = (p) => (isAbsolute(p) ? p : resolve(REPO, p));
@@ -110,10 +110,10 @@ const LICENCE = abs(args.licence || "EULA.txt");
 const ICON = abs(join("electron", "icon.ico"));
 const TEMPLATE = abs(args.template || join("tools", "installer.nsi"));
 const OUT = abs(args.out || join("dist", `${APP_NAME} Setup ${APP_VERSION}.exe`));
-// VIProductVersion wants four numbers.
-const version4 = /^\d+\.\d+\.\d+(\.\d+)?$/.test(APP_VERSION)
-  ? (APP_VERSION.split(".").length === 3 ? `${APP_VERSION}.0` : APP_VERSION)
-  : "0.0.0.0";
+// VIProductVersion wants four numbers, so `0.1.1-alpha.1` becomes `0.1.1.0`
+// (a pre-release tail is not a number makensis can take).
+const v4 = /^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/.exec(APP_VERSION);
+const version4 = v4 ? `${v4[1]}.${v4[2]}.${v4[3]}.${v4[4] || 0}` : "0.0.0.0";
 
 const DEFINES = {
   APP_NAME,
@@ -258,11 +258,15 @@ const AUDIT_ALLOW = [
   ["resources/shell/mods/search.js", "corpus search indexes the game's story files"],
 ];
 // Product identity that is legitimate in the payload.  Blanked before matching,
-// so `InfantGod Studio` is not read as the game's `InfantGod`.
+// so the product's own name is not read as the game's name.
 const AUDIT_IDENTITY = [
-  "InfantGod Studio", "InfantGodStudio", "InfantGod IDE", "InfantGodModIDE",
-  "infantgod-studio", "com.infantgod.studio", "infantgod.exe", "InfantGod.exe",
-  ".infantgod", "infantgod", "幼神工坊",
+  // The product's own name, in every spelling it takes in our sources.
+  "OsanaKami IDE Studio", "OsanaKamiIDEStudio", "osanakami-ide-studio",
+  "com.osanakami.idestudio",
+  // Internal identifiers that still say "infantgod" on purpose: the kernel's file
+  // name, the workspace state directory and the protocol name are not user-facing
+  // text, and renaming them would desynchronise the shipped kernel binary.
+  "infantgod.exe", "InfantGod.exe", ".infantgod", "infantgod",
 ];
 // Electron/Chromium runtime and notices: not our content, and 20 MB of English
 // prose whose ordinary words ("Company", "Nerd") are also character names.

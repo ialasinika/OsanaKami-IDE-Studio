@@ -60,7 +60,7 @@ section("descriptor parsing");
  * kinds, unquoted markers, two extensions, both comment styles -- so the parser
  * is exercised by an inline descriptor while the tokenizer below runs on the
  * file that actually ships. */
-const inlineText = `# InfantGod Studio language descriptor
+const inlineText = `# OsanaKami IDE Studio language descriptor
 id yarn
 title Yarn
 ext .yarn

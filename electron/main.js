@@ -85,10 +85,10 @@ function log(message) {
  * A packaged app has no meaningful working directory and its own directory is
  * read-only, so the workspace -- the one directory the kernel may read and
  * write, and where .infantgod/board.json lives -- has to be an explicit,
- * writable path.  Documents/InfantGodStudio is the first-run default; the
+ * writable path.  Documents/OsanaKamiIDEStudio is the first-run default; the
  * File menu is how you point at a real project.
  */
-const defaultWorkspace = () => path.join(app.getPath("documents"), "InfantGodStudio");
+const defaultWorkspace = () => path.join(app.getPath("documents"), "OsanaKamiIDEStudio");
 
 // Logged from module scope as well as from `boot()`: if the app dies during
 // Chromium's own start-up, `boot()` never runs and this line is the only trace.
@@ -248,7 +248,7 @@ function createWindow(url) {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#14171b",
-    title: "InfantGod Studio",
+    title: "OsanaKami IDE Studio",
     show: false,
     webPreferences: {
       // The board needs none of these; leaving them off is what keeps the
@@ -329,12 +329,12 @@ async function boot() {
       log("boot: window reloaded");
     }
     if (win !== null) {
-      win.setTitle(`InfantGod Studio — ${workspace}`);
+      win.setTitle(`OsanaKami IDE Studio — ${workspace}`);
     }
     console.log(started.log.trimEnd());
   } catch (err) {
     log(`boot FAILED: ${(err && err.stack) || err}`);
-    reportFailure("幼神工坊启动失败", err);
+    reportFailure("OsanaKami IDE Studio 启动失败", err);
     app.quit();
   } finally {
     booting = false;
@@ -553,8 +553,8 @@ function buildMenu() {
               : ["端点尚未启动。"];
             messageBox({
               type: "info",
-              title: "InfantGod Studio",
-              message: `InfantGod Studio ${app.getVersion()}`,
+              title: "OsanaKami IDE Studio",
+              message: `OsanaKami IDE Studio ${app.getVersion()}`,
               detail: lines.join("\n"),
               buttons: ["好"],
             });          },

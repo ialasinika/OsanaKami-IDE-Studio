@@ -1,7 +1,7 @@
 /**
  * lang.mjs -- `.lang` descriptors: parsing, validation, and the registry.
  *
- * This file is the whole of InfantGod Studio's language support, and it lives *outside*
+ * This file is the whole of OsanaKami IDE Studio's language support, and it lives *outside*
  * `core/` on purpose.  The kernel knows about files, boards and processes; it
  * does not know what a keyword is.  A fork that wants no colouring at all
  * deletes this directory and `core/` still builds and runs.
@@ -9,7 +9,7 @@
  * The descriptor grammar is frozen (see langs/README.md).  It is small on
  * purpose: adding a language must cost one text file and zero code.
  *
- *     # InfantGod Studio language descriptor
+ *     # OsanaKami IDE Studio language descriptor
  *     id yarn
  *     title Yarn Spinner
  *     ext .yarn

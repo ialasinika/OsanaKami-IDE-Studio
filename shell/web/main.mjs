@@ -399,7 +399,7 @@ function createApp() {
   /* ------------------------------------------------------------------ */
 
   /* The strip is where every refusal, warning and unknown command lands -- the
-     whole of InfantGod Studio's dialog system -- and it starts closed.  A window is
+     whole of OsanaKami IDE Studio's dialog system -- and it starts closed.  A window is
      for writing, and 132px of mostly-routine chatter along the bottom of it is
      132px nobody asked for.  The price of closing it is that "closed" has to be
      able to say "something happened", which is what the HUD button does.  It is
@@ -495,7 +495,7 @@ function createApp() {
    *
    * Returns a promise that resolves with the chosen value, or `null` if the
    * user typed something else into the command line first.  Deliberately not a
-   * modal: InfantGod Studio has no dialogs, so a decision is a row of buttons on the board.
+   * modal: OsanaKami IDE Studio has no dialogs, so a decision is a row of buttons on the board.
    */
   function ask(message, choices) {
     const strip = el("div", "ask");
@@ -1096,7 +1096,7 @@ function createApp() {
   /**
    * The editor cards currently on the board, as plain data.
    *
-   * This is what "open" means in InfantGod Studio: the board is the document
+   * This is what "open" means in OsanaKami IDE Studio: the board is the document
    * list -- a file is open exactly when a card holds it.  The classic view's tab
    * strip is drawn from this list and never kept beside it, so a card that is
    * opened, closed or hidden shows up in (and disappears from) the strip with no
@@ -2029,7 +2029,7 @@ function createApp() {
       // exactly what the shell did before this poll existed.
       watchUnavailable = true;
       stopWatching();
-      log("warn", "this kernel has no `file.stat`: changes made outside InfantGod Studio will be"
+      log("warn", "this kernel has no `file.stat`: changes made outside OsanaKami IDE Studio will be"
         + " noticed when the file is opened again, not while it is on the board");
       return;
     }
@@ -2229,7 +2229,7 @@ function createApp() {
     }
     const stamp = await client.call("hello", {}).catch(() => null);
     if (stamp !== null && !quiet) {
-      log("info", `InfantGod Studio ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
+      log("info", `OsanaKami IDE Studio ${stamp.kernel_version} · protocol ${stamp.protocol} · pid ${stamp.pid}`);
     }
 
     // Where the kernel was pointed. It is the one piece of project context that
@@ -2259,7 +2259,7 @@ function createApp() {
     if (board.cards.length === 0) {
       // A brand-new project: one note card explains the paradigm on the board
       // itself, and is deleted like any other card. Creating it must not mark
-      // the board dirty, or merely opening InfantGod Studio would write a board.json.
+      // the board dirty, or merely opening OsanaKami IDE Studio would write a board.json.
       const wasDirty = dirty;
       addCard("note", 80, 80, { text: HINT_TEXT }, { w: HINT_SIZE.w, h: HINT_SIZE.h });
       dirty = wasDirty;

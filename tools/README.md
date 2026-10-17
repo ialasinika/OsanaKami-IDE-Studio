@@ -1,7 +1,7 @@
-# InfantGod Studio Python tooling
+# OsanaKami IDE Studio Python tooling
 
 Standard-library-only helpers that sit beside the C kernel (`core/`) and the
-JavaScript shell (`shell/`). Nothing here is required to run InfantGod Studio: these are
+JavaScript shell (`shell/`). Nothing here is required to run OsanaKami IDE Studio: these are
 build, scaffolding, verification and reference tools.
 
 | Tool | What it is for |

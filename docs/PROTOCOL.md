@@ -1,6 +1,6 @@
 # Protocol
 
-The wire contract between a client and InfantGod Studio. There are two endpoints and one
+The wire contract between a client and OsanaKami IDE Studio. There are two endpoints and one
 frame format; this document is the frozen reference for both.
 
 - **Kernel endpoint** — `build/infantgod.exe rpc`. Answers the thirteen methods in the
@@ -115,7 +115,7 @@ or mis-typing them produces `-32602 INVALID_PARAMS`.
 ### `hello`
 
 ```json
-{"protocol":2,"protocol_name":"infantgod/2","kernel_version":"0.1.0","root":"C:/codes/InfantGod Studio","pid":12345}
+{"protocol":2,"protocol_name":"infantgod/2","kernel_version":"0.1.0","root":"C:/codes/OsanaKami IDE Studio","pid":12345}
 ```
 
 `protocol` is the integer a client can compare; `protocol_name` is the same
@@ -129,7 +129,7 @@ board.  See `docs/VIEWS.md` for why that line is where it is.
 ### `workspace.info`
 
 ```json
-{"root":"C:/codes/InfantGod Studio","name":"InfantGod Studio","file_count":42,"view_path":".infantgod/board.json","view_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
+{"root":"C:/codes/OsanaKami IDE Studio","name":"OsanaKami IDE Studio","file_count":42,"view_path":".infantgod/board.json","view_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
 ```
 
 `name` is the last path segment of `root`. `view_path` is the path of the
@@ -743,7 +743,7 @@ The grammar is frozen and documented in `langs/README.md`. A descriptor is a
 plain text file, one `key value` per line:
 
 ```
-# InfantGod Studio language descriptor
+# OsanaKami IDE Studio language descriptor
 id json
 title JSON
 ext .json
@@ -784,7 +784,7 @@ python tools/newlang.py --id mylang --ext .ml --keywords "if,else,while"
 The shipped descriptor, with only its long explanatory comment block elided:
 
 ```
-# InfantGod Studio language descriptor
+# OsanaKami IDE Studio language descriptor
 # Yarn Spinner dialogue -- the format 《幼神》 is written in.
 id yarn
 title Yarn

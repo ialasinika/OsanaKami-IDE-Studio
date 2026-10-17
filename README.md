@@ -1,6 +1,6 @@
-# InfantGod Studio · 幼神工坊
+# OsanaKami IDE Studio
 
-InfantGod Studio is a **mod IDE for 《幼神》 (Infant God)** — a board-shaped
+OsanaKami IDE Studio is a **mod IDE for 《幼神》 (Infant God)** — a board-shaped
 editor for the game's Yarn scripts, ScriptableObject definitions, sprites and
 localisation tables.
 
@@ -14,7 +14,7 @@ Git integration, and no undo of the typing inside a card (Ctrl+Z takes back
 board edits; a textarea keeps its own undo). Every deliberate tradeoff is
 written down instead of discovered.
 
-![The InfantGod Studio board: an editor card with Yarn colouring, a mod card listing a package's defines, a problems card, a docs card and labelled links between them](docs/board.png)
+![The OsanaKami IDE Studio board: an editor card with Yarn colouring, a mod card listing a package's defines, a problems card, a docs card and labelled links between them](docs/board.png)
 
 ---
 
@@ -41,7 +41,7 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 See [docs/MODS.md](docs/MODS.md) for the verb table, the three card kinds and
 the containment rules.
 
-## What InfantGod Studio is
+## What OsanaKami IDE Studio is
 
 - A **card document**: one persistent set of cards, drawn by two tiled views. No
   tabs, no file tree. What is open, and what is linked to what, is part of the
@@ -64,7 +64,7 @@ the containment rules.
   announces nothing, so the shell polls for it and a card either reloads (if you
   have no unsaved edits) or keeps your text and tells you the file moved.
 
-## What InfantGod Studio is not
+## What OsanaKami IDE Studio is not
 
 - **Not a complete product.** There is no settings UI, no terminal emulator, no
   debugger, no Git integration, no refactoring, and no undo of text inside a card.
@@ -591,10 +591,10 @@ number in both; no build step generates it.
 The code is [MIT](LICENSE) — take it, fork it, rename it. The documentation
 (the Markdown files, this one included) is [CC BY 4.0](LICENSE-DOCS): quote it,
 translate it, rewrite it for your fork, keep the attribution. Two licences, two
-scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). InfantGod Studio is a
+scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). OsanaKami IDE Studio is a
 derivative of the MIT-licensed seIDE, and a rename does not change what a
 licence allows: the kernel, the shell, the tools and the fixtures are MIT, and
-only the prose is CC BY 4.0. InfantGod Studio is not affiliated with, endorsed
+only the prose is CC BY 4.0. OsanaKami IDE Studio is not affiliated with, endorsed
 by or authorised by the makers of the game it edits, and it claims no
 trademark in that game's names or marks; it names the game only to say what it
 is compatible with.

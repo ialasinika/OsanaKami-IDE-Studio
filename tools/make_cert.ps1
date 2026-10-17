@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Creates the code-signing identity InfantGod Studio is signed with.
+    Creates the code-signing identity OsanaKami IDE Studio is signed with.
 
 .DESCRIPTION
     Produces a self-signed certificate with the Code Signing EKU, exports the
@@ -22,7 +22,7 @@
     ANSI codepage is not UTF-8.
 
 .PARAMETER Subject
-    Certificate subject.  Default CN=InfantGod Studio.
+    Certificate subject.  Default CN=OsanaKami IDE Studio.
 
 .PARAMETER Years
     Validity.  Default 3.
@@ -39,7 +39,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Subject = 'CN=InfantGod Studio',
+    [string] $Subject = 'CN=OsanaKami IDE Studio',
     [int]    $Years = 3,
     [switch] $Force,
     [switch] $NoTrust
@@ -73,7 +73,7 @@ Write-Host 'generating a self-signed code-signing certificate ...'
 $cert = New-SelfSignedCertificate `
     -Type CodeSigningCert `
     -Subject $Subject `
-    -FriendlyName 'InfantGod Studio (self-signed)' `
+    -FriendlyName 'OsanaKami IDE Studio (self-signed)' `
     -CertStoreLocation 'Cert:\CurrentUser\My' `
     -KeyAlgorithm RSA `
     -KeyLength 3072 `

@@ -1,4 +1,4 @@
-# InfantGod Studio kernel -- C89, zero third-party dependencies, offline build.
+# OsanaKami IDE Studio kernel -- C89, zero third-party dependencies, offline build.
 #
 # Everything this file needs is a C89 compiler and GNU make.  There is no
 # configure step, no package manager and no network access: `make` either

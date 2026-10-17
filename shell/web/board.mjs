@@ -1,7 +1,7 @@
 /**
  * board.mjs -- the board document and the operations the canvas performs.
  *
- * DELETE THIS FILE and InfantGod Studio stops being InfantGod Studio: it holds the only definition of
+ * DELETE THIS FILE and OsanaKami IDE Studio stops being OsanaKami IDE Studio: it holds the only definition of
  * what a board *is* (cards, links, viewport), where it lives in the workspace,
  * and the only place the layout is assembled before `view.save`.  Without it
  * there is nothing to render.

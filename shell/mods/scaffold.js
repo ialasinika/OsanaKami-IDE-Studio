@@ -1073,7 +1073,7 @@ function renderReadme(meta) {
   lines.push(`| 作者 | ${meta.author} |`);
   lines.push(`| 基准语言 | ${meta.baseLanguage} |`);
   lines.push(`| 语言 | ${meta.locales.join(', ')} |`);
-  lines.push(`| 生成器 | InfantGodModIDE scaffold.js v${SCAFFOLD_VERSION} |`);
+  lines.push(`| 生成器 | OsanaKami IDE Studio scaffold.js v${SCAFFOLD_VERSION} |`);
   lines.push('');
   lines.push('## 安装步骤');
   lines.push('');

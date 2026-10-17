@@ -1,4 +1,4 @@
-; tools/installer.nsi -- the InfantGod Studio installer, compiled in ONE makensis
+; tools/installer.nsi -- the OsanaKami IDE Studio installer, compiled in ONE makensis
 ; pass by tools/make-installer.mjs.
 ;
 ; Why this file exists instead of electron-builder's NSIS target: that target
@@ -21,7 +21,7 @@ Unicode true
 ; Inputs (overridable with -D on the makensis command line)
 ; --------------------------------------------------------------------------
 !ifndef APP_NAME
-  !define APP_NAME "InfantGod Studio"
+  !define APP_NAME "OsanaKami IDE Studio"
 !endif
 !ifndef APP_VERSION
   !define APP_VERSION "0.1.0"
@@ -31,13 +31,13 @@ Unicode true
   !define APP_VERSION4 "0.1.0.0"
 !endif
 !ifndef APP_EXE
-  !define APP_EXE "InfantGod Studio.exe"
+  !define APP_EXE "OsanaKami IDE Studio.exe"
 !endif
 !ifndef APP_ID
-  !define APP_ID "com.infantgod.studio"
+  !define APP_ID "com.osanakami.idestudio"
 !endif
 !ifndef APP_PUBLISHER
-  !define APP_PUBLISHER "InfantGod Studio"
+  !define APP_PUBLISHER "OsanaKami IDE Studio"
 !endif
 !ifndef PAYLOAD_DIR
   !define PAYLOAD_DIR "..\dist\win-unpacked"

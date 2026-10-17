@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""version.py -- the one place an InfantGod Studio version number is decided.
+"""version.py -- the one place an OsanaKami IDE Studio version number is decided.
 
     python tools/version.py show
     python tools/version.py check

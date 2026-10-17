@@ -1,8 +1,8 @@
 'use strict';
 /**
- * index.js — InfantGod IDE 的 Mod 智能层门面（host-independent facade）。
+ * index.js — OsanaKami IDE Studio 的 Mod 智能层门面（host-independent facade）。
  *
- * 把 InfantGodModIDE 的四个核心模块（yarn / validate / scaffold / search）
+ * 把 OsanaKami IDE Studio 的四个核心模块（yarn / validate / scaffold / search）
  * 与 knowledge.json 收成一个对 shell 友好的同步 API：
  *
  *   const { createMods } = require('./mods');

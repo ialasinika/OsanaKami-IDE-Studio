@@ -1,6 +1,6 @@
 # Trimming the kernel
 
-InfantGod Studio is built to be cut down. Every subsystem in `core/` is a whole module with
+OsanaKami IDE Studio is built to be cut down. Every subsystem in `core/` is a whole module with
 a stated cost of removal, and the seed of that list is compiled into the binary —
 `infantgod modules` prints it.
 
@@ -185,6 +185,11 @@ are whole subsystems.
 Six required (`buf`, `vec`, `json`, `port`, `rpc`, `app`), four optional
 (`wksp`, `view`, `exec`, `serve`).
 
+That banner still says *InfantGod Studio*: the kernel ships as a prebuilt binary and
+was not rebuilt for the product rename, so its sources keep their internal names
+(see the CHANGELOG, "The name").  Everything above the kernel — shell, tools,
+installer, docs — is OsanaKami IDE Studio.
+
 ---
 
 ## What survives each cut
@@ -225,7 +230,7 @@ the `#if SDE_WITH_VIEW` block in `rpc.c`, and the view construction in `app.c`.
   it looks.
 - **Survives:** files, processes, the protocol.
 - **What is lost is persistence itself:** the layout stops existing between runs.
-  Everything else still works; the reason to use InfantGod Studio does not.
+  Everything else still works; the reason to use OsanaKami IDE Studio does not.
 - **Shell must change too:** yes and heavily — `board.mjs` and `main.mjs` both
   assume `view.load` / `view.save` exist, and every other client would have to
   keep its own file. `tools/seide_cli.py`'s `board` verb is that second client:

@@ -1,4 +1,4 @@
-# InfantGod Studio language descriptor
+# OsanaKami IDE Studio language descriptor
 # JSON (RFC 8259) -- used for `board.json`, `.yarnproject` metadata and fixtures.
 #
 # Notes on the eight-key grammar:

@@ -2,7 +2,7 @@
  * cards.mjs -- one renderer and one behaviour set per card kind.
  *
  * DELETE THIS FILE and the document still opens; it just has no cards to show.
- * InfantGod Studio has no plugin system: extending the visual vocabulary means forking this
+ * OsanaKami IDE Studio has no plugin system: extending the visual vocabulary means forking this
  * file.  What it does have is a *hook* -- `registerCardKind()` -- so that
  * "adding a kind" is one self-contained object instead of an edit to a switch
  * in three places.  Six kinds are registered at the bottom of this file:

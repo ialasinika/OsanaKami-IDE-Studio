@@ -1,7 +1,7 @@
-InfantGod Studio -- documentation licence
+OsanaKami IDE Studio -- documentation licence
 =========================================
 
-The prose documentation of InfantGod Studio is licensed under the **Creative
+The prose documentation of OsanaKami IDE Studio is licensed under the **Creative
 Commons Attribution 4.0 International** licence (CC BY 4.0), not the MIT licence
 that covers the code.
 
@@ -20,13 +20,13 @@ tools/, the Makefile, the CI workflow, and the example sources in examples/.
 Attribution -- keep this notice with the material when you share it (Section
 3(a) of the licence):
 
-    InfantGod Studio contributors -- InfantGod Studio documentation
+    OsanaKami IDE Studio contributors -- OsanaKami IDE Studio documentation
     Licensed under Creative Commons Attribution 4.0 International.
     https://creativecommons.org/licenses/by/4.0/
-    Source: the InfantGod Studio repository (no public remote is configured yet).
+    Source: the OsanaKami IDE Studio repository (no public remote is configured yet).
 
 If you share a modified version, say that you changed it, and do not imply that
-InfantGod Studio endorses the change.  What is *not* licensed: the names and the
+OsanaKami IDE Studio endorses the change.  What is *not* licensed: the names and the
 logo, the patent and trademark rights, and the warranties the licence disclaims.
 
 Below is the official legal code of CC BY 4.0, reproduced unchanged (retrieved

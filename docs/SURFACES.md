@@ -1,7 +1,7 @@
 # Surfaces — non-text editing, and the hook that makes it cheap
 
 A card in the board document is called a **surface**: a thing that owns
-some state and knows how to edit it. Nothing in InfantGod Studio assumes that state is a
+some state and knows how to edit it. Nothing in OsanaKami IDE Studio assumes that state is a
 string of source text.
 
 This document is about the one hook the shell exposes for new surfaces, and
@@ -18,7 +18,7 @@ text. A fork that wants to edit a *shader graph*, a *level layout*, an *audio
 envelope*, a *database row set* or a *build matrix* spends its first month
 fighting the host instead of building the product.
 
-InfantGod Studio makes the opposite bet. The board document is a set of surfaces; a text editor
+OsanaKami IDE Studio makes the opposite bet. The board document is a set of surfaces; a text editor
 is just one surface kind among several. The toolkit ships:
 
 - a kernel that stores a card's payload **verbatim** and validates only its
@@ -150,7 +150,7 @@ A second worked example is in [`PROJECT.md`](PROJECT.md): the `project` card
 merges the kernel's `workspace.list` with the board's own editor cards, so a
 kind can depend on *both* the filesystem and the board without changing either.
 
-## 4. What the rest of InfantGod Studio guarantees a new surface
+## 4. What the rest of OsanaKami IDE Studio guarantees a new surface
 
 | layer | guarantee | where |
 |---|---|---|

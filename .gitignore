@@ -1,4 +1,4 @@
-# InfantGod Studio -- build artefacts and workspace-local state.
+# OsanaKami IDE Studio -- build artefacts and workspace-local state.
 #
 # Deliberately NOT ignored: examples/ and its hello.yarn / sample.json fixtures.
 # The fixtures are part of the project, and tools/e2e.py and langs/selftest.mjs

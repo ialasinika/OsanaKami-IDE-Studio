@@ -1,6 +1,6 @@
 # Architecture
 
-InfantGod Studio is three layers in three languages, connected by one frozen protocol.
+OsanaKami IDE Studio is three layers in three languages, connected by one frozen protocol.
 This document describes what each layer is, how the processes are arranged, and
 why the kernel deliberately knows nothing about programming languages.
 
@@ -285,7 +285,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | --- | --- | --- |
 | `index.html` | the entire page | nothing loads |
 | `style.css` | layout, card chrome, the editor's two-layer metrics | cards render unstyled |
-| `board.mjs` | the board model: cards, links, serialise | InfantGod Studio stops being InfantGod Studio; both views have nothing to project |
+| `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
 | `cards.mjs` | one renderer and behaviour set per card kind | no card has anything to draw with |

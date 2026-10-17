@@ -1,6 +1,6 @@
 # `langs/` — language support, deliberately outside the kernel
 
-This directory is the *entire* language layer of InfantGod Studio. It is a sibling of
+This directory is the *entire* language layer of OsanaKami IDE Studio. It is a sibling of
 `core/`, not a part of it.
 
 The kernel knows about files, boards and processes. It does not know what a
@@ -54,7 +54,7 @@ The two descriptors this repository ships, condensed to their keys (the real
 files carry more tokens and their own comments):
 
 ```
-# InfantGod Studio language descriptor
+# OsanaKami IDE Studio language descriptor
 id yarn
 title Yarn
 ext .yarn
@@ -69,7 +69,7 @@ kind command "<<" ">>" "---" "===" "->" "#" "$" ":" "|"
 ```
 
 ```
-# InfantGod Studio language descriptor
+# OsanaKami IDE Studio language descriptor
 id json
 title JSON
 ext .json

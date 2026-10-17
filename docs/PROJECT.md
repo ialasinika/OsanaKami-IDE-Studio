@@ -1,6 +1,6 @@
 # The project card
 
-InfantGod Studio has one workspace and one project: the tree the kernel was pointed at. The
+OsanaKami IDE Studio has one workspace and one project: the tree the kernel was pointed at. The
 `project` card is the surface that treats it as **one project** rather than as a
 list of files — it answers two questions in the same panel:
 
@@ -21,7 +21,7 @@ project state.
 ## What it shows
 
 ```
-workspace — C:\codes\InfantGod Studio
+workspace — C:\codes\OsanaKami IDE Studio
 [ **/*                       ] [ refresh ]
 
 OPEN · 2

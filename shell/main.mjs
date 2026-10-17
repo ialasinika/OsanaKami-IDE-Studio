@@ -746,7 +746,7 @@ function browserCandidates() {
 function openWindow(url, { verbose = false } = {}) {
   const exe = browserCandidates().find((candidate) => candidate && existsSync(candidate));
   if (!exe) {
-    process.stderr.write("InfantGod Studio: no Edge/Chromium found; open the URL printed above yourself\n");
+    process.stderr.write("OsanaKami IDE Studio: no Edge/Chromium found; open the URL printed above yourself\n");
     return null;
   }
 
@@ -762,7 +762,7 @@ function openWindow(url, { verbose = false } = {}) {
   ];
   if (verbose) process.stderr.write(`[shell] ${exe} ${args.join(" ")}\n`);
   const child = spawn(exe, args, { stdio: "ignore", detached: false, windowsHide: false });
-  child.on("error", (err) => process.stderr.write(`InfantGod Studio: cannot launch ${exe}: ${err.message}\n`));
+  child.on("error", (err) => process.stderr.write(`OsanaKami IDE Studio: cannot launch ${exe}: ${err.message}\n`));
   return child;
 }
 
@@ -957,7 +957,7 @@ async function runServe(options) {
   const address = server.address();
   const url = `http://127.0.0.1:${address.port}/`;
 
-  process.stdout.write(`InfantGod Studio ${SHELL_VERSION}\n`);
+  process.stdout.write(`OsanaKami IDE Studio ${SHELL_VERSION}\n`);
   process.stdout.write(`  board   ${url}\n`);
   process.stdout.write(`  kernel  ${kernel.exe}\n`);
   process.stdout.write(`  root    ${kernel.workspace}\n`);
@@ -983,7 +983,7 @@ async function runServe(options) {
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
-const USAGE = `InfantGod Studio shell ${SHELL_VERSION}
+const USAGE = `OsanaKami IDE Studio shell ${SHELL_VERSION}
 
 usage: node shell/main.mjs <command> [options]
 
@@ -1097,7 +1097,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     options = parseArgs(argv);
   } catch (err) {
-    process.stderr.write(`InfantGod Studio: ${err.message}\n\n${USAGE}`);
+    process.stderr.write(`OsanaKami IDE Studio: ${err.message}\n\n${USAGE}`);
     return 2;
   }
 
@@ -1110,11 +1110,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "rpc") return await runRpc(options);
     if (options.command === "serve") return await runServe(options);
   } catch (err) {
-    process.stderr.write(`InfantGod Studio: ${err && err.message ? err.message : err}\n`);
+    process.stderr.write(`OsanaKami IDE Studio: ${err && err.message ? err.message : err}\n`);
     return 1;
   }
 
-  process.stderr.write(`InfantGod Studio: unknown command: ${options.command}\n\n${USAGE}`);
+  process.stderr.write(`OsanaKami IDE Studio: unknown command: ${options.command}\n\n${USAGE}`);
   return 2;
 }
 
