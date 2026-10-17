@@ -40,6 +40,29 @@ stands in this tree.
 - The game's own names are still used only descriptively, and the disclaimer from
   the previous entry (not affiliated, no trademark claim) is unchanged.
 
+### The licences: MIT for the code, non-commercial share-alike for the prose
+
+- The documentation licence changes from CC BY 4.0 to **CC BY-NC-SA 4.0**
+  ([LICENSE-DOCS](LICENSE-DOCS), which carries the full legal code and the scope
+  list: every Markdown file in the repository).  The code stays **MIT**
+  ([LICENSE](LICENSE)).  NC and SA restrict the prose only; MIT still grants
+  commercial use of the program, and this file does not ask you to give that up.
+- Why: this is a tool for making mods, and the mods are shared for free.  The prose
+  -- the specs, the architecture notes, this changelog -- is the part a paid
+  course, a paid handbook or a commercial fork would repackage and sell; the code
+  is not.  NC keeps the prose out of commercial reuse; SA keeps a shared
+  adaptation of it (a translation counts) under the same licence, so a fork cannot
+  relicense the writing more loosely.
+- `LICENSE-DOCS` is assembled from the official legal code retrieved from
+  creativecommons.org, not retyped, and its preamble says in plain words that
+  CC BY-NC-SA 4.0 is not an open-source licence: the prose is source-available.
+- `EULA.txt` gains a section on what the two licences allow, and says plainly that
+  selling this early, AI-authored build is **not recommended** -- a request, not a
+  restriction, because MIT does not allow the project to restrict commercial use
+  of the code.  The installer's licence page shows the same file.
+- History: the entries below that say "CC BY 4.0" record what the licence was at
+  the time; they are not rewritten.
+
 ### One document, two views -- the canvas is gone
 
 - There were three ways to look at a board document; there are **two**.  `classic`

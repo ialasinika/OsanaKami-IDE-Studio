@@ -436,7 +436,7 @@ Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
                         test target
 README.md               this file
 LICENSE                 MIT -- the code.  Except the docs: see below
-LICENSE-DOCS            CC BY 4.0 -- every Markdown file in the repository
+LICENSE-DOCS            CC BY-NC-SA 4.0 -- every Markdown file in the repository
 EULA.txt                the early-version notice the installer shows
 CHANGELOG.md            what is in this version, and what is not
 .github/workflows/      CI: the same make targets, on a Windows runner
@@ -605,26 +605,37 @@ The version is one line — `#define SDE_VERSION` in
 file at build time. `build/infantgod.exe version` prints it, and it is the same
 number in both; no build step generates it.
 
-The code is [MIT](LICENSE) — take it, fork it, rename it. The documentation
-(the Markdown files, this one included) is [CC BY 4.0](LICENSE-DOCS): quote it,
-translate it, rewrite it for your fork, keep the attribution. Two licences, two
-scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). OsanaKami IDE Studio is a
-derivative of the MIT-licensed seIDE, and a rename does not change what a
-licence allows: the kernel, the shell, the tools and the fixtures are MIT, and
-only the prose is CC BY 4.0. OsanaKami IDE Studio is not affiliated with, endorsed
-by or authorised by the makers of the game it edits, and it claims no
-trademark in that game's names or marks; it names the game only to say what it
-is compatible with.
+The code is [MIT](LICENSE) — take it, fork it, rename it, sell it. The
+documentation (the Markdown files, this one included) is
+[CC BY-NC-SA 4.0](LICENSE-DOCS): quote it, translate it, rewrite it for your
+fork, keep the attribution — but not for commercial use, and an adaptation of it
+stays under the same licence. Two licences, two scopes, both spelled out in
+[LICENSE-DOCS](LICENSE-DOCS). The non-commercial, share-alike choice covers the
+prose because this is a free modding tool: the writing is the part a paid course
+or a commercial fork would repackage, and the code is not restricted that way —
+MIT grants commercial use, and nothing here takes it back. CC BY-NC-SA 4.0 is
+not an open-source licence, and this file does not call it one: the repository
+is source-available, the prose is non-commercial and share-alike on purpose.
+OsanaKami IDE Studio is a derivative of the MIT-licensed seIDE, and a rename
+does not change what a licence allows: the kernel, the shell, the tools and the
+fixtures are MIT, and only the prose is CC BY-NC-SA 4.0. OsanaKami IDE Studio is
+not affiliated with, endorsed by or authorised by the makers of the game it
+edits, and it claims no trademark in that game's names or marks; it names the
+game only to say what it is compatible with.
 
 The installer shows [EULA.txt](EULA.txt) on its licence page instead of the MIT
 file, because this build is early and not stable, and the one thing worth saying
 before an install is what that costs you: it may have bugs, it writes the files
 under your Mods directory, back them up. It is not a restrictive agreement — it
-says itself that it narrows nothing, and defers to the two licences above. It
-also discloses how the program was made, which is part of judging an early build:
-it is AI-authored throughout, corrected by hand through DSH sessions. The program
-stays free to use, fork, rename and redistribute either way; the licence page is
-about the build you are installing, not about the repository.
+says itself that it narrows nothing the licences above grant you, and defers to
+them; the only binding term it repeats is the documentation licence, CC BY-NC-SA
+4.0. It also says plainly that selling this early, AI-authored build is **not
+recommended** — a request, not a restriction, because the code's MIT licence does
+not allow one. It also discloses how the program was made, which is part of
+judging an early build: it is AI-authored throughout, corrected by hand through
+DSH sessions. The program stays free to use, fork, rename and redistribute, and
+the code stays free to sell on MIT's terms; the licence page is about the build
+you are installing, not about the repository.
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
