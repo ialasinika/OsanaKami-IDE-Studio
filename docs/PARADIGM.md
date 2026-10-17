@@ -112,7 +112,7 @@ with:
 | `z` | numeric stacking order, defaults to 0 | the board model's load defaults |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships twelve kinds:
+The shell ships thirteen kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -128,10 +128,11 @@ The shell ships twelve kinds:
 | `mod` | one Mod package: its manifest and diagnostics | `dir` |
 | `problems` | the diagnostics of one Mod, as a list | `root` |
 | `docs` | the game's knowledge base, searched | `query` |
+| `settings` | the machine rather than the project: AI provider, the view a window opens in, poll interval | none |
 
 The board model does **not** interpret `kind`, and the kernel never sees it.
 `core/include/view.h` stores any document verbatim; `shell/web/board.mjs` states
-the schema, and `docs/VIEWS.md` states the seam: those twelve kinds are
+the schema, and `docs/VIEWS.md` states the seam: those thirteen kinds are
 conventions the shell implements, and a fork that invents `timeline` or
 `waveform` changes the shell and nothing else. A card with an unknown kind still
 loads, still saves, and still renders — `renderCard` in `shell/web/cards.mjs`

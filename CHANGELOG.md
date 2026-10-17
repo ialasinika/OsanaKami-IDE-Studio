@@ -16,6 +16,75 @@ stands in this tree.
 
 ## Unreleased
 
+### A file can be made from the game's schema, or brought in from outside
+
+- `shell/mods/newfile.js` and `mod.newFile {dir, type, name, overwrite?}` grow a
+  package one file at a time. A definition type gets exactly the keys its schema
+  `required`s (two-space JSON; strings `""`, integers `0`, booleans `false`,
+  arrays `[]`, objects `{}`) and `techName` set to the file's name — case-folded,
+  because the knowledge base spells it `techName` for some types and `TechName` for
+  others while the file name has to agree with both. `yarn`, `translation` and
+  `sprite` are the three kinds the mod layer writes itself: a story with the
+  repository's header (its `#line:` id derived from the name, so two runs are
+  byte-identical), the eight-column table with a BOM and CRLF, and a real 96×96
+  RGBA PNG. A rig or an audio file is refused by naming the tool it actually
+  needs; `name` is a bare identifier and the directory and extension are the
+  verb's decision; overwriting needs `overwrite: true`; every refusal starts with
+  `new file: `.
+- `shell/mods/importfile.js` and `mod.importFile {dir, from, to?, name?,
+  overwrite?}` are the other half: a file that already exists is copied in
+  **byte for byte** (no newline or BOM rewriting) and lands where its kind
+  belongs, or exactly at `to`. A define is validated against its type's schema as
+  it lands, a PNG must carry the PNG signature and an IHDR, a story is diagnosed;
+  a file that fails is removed again instead of being left half-imported. A define
+  whose source path has no `Defines/<Type>/` segment has to be given a target — a
+  define's directory *is* its type, and guessing would write a file the game will
+  not load. Paths that escape the package are refused, and the source limit is
+  64 MiB.
+- The `mod` card has an import row and a new-file row, and the kind picker is
+  generated from `mod.types`: 56 entries today — the knowledge base's 51 definition
+  types, the three this side writes, and rig/audio greyed out with the reason. The
+  command line is `new <type> <dir> <name>` and `import <from> <dir> [to]`; both
+  open what they wrote (pixels in the pixel card), so the menu and the typed
+  command cannot drift apart.
+- Evidence: `shell/mods/selftest.mjs` is 407 checks (was 363); a live stdio RPC run
+  passes 17 of 17 (a create writes exactly its required key, an imported PNG is
+  identical to its source, a broken define is refused and removed, an escaping
+  target is refused); `tools/browser_smoke.py` is 61 checks, with two of them
+  driving the card itself — a Goods created through the picker and an imported PNG
+  read back byte for byte.
+
+### The window says what it prefers, and the machine has a card
+
+- A thirteenth card, `settings`: the AI provider (endpoint, model, key,
+  temperature, max tokens, timeout, streaming), the view a window opens in
+  (`bootView`) and how often the cards poll a file that changed underneath them
+  (`watchPollMs`, 250–60000).  The workspace and the mods folder are shown with
+  their files, not offered for editing: they are process arguments, and the card
+  says a change needs a restart.
+- Two shell-owned verbs behind it, `config.get` and `config.set` (`shell/main.mjs`,
+  documented in `docs/PROTOCOL.md`).  The key never comes back on the wire --
+  `"***"` when one is stored, `null` when none is -- and `apiKey: ""` means
+  "leave the stored key alone", so a masked form cannot erase a key by accident;
+  `clearKey` is the only way to remove one.  A refused value answers
+  `-32603` with a message that starts `config.set:` and names the field, and the
+  file is untouched.
+- `shell/ai/settings.mjs` is the preference store: `preferences.json` under the
+  user data directory, versioned, validated, written atomically with mode `0600`
+  where the platform has modes.  A corrupt file is reported as a warning and the
+  defaults are used, without echoing the file's contents.  The AI half reuses the
+  existing `shell/ai/config.mjs` rather than growing a second schema.
+- A window reads the preferences **once, on boot** (`bootPreferencesFrom` in
+  `shell/web/main.mjs`), so a new boot view takes effect the next time the window
+  opens and the poll interval is applied to the running loop.  The preferences are
+  the user's, so they live beside the AI config and never in `board.json`.
+- `README.md` loses its "no settings UI" line, which was the first item to leave
+  that list; it now says which three things are configurable and that the rest
+  still is not.  Evidence: `shell/ai/selftest.mjs` is 86 checks (one mode check
+  skipped on Windows), a live stdio RPC run of `config.get`/`config.set` passes
+  11 of 11, `shell/web/selftest.mjs` is 284, and `tools/browser_smoke.py` reaches
+  the `settings` card as a tab in both tiles (59 checks).
+
 ### A Spine rig, drawn from its own bytes
 
 - `shell/web/spine.mjs` reads the `.skel.bytes` and `.atlas.txt` pair the game

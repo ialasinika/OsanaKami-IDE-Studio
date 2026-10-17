@@ -91,6 +91,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
 | `rig` | a Spine rig from the game: bones, skins, an animation timeline, edit and save back | `file`, `animation`, `skin`, `bones` |
+| `settings` | the machine, not the project: AI provider, the view a window opens in, poll interval | none |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`:
@@ -179,8 +180,11 @@ run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)
 mod <dir>                open a mod package card
+new <type> <dir> <name>  create one file from the game's own schema, then open it
+import <from> <dir> [to]  copy a file into a package (byte for byte), then open it
 problems <dir>           open a validation card and run it
 docs [query]             open the knowledge-base card
+settings                 the AI provider, the view a window opens in, the poll interval
 link <from> <to> [label] connect two cards
 unlink <linkId>          remove a connection
 mode <name>              draw by another view: classic | mod
@@ -554,6 +558,59 @@ survives a save and a reload; the pose time, the camera and the edit itself stay
 local, and closing a card with an unsaved edit asks nothing, because the edit was
 never on disk to lose. Mesh attachments are still read and counted but not drawn,
 so a saved file that carries them keeps them untouched.
+
+### The settings card, and the machine instead of the project
+
+Every other card is about the project. `settings` is about the machine: the AI
+provider (`baseUrl`, `model`, `apiKey`, `temperature`, `maxTokens`, `timeoutMs`,
+`stream`), which view a window opens in (`bootView`), and how often the cards poll
+for a file that changed under them (`watchPollMs`, 250–60000).
+
+The card does not decide any of this itself — it is a form over two shell verbs,
+`config.get` and `config.set` (`docs/PROTOCOL.md`), which own the files and the
+validation. Three consequences worth knowing:
+
+- **The API key never comes back.** `config.get` answers `"***"`, so the field is
+  blank by design; blank means "leave the stored key alone", and the separate
+  *forget key* switch is the only thing that removes one.
+- **A refused value changes nothing.** The shell rejects it with a message that
+  names the field (`config.set: …`), and the card prints that sentence rather than
+  guessing.
+- **The workspace and the mods folder are shown, not edited.** They are process
+  arguments (`--workspace`, `--mods-root`), so the card names them and their files
+  and says a change needs a restart.
+
+A window reads `prefs` **once**, on boot (`bootPreferencesFrom` in `main.mjs`), so
+a new boot view takes effect next time you open the window; the poll interval is
+applied to the running loop. Both preferences are the user's, so they live in
+`preferences.json` under the user data directory and never in `board.json` — a
+project does not carry how one person likes the window.
+
+### New files and imported files
+
+A mod package is normally grown by copying a file in or writing one. The `mod`
+card has a row for each, in the same place, and both call a shell verb:
+
+- **new** — `mod.newFile {dir, type, name}` writes one file from the game's own
+  knowledge base: a define type gets exactly the keys its schema requires and a
+  `techName` equal to its name, `yarn` a story with the repo's header, `translation`
+  the eight-column table with a BOM and CRLF, `sprite` a real 96×96 PNG. The picker
+  is generated from `mod.types`, so a schema this build does not have is a kind you
+  cannot pick. Rigs and audio are listed greyed with the tool they need instead of
+  being hidden — the card can explain what it cannot make.
+- **import** — `mod.importFile {dir, from, to?, name?, overwrite?}` copies an
+  existing file into the package **byte for byte** (no newline or BOM rewriting)
+  and puts it where its kind belongs, or exactly at `to`. A define is validated
+  against its type's schema as it lands, a PNG must carry the PNG signature, and a
+  story is diagnosed; a file that fails is removed again rather than left as a
+  half-import. Overwriting needs `overwrite: true`.
+
+Both verbs resolve `dir` the same way the rest of the mod layer does (absolute,
+relative to the mods root, or any directory inside a package — the package root is
+found by walking up for `mod.json`), and both open the file they wrote: pixels in
+the pixel card, everything else as text. The command line has the same two verbs
+(`new <type> <dir> <name>`, `import <from> <dir> [to]`), so the menu and the typed
+command cannot drift apart.
 
 ### Known limitations (deliberate, documented rather than hidden)
 

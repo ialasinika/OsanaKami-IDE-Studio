@@ -60,6 +60,10 @@ result renders its documentation. `window` reloads the counts.
 
 ```
 mod <dir>           open a mod package card
+new <type> <dir> <name>
+                    create one file from the game's own schema, then open it
+import <from> <dir> [to]
+                    copy a file into a package (byte for byte), then open it
 problems <dir>      open a validation card and run it
 docs [query]        open the knowledge-base card
 ```
@@ -71,7 +75,8 @@ re-points the card you already have instead of stacking a duplicate.
 
 Every verb is answered by `dispatch()` in `shell/main.mjs` from the
 `MOD_METHODS` table, before the kernel is ever consulted. All of them are
-synchronous except `mod.scaffold`.
+synchronous except `mod.scaffold`, `mod.newFile` and `mod.importFile`, which
+write files.
 
 | verb | params | returns |
 | --- | --- | --- |
@@ -84,6 +89,8 @@ synchronous except `mod.scaffold`.
 | `mod.validateDefine` | `type`, `text`, `relPath?` | `{diagnostics[]}` |
 | `mod.diagnose` | `text`, `fileName?`, `root?` | `{available, diagnostics[], nodes[]}` |
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
+| `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, writes one file |
+| `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
 | `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
 | `mod.docFor` | `kind`, `name` | markdown string |
 | `mod.suggest` | `prefix`, `context?` | `[{label, kind, detail, insertText, documentation}]` |
@@ -115,6 +122,31 @@ is no `file` member — the pointer suffix is part of `path`.
 `dir` is the **parent** directory and the package lands in `dir/<modName>/`;
 the reply's `modRoot` is what you then pass to every other verb. This follows
 `scaffold.js`'s own contract. Every other verb takes the package root directly.
+
+### One file, made from the game's own schema
+
+`mod.newFile` grows a package that already exists. `dir` is the package root, or
+any directory inside it — the verb walks up (at most 25 levels) for `mod.json` —
+and it works from an absolute path, a path relative to the mods root, or a name.
+The kind decides where the file goes and what is in it:
+
+| `type` | lands in | contents |
+| --- | --- | --- |
+| any of the knowledge base's 51 definition types | `Defines/<Type>/<name>.json` | exactly the keys that schema `required`s, two-space JSON: strings `""`, integers `0`, booleans `false`, arrays `[]`, objects `{}`. The identity field is filled with `name` (case-insensitively — `techName` and `TechName` are both the file's `techName`), because the file name and that field have to agree |
+| `yarn` | `Yarn/<name>.yarn` | a story with `title:`, `when: always`, the `---`/`===` fences, one `Narrator:` line whose `#line:` id is derived from `name` (no clock, no random: two runs are byte-identical) |
+| `translation` | `Yarn/<name>.csv` | the eight-column table (`language,id,text,file,node,lineNumber,lock,comment`) with a BOM and CRLF, header only |
+| `sprite` | `Sprites/<name>.png` | a real 96×96 RGBA PNG, so opening it in the pixel card is something to draw on rather than a broken image |
+| `spine`, `audio` | — | refused, naming the tool the file actually needs |
+
+`name` is a bare identifier (`/^[A-Za-z_][A-Za-z0-9_]*$/`) — no directory, no
+extension, because the directory and extension are the verb's decision. Every
+refusal starts with `new file:`; overwriting a file that is already there needs
+`overwrite: true`, and two plans for the same file are byte-identical.
+
+The mod card's **new** row is generated from `mod.types`, so a build with three
+schemas offers three kinds and the four this side adds by hand (story,
+translation, sprite) plus the two it cannot write, greyed with the reason. The
+command line is `new <type> <dir> <name>`, and it opens what it wrote.
 
 ### A machine with no game is a state, not a guess
 
@@ -458,7 +490,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 332 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 407 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

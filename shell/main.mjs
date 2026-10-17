@@ -34,6 +34,9 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { createConfigStore, defaultUserDataDir, describeConfig } from "./ai/config.mjs";
+import { createPreferenceStore } from "./ai/settings.mjs";
+
 const SHELL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(SHELL_DIR);
 const WEB_DIR = path.join(SHELL_DIR, "web");
@@ -454,6 +457,139 @@ async function loadMods(options, log = () => {}) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* the settings layer -- files the shell owns, never the kernel        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `config.get` and `config.set` report and persist the three JSON files a
+ * settings card cares about, all under the userData directory:
+ *
+ *   ai-provider.json   the agent's provider settings (shell/ai/config.mjs)
+ *   preferences.json   the board's own defaults (shell/ai/settings.mjs)
+ *   settings.json      Electron's file; reported as a path, never written here
+ *
+ * The context is built once per process, next to the mod layer, so no single
+ * request can pick a different directory halfway through.  `--user-dir` wins;
+ * otherwise the platform's userData directory is used.  Nothing here talks to
+ * the kernel, exactly like `mod.*`.
+ */
+function loadSettings(options = {}) {
+  const userDir = typeof options.userDir === "string" && options.userDir !== ""
+    ? options.userDir
+    : defaultUserDataDir();
+  return {
+    userDir,
+    app: {
+      workspace: typeof options.workspace === "string" ? options.workspace : null,
+      modsRoot: typeof options.modsRoot === "string" ? options.modsRoot : null,
+    },
+    ai: createConfigStore({ dir: userDir }),
+    prefs: createPreferenceStore({ dir: userDir }),
+  };
+}
+
+/*
+ * Only reached when someone imports `dispatch` directly and passes the old
+ * four arguments (the kernel probe, a unit test).  Building the context lazily
+ * keeps importing this module free of filesystem work.
+ */
+let lazySettings = null;
+
+function settingsContext(settings) {
+  if (settings !== null && settings !== undefined) {
+    return settings;
+  }
+  if (lazySettings === null) {
+    lazySettings = loadSettings();
+  }
+  return lazySettings;
+}
+
+/** The redacted description `config.get` answers with; never contains a key. */
+function describeSettings(context) {
+  const ai = context.ai.read();
+  const prefs = context.prefs.read();
+  const app = context.app ?? {};
+  return {
+    userDir: context.userDir,
+    files: {
+      settings: path.join(context.userDir, "settings.json"),
+      ai: context.ai.file,
+      preferences: context.prefs.file,
+    },
+    app: {
+      workspace: app.workspace ?? null,
+      modsRoot: app.modsRoot ?? null,
+    },
+    ai: {
+      ...describeConfig(ai.config),
+      file: context.ai.file,
+      exists: ai.exists,
+      warnings: ai.warnings,
+      errors: ai.errors,
+    },
+    prefs: {
+      ...prefs.preferences,
+      file: context.prefs.file,
+      exists: prefs.exists,
+      warnings: prefs.warnings,
+    },
+  };
+}
+
+/**
+ * Apply one `config.set` payload.  Throws an Error whose message starts with
+ * `config.set:`; `dispatch` already turns that into an -32603 frame, so there
+ * is no second error path to keep in sync.  Never returns the key.
+ */
+function applySettings(context, params) {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new Error("config.set: params must be an object");
+  }
+  const clearKey = params.clearKey === true;
+  try {
+    if (params.ai !== undefined) {
+      if (params.ai === null || typeof params.ai !== "object" || Array.isArray(params.ai)) {
+        throw new Error("`ai` must be an object");
+      }
+      const patch = {};
+      for (const key of Object.keys(params.ai)) {
+        // An empty apiKey field means "leave the stored key alone", which is
+        // what a settings card sends when the user did not retype it.
+        if (key === "apiKey" && params.ai[key] === "") continue;
+        patch[key] = params.ai[key];
+      }
+      if (clearKey) patch.apiKey = "";
+      if (Object.keys(patch).length > 0) context.ai.write(patch);
+    } else if (clearKey) {
+      context.ai.write({ apiKey: "" });
+    }
+    if (params.prefs !== undefined) {
+      if (params.prefs === null || typeof params.prefs !== "object" || Array.isArray(params.prefs)) {
+        throw new Error("`prefs` must be an object");
+      }
+      context.prefs.write(params.prefs);
+    }
+  } catch (error) {
+    throw new Error("config.set: " + settingsErrorMessage(error));
+  }
+  return describeSettings(context);
+}
+
+/** Flatten a ConfigError/SettingsError into one message without echoing values. */
+function settingsErrorMessage(error) {
+  const message = error && error.message ? String(error.message) : String(error);
+  const details = error && Array.isArray(error.errors) ? error.errors : [];
+  if (details.length === 0) return message;
+  const notes = details.map((entry) => {
+    const key = entry && entry.key ? String(entry.key) : "";
+    const note = entry && entry.message ? String(entry.message) : "";
+    return key === "" ? note : key + ": " + note;
+  });
+  return message + " (" + notes.join("; ") + ")";
+}
+
 function needParam(params, name) {
   const value = params === null || typeof params !== "object" ? undefined : params[name];
   if (typeof value !== "string" || value === "") {
@@ -473,8 +609,8 @@ function optionalString(params, name) {
 
 /*
  * Every `mod.*` verb, in one table, so adding one is a row and not a branch.
- * The facade behind these is synchronous; `mod.scaffold` writes files and is
- * the only one with a side effect.
+ * The facade behind these is synchronous; `mod.scaffold` and `mod.newFile`
+ * write files, and are the two with a side effect.
  */
 const MOD_METHODS = {
   "mod.stats": (_params, mods) => mods.stats(),
@@ -498,6 +634,24 @@ const MOD_METHODS = {
     dir: needParam(params, "dir"),
     modName: needParam(params, "modName"),
     template: optionalString(params, "template") ?? "full",
+  }),
+  // G50: one file, generated from the game's own schema, inside a package that
+  // already exists.  `dir` may be the package root or any directory inside it.
+  "mod.newFile": (params, mods) => mods.newFile({
+    dir: needParam(params, "dir"),
+    type: needParam(params, "type"),
+    name: needParam(params, "name"),
+    overwrite: params.overwrite === true,
+  }),
+  // The other half of G50: copy a file that already exists into a package.  The
+  // bytes are copied verbatim; `to` is only needed when the name does not say
+  // where the file belongs.
+  "mod.importFile": (params, mods) => mods.importFile({
+    dir: needParam(params, "dir"),
+    from: needParam(params, "from"),
+    to: optionalString(params, "to") ?? undefined,
+    name: optionalString(params, "name") ?? undefined,
+    overwrite: params.overwrite === true,
   }),
   "mod.search": (params, mods) => mods.search({
     query: typeof params.query === "string" ? params.query : "",
@@ -532,10 +686,11 @@ const MOD_METHODS = {
  * Methods the shell owns:
  *   lang.list, lang.tokenize            served from langs/, no kernel involved
  *   mod.*                               served from shell/mods/, no kernel involved
+ *   config.get, config.set              the shell's settings files; no kernel involved
  *   workspace.info                      the kernel's answer plus `langs`
  * Everything else is forwarded verbatim.
  */
-export async function dispatch(frame, kernel, languages, mods = null) {
+export async function dispatch(frame, kernel, languages, mods = null, settings = null) {
   if (frame === null || typeof frame !== "object" || Array.isArray(frame)) {
     return failure(null, -32600, "INVALID_REQUEST", "a frame must be a JSON object");
   }
@@ -587,6 +742,15 @@ export async function dispatch(frame, kernel, languages, mods = null) {
        */
       const result = await handler(params, mods);
       return answer(() => response(id, result));
+    }
+
+    if (method === "config.get") {
+      return answer(() => response(id, describeSettings(settingsContext(settings))));
+    }
+
+    if (method === "config.set") {
+      const context = settingsContext(settings);
+      return answer(() => response(id, applySettings(context, params)));
     }
 
     const result = await kernel.call(method, frame.params);
@@ -647,6 +811,9 @@ async function runRpc(options) {
   const mods = await loadMods(options, (message) => {
     process.stderr.write(`[shell] ${message}\n`);
   });
+  // The files behind config.get/config.set are the shell's own; the kernel is
+  // never consulted for them, exactly like `mod.*`.
+  const settings = loadSettings(options);
 
   await kernel.start();
   if (options.verbose) {
@@ -670,7 +837,7 @@ async function runRpc(options) {
 
       // Sequential on purpose: the kernel answers one frame at a time, and a
       // client that pipelines still gets its replies in order.
-      const reply = await dispatch(frame, kernel, languages, mods);
+      const reply = await dispatch(frame, kernel, languages, mods, settings);
       if (reply !== null) writeStdout(reply);
     }
   } finally {
@@ -795,6 +962,9 @@ async function runServe(options) {
   const mods = await loadMods(options, (message) => {
     process.stderr.write(`[shell] ${message}\n`);
   });
+  // The files behind config.get/config.set are the shell's own; the kernel is
+  // never consulted for them, exactly like `mod.*`.
+  const settings = loadSettings(options);
   await kernel.start();
 
   const subscribers = new Set();
@@ -878,7 +1048,7 @@ async function runServe(options) {
         return;
       }
 
-      const reply = await dispatch(frame, kernel, languages, mods);
+      const reply = await dispatch(frame, kernel, languages, mods, settings);
       // A notification is answered with 204: HTTP always needs a status, but
       // there is no response frame to give.
       if (reply === null) {

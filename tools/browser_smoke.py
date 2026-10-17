@@ -1322,7 +1322,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 #: Every one of them has to be reachable in both tiles.
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
-    "sheet", "story", "pixel", "rig", "mod", "problems", "docs",
+    "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1343,6 +1343,7 @@ CARD_COMMANDS = (
     "mod NewMod",
     "problems",
     "docs",
+    "settings",
 )
 
 #: The close facts the card page prints after the reachability walk: the three
@@ -1383,15 +1384,18 @@ LANG_CHECK_KEYS = (
 LANG_CHECK_COUNT = len(LANG_CHECK_KEYS)
 
 #: The rig card's own round trip -- edit, save, and a second save that must
-#: refuse -- is two facts past the reachability sweep.
+#: refuse -- is two facts past the reachability sweep.  The mod card's new-file
+#: row is one more: the picker it generates, and the define it writes.
 RIG_SAVE_CHECK_COUNT = 2
+MOD_NEW_CHECK_COUNT = 2
 
 #: One assertion per (view, kind), plus the one that every mounted card is
-#: reachable somewhere, plus the rig save facts, the close facts and the
-#: language-strip facts.  Used by the "browser is not installed" summary line.
+#: reachable somewhere, plus the rig save facts, the mod new-file fact, the close
+#: facts and the language-strip facts.  Used by the "browser is not installed"
+#: summary line.
 CARD_CHECK_COUNT = (
     len(CARD_KINDS) * len(CARD_VIEWS) + 1 + RIG_SAVE_CHECK_COUNT
-    + CLOSE_CHECK_COUNT + LANG_CHECK_COUNT
+    + MOD_NEW_CHECK_COUNT + CLOSE_CHECK_COUNT + LANG_CHECK_COUNT
 )
 
 #: The wrapper page.  Same rules as ``MOD_PAGE``: plain browser JS, no imports,
@@ -1607,6 +1611,88 @@ pre{white-space:pre-wrap}
           clickIn('[data-role="rig-save"]');
           await sleep(250);
           say("rig_again", "refused=" + (statusOf().indexOf("nothing to save") === 0 ? 1 : 0));
+        }
+      }
+
+      /* ---------------- the mod card makes one file from a schema ---------------- */
+      {
+        const modRoot = rootOf("mod");
+        say("mod_card", "root=" + (modRoot !== null ? 1 : 0));
+        if (modRoot !== null) {
+          const statusOf = () => {
+            const el = modRoot.querySelector(".card-status");
+            return el === null ? "" : el.textContent.trim();
+          };
+          const select = modRoot.querySelector(".mod-new-type");
+          const name = modRoot.querySelector(".mod-new-name");
+          const newButton = modRoot.querySelector(".mod-new .card-button");
+          const options = select === null ? [] : Array.from(select.options || []).map((one) => one.value);
+          const greyed = select === null ? 0 : Array.from(select.options || []).filter((one) => one.disabled).length;
+          say("mod_new_pick", "select=" + (select !== null ? 1 : 0)
+            + " options=" + options.length
+            + " goods=" + (options.indexOf("Goods") >= 0 ? 1 : 0)
+            + " yarn=" + (options.indexOf("yarn") >= 0 ? 1 : 0)
+            + " greyed=" + greyed);
+          if (select !== null && name !== null && newButton !== null) {
+            select.value = "Goods";
+            name.value = "Goods_Smoke";
+            name.dispatchEvent(new (win().Event)("input", { bubbles: true }));
+            newButton.click();
+          }
+          const created = await waitFor(() => {
+            const text = statusOf();
+            return text.indexOf("created") === 0 || text.indexOf("not created") === 0 ? text : "";
+          }, 300);
+          let keys = "";
+          let techName = "";
+          try {
+            const reply = await fetch("/rpc", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "file.read", params: { path: "NewMod/Defines/Goods/Goods_Smoke.json" } }),
+            });
+            const body = await reply.json();
+            if (body.error) { throw new Error(body.error.message); }
+            const parsed = JSON.parse(body.result.text);
+            keys = Object.keys(parsed).join(",");
+            techName = String(parsed.techName);
+          } catch (err) {
+            keys = "error=" + String(err && err.message ? err.message : err);
+          }
+          say("mod_new", "created=" + (created !== null && created.indexOf("created") === 0 ? 1 : 0)
+            + " keys=" + keys + " techName=" + techName);
+
+          /* The other half: a file that already exists, copied into the package. */
+          const importFrom = modRoot.querySelector(".mod-import-from");
+          const importTo = modRoot.querySelector(".mod-import-to");
+          const importButton = modRoot.querySelector(".mod-import .card-button");
+          let imported = 0;
+          let same = 0;
+          if (importFrom !== null && importTo !== null && importButton !== null) {
+            importFrom.value = "icon.png";
+            importTo.value = "Sprites/icon-imported.png";
+            importFrom.dispatchEvent(new (win().Event)("input", { bubbles: true }));
+            importTo.dispatchEvent(new (win().Event)("input", { bubbles: true }));
+            importButton.click();
+            const done = await waitFor(() => {
+              const text = statusOf();
+              return text.indexOf("imported") === 0 || text.indexOf("not imported") === 0 ? text : "";
+            }, 300);
+            imported = done !== null && done.indexOf("imported") === 0 ? 1 : 0;
+            const read64 = async (path) => {
+              const reply = await fetch("/rpc", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "file.read_bytes", params: { path } }),
+              });
+              const body = await reply.json();
+              return body.error ? "" : String(body.result.base64 || "");
+            };
+            const source = await read64("icon.png");
+            const target = await read64("NewMod/Sprites/icon-imported.png");
+            same = source !== "" && source === target ? 1 : 0;
+          }
+          say("mod_import", "imported=" + imported + " same=" + same);
         }
       }
 
@@ -2383,6 +2469,65 @@ def define_card_checks(facts: dict) -> list:
         return "a clean rig card answers 'nothing to save' and leaves the file alone"
 
     checks.append(("G29: the rig card refuses to write a rig with no edit", rig_refuses_a_clean_save))
+
+    def mod_card_makes_a_file():
+        require(facts.get("mod_card"), "the wrapper page reported no line for the mod card")
+        require(
+            _split_fact_line(facts["mod_card"]).get("root") == "1",
+            "no mod card root was mounted, so the new-file row could not be used",
+        )
+        pick = _split_fact_line(facts.get("mod_new_pick", ""))
+        require(facts.get("mod_new_pick"), "the wrapper page reported no new-file picker line")
+        require(pick.get("select") == "1", "the mod card has no new-file kind picker")
+        require(
+            pick.get("goods") == "1",
+            f"the picker was not generated from the knowledge base's types (facts {facts.get('mod_new_pick')!r})",
+        )
+        require(
+            pick.get("yarn") == "1",
+            "the picker does not offer the story kind this side writes itself",
+        )
+        require(
+            pick.get("greyed", "0").isdigit() and int(pick["greyed"]) >= 2,
+            "a rig and an audio file need tools this editor does not have, and should be "
+            f"shown greyed rather than missing (facts {facts.get('mod_new_pick')!r})",
+        )
+        require(facts.get("mod_new"), "the wrapper page reported no new-file result line")
+        new = _split_fact_line(facts["mod_new"])
+        require(
+            new.get("created") == "1",
+            f"the new-file row did not create a define from its schema (facts {facts.get('mod_new')!r})",
+        )
+        require(
+            new.get("keys") == "techName",
+            "a Goods define made from the schema should carry exactly its required key, "
+            f"got {new.get('keys')!r}",
+        )
+        require(
+            new.get("techName") == "Goods_Smoke",
+            f"the file does not name itself as its techName (facts {facts.get('mod_new')!r})",
+        )
+        return (
+            f"the picker offered {pick.get('options')} kinds with {pick.get('greyed')} greyed; "
+            "creating a Goods wrote exactly its required key and the name it was given"
+        )
+
+    checks.append(("G50: the mod card creates a file from the game's own schema", mod_card_makes_a_file))
+
+    def mod_card_imports_a_file():
+        require(facts.get("mod_import"), "the wrapper page reported no import result line")
+        imported = _split_fact_line(facts["mod_import"])
+        require(
+            imported.get("imported") == "1",
+            f"the mod card's import row did not import a file (facts {facts.get('mod_import')!r})",
+        )
+        require(
+            imported.get("same") == "1",
+            "the imported file is not byte-identical to the file it was copied from",
+        )
+        return "a workspace PNG imported into the package lands byte for byte, at the target given"
+
+    checks.append(("G50: the mod card imports a file into the package, byte for byte", mod_card_imports_a_file))
 
     ask_labels = ("保存并关闭", "不保存，关闭", "取消")
 

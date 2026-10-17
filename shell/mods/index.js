@@ -30,6 +30,8 @@ const searchCore = require('./search.js');
 const completeCore = require('./complete.js');
 const gamepath = require('./gamepath.js');
 const knowledgeBuild = require('./knowledge-build.js');
+const newfileCore = require('./newfile.js');
+const importfileCore = require('./importfile.js');
 
 /** knowledge.json 的位置（本模块同目录；发布物里可能不带，见下面的解析顺序）。 */
 const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
@@ -1285,6 +1287,140 @@ function createMods(options) {
     return { modRoot: r.modRoot, created: r.created, warnings: r.warnings };
   }
 
+  /* ---------------- 按类型新建文件（G50） ---------------- */
+
+  /**
+   * 把调用方给的 dir 解析成它所属的 Mod 包根（newFile / importFile 共用）。
+   * dir 可以是绝对路径、相对 modsRoot 的路径，也可以是包内任意子目录；从它往上
+   * 找 `mod.json`（最多 25 层，别一路找到盘符）。拒绝消息带调用方的动词前缀。
+   */
+  function packageRootOf(rawDir, prefix) {
+    let dirAbs;
+    try {
+      dirAbs = resolveArg(String(rawDir), 'dir');
+    } catch (e) {
+      // 路径越界也属于「这个动词拒绝了你」，把消息归一到动词前缀。
+      if (e && e.code === 'EOUTSIDE') throw new Error(prefix + e.message);
+      throw e;
+    }
+
+    let root = path.resolve(dirAbs);
+    for (let i = 0; i <= 25; i++) {
+      if (fs.existsSync(path.join(root, 'mod.json'))) return root;
+      const parent = path.dirname(root);
+      if (parent === root) break;
+      root = parent;
+    }
+    throw new Error(prefix + rawDir + ' is not inside a mod package');
+  }
+
+  /**
+   * 在一个已有的 Mod 包里新建一个文件。
+   *
+   * params `{ dir, type, name, overwrite? }`：
+   *   - `dir` 可以是绝对路径，也可以相对 modsRoot（和别的动词同一个 resolveArg，
+   *     越界即拒绝）；从它往上找 `mod.json`
+   *     （最多 25 层）得到包根，写进包根下的规范位置（见 newfile.js）。
+   *   - `type` 是 51 个 schema 类型之一，或 `yarn|translation|sprite|spine|audio`；
+   *     `spine`/`audio` 明确拒绝并说出需要什么工具，未知类型也拒绝。
+   *   - `overwrite: true` 才允许替换已有文件。
+   *
+   * @returns {{path:string, file:string, kind:string, bytes:number, warnings:string[]}}
+   * @throws {Error} 消息以 `new file: ` 开头（dispatch 直接转成错误帧）
+   */
+  function newFile(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    for (const key of ['dir', 'type', 'name']) {
+      if (p[key] == null || String(p[key]).trim() === '') {
+        throw new Error('new file: ' + key + ' is required');
+      }
+    }
+
+    const packageRoot = packageRootOf(String(p.dir), 'new file: ');
+
+    const requestedType = String(p.type);
+    const name = String(p.name);
+    const kb = knowledge();
+    const schemas = kb && kb.schemas && typeof kb.schemas === 'object' ? kb.schemas : {};
+    let schema = Object.prototype.hasOwnProperty.call(schemas, requestedType) ? schemas[requestedType] : null;
+    let type = requestedType;
+    if (!schema) {
+      // 大小写不敏感地找一次（Defines/<Type> 目录名必须用 schema 的真实键）。
+      const hit = Object.keys(schemas).find((k) => k.toLowerCase() === requestedType.toLowerCase());
+      if (hit) {
+        type = hit;
+        schema = schemas[hit];
+      }
+    }
+
+    const written = newfileCore.writeNewFile({
+      modRoot: packageRoot,
+      type: type,
+      name: name,
+      schema: schema,
+      overwrite: p.overwrite
+    });
+    invalidateForRoot(); // 目录树变了，按 root 的缓存一律作废（同 scaffold）
+    return written;
+  }
+
+  /* ---------------- 导入既有文件（G50） ---------------- */
+
+  /**
+   * 把一个磁盘上已有的文件导入一个 Mod 包（mod.importFile）。
+   *
+   * params `{ dir, from, to?, name?, overwrite? }`：
+   *   - `dir`：同 newFile（包内任意子目录/绝对路径/相对 modsRoot），用来定位包根；
+   *   - `from`：源文件。绝对路径原样接受（导入的常见来源就在包外），相对路径按
+   *     modsRoot/工作区解析（resolveArg，越界即拒绝）；
+   *   - `to`：可选，包根相对的 POSIX 目标路径；不给时按扩展名落规范目录
+   *     （规则见 importfile.js）；`.json` 的源路径没有 `Defines/<Type>/` 段时
+   *     要求给 `to` —— 定义的目录就是它的类型，不猜；
+   *   - `overwrite: true` 才允许替换已有文件。
+   *
+   * 复制逐字节进行（BOM/换行不归一化，§18.2 字节保真）；内容校验失败会删掉
+   * 刚拷进来的那个文件再抛错。消息统一 `import file: ` 前缀。
+   * @returns {{path:string, file:string, kind:string, bytes:number, warnings:string[], diagnostics:Array}}
+   * @throws {Error} 消息以 `import file: ` 开头（dispatch 直接转成错误帧）
+   */
+  function importFileInto(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    for (const key of ['dir', 'from']) {
+      if (p[key] == null || String(p[key]).trim() === '') {
+        throw new Error('import file: ' + key + ' is required');
+      }
+    }
+
+    const packageRoot = packageRootOf(String(p.dir), 'import file: ');
+
+    const rawFrom = String(p.from);
+    let fromAbs;
+    if (path.isAbsolute(rawFrom)) {
+      // 导入的来源通常在包外（桌面、别的工程目录），绝对路径不再受 modsRoot 限制。
+      fromAbs = path.resolve(rawFrom);
+    } else {
+      try {
+        fromAbs = resolveArg(rawFrom, 'from');
+      } catch (e) {
+        if (e && e.code === 'EOUTSIDE') throw new Error('import file: ' + e.message);
+        throw e;
+      }
+    }
+
+    const imported = importfileCore.importFile({
+      modRoot: packageRoot,
+      from: fromAbs,
+      to: p.to,
+      name: p.name,
+      overwrite: p.overwrite,
+      // 校验器由门面注入：定义校验和 Yarn 诊断都是这里的闭包（含知识库/磁盘索引）。
+      validateDefineText: validateDefineText,
+      diagnoseYarn: diagnoseYarn
+    });
+    invalidateForRoot(); // 目录树变了，按 root 的缓存一律作废（同 newFile/scaffold）
+    return imported;
+  }
+
   /** 模板摘要：[{ id, title, files }]。 */
   function templates() {
     return (scaffoldCore.MOD_TEMPLATES || []).map((t) => ({
@@ -1427,6 +1563,8 @@ function createMods(options) {
     validateDefineText: validateDefineText,
     diagnoseYarn: diagnoseYarn,
     scaffold: scaffold,
+    newFile: newFile,
+    importFile: importFileInto,
     templates: templates,
     search: search,
     docFor: docFor,

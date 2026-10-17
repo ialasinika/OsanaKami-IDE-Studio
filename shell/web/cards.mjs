@@ -811,12 +811,15 @@ export const COMMAND_HELP = [
   "story <path>             open a .yarn file as nodes and lines, not text",
   "pixel <path.png> [w] [h]     draw a PNG: pixels are the file, not the board",
   "rig <path.skel.bytes>    show a Spine rig: bones, skins, animation timeline",
+  "new <type> <dir> <name>  create a file from the game's own schemas",
+  "import <from> <dir> [to] copy a file into a package (byte for byte), then open it",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
   "mod <dir>                游戏 Mod 包卡片（打开目录、列出定义与 Yarn）",
   "problems <dir>           游戏 Mod 校验结果（错误/警告/提示，可跳转）",
   "docs [query]             游戏知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
+  "settings                 AI provider, default view and poll interval",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "focus <id>               select and centre a card",
@@ -7846,6 +7849,61 @@ function renderMod(card, ctx) {
   const validateButton = button("validate", "check every define and Yarn file", () => validate());
   const controls = h("div", "mod-controls", { children: [dirInput, openButton, validateButton] });
 
+  /*
+   * Creating one file (G50) is the same verb the command line uses: pick a kind,
+   * pick a name, and the shell writes what its own knowledge base says the file
+   * has to contain.  The list of kinds is read from `mod.types`, so a fork with
+   * three schemas offers three kinds; the four kinds this side adds by hand are
+   * the ones no schema describes (a story, a translation, a sprite) plus the two
+   * that need a tool this editor does not have, and those are shown greyed with
+   * the reason on them rather than hidden.
+   */
+  const newType = h("select", "mod-new-type", {
+    attrs: { title: "what kind of file to create" },
+  });
+  const newName = h("input", "mod-new-name", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "Goods_Sword",
+      title: "the new file's name -- for a define, the techName the file name has to equal",
+    },
+  });
+  const newButton = button("new", "write a new file from the game's own schema, then open it", () => {
+    createFile();
+  });
+  const newControls = h("div", "mod-controls mod-new", { children: [newType, newName, newButton] });
+
+  /*
+   * Importing an existing file (G50's other half) is the same three questions,
+   * with a source instead of a kind: which file, into which package, and -- for
+   * a file whose name says nothing about where it belongs -- an explicit target.
+   * The file is copied byte for byte, so this row is also the way to bring a
+   * translated table or a sprite from an old mod across without rewriting it.
+   */
+  const importFrom = h("input", "mod-import-from", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "C:\\art\\icon.png",
+      title: "the file to copy in -- absolute, or relative to the workspace",
+    },
+  });
+  const importTo = h("input", "mod-import-to", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "Sprites/icon.png (optional)",
+      title: "where it lands inside the package; only needed when the name does not say",
+    },
+  });
+  const importButton = button("import", "copy a file into this package, byte for byte, then open it", () => {
+    importFile();
+  });
+  const importControls = h("div", "mod-controls mod-import", {
+    children: [importFrom, importTo, importButton],
+  });
+
   const headline = h("div", "mod-headline");
   const counts = h("div", "mod-counts");
   const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"));
@@ -7857,7 +7915,7 @@ function renderMod(card, ctx) {
   let opened = null;
 
   const body = h("div", "card-body card-body-mod", {
-    children: [controls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
+    children: [controls, newControls, importControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
   });
   const shell = cardShell(card, body);
   shell.label.textContent = dirInput.value === "" ? "(no dir)" : dirInput.value;
@@ -7910,6 +7968,137 @@ function renderMod(card, ctx) {
   /** Fill a section, or its one placeholder row when there is nothing in it. */
   function fillOrEmpty(sectionEl, rows) {
     fillRows(sectionEl.rows, rows.length === 0 ? [{ label: "（空）", empty: true }] : rows);
+  }
+
+  /**
+   * The kinds the "new" row offers: everything the game's knowledge base has a
+   * schema for, then the three files this editor writes itself, then the two
+   * that need a tool it does not have -- greyed, with the reason in the label,
+   * because a menu that hides them cannot explain why they are missing.
+   */
+  async function loadTypes() {
+    let types = [];
+    try {
+      types = await client.call("mod.types", {});
+    } catch {
+      types = [];
+    }
+    const raw = Array.isArray(types) ? types : [];
+    const kinds = [
+      ...raw.map((type) => ({
+        value: type.type,
+        label: `${type.type}${type.required && type.required.length > 0 ? ` (${type.required.join(", ")})` : ""}`,
+      })),
+      { value: "yarn", label: "Story (.yarn)" },
+      { value: "translation", label: "Translation (.csv)" },
+      { value: "sprite", label: "Sprite (.png)" },
+      { value: "spine", label: "Rig (.skel.bytes) — needs Spine", disabled: true },
+      { value: "audio", label: "Audio (.wav) — needs a recording", disabled: true },
+    ];
+    newType.textContent = "";
+    for (const kind of kinds) {
+      const option = document.createElement("option");
+      option.value = kind.value;
+      option.textContent = kind.label;
+      option.disabled = kind.disabled === true;
+      newType.append(option);
+    }
+    newButton.disabled = kinds.length === 0;
+  }
+
+  /**
+   * Create the file the row names, then open it.
+   *
+   * The answer names the file the shell wrote, so this side opens *that* path
+   * instead of guessing where the verb would have put it -- the generate rules
+   * live in one place (`shell/mods/newfile.js`), and a card that re-derived the
+   * path would eventually guess a different directory.
+   */
+  async function createFile() {
+    const root = opened !== null && typeof opened.root === "string" && opened.root !== ""
+      ? opened.root
+      : dirInput.value.trim();
+    if (root === "") {
+      status.textContent = "open a mod first: a new file needs a package to live in";
+      app.log("warn", "new file: open a mod first -- a new file needs a package to live in");
+      return;
+    }
+    const type = newType.value;
+    const name = newName.value.trim();
+    if (name === "") {
+      status.textContent = "give the new file a name";
+      return;
+    }
+    status.textContent = `creating ${type} ${name}…`;
+    let answer;
+    try {
+      answer = await client.call("mod.newFile", { dir: root, type, name });
+    } catch (err) {
+      status.textContent = `not created: ${err.message}`;
+      app.log("warn", `new file failed: ${err.message}`);
+      return;
+    }
+    const file = typeof answer.file === "string" && answer.file !== ""
+      ? answer.file
+      : modPath(root, answer.path);
+    newName.value = "";
+    status.textContent = `created ${answer.path} (${answer.bytes} bytes)`;
+    app.log("info", `new file (${answer.path}) — ${type === "sprite" ? "the pixels are the file" : "the schema filled the fields it requires"}`);
+    if (type === "sprite") {
+      app.openPixelCard(file);
+    } else {
+      app.openFile(file);
+    }
+  }
+
+  /**
+   * Copy an existing file into the package and open it.
+   *
+   * The verb copies the bytes; this side never rewrites them.  A file whose name
+   * does not say where it belongs (a define's directory *is* its type) has to be
+   * given a target, and the shell refuses rather than guessing, because a define
+   * in the wrong `Defines/<Type>/` is a file the game will not load.
+   */
+  async function importFile() {
+    const root = opened !== null && typeof opened.root === "string" && opened.root !== ""
+      ? opened.root
+      : dirInput.value.trim();
+    if (root === "") {
+      status.textContent = "open a mod first: an import needs a package to land in";
+      app.log("warn", "import: open a mod first -- an import needs a package to land in");
+      return;
+    }
+    const from = importFrom.value.trim();
+    if (from === "") {
+      status.textContent = "give a file to import";
+      return;
+    }
+    const to = importTo.value.trim();
+    status.textContent = `importing ${from}…`;
+    let answer;
+    try {
+      answer = await client.call("mod.importFile", {
+        dir: root,
+        from,
+        ...(to === "" ? {} : { to }),
+      });
+    } catch (err) {
+      status.textContent = `not imported: ${err.message}`;
+      app.log("warn", `import failed: ${err.message}`);
+      return;
+    }
+    const file = typeof answer.file === "string" && answer.file !== ""
+      ? answer.file
+      : modPath(root, answer.path);
+    importFrom.value = "";
+    importTo.value = "";
+    status.textContent = `imported ${answer.path} (${answer.bytes} bytes)`;
+    app.log("info", `imported ${answer.path} (${answer.bytes} bytes) — copied byte for byte`);
+    if (answer.kind === "sprite" || /\.png$/i.test(answer.path)) {
+      app.openPixelCard(file);
+    } else {
+      app.openFile(file);
+    }
   }
 
   async function openMod() {
@@ -8034,6 +8223,22 @@ function renderMod(card, ctx) {
       openMod();
     }
   });
+  newName.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      createFile();
+    }
+  });
+  for (const field of [importFrom, importTo]) {
+    field.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        importFile();
+      }
+    });
+  }
+
+  loadTypes();
 
   // An unopened card says how the input is read and shows each section's
   // placeholder: a blank rectangle gave no clue that `Mods/MyMod` was wrong.
@@ -8320,6 +8525,238 @@ function renderDocs(card, ctx) {
   };
 }
 
+/* -- kind: settings -- the user's own machine ------------------------- */
+
+/**
+ * The settings card (G48): the one place a card may talk about the machine
+ * rather than the project.
+ *
+ * It edits exactly what `config.get`/`config.set` say it may edit -- the AI
+ * provider, the view a window opens in, and how often the cards ask the kernel
+ * what changed -- and it *shows* the rest (the workspace, the files that hold
+ * these values) without offering to change it, because those are process
+ * arguments and a change needs a restart.
+ *
+ * The renderer never judges a value: `config.set` validates and writes, and its
+ * message is what the status line shows.  A form that re-implemented the rules
+ * would eventually disagree with the store that owns them, and the store is the
+ * one the API calls actually read.
+ */
+function renderSettings(card, ctx) {
+  const { client } = ctx;
+
+  function textInput(attrs) {
+    return h("input", "settings-input", {
+      attrs: Object.assign({ type: "text", spellcheck: "false" }, attrs),
+    });
+  }
+
+  function numberInput(attrs) {
+    return h("input", "settings-input", { attrs: Object.assign({ type: "number" }, attrs) });
+  }
+
+  function field(label, input, note) {
+    const children = [h("span", "settings-label", { text: label }), input];
+    if (note !== undefined) {
+      children.push(h("span", "settings-note", { text: note }));
+    }
+    return h("div", "settings-field", { children });
+  }
+
+  function check(label, input) {
+    return h("div", "settings-field settings-check", {
+      children: [input, h("span", "settings-label", { text: label })],
+    });
+  }
+
+  function codeRow(label) {
+    const value = h("code", "settings-path-value");
+    const row = h("div", "settings-path", {
+      children: [h("span", "settings-path-label", { text: label }), value],
+    });
+    return { row, value };
+  }
+
+  function option(value, label) {
+    const el = document.createElement("option");
+    el.value = value;
+    el.textContent = label;
+    return el;
+  }
+
+  const baseUrl = textInput({ placeholder: "https://api.deepseek.com/v1" });
+  const model = textInput({ placeholder: "deepseek-chat" });
+  const apiKey = h("input", "settings-input", {
+    attrs: { type: "password", autocomplete: "off", placeholder: "no key stored" },
+  });
+  const temperature = numberInput({ min: "0", max: "2", step: "0.1" });
+  const maxTokens = numberInput({ min: "1", max: "131072", step: "1" });
+  const timeoutMs = numberInput({ min: "1", max: "3600000", step: "1000" });
+  const stream = h("input", "", { attrs: { type: "checkbox" } });
+  const clearKey = h("input", "", { attrs: { type: "checkbox" } });
+
+  const aiBlock = h("div", "settings-block", {
+    children: [
+      h("h3", "settings-heading", { text: "AI provider" }),
+      field("endpoint", baseUrl),
+      field("model", model),
+      field("api key", apiKey, "the stored key is never shown; leave it blank to keep it"),
+      field("temperature", temperature),
+      field("max tokens", maxTokens),
+      field("timeout (ms)", timeoutMs),
+      check("stream the answer", stream),
+      check("forget the stored key", clearKey),
+    ],
+  });
+
+  const bootView = h("select", "settings-input", {
+    children: [option("mod", "mod"), option("classic", "classic")],
+  });
+  const watchPollMs = numberInput({ min: "250", max: "60000", step: "250" });
+  const prefsBlock = h("div", "settings-block", {
+    children: [
+      h("h3", "settings-heading", { text: "this machine" }),
+      field("opens in", bootView, "the view a new window starts in"),
+      field("poll interval (ms)", watchPollMs, "how often the cards ask the kernel what changed"),
+    ],
+  });
+
+  const userData = codeRow("user data");
+  const prefsFile = codeRow("preferences");
+  const aiFile = codeRow("ai provider");
+  const electronSettings = codeRow("window settings");
+  const workspaceRow = codeRow("workspace");
+  const modsRow = codeRow("mods");
+  const pathsBlock = h("div", "settings-block", {
+    children: [
+      h("h3", "settings-heading", { text: "where this lives" }),
+      userData.row,
+      prefsFile.row,
+      aiFile.row,
+      electronSettings.row,
+      workspaceRow,
+      modsRow,
+    ],
+  });
+
+  const saveButton = button("save", "write the provider and the view", () => {
+    save();
+  });
+  const reloadButton = button("reload", "read the settings again", () => {
+    load();
+  });
+  const controls = h("div", "settings-controls", { children: [saveButton, reloadButton] });
+  const status = makeStatus();
+  const body = h("div", "card-body settings-body", {
+    children: [pathsBlock, aiBlock, prefsBlock, controls, status],
+  });
+  const shell = cardShell(card, body);
+  shell.label.textContent = "the user's machine";
+
+  let last = null;
+
+  function show(answer) {
+    last = answer;
+    const ai = answer?.ai ?? {};
+    baseUrl.value = typeof ai.baseUrl === "string" ? ai.baseUrl : "";
+    model.value = typeof ai.model === "string" ? ai.model : "";
+    apiKey.value = "";
+    apiKey.placeholder = ai.hasApiKey === true ? "stored key is kept; type to replace it" : "no key stored yet";
+    temperature.value = ai.temperature === null || ai.temperature === undefined ? "" : String(ai.temperature);
+    maxTokens.value = ai.maxTokens === null || ai.maxTokens === undefined ? "" : String(ai.maxTokens);
+    timeoutMs.value = ai.timeoutMs === null || ai.timeoutMs === undefined ? "" : String(ai.timeoutMs);
+    stream.checked = ai.stream !== false;
+    clearKey.checked = false;
+    const prefs = answer?.prefs ?? {};
+    bootView.value = prefs.bootView === "classic" ? "classic" : "mod";
+    watchPollMs.value = prefs.watchPollMs === null || prefs.watchPollMs === undefined
+      ? "" : String(prefs.watchPollMs);
+    const files = answer?.files ?? {};
+    userData.value.textContent = answer?.userDir ?? "(unknown)";
+    prefsFile.value.textContent = files.preferences ?? "(unknown)";
+    aiFile.value.textContent = files.ai ?? "(unknown)";
+    electronSettings.value.textContent = files.settings ?? "(unknown)";
+    workspaceRow.value.textContent = answer?.app?.workspace ?? "(none)";
+    modsRow.value.textContent = answer?.app?.modsRoot ?? "(none)";
+    const notes = [];
+    for (const list of [ai.warnings, ai.errors, prefs.warnings, prefs.errors]) {
+      if (Array.isArray(list)) {
+        notes.push(...list.map((item) => (item && typeof item === "object" ? item.message ?? String(item) : String(item))));
+      }
+    }
+    status.textContent = notes.length === 0
+      ? "saved in the user data directory; a window reads it on boot"
+      : notes.join(" · ");
+  }
+
+  async function load() {
+    status.textContent = "reading settings…";
+    try {
+      show(await client.call("config.get", {}));
+    } catch (err) {
+      status.textContent = `settings unavailable: ${err.message}`;
+    }
+  }
+
+  /** Only the fields with something in them travel: a missing key keeps its default. */
+  function gather() {
+    const patch = { prefs: { bootView: bootView.value, watchPollMs: Number(watchPollMs.value) } };
+    const ai = {};
+    if (baseUrl.value.trim() !== "") {
+      ai.baseUrl = baseUrl.value.trim();
+    }
+    if (model.value.trim() !== "") {
+      ai.model = model.value.trim();
+    }
+    if (temperature.value !== "") {
+      ai.temperature = Number(temperature.value);
+    }
+    if (maxTokens.value !== "") {
+      ai.maxTokens = Number(maxTokens.value);
+    }
+    if (timeoutMs.value !== "") {
+      ai.timeoutMs = Number(timeoutMs.value);
+    }
+    ai.stream = stream.checked;
+    if (apiKey.value !== "") {
+      ai.apiKey = apiKey.value;
+    }
+    if (clearKey.checked) {
+      patch.clearKey = true;
+    }
+    patch.ai = ai;
+    return patch;
+  }
+
+  async function save() {
+    status.textContent = "writing…";
+    try {
+      show(await client.call("config.set", gather()));
+      status.textContent = "saved; this window keeps its view until it is reloaded";
+    } catch (err) {
+      status.textContent = `not saved: ${err.message}`;
+    }
+  }
+
+  load();
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "settings",
+      focus() {
+        baseUrl.focus();
+      },
+      load,
+      save,
+      value() {
+        return last;
+      },
+    },
+    destroy() {},
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* registrations                                                          */
 /* ------------------------------------------------------------------ */
@@ -8435,4 +8872,12 @@ registerCardKind({
   describe: (card) => `docs ${card.query || "(knowledge base)"}`,
   create: () => ({ query: "" }),
   render: renderDocs,
+});
+
+registerCardKind({
+  kind: "settings",
+  title: "Settings",
+  describe: () => "settings the user's machine",
+  create: () => ({}),
+  render: renderSettings,
 });

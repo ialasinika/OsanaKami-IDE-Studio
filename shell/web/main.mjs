@@ -41,6 +41,8 @@ import {
 } from "./views.mjs";
 import {
   WATCH_GONE,
+  WATCH_POLL_MAX,
+  WATCH_POLL_MIN,
   WATCH_POLL_MS,
   WATCH_RELOAD,
   WATCH_WARN,
@@ -276,6 +278,41 @@ export function saveOutcomeMessage(outcome) {
 export const BOOT_VIEW = "mod";
 
 /**
+ * The preferences a window may act on at boot, out of a `config.get` answer.
+ *
+ * The shell owns the file and validates it; this function only decides what the
+ * *window* can honour without a restart: the view it opens in and how often the
+ * cards poll.  Anything else the answer carries -- the AI provider, the
+ * workspace, the file paths -- belongs to whoever asked the question, not to a
+ * page paint.  An answer that is missing, partial or out of range falls back to
+ * the constants this file was built with, so a corrupt preference file can
+ * never leave a window with no view at all.
+ *
+ * Exported and pure so the fallback rules are testable without a browser.
+ *
+ * @param {unknown} answer  a `config.get` result, or null when the call failed
+ * @returns {{bootView: string, watchPollMs: number}}
+ */
+export function bootPreferencesFrom(answer) {
+  const fallback = { bootView: BOOT_VIEW, watchPollMs: null };
+  if (answer === null || typeof answer !== "object") {
+    return fallback;
+  }
+  const prefs = answer.prefs;
+  if (prefs === null || typeof prefs !== "object") {
+    return fallback;
+  }
+  const view = typeof prefs.bootView === "string" && SWITCH_VIEWS.includes(prefs.bootView)
+    ? prefs.bootView
+    : BOOT_VIEW;
+  const poll = Number.isInteger(prefs.watchPollMs)
+    && prefs.watchPollMs >= WATCH_POLL_MIN && prefs.watchPollMs <= WATCH_POLL_MAX
+    ? prefs.watchPollMs
+    : null;
+  return { bootView: view, watchPollMs: poll };
+}
+
+/**
  * What one `view.changed` revision means now that the save it may belong to has
  * settled.  `revision` is the event's revision, `boardRevision` the revision of
  * the document on the board (`null` before the first load) and `dirty` whether
@@ -398,11 +435,12 @@ function createApp() {
   let initializing = true;
   let connected = false;
   let autosave = true;
-  /* Which of the two views is on screen: "classic" or "mod".  In memory only,
-     deliberately -- the document is the cards, and a view that survived a
-     reload would be a document of its own.  Reloading the page always starts in
-     `BOOT_VIEW` (the mod view), never in whatever the last window was left
-     showing. */
+  /* Which of the two views is on screen: "classic" or "mod".  Never part of the
+     *document* -- the document is the cards, and a view stored inside board.json
+     would make the file describe how it is looked at.  A preference file may
+     name the view a window opens in (G48), which is the one place this value
+     comes from anywhere but this process; a reload with no preference still
+     starts in `BOOT_VIEW` (the mod view). */
   let viewMode = BOOT_VIEW;
   /* Revisions the kernel announced while a save was in flight.  They cannot be
      classified until the reply to that save has updated `boardRevision` and
@@ -1616,6 +1654,93 @@ function createApp() {
     return card;
   }
 
+  /**
+   * The settings card, if the board already has one.
+   *
+   * Settings describe the machine, not the project, so one card is enough: a
+   * second copy would be a second form for the same preference file, and the
+   * two would show different answers until one of them reloaded.
+   */
+  function settingsCard() {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind === "settings") {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put the settings card on the board (G48).  It edits the AI provider and the
+   * two preferences a window reads on boot; the rest it shows is a process
+   * argument and needs a restart, which the card says rather than pretending.
+   */
+  function openSettingsCard() {
+    const existing = settingsCard();
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      log("info", "settings card focused — one form for one preference file");
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.settings;
+    const centre = centreWorld();
+    const card = addCard(
+      "settings",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      {},
+      size,
+    );
+    log("info", "settings card added — the AI provider and the view a window opens in");
+    return card;
+  }
+
+  /**
+   * Create one file from the game's own schema (G50), then open it.
+   *
+   * The shell owns the generator and the knowledge base; this side only names
+   * the three things the verb wants -- what kind of file, which package, what to
+   * call it -- and opens the path the answer names rather than a guess at where
+   * the verb would have put it.  A sprite opens in the pixel card, because its
+   * file is pixels; everything else opens as text.
+   */
+  async function createNewFile(type, dir, name) {
+    const answer = await client.call("mod.newFile", { dir, type, name });
+    const file = typeof answer.file === "string" && answer.file !== "" ? answer.file : answer.path;
+    log("info", `new ${type} (${answer.path}, ${answer.bytes} bytes) — the game's schema filled what it requires`);
+    if (type === "sprite") {
+      openPixelCard(file);
+    } else {
+      openFile(file);
+    }
+    return answer;
+  }
+
+  /**
+   * Copy an existing file into a package (the other half of G50), then open it.
+   *
+   * `from` may be any file the shell can read; `to` names the place inside the
+   * package and is only needed when the file's own name does not say where it
+   * belongs.  The verb copies the bytes verbatim and validates them as they
+   * land; this side opens what the answer names.
+   */
+  async function importNewFile(from, dir, to) {
+    const answer = await client.call("mod.importFile", {
+      dir,
+      from,
+      ...(to === undefined || to === "" ? {} : { to }),
+    });
+    const file = typeof answer.file === "string" && answer.file !== "" ? answer.file : answer.path;
+    log("info", `imported ${answer.path} (${answer.bytes} bytes) — copied byte for byte`);
+    if (answer.kind === "sprite" || /\.png$/i.test(answer.path)) {
+      openPixelCard(file);
+    } else {
+      openFile(file);
+    }
+    return answer;
+  }
+
   const app = {
     log,
     boardTouched,
@@ -1627,6 +1752,7 @@ function createApp() {
     revealCard,
     openPixelCard,
     openRigCard,
+    openSettingsCard,
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
     // selected card first: a handle that answers `true` took the step itself
@@ -1908,6 +2034,40 @@ function createApp() {
         const size = DEFAULT_SIZE.docs;
         const centre = centreWorld();
         addCard("docs", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { query }, size);
+        return;
+      }
+      case "new": {
+        // The three arguments the verb takes: what kind of file, which package,
+        // what to call it.  `dir` is a package directory (absolute, or relative
+        // to the mods root) or any directory inside one -- the shell walks up
+        // for mod.json.  The name is everything after it, which is how a name
+        // with a space in it gets refused by the verb rather than mangled here.
+        if (argc < 3) {
+          log("warn", "usage: new <type> <dir> <name>  (type: a define type, yarn, translation or sprite)");
+          return;
+        }
+        createNewFile(arg(0), arg(1), tokens.slice(2).join(" ")).catch((err) => {
+          log("warn", `new: ${err.message}`);
+        });
+        return;
+      }
+      case "import": {
+        // `from` is quoted when its path has spaces; the rest is the package
+        // (`dir`) and, when the name does not say where the file belongs, the
+        // target inside it.  The verb refuses a define without a target instead
+        // of guessing its type.
+        if (argc < 2) {
+          log("warn", 'usage: import <from> <dir> [to]  (quote a path with spaces in it)');
+          return;
+        }
+        const to = tokens.length > 2 ? tokens.slice(2).join(" ") : undefined;
+        importNewFile(arg(0), arg(1), to).catch((err) => {
+          log("warn", `import: ${err.message}`);
+        });
+        return;
+      }
+      case "settings": {
+        openSettingsCard();
         return;
       }
       case "link": {
@@ -2269,6 +2429,10 @@ function createApp() {
   let watchTimer = null;
   let watchBusy = false;
   let watchSeen = new Map();
+  /* How often to ask.  The file's preference may move this once at boot
+     (`bootPreferencesFrom`); the constant is what a window that was never told
+     anything uses. */
+  let watchPollMs = WATCH_POLL_MS;
   /** A kernel without `file.stat` (a trimmed fork): stop asking, say so once. */
   let watchUnavailable = false;
 
@@ -2407,7 +2571,7 @@ function createApp() {
         .finally(() => {
           watchBusy = false;
         });
-    }, WATCH_POLL_MS);
+    }, watchPollMs);
   }
 
   function stopWatching() {
@@ -2543,6 +2707,21 @@ function createApp() {
     await client.ready();
     connected = true;
     setStatus("ready");
+
+    // G48: the user's preference file can name the view a window opens in and
+    // how often the cards poll.  Both are read here, before the first paint, so
+    // a window told to open in the classic tile never flashes the mod one.  A
+    // shell that does not answer `config.get` (an older one, or a trimmed
+    // build) is not an error: the constants in this file are the fallback.
+    const settings = await client.call("config.get", {}).catch(() => null);
+    const bootPrefs = bootPreferencesFrom(settings);
+    if (bootPrefs.bootView !== viewMode) {
+      viewMode = bootPrefs.bootView;
+      paintView();
+    }
+    if (bootPrefs.watchPollMs !== null) {
+      watchPollMs = bootPrefs.watchPollMs;
+    }
 
     let loaded;
     try {

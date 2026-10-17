@@ -858,6 +858,58 @@ The editor card in the shell calls `lang.tokenize` with `{path, text}` on a
 
 ---
 
+## The shell-owned settings methods
+
+Also answered by the shell, never by the kernel: these read and write the two
+JSON files that live under the user data directory (`ai-provider.json` for the AI
+client, `preferences.json` for the window). The `mod.*` verbs — including the
+file-creating ones, `mod.newFile` and `mod.importFile` — are shell-owned too and
+are documented in [`docs/MODS.md`](MODS.md).
+
+### `config.get`
+
+Parameters: none. The answer is everything the settings card shows, with the API
+key **always masked**:
+
+```json
+{"userDir":"…/user",
+ "files":{"settings":"…/user/settings.json","ai":"…/user/ai-provider.json",
+          "preferences":"…/user/preferences.json"},
+ "app":{"workspace":"…/ws","modsRoot":null},
+ "ai":{"baseUrl":"https://api.deepseek.com/v1","model":"deepseek-chat",
+       "temperature":0.7,"maxTokens":2048,"timeoutMs":60000,"stream":true,
+       "hasApiKey":true,"apiKey":"***","file":"…/ai-provider.json",
+       "exists":true,"warnings":[],"errors":[]},
+ "prefs":{"version":1,"bootView":"mod","watchPollMs":1500,
+          "file":"…/preferences.json","exists":true,"warnings":[]}}
+```
+
+`ai.apiKey` is `"***"` when a key is stored and `null` when none is; the real key
+is not on the wire, ever. `settings` names the Electron-owned `settings.json`
+(workspace and mods folder) for display only — this protocol does not write it.
+`app.workspace`/`app.modsRoot` are the process arguments the shell was started
+with, and are `null` when the shell was started without them.
+
+### `config.set`
+
+| parameter | type | meaning |
+| --- | --- | --- |
+| `ai` | object, optional | any of `baseUrl`, `model`, `apiKey`, `temperature`, `maxTokens`, `timeoutMs`, `stream`; merged onto the stored config |
+| `clearKey` | `true`, optional | delete the stored API key |
+| `prefs` | object, optional | `bootView` (`"classic"` or `"mod"`) and/or `watchPollMs` (integer 250–60000) |
+
+`apiKey: ""` means **leave the stored key alone**, so a form that shows a masked
+key and submits its own blank field cannot erase it by accident; `clearKey` is the
+only way to remove one. Both files are written atomically and mode `0600` where
+the platform has modes. The answer has the same shape as `config.get`.
+
+A value the validator refuses is a `-32603 SHELL_ERROR` whose message starts with
+`config.set:` and names the field; the file is untouched. `prefs.bootView` is
+read by the window on boot — which view it opens in — and `prefs.watchPollMs`
+by the poll loop that notices a file changed outside the shell.
+
+---
+
 ## The view document
 
 The kernel's whole contract for a document is: it is JSON, it is not `null`, it

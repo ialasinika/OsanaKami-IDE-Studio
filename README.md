@@ -9,10 +9,12 @@ whose stated purpose is to be reshaped into a real product for a real audience;
 this repository is one such reshaping. `docs/FORK.md` records exactly what was
 renamed, what was kept byte-identical, and what was added.
 
-What it is *not*: a complete product. There is no settings UI, no debugger, no
-Git integration, and no undo of the typing inside a card (Ctrl+Z takes back
-board edits; a textarea keeps its own undo). Every deliberate tradeoff is
-written down instead of discovered.
+What it is *not*: a complete product. There is no debugger, no Git integration,
+and no undo of the typing inside a card (Ctrl+Z takes back board edits; a
+textarea keeps its own undo). The settings card is deliberately small — the AI
+provider, the view a window opens in and the poll interval; the workspace, the
+mods folder and the port are still command-line arguments, and a window reads
+them on boot. Every deliberate tradeoff is written down instead of discovered.
 
 ![The OsanaKami IDE Studio board: an editor card with Yarn colouring, a mod card listing a package's defines, a problems card, a docs card and labelled links between them](docs/board.png)
 
@@ -33,7 +35,14 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
   baseline a development tree keeps.
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
-  package scaffolding, search and completion. Pure Node, zero npm.
+  package scaffolding, creating one file from a schema (`mod.newFile`), importing
+  an existing file into a package (`mod.importFile`), search and completion. Pure
+  Node, zero npm.
+- **`settings` card** — one place for the machine rather than the project: the AI
+  provider, the view a window opens in and how often the cards poll, stored under
+  the user data directory (`config.get`/`config.set`). The workspace and the mods
+  folder stay process arguments and are shown, not edited; a change needs a
+  restart, and the card says so.
 - **`File → New Mod…`** — the desktop shell asks the game layer for a scaffold
   plan and writes a loadable package into a directory you pick (four templates —
   minimal, Yarn story, define pack, full project), says what it is about to
@@ -69,8 +78,11 @@ the containment rules.
 
 ## What OsanaKami IDE Studio is not
 
-- **Not a complete product.** There is no settings UI, no terminal emulator, no
-  debugger, no Git integration, no refactoring, and no undo of text inside a card.
+- **Not a complete product.** There is no terminal emulator, no debugger, no Git
+  integration, no refactoring, and no undo of text inside a card. The settings
+  card is not a general preference editor: it writes the three things a window
+  and the AI client actually read, and shows the rest without offering to
+  change it.
 - **Not extensible.** There is no plugin system, by design. Extension means
   forking this repository and editing the source.
 - **Not a native window.** The app mode of a browser is not a real application
@@ -161,14 +173,15 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers twelve kinds — `editor`, `runner`, `note`, `files`,
+The shell registers thirteen kinds — `editor`, `runner`, `note`, `files`,
 `project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `rig`,
-`mod`, `problems` and `docs` — `sheet` being a structured-data grid (typed cells,
-rows, columns, TSV export) that exists to prove nothing downstream assumes text,
-`project` being the workspace as one project: what the project contains, merged
-with what the document has open, and `rig` being a skeleton and its atlas read
-from the game's own bytes. See [`docs/SURFACES.md`](docs/SURFACES.md) and
-[`docs/PROJECT.md`](docs/PROJECT.md).
+`mod`, `problems`, `docs` and `settings` — `sheet` being a structured-data grid
+(typed cells, rows, columns, TSV export) that exists to prove nothing downstream
+assumes text, `project` being the workspace as one project: what the project
+contains, merged with what the document has open, `rig` being a skeleton and its
+atlas read from the game's own bytes, and `settings` being the one card that
+talks about the machine instead of the project. See
+[`docs/SURFACES.md`](docs/SURFACES.md) and [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
 
@@ -266,14 +279,14 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 57 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 61 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 43 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 249/249 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 332/332 checks passed
+node shell/mods/selftest.mjs                   # 407/407 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -292,7 +305,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 57 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 61 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -479,7 +492,7 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 332 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 407 checks, no kernel
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs,
                         views.mjs, history.mjs, rpc.mjs, watch.mjs, classic.mjs,
                         modview.mjs, main.mjs, story.mjs, storycsv.mjs, ysls.mjs,

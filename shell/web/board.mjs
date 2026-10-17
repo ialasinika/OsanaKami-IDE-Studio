@@ -37,7 +37,7 @@
  */
 export const CARD_KINDS = [
   "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-  "rig", "mod", "problems", "docs",
+  "rig", "mod", "problems", "docs", "settings",
 ];
 
 export const BOARD_VERSION = 1;
@@ -66,6 +66,7 @@ export const DEFAULT_SIZE = {
   mod: { w: 420, h: 520 },
   problems: { w: 520, h: 420 },
   docs: { w: 460, h: 520 },
+  settings: { w: 540, h: 520 },
 };
 
 /** Cards never get smaller than this; a zero-size card is unclickable. */

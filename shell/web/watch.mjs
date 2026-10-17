@@ -22,6 +22,17 @@
 /** How often the shell asks. A stat moves no bytes; a false negative is worse. */
 export const WATCH_POLL_MS = 1500;
 
+/**
+ * The interval the settings card may ask for, in milliseconds.
+ *
+ * Kept beside the default so the window's fallback and the form's number input
+ * bounds are the same two numbers.  The shell's preference store validates the
+ * same range on its side; a persisted value outside it is a bug in a writer,
+ * and the window's answer to a bug is the default, not a faster poll.
+ */
+export const WATCH_POLL_MIN = 250;
+export const WATCH_POLL_MAX = 60000;
+
 export const WATCH_OK = "ok";
 export const WATCH_RELOAD = "reload";
 export const WATCH_WARN = "warn";

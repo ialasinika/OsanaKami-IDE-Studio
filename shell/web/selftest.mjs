@@ -148,6 +148,7 @@ import {
 import {
   BOOT_VIEW,
   applyCloseAnswer,
+  bootPreferencesFrom,
   classifyViewEvent,
   closePlan,
   createApp,
@@ -1917,7 +1918,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 test("hook: the built-in kinds register in a known order", () => {
   assert.deepEqual(knownCardKinds(), [
     "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-    "rig", "mod", "problems", "docs",
+    "rig", "mod", "problems", "docs", "settings",
   ]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
@@ -2796,7 +2797,7 @@ const ALL_CARD_KINDS = knownCardKinds();
 test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
   assert.deepEqual(
     [...CARD_KINDS].sort(),
-    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs"].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings"].sort(),
     "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
   );
   for (const kind of CARD_KINDS) {
@@ -3020,6 +3021,36 @@ test("views: the window opens on the mod view, and the switch offers every view 
   assert.equal(SWITCH_VIEWS.indexOf(BOOT_VIEW) !== -1, true, "the view a window opens in must be one you can leave");
   assert.equal(VIEWS.indexOf("board"), -1, "the board is a document and a file, not a way to look at them");
   assert.equal(SWITCH_VIEWS.indexOf("board"), -1);
+});
+
+test("settings: the boot view and the poll interval come from the file, with fallbacks", () => {
+  // A window with no answer (an older shell, a trimmed build) is the constants.
+  assert.deepEqual(bootPreferencesFrom(null), { bootView: BOOT_VIEW, watchPollMs: null });
+  assert.deepEqual(bootPreferencesFrom({}), { bootView: BOOT_VIEW, watchPollMs: null });
+  assert.deepEqual(bootPreferencesFrom({ prefs: null }), { bootView: BOOT_VIEW, watchPollMs: null });
+
+  // What the file says, when it says something a window can honour.
+  assert.deepEqual(
+    bootPreferencesFrom({ prefs: { bootView: "classic", watchPollMs: 750 } }),
+    { bootView: "classic", watchPollMs: 750 },
+    "the file names the view and the interval, and both travel",
+  );
+
+  // A view `mode` does not accept, or an interval outside the range the form
+  // offers, falls back rather than half-applying: a window does not open on a
+  // view that does not exist, and does not poll every millisecond.
+  for (const view of ["board", "", "MOD", 7, null]) {
+    assert.equal(bootPreferencesFrom({ prefs: { bootView: view } }).bootView, BOOT_VIEW,
+      `${JSON.stringify(view)} is not a view a window can open in`);
+  }
+  for (const poll of [0, 10, 249, 60001, -1, 1.5, "1500", null]) {
+    assert.equal(bootPreferencesFrom({ prefs: { watchPollMs: poll } }).watchPollMs, null,
+      `${JSON.stringify(poll)} is not an interval the window may use`);
+  }
+  assert.equal(bootPreferencesFrom({ prefs: { watchPollMs: 250 } }).watchPollMs, 250,
+    "the low end of the form's range is honoured");
+  assert.equal(bootPreferencesFrom({ prefs: { watchPollMs: 60000 } }).watchPollMs, 60000,
+    "the high end of the form's range is honoured");
 });
 
 test("views: a switch button has a label and a tooltip whichever view is on it", () => {
