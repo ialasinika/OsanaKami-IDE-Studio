@@ -413,7 +413,7 @@ next to the repository: it drives `examples/Mods/Lantern`, generates its own
 read, so the story card can only open it through a `file.blob*` session), and
 proves the D006 click-through on the example mod's missing sprite.
 
-Three of its 42 checks pin the example's own claims rather than the UI's: the
+Three of its 43 checks pin the example's own claims rather than the UI's: the
 8-bit RGB sprite is read as colour type 2 and written back as colour type 6
 (G20); the whole tag surface reaches the story card while the tools judge
 exactly the three tag names they know; and the package's only findings are its

@@ -454,6 +454,53 @@ stands in this tree.
   over text, empty, directory, binary, missing, escape, notification-free and
   agree-with-`file.read`.
 
+### Closing a card asks before unsaved text goes
+
+- Every open card now has a tab in **both** tiles.  The sidebars keep what they
+  always showed (project/files; in the mod view also mod and problems) and every
+  other kind of card -- notes, docs, stories, pixels, the tool console -- lands in
+  the strip, so a card opened in one view is reachable in the other instead of
+  being open and invisible.  The click target is one container per card
+  (`div.tab[data-card-id][data-kind]`) with a name button and a close button; the
+  old fixture-based tab ids are gone from `tools/input_smoke.py`, which is why that
+  suite gained a check rather than losing one.
+- Three gestures close a tab -- `x`, a middle click, `Ctrl+W` -- and all three go
+  through the same `closeTab` → `closeCard` path, so there is no second way to
+  delete a card.  Which tab becomes active afterwards is a pure function
+  (`classicNeighbourAfterClose`: the right neighbour, else the left, else
+  nothing), shared by both views.
+- A card with unsaved text **asks** first: save and close, discard, or cancel,
+  with Escape meaning cancel, and a save that throws keeps the card (and its text)
+  exactly where it was.  A clean card closes without a question, as it did before.
+  This is an inline strip above the command line, not a modal: the app still has
+  no dialogs.
+- The old "focus the card after opening it" bug is gone: focus used to be applied
+  before the render, so a card in a `display:none` region could be opened, its tab
+  clicked, and never receive the keyboard.  The fixed order is select → render →
+  focus.
+- `shell/web/selftest.mjs` 227 → 238 checks, `tools/browser_smoke.py` 11 → 42
+  (22 view × kind, reachability in both tiles, four gestures, three answers), and
+  `tools/input_smoke.py` 42 → 43 against the real kernel.
+
+### Finding the game: a setting, the environment, or discovery
+
+- The game's Mods folder used to be a path in the source.  It is now a documented
+  search: an explicit setting wins, then `INFANTGOD_MODS_DIR` /
+  `INFANTGOD_GAME_DIR`, then discovery under the platform's Steam install
+  directories (`steamapps/libraryfolders.vdf` in each), the user's home and the
+  checkout's parent.  "Not found" is a value with a name -- `{dir: null, source:
+  "not found", tried: [...]}` -- and `describeDiscovery` turns it into one line:
+  `found <dir> (<source>)` or `not found; looked in N places`.
+- `steamInstallDirs(env, platform)` names the per-platform defaults
+  (`ProgramFiles(x86)` on Windows, `~/Library/Application Support/Steam` and
+  `~/.steam/steam` on macOS, `~/.local/share/Steam` and `~/.steam/steam` on Linux)
+  and takes the platform as an argument, so the checks speak for all three from one
+  machine.  `shell/mods/selftest.mjs` 290 → 297.
+- `tools/path_guard.py` fails the build on a home directory or a network share in
+  a tracked file, and `tools/make-installer.mjs` audits the unpacked payload for
+  the same thing before packing it; three allow-listed files carry the example
+  corpus's game names on purpose, and the reason is in the file.
+
 ### The editor card behaves like an editor
 
 - The editor card gained the keys a person reaches for before trusting a text

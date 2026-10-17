@@ -32,8 +32,8 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, search and completion. Pure Node, zero npm.
 - **`File → New Mod…`** — the desktop shell asks the game layer for a scaffold
-  plan and writes a loadable package into a directory you pick (five templates,
-  from the minimal loadable package to the full one), says what it is about to
+  plan and writes a loadable package into a directory you pick (four templates —
+  minimal, Yarn story, define pack, full project), says what it is about to
   create first, refuses to overwrite anything, and opens the result as cards.
   The same layer, reached through the protocol: see
   [electron/README.md](electron/README.md) and `docs/MODS.md`.
@@ -116,6 +116,7 @@ that deletes a view loses a way of looking, not a piece of project state; the
 document is still where the project is. The geometry (`x`/`y`/`w`/`h`,
 `viewport`) stays in the file for any view that wants to draw a plane, but no
 shipped view reads it, and `mode board` is no longer a mode.
+
 
 ### 2. No Electron in the core
 
@@ -261,14 +262,14 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 11 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 42 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 43 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 227/227 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 148/148 checks passed
+node shell/web/selftest.mjs                    # ok 238/238 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 297/297 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -287,7 +288,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 11 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 42 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -325,7 +326,7 @@ in the HUD's view switch marks it as the one that is on, and `mode classic` is
 how you reach the other tile; `mode mod` comes back. The classic tile arranges
 the focused
 editor as a code area,
-the other open files as tabs above it and a `project`/`files` card, if the document has
+the rest of the open cards as tabs above it and a `project`/`files` card, if the document has
 one, as a sidebar. The
 arithmetic is pure, lives in `shell/web/classic.mjs` and is measured in the
 view's own pixels, which is why `node shell/web/selftest.mjs` can pin the tile
@@ -337,6 +338,18 @@ and neither view pans or zooms, so there is no scale for the HUD to quote.
 Nothing about the view is saved, the
 document in memory is never rewritten, and no protocol method changed;
 [`docs/PARADIGM.md`](docs/PARADIGM.md) states what it is not.
+
+**Every open card has a tab, in both views, and closing one asks first.** The
+strip used to be the classic tile's and to hold only editors; it now belongs to
+the tile and holds every kind of card, so a note, a story or a pixel card opened
+in one view is reachable in the other instead of being open and invisible (the
+sidebars keep what they always showed: `project`/`files`, and in the mod tile
+`mod` and the problems report). A card's tab closes with its `x`, a middle click
+or `Ctrl+W` — one path, one neighbour rule (the tab to the right, else the left,
+else nothing) — and a card holding unsaved text is asked about first: `save and
+close`, `discard`, or `cancel`, with Escape meaning cancel and a save that fails
+keeping the card and its text. A clean card closes without a question. The
+question is an inline strip above the command line, not a dialog.
 
 **The views are views, and there are two of them.** A view's arrangement is only
 meaningful because it is computed — nothing is dragged into place — so the HUD
