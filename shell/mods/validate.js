@@ -78,6 +78,14 @@ const RE_SPRITE_DESC = /Relative path to sprite image file/i;
 const RE_YARN_TITLE = /^title:\s*(\S+)\s*$/;
 const RE_YARN_SUBTITLE = /^subtitle:\s*(.+?)\s*$/;
 
+/*
+ * G41：description 里的两类事实，facts-only 的 KB（tools/gen_knowledge.mjs 生成）
+ * 把它们提成这两个显式键后剥掉文本。校验器必须两边都认，否则「重新生成 KB」会让
+ * 引用检查与 sprite 检查静默变成空集 —— 全绿，但什么都没查。
+ */
+const X_REF_KEY = 'x-techReference';
+const X_SPRITE_KEY = 'x-sprite';
+
 /** 泛型引用：类型未知，只能做非空检查。 */
 const GENERIC_REF = 'ScriptableObject';
 /** 图片路径字段在 referenceMap 中的特殊目标值。 */
@@ -357,9 +365,13 @@ function flattenSchema(schema) {
     const n = deref(rawNode, schema);
     if (!isPlainObject(n)) return;
     const desc = typeof n.description === 'string' ? n.description : '';
-    const m = RE_TECH_REF.exec(desc);
-    if (m) out.push({ path: spath, kind: 'ref', target: m[1] });
-    else if (RE_SPRITE_DESC.test(desc)) out.push({ path: spath, kind: 'sprite', target: SPRITE });
+    /* G41: the fact keys win when present; a rich KB still carries the text. */
+    const ref = RE_TECH_REF.exec(desc) ||
+      (typeof n[X_REF_KEY] === 'string' && n[X_REF_KEY] ? [null, n[X_REF_KEY]] : null);
+    if (ref) out.push({ path: spath, kind: 'ref', target: ref[1] });
+    else if (RE_SPRITE_DESC.test(desc) || n[X_SPRITE_KEY] === true) {
+      out.push({ path: spath, kind: 'sprite', target: SPRITE });
+    }
     if (Array.isArray(n.enum)) out.push({ path: spath, kind: 'enum', values: n.enum.slice() });
 
     if (isPlainObject(n.properties)) {

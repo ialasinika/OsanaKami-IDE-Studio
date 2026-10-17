@@ -13,6 +13,14 @@
  *         配色、projectName / startNode / 本机绝对路径 gameModsDir
  * 理由：文档文本与角色表和游戏本体是同一份受版权约束的复制件，事实不是。
  *
+ * 例外（G41）：description 里有两类**事实**，剥掉文本时必须把它们留下，否则
+ * 「重新生成 KB」会静默关掉校验器的一整类检查（两条线各自正确，合起来是
+ * 「全绿但没查」）：
+ *   "TechName reference to XDefinition"      -> 节点上的 "x-techReference": "XDefinition"
+ *   "Relative path to sprite image file ..." -> 节点上的 "x-sprite": true
+ * 校验器（shell/mods/validate.js 的 flattenSchema）优先读这两个键，没有时再退回
+ * 解析 description —— 所以旧的富 KB 与新生成的 facts-only KB 都查得到同样的字段。
+ *
  * 用法：
  *   node tools/gen_knowledge.mjs --game-dir <游戏Mods目录> --out <文件>
  *   node tools/gen_knowledge.mjs --game-dir <游戏Mods目录> --check [已有知识库]
@@ -51,6 +59,12 @@ const DEFAULT_KB = path.join(REPO, "shell", "mods", "knowledge.json");
 /** schema 里这些键是文档/元数据，不是事实，一律剥掉。 */
 const DROP_KEYS = new Set(["description", "$schema", "$comment", "examples", "x-description"]);
 
+/** description 里的两类事实（G41）：剥文本前先把它们提成显式字段。 */
+const RE_TECH_REF = /^TechName reference to (.+)$/;
+const RE_SPRITE_DESC = /Relative path to sprite image file/i;
+const X_REF_KEY = "x-techReference";
+const X_SPRITE_KEY = "x-sprite";
+
 /** Yarn 方言里由引擎实现的内置动词，不算「Mod 用到的命令」。 */
 const BUILTIN_VERBS = new Set([
   "if", "else", "elseif", "endif", "set", "declare", "jump", "detour", "once", "stop",
@@ -87,15 +101,19 @@ function walkFiles(dir, filter, out, depth) {
   return list;
 }
 
-/** 深拷贝并剥掉文档键。 */
+/** 深拷贝并剥掉文档键；description 里的两类事实先提成显式字段（G41）。 */
 function stripFacts(node) {
   if (Array.isArray(node)) return node.map(stripFacts);
   if (node && typeof node === "object") {
     const out = {};
+    const desc = typeof node.description === "string" ? node.description : "";
+    const reference = RE_TECH_REF.exec(desc);
     for (const key of Object.keys(node)) {
       if (DROP_KEYS.has(key)) continue;
       out[key] = stripFacts(node[key]);
     }
+    if (reference) out[X_REF_KEY] = reference[1];
+    else if (RE_SPRITE_DESC.test(desc)) out[X_SPRITE_KEY] = true;
     return out;
   }
   return node;

@@ -501,6 +501,17 @@ const MOD_METHODS = {
     prefix: typeof params.prefix === "string" ? params.prefix : "",
     context: optionalString(params, "context") ?? undefined,
   }),
+  // The language service takes the *document being edited*, never the file on
+  // disk: the editor can ask about text the user has not saved yet.
+  "mod.complete": (params, mods) => mods.completeYarn({
+    text: typeof params.text === "string" ? params.text : "",
+    caret: typeof params.caret === "number" ? params.caret : 0,
+    limit: typeof params.limit === "number" ? params.limit : undefined,
+  }),
+  "mod.hover": (params, mods) => mods.hoverYarn({
+    text: typeof params.text === "string" ? params.text : "",
+    caret: typeof params.caret === "number" ? params.caret : 0,
+  }),
   "mod.localization": (params, mods) => mods.localization({ root: needParam(params, "root") }),
 };
 

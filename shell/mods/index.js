@@ -27,6 +27,7 @@ const yarnCore = require('./yarn.js');
 const validateCore = require('./validate.js');
 const scaffoldCore = require('./scaffold.js');
 const searchCore = require('./search.js');
+const completeCore = require('./complete.js');
 const gamepath = require('./gamepath.js');
 
 /** knowledge.json 的位置（本模块同目录）。 */
@@ -494,6 +495,38 @@ function createMods(options) {
       writable: true
     });
     return items;
+  }
+
+  /**
+   * 补全：`mod.complete` 的实现。`text` 是**正在编辑的文档**（不是磁盘文件），
+   * `caret` 是 0-based UTF-16 偏移。返回 `{context, items, isIncomplete}`。
+   * 落盘与否不参与判定 —— 编辑器可以拿未保存的文本直接问。
+   * 上下文分类与候选列表分别由 complete.js（哪一段被编辑）与 search.js（候选从哪来）负责，
+   * 这里只把两者接到 knowledge() 建出的索引上，不重复实现。
+   */
+  function completeYarn(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    const text = typeof p.text === 'string' ? p.text : '';
+    const caret = typeof p.caret === 'number' ? p.caret : 0;
+    const res = completeCore.complete(text, caret, index(), {
+      limit: typeof p.limit === 'number' ? p.limit : 200
+    }) || {};
+    return {
+      context: res.context || {},
+      items: Array.isArray(res.items) ? res.items : [],
+      isIncomplete: !!res.isIncomplete
+    };
+  }
+
+  /**
+   * 悬停：`mod.hover` 的实现。返回 `{range, kind, name, contents} | null`。
+   * 没把握时返回 null 而不是编一段 —— 空的悬停比错的好（complete.js 的解析顺序）。
+   */
+  function hoverYarn(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    const text = typeof p.text === 'string' ? p.text : '';
+    const caret = typeof p.caret === 'number' ? p.caret : 0;
+    return completeCore.hover(text, caret, index());
   }
 
   /* ---------------- 打开 Mod ---------------- */
@@ -1244,6 +1277,8 @@ function createMods(options) {
     search: search,
     docFor: docFor,
     suggest: suggest,
+    completeYarn: completeYarn,
+    hoverYarn: hoverYarn,
     localization: localization
   };
 }

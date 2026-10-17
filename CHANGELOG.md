@@ -63,6 +63,23 @@ stands in this tree.
 - History: the entries below that say "CC BY 4.0" record what the licence was at
   the time; they are not rewritten.
 
+### A regenerated knowledge base cannot switch the checks off
+
+- `tools/gen_knowledge.mjs` drops every `description`, because those sentences are
+  the game's documentation text rather than facts. But two sentences *were* facts:
+  `TechName reference to XDefinition` is how the checker knows a field points at
+  another definition, and `Relative path to sprite image file` is how it knows a
+  field holds a sprite. Regenerating the knowledge base from a real install would
+  therefore have emptied 26 sprite fields and 62 reference fields, and every
+  package would have validated green because nothing was left to look at.
+- The generator now lifts exactly those two facts into `x-techReference` and
+  `x-sprite` before dropping the text, and `flattenSchema` reads the keys first and
+  the sentences only as the fallback. A rich knowledge base and a facts-only one
+  describe the same fields: on the committed `shell/mods/knowledge.json` the old
+  and new `referenceMap`/`schemaSummary` answers are byte-identical, and the mod
+  suite (314/314) pins the facts-only side, including the failure mode where both
+  the key and the sentence are missing and the map is empty.
+
 ### One document, two views -- the canvas is gone
 
 - There were three ways to look at a board document; there are **two**.  `classic`

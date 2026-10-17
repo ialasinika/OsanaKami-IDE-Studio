@@ -84,7 +84,18 @@ synchronous except `mod.scaffold`.
 | `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
 | `mod.docFor` | `kind`, `name` | markdown string |
 | `mod.suggest` | `prefix`, `context?` | `[{label, kind, detail, insertText, documentation}]` |
+| `mod.complete` | `text`, `caret`, `limit?` | `{context, items[{label, kind, detail, insertText, documentation, sortText, replace}], isIncomplete}` |
+| `mod.hover` | `text`, `caret` | `{range, kind, name, contents[{kind, value}]}` or `null` |
 | `mod.localization` | `root` | `{locales: [{code, file, base, rows, bytes}], baseLanguage}` |
+
+`mod.complete` and `mod.hover` take the **document being edited**, not a path:
+`text` is the buffer (saved or not) and `caret` is a 0-based UTF-16 offset into
+it, the same unit `positions.js` and `lang.tokenize` use. Neither verb touches
+the disk, so an editor can ask about an unsaved buffer without writing first.
+`mod.complete` answers with what the caret is inside (`context.kind` — `none`,
+`command`, `argument`, `variable`, `character`, `tag`, `tagvalue`), the exact
+span to replace, and the candidates; `mod.hover` answers `null` when it has
+nothing trustworthy to say rather than inventing a doc.
 
 A diagnostic is uniformly shaped:
 
@@ -130,6 +141,16 @@ and it says which it got.
   `--diff` lists, per section, the names only one side knows. Loading the knowledge
   base from the user's own install at runtime, so the package need not carry one,
   is the next step; see `docs/EDITOR_GAPS.md` G26.
+- A regenerated knowledge base keeps the two facts the game's schema *text* carries.
+  A schema marks a TechName reference with the sentence `TechName reference to
+  XDefinition` and a sprite path with `Relative path to sprite image file`; the
+  checker reads those sentences, and the generator drops every description. Left
+  alone, regenerating would empty the reference and sprite checks and `ok: true`
+  would start meaning "nothing was looked at". So the generator lifts exactly those
+  two facts into `x-techReference` and `x-sprite` before dropping the text, and
+  `flattenSchema` reads the keys first and the sentences only as the fallback: a
+  rich knowledge base and a facts-only one describe the same fields, which
+  `shell/mods/selftest.mjs` pins from both ends.
 
 ## Containment
 

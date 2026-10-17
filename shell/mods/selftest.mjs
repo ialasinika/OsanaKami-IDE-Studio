@@ -1353,7 +1353,12 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
    */
   specWrite(join(gameDir, "SODefines", "Schema", "Demo.schema.json"), JSON.stringify({
     type: "object", description: "documentation that must not ship",
-    properties: { techName: { type: "string" }, hp: { type: "number", description: "also stripped" } },
+    properties: {
+      techName: { type: "string" },
+      hp: { type: "number", description: "also stripped" },
+      portrait: { type: "string", description: "Relative path to sprite image file (png)" },
+      friend: { type: "string", description: "TechName reference to OtherDefinition" },
+    },
   }, null, 2));
   specWrite(join(gameDir, "SODefines", "Schema", "Other.schema.json"), JSON.stringify({
     type: "object", properties: { techName: { type: "string" } },
@@ -1385,6 +1390,21 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
     JSON.stringify({ stats: kb.stats, base: kb.localization.baseLanguage }));
   check("no documentation text survives into the knowledge base",
     !JSON.stringify(kb).includes('"description"'), "a description key survived");
+  /*
+   * G41: the two facts that sentence-shaped descriptions encode must survive the
+   * text.  If they do not, regenerating the KB silently empties the reference and
+   * sprite checks and `ok:true` starts meaning "nothing was looked at".
+   */
+  check("a description naming a TechName reference leaves the reference behind as a fact",
+    kb.schemas.Demo.properties.friend["x-techReference"] === "OtherDefinition",
+    JSON.stringify(kb.schemas.Demo.properties.friend));
+  check("a description naming a sprite path leaves the flag behind as a fact",
+    kb.schemas.Demo.properties.portrait["x-sprite"] === true,
+    JSON.stringify(kb.schemas.Demo.properties.portrait));
+  check("and neither sentence itself survives",
+    !JSON.stringify(kb).includes("Relative path to sprite image file") &&
+    !JSON.stringify(kb).includes("TechName reference to"),
+    "a description sentence survived");
   check("the character table is not generated at all",
     kb.characters === undefined, JSON.stringify(Object.keys(kb)));
 
@@ -1450,6 +1470,61 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
   check("with no game directory the generator exits 2 and writes nothing",
     noGame.status === 2 && !existsSync(join(fixtureRoot, "never.json")),
     JSON.stringify({ status: noGame.status, err: (noGame.stderr || "").trim().slice(-160) }));
+}
+
+/* ------------------------------------------------------------------ */
+/* a regenerated knowledge base still knows the fields it checks      */
+/* ------------------------------------------------------------------ */
+
+section("a facts-only knowledge base keeps the fields the checker looks at");
+
+{
+  const validate = require(join(HERE, "validate.js"));
+  const factsOnly = {
+    schemas: {
+      Hero: {
+        type: "object",
+        properties: {
+          portrait: { type: "string", "x-sprite": true },
+          friend: { type: "string", "x-techReference": "OtherDefinition" },
+        },
+      },
+      Other: { type: "object", properties: { techName: { type: "string" } } },
+    },
+  };
+  const rich = {
+    schemas: {
+      Hero: {
+        type: "object",
+        properties: {
+          portrait: { type: "string", description: "Relative path to sprite image file (png)" },
+          friend: { type: "string", description: "TechName reference to OtherDefinition" },
+        },
+      },
+      Other: { type: "object", properties: { techName: { type: "string" } } },
+    },
+  };
+  const factsMap = validate.referenceMap(factsOnly.schemas);
+  const richMap = validate.referenceMap(rich.schemas);
+  check("the sprite and reference fields survive in a facts-only knowledge base",
+    factsMap.Hero.portrait === "sprite" && factsMap.Hero.friend === "Other",
+    JSON.stringify(factsMap));
+  check("a rich KB and a facts-only KB describe the same fields",
+    JSON.stringify(factsMap) === JSON.stringify(richMap),
+    JSON.stringify({ factsMap, richMap }));
+  const stripped = {
+    schemas: {
+      Hero: { type: "object", properties: { portrait: { type: "string" }, friend: { type: "string" } } },
+      Other: rich.schemas.Other,
+    },
+  };
+  check("with neither the fact nor the sentence there is nothing to check, and the map is empty",
+    Object.keys(validate.referenceMap(stripped.schemas).Hero).length === 0,
+    JSON.stringify(validate.referenceMap(stripped.schemas)));
+  const summary = validate.schemaSummary(factsOnly);
+  check("schemaSummary lists the same sprite path",
+    summary.find((s) => s.type === "Hero").sprites.join(",") === "portrait",
+    JSON.stringify(summary.map((s) => [s.type, s.sprites])));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1754,6 +1829,61 @@ section("language service: completion and hover");
     eq("on the right line", ctx.line, 3);
     eq("with the right prefix", ctx.prefix, "jum");
   }
+}
+
+/*
+ * 两个 shell 动词：`mod.complete` 与 `mod.hover`。光标是正在编辑的文档上的
+ * 0-based UTF-16 偏移（positions.js 的定义），文档本身不必保存过 —— 编辑器
+ * 拿内存里的文本直接问，动词不读盘。
+ */
+section("language service: the two shell verbs");
+{
+  const text = "title: Probe\n---\n<<jum";
+  const answered = await frame(41, "mod.complete", { text, caret: text.length });
+  check("mod.complete answers with a context and items, not a bare array",
+    answered.error === undefined && answered.result !== undefined
+      && answered.result.context.kind === "command"
+      && answered.result.context.prefix === "jum"
+      && Array.isArray(answered.result.items),
+    JSON.stringify(answered).slice(0, 160));
+
+  const jump = answered.result && answered.result.items.find((i) => i.label === "jump");
+  check("an item carries what the editor has to replace and insert",
+    jump !== undefined && jump.insertText === "jump "
+      && typeof jump.replace.startOffset === "number" && jump.replace.startOffset < jump.replace.endOffset,
+    JSON.stringify(jump));
+
+  check("the context counts lines of the document it was given, not of a file",
+    answered.result.context.line === 3 && answered.result.context.character === 5,
+    JSON.stringify(answered.result.context));
+
+  check("isIncomplete is part of the answer", answered.result.isIncomplete === false,
+    String(answered.result.isIncomplete));
+
+  const hovered = await frame(42, "mod.hover", { text: "<<jump X>>", caret: 3 });
+  check("mod.hover names the token under the caret",
+    hovered.error === undefined && hovered.result !== null
+      && hovered.result.kind === "command" && hovered.result.name === "jump",
+    JSON.stringify(hovered.result && hovered.result.kind));
+
+  const silent = await frame(43, "mod.hover", { text: "zz", caret: 2 });
+  check("nothing under the caret is null, not an invented answer",
+    silent.result === null && silent.error === undefined, JSON.stringify(silent).slice(0, 120));
+
+  const defaults = await frame(44, "mod.complete", {});
+  check("missing text and caret default to an empty document, not INVALID_PARAMS",
+    defaults.error === undefined && defaults.result.context.kind === "none" && defaults.result.items.length === 0,
+    JSON.stringify(defaults).slice(0, 140));
+
+  const noParams = await frame(45, "mod.hover", {});
+  check("mod.hover with no document is null too",
+    noParams.result === null && noParams.error === undefined, JSON.stringify(noParams).slice(0, 120));
+
+  const again = await frame(46, "mod.complete", { text, caret: text.length });
+  check("the same document and caret give the same answer",
+    JSON.stringify(again.result) === JSON.stringify(answered.result));
+
+  check("neither verb reached the kernel", kernelCalls === 0, String(kernelCalls));
 }
 
 /* ------------------------------------------------------------------ */
