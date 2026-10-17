@@ -37,7 +37,7 @@
  */
 export const CARD_KINDS = [
   "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-  "mod", "problems", "docs",
+  "spine", "mod", "problems", "docs",
 ];
 
 export const BOARD_VERSION = 1;
@@ -61,6 +61,7 @@ export const DEFAULT_SIZE = {
   sheet: { w: 460, h: 320 },
   story: { w: 600, h: 480 },
   pixel: { w: 560, h: 500 },
+  spine: { w: 660, h: 560 },
   project: { w: 340, h: 580 },
   mod: { w: 420, h: 520 },
   problems: { w: 520, h: 420 },

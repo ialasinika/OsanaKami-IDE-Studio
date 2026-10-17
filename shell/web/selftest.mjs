@@ -108,6 +108,11 @@ import {
   sheetCell,
   sheetSummary,
   sheetToTSV,
+  spineAtlasPath,
+  spineBaseOf,
+  spineDirOf,
+  spinePagePath,
+  spineSkeletonPath,
   stepCompletion,
   storyAcceptSuggestion,
   storyAddLine,
@@ -234,12 +239,24 @@ import {
   bezierValue,
   easeFraction,
   frameWindow,
+  mergedSkins,
   regionCorners,
   sceneAt,
   slotAttachmentName,
   slotColorAt,
   worldTransforms,
 } from "./spinepose.mjs";
+
+import {
+  atlasPage,
+  atlasRegion,
+  spineBoneLines,
+  spineCacheSize,
+  spineContentQuad,
+  spineDrawBounds,
+  spineDrawList,
+  spineFit,
+} from "./spineframe.mjs";
 
 import {
   PNG_SIGNATURE,
@@ -1875,7 +1892,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
 test("hook: the built-in kinds register in a known order", () => {
   assert.deepEqual(knownCardKinds(), [
     "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-    "mod", "problems", "docs",
+    "spine", "mod", "problems", "docs",
   ]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);
@@ -2742,7 +2759,7 @@ const ALL_CARD_KINDS = knownCardKinds();
 test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
   assert.deepEqual(
     [...CARD_KINDS].sort(),
-    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "mod", "problems", "docs"].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "spine", "mod", "problems", "docs"].sort(),
     "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
   );
   for (const kind of CARD_KINDS) {
@@ -5378,6 +5395,39 @@ test("spine pose: a colour timeline multiplies the slot's colour", () => {
   assert.equal(slotColorAt(rig, animation, 0, 0.5, [1, 1, 1, 1])[3], 0.5);
 });
 
+test("spine pose: skins compose in order, a later skin winning the same slot name", () => {
+  const rig = spineRig(
+    [spineBone("root", -1)],
+    {
+      slots: [
+        { name: "body", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: "idle" },
+        { name: "eyes", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: "open" },
+      ],
+      skins: [
+        { name: "Body/Expose", attachments: [
+          { slotIndex: 0, name: "idle", type: "region", width: 1, height: 1 },
+        ] },
+        { name: "Body/Normal", attachments: [
+          { slotIndex: 0, name: "idle", type: "region", width: 2, height: 2 },
+        ] },
+        { name: "Eyes/Normal", attachments: [
+          { slotIndex: 1, name: "open", type: "region", width: 1, height: 1 },
+        ] },
+      ],
+    },
+  );
+  const merged = mergedSkins(rig);
+  assert.equal(merged.length, 2, "the same slot and name from two skins is one attachment");
+  assert.equal(merged.find((attachment) => attachment.slotIndex === 0).width, 2, "a later skin wins");
+  const scene = sceneAt(rig, null, 0, { skin: merged });
+  assert.equal(scene.items.length, 2, "the body and the eyes are drawn together, which is the point");
+});
+
+test("spine pose: a rig with no skins composes to nothing", () => {
+  const rig = spineRig([spineBone("root", -1)], { skins: [] });
+  assert.deepEqual(mergedSkins(rig), []);
+});
+
 test("spine pose: an attachment timeline switches what the slot shows", () => {
   const rig = spineRig(
     [spineBone("root", -1)],
@@ -5389,6 +5439,155 @@ test("spine pose: an attachment timeline switches what the slot shows", () => {
   assert.equal(slotAttachmentName(rig, null, 0, 0), "idle");
   assert.equal(slotAttachmentName(rig, animation, 0, 0.2), "idle");
   assert.equal(slotAttachmentName(rig, animation, 0, 0.7), "attack");
+});
+
+/* ------------------------------------------------------------------ */
+/* Spine's pages, quads and framing                                    */
+/* ------------------------------------------------------------------ */
+
+/** The atlas shape `parseAtlas` returns, with only the fields this suite uses. */
+const atlasOf = (...regions) => ({
+  pages: [{ name: "Cop.png", size: { width: 256, height: 256 }, regions }],
+});
+
+const regionOf = (extra = {}) => ({
+  name: "Idle",
+  page: "Cop.png",
+  x: 0,
+  y: 0,
+  w: 90,
+  h: 126,
+  rotate: 0,
+  offsetX: 0,
+  offsetY: 0,
+  origWidth: 0,
+  origHeight: 0,
+  index: -1,
+  properties: {},
+  hasBounds: true,
+  hasOffsets: false,
+  ...extra,
+});
+
+/** One region's corners in `spinepose.regionCorners`' order: bl, br, tr, tl. */
+const cornersOf = (x, y, w, h) => [
+  { x, y },
+  { x: x + w, y },
+  { x: x + w, y: y + h },
+  { x, y: y + h },
+];
+
+/** A point compared with a tolerance, because the quad is an interpolation. */
+function assertNearPoint(actual, x, y, label = "") {
+  assert.ok(
+    Math.abs(actual.x - x) < 1e-9 && Math.abs(actual.y - y) < 1e-9,
+    `${label} expected (${x}, ${y}), got (${actual.x}, ${actual.y})`,
+  );
+}
+
+test("spine frame: a page and a region are found by the names the atlas wrote", () => {
+  const atlas = atlasOf(regionOf());
+  assert.equal(atlasPage(atlas, "Cop.png").name, "Cop.png");
+  assert.equal(atlasPage(atlas, "Nope.png"), null);
+  assert.equal(atlasRegion(atlas, "Idle").region.name, "Idle");
+  assert.equal(atlasRegion(atlas, "Nope"), null);
+  assert.equal(atlasRegion({ pages: [] }, "Idle"), null);
+});
+
+test("spine frame: a quarter-turned region is cached with its sides swapped", () => {
+  assert.deepEqual(spineCacheSize(regionOf()), { width: 90, height: 126 });
+  assert.deepEqual(spineCacheSize(regionOf({ rotate: 90 })), { width: 126, height: 90 });
+  assert.deepEqual(spineCacheSize(regionOf({ rotate: 180 })), { width: 90, height: 126 });
+  assert.deepEqual(spineCacheSize(regionOf({ rotate: 270 })), { width: 126, height: 90 });
+});
+
+test("spine frame: trim offsets move the drawn rectangle inside the quad", () => {
+  const region = regionOf({ origWidth: 100, origHeight: 50, w: 20, h: 10, offsetX: 10, offsetY: 5, hasOffsets: true });
+  const quad = spineContentQuad(cornersOf(0, 0, 100, 50), region);
+  assert.equal(quad.trimmed, true);
+  // The quad's top-left is (0, 50); offsets are measured down from it.
+  assertNearPoint(quad.tl, 10, 45, "top-left");
+  assertNearPoint(quad.tr, 30, 45, "top-right");
+  assertNearPoint(quad.bl, 10, 35, "bottom-left");
+  assertNearPoint(quad.br, 30, 35, "bottom-right");
+});
+
+test("spine frame: no offsets means the quad itself, and no corners mean nothing", () => {
+  const region = regionOf({ origWidth: 100, origHeight: 50, w: 100, h: 50 });
+  const quad = spineContentQuad(cornersOf(0, 0, 100, 50), region);
+  assert.equal(quad.trimmed, false);
+  assertNearPoint(quad.tl, 0, 50, "top-left");
+  assertNearPoint(quad.br, 100, 0, "bottom-right");
+  assert.equal(spineContentQuad([], regionOf()), null);
+  // No untrimmed size recorded: there is nothing to scale against, so the quad
+  // comes back as it arrived rather than vanishing.
+  const bare = spineContentQuad(cornersOf(0, 0, 1, 1), regionOf());
+  assert.equal(bare.trimmed, false);
+  assertNearPoint(bare.tl, 0, 1, "top-left of a unit quad");
+});
+
+test("spine frame: a draw list names what it cannot draw instead of dropping it", () => {
+  const scene = [
+    { kind: "region", slotIndex: 0, name: "Body", path: "Idle", color: [1, 1, 1, 0.5], corners: cornersOf(0, 0, 90, 126) },
+    { kind: "region", slotIndex: 1, name: "Ghost", path: null, corners: cornersOf(0, 0, 1, 1) },
+    { kind: "mesh", slotIndex: 2, name: "Cloth", path: null, corners: [] },
+  ];
+  const list = spineDrawList(scene, atlasOf(regionOf()));
+  assert.equal(list.items.length, 1);
+  assert.deepEqual(list.items[0].colour, [1, 1, 1, 0.5]);
+  assert.equal(list.items[0].page, "Cop.png");
+  assert.equal(list.missing.length, 1);
+  assert.equal(list.missing[0].name, "Ghost");
+  assert.equal(list.unsupported.length, 1);
+  assert.equal(list.unsupported[0].kind, "mesh");
+});
+
+test("spine frame: the bounds cover every corner, and an empty list has none", () => {
+  const list = spineDrawList([
+    { kind: "region", slotIndex: 0, name: "Body", path: "Idle", color: [1, 1, 1, 1], corners: cornersOf(-10, -20, 20, 40) },
+  ], atlasOf(regionOf({ origWidth: 90, origHeight: 126 })));
+  const bounds = spineDrawBounds(list.items);
+  assert.deepEqual(bounds, { minX: -10, minY: -20, maxX: 10, maxY: 20, width: 20, height: 40 });
+  assert.equal(spineDrawBounds([]), null);
+});
+
+test("spine frame: the fit keeps the padded inside of the viewport", () => {
+  const bounds = { minX: -10, minY: -20, maxX: 10, maxY: 20, width: 20, height: 40 };
+  const fit = spineFit(bounds, 200, 200, 0.1);
+  assert.equal(fit.scale, 4, "160 pixels usable, 40 units tall");
+  assert.equal(fit.tx, 0);
+  assert.equal(fit.ty, 0);
+  assert.deepEqual(spineFit(null, 200, 200), { scale: 1, tx: 0, ty: 0 });
+  assert.deepEqual(spineFit({ ...bounds, width: 0 }, 200, 200), { scale: 1, tx: 0, ty: 0 });
+});
+
+test("spine frame: a bone line starts at its origin and points along its matrix", () => {
+  const skeleton = { bones: [{ name: "root", parentIndex: -1, length: 10 }] };
+  const lines = spineBoneLines(skeleton, [{ a: 0, b: 1, c: -1, d: 0, e: 5, f: 5 }]);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].name, "root");
+  assert.equal(lines[0].parentIndex, -1, "the root's own -1 comes through as written");
+  assert.deepEqual(lines[0].origin, { x: 5, y: 5 });
+  assert.ok(Math.abs(lines[0].tip.x - 5) < 1e-9 && Math.abs(lines[0].tip.y - 15) < 1e-9, "a quarter turn points up");
+  assert.deepEqual(spineBoneLines({ bones: [] }, []), []);
+  assert.deepEqual(spineBoneLines({ bones: [{ name: "b", length: 1 }] }, []), [], "a bone with no transform is not guessed");
+});
+
+test("spine frame: the four names a rig's files wear", () => {
+  const skeleton = "Mods/Cop/Cop.skel.bytes";
+  const atlas = "Mods/Cop/Cop.atlas.txt";
+  assert.equal(spineAtlasPath(skeleton), atlas);
+  assert.equal(spineAtlasPath(atlas), atlas);
+  assert.equal(spineAtlasPath("Mods/Cop/Cop.png"), "");
+  assert.equal(spineSkeletonPath(atlas), skeleton);
+  assert.equal(spineSkeletonPath(skeleton), skeleton);
+  assert.equal(spineSkeletonPath("Mods/Cop/Cop.png"), "");
+  assert.equal(spineDirOf(skeleton), "Mods/Cop");
+  assert.equal(spineDirOf("Cop.skel.bytes"), "");
+  assert.equal(spineBaseOf(skeleton), "Cop.skel.bytes");
+  assert.equal(spinePagePath(atlas, "Cop.png"), "Mods/Cop/Cop.png");
+  assert.equal(spinePagePath("Cop.atlas.txt", "Cop.png"), "Cop.png");
+  assert.equal(spineAtlasPath("Mods\\Cop\\Cop.skel.bytes"), atlas, "a Windows path is still a path");
 });
 
 /* ------------------------------------------------------------------ */

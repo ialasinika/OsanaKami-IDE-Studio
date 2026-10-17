@@ -16,6 +16,52 @@ stands in this tree.
 
 ## Unreleased
 
+### A Spine rig, drawn from its own bytes
+
+- `shell/web/spine.mjs` reads the `.skel.bytes` and `.atlas.txt` pair the game
+  ships.  It is a layout parser, not a runtime: it knows nothing about drawing,
+  and the file says where its field order comes from -- the 4.2 runtime's
+  `SkeletonBinary.java` (Esoteric Software, Spine Runtimes License), read as a
+  reference for an independent JavaScript parser, not vendored into this tree.
+  A buffer it refuses is refused with the byte offset that broke it, so a wrong
+  file is a message and not an empty canvas.
+- `shell/web/spinepose.mjs` turns a skeleton and a time into world transforms and
+  region corners (the previous commit); `shell/web/spineframe.mjs` maps those
+  corners onto atlas rectangles, which is where a trimmed region's `offsets` and a
+  quarter-turned `rotate` live.  Both are pure, so `shell/web/selftest.mjs`
+  checks them without a browser.
+- The `spine` card is those three layers plus a canvas, a selectable bones
+  overlay, a skin picker, an animation picker, a timeline, playback at four
+  speeds, and wheel zoom / drag pan / click-to-pick-bone.  Choosing no skin means
+  *every* skin merged in skin order: these rigs keep the body, the eyes and the
+  mouth in separate skins and the game stacks them, so `Journalist`'s single setup
+  skin is six hair meshes and would draw an empty body.  A named skin still shows
+  exactly that skin.
+- `spine <path.skel.bytes>` opens it as a command, and opening either half of the
+  pair as a file opens the card too.  Nothing is written yet: the card is a
+  viewer, and the board keeps `file`, `animation`, `skin` and `bones` so the
+  choice survives a save and a reload.
+- Evidence, measured.  A throw-away probe under `build/` parsed all 37 rigs in the
+  game's `Spine/` folder and consumed every skeleton to its last byte -- 1199
+  bones, 394 slots, 321 skins, 1077 attachments, 1038 atlas regions.  The game's
+  files are not in this repository, so that probe is not a suite check.  What the
+  suite does check is the arithmetic (`spine frame:` and `mergedSkins` in
+  `shell/web/selftest.mjs`, 271 checks) and, in a real headless browser, three
+  rigs end to end: `Cop` (2 bones, 3 regions) paints 200509 pixels; `Journalist`
+  (28 bones) paints 178337 pixels from 4 region attachments and counts its 6 mesh
+  attachments as not drawn; `Aistalt` (110 bones, 7 regions) paints 231814 pixels.
+  The skin picker is not decoration: picking `Journalist`'s own `default` skin
+  drops the picture to 0 regions -- that skin is six hair meshes, and the face
+  lives in the merged skins -- and picking `Aistalt`'s takes it to 2.  Playback is
+  real: `TailLoop` reads 0.93 s of 3.00 s after 600 ms with the picture changing
+  while it runs.  `Journalist`'s 2 s animation moves only mesh vertices, which
+  this card does not draw yet, so its picture stands still while the clock runs;
+  the status line counts those meshes as not drawn instead of pretending.  The
+  card round trip is a suite check now: `tools/browser_smoke.py` opens a synthetic
+  one-bone rig (written in the test, to the layout the reader documents -- the
+  game's own rigs stay out of the repository) through `spine rig.skel.bytes` and
+  reaches the card as a tab in both tiles (55 checks).
+
 ### The completion menu cannot outlive the caret
 
 - The menu is a promise about a document and a caret: the language service

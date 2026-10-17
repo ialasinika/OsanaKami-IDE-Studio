@@ -402,6 +402,33 @@ export function defaultSkin(skeleton) {
   return fallback !== undefined && Array.isArray(fallback.attachments) ? fallback.attachments : [];
 }
 
+/**
+ * Every skin's attachments flattened into one list: the skins the game's rigs
+ * are built from are pieces (a body skin, an eyes skin, a mouth skin), so the
+ * picture a player sees is a *composition* of skins rather than any single one.
+ *
+ * The order is the skeleton's skin order and a later skin wins over an earlier
+ * one for the same slot and attachment name -- the same precedence `addSkin`
+ * has in the runtime.  A slot still draws only the attachment its setup name
+ * selects, so merging cannot show two attachments on one slot.
+ */
+export function mergedSkins(skeleton) {
+  const skins = Array.isArray(skeleton.skins) ? skeleton.skins : [];
+  const merged = new Map();
+  for (const skin of skins) {
+    const attachments = skin !== null && typeof skin === "object" && Array.isArray(skin.attachments)
+      ? skin.attachments
+      : [];
+    for (const attachment of attachments) {
+      if (attachment === null || typeof attachment !== "object") continue;
+      const slotIndex = typeof attachment.slotIndex === "number" ? attachment.slotIndex : -1;
+      const name = typeof attachment.name === "string" ? attachment.name : "";
+      merged.set(`${slotIndex}\u0000${name}`, attachment);
+    }
+  }
+  return [...merged.values()];
+}
+
 /** A slot's colour at `time`, multiplied through any `color` timeline. */
 export function slotColorAt(skeleton, animation, slotIndex, time, setupColor) {
   const base = Array.isArray(setupColor) && setupColor.length === 4

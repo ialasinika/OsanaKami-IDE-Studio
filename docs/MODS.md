@@ -479,6 +479,6 @@ type 6 (G20); the whole tag surface reaches the story card while the tools judge
 exactly the three tag names they know; and the package's only findings are its
 two deliberate ones, with the three audio references earning nothing at all
 (G21). Each was falsified once -- a sabotaged package fails exactly the check it
-should and nothing else -- before being trusted.  `tools/browser_smoke.py` is 51
+should and nothing else -- before being trusted.  `tools/browser_smoke.py` is 55
 checks over the same example (the views' tabs and tiles, a tab that closes after
 asking, the completion menu and the hover line).

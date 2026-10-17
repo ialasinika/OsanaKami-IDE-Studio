@@ -161,12 +161,13 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers eleven kinds — `editor`, `runner`, `note`, `files`,
-`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `mod`,
-`problems` and `docs` — `sheet` being a structured-data grid (typed cells, rows,
-columns, TSV export) that exists to prove nothing downstream assumes text, and
+The shell registers twelve kinds — `editor`, `runner`, `note`, `files`,
+`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `spine`,
+`mod`, `problems` and `docs` — `sheet` being a structured-data grid (typed cells,
+rows, columns, TSV export) that exists to prove nothing downstream assumes text,
 `project` being the workspace as one project: what the project contains, merged
-with what the document has open. See [`docs/SURFACES.md`](docs/SURFACES.md) and
+with what the document has open, and `spine` being a skeleton and its atlas read
+from the game's own bytes. See [`docs/SURFACES.md`](docs/SURFACES.md) and
 [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
@@ -265,7 +266,7 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 53 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 55 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 43 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
@@ -291,7 +292,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 53 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 55 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those

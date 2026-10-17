@@ -84,6 +84,20 @@ import {
   pixelAt,
   setPixelAt,
 } from "./pixelpng.mjs";
+/*
+ * The Spine card is three headless layers plus this file's canvas: the binary
+ * and atlas reader (`spine.mjs`), the pose math (`spinepose.mjs`) and the
+ * atlas mapping (`spineframe.mjs`).  Keeping them out of the renderer is what
+ * lets `selftest.mjs` check all three without a browser.
+ */
+import { parseAtlas, readSkeletonBinary } from "./spine.mjs";
+import { mergedSkins, sceneAt } from "./spinepose.mjs";
+import {
+  spineBoneLines,
+  spineDrawBounds,
+  spineDrawList,
+  spineFit,
+} from "./spineframe.mjs";
 
 /**
  * Kinds the wire may carry, mapped to the class suffix `style.css` styles.
@@ -770,6 +784,7 @@ export const COMMAND_HELP = [
   "sheet [title]            drop a structured-data card (typed cells, not text)",
   "story <path>             open a .yarn file as nodes and lines, not text",
   "pixel <path.png> [w] [h]     draw a PNG: pixels are the file, not the board",
+  "spine <path.skel.bytes>  show a Spine rig: bones, skins, animation timeline",
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
@@ -5949,6 +5964,962 @@ function renderPixel(card, ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* the spine card                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A Spine export is three files that never name each other in full:
+ * `Rig.skel.bytes` (the skeleton), `Rig.atlas.txt` (where each region sits on
+ * the page) and `Rig.png` (the page itself).  `spine.mjs` reads the first two,
+ * `spinepose.mjs` poses the bones at a time, `spineframe.mjs` turns that pose
+ * into page rectangles, and this renderer caches one bitmap per region and
+ * blits it through its quad.
+ *
+ * It is a viewer, and it says what it does not show: mesh, path, point and
+ * clipping attachments are counted in the status line instead of being drawn,
+ * and a region the atlas does not carry is named, not skipped silently.
+ * Nothing on this card writes a file.
+ *
+ * The card's document state is `{file, animation, skin, bones}`.  The pose time
+ * is deliberately not saved: it changes thirty times a second while playing.
+ */
+
+/** The atlas that belongs beside a `.skel.bytes`, or "" for other names. */
+export function spineAtlasPath(file) {
+  const path = typeof file === "string" ? file.replace(/\\/g, "/") : "";
+  if (/\.atlas\.txt$/i.test(path)) {
+    return path;
+  }
+  if (/\.skel\.bytes$/i.test(path)) {
+    return path.replace(/\.skel\.bytes$/i, ".atlas.txt");
+  }
+  return "";
+}
+
+/** The skeleton that belongs beside an `.atlas.txt`, or "" for other names. */
+export function spineSkeletonPath(file) {
+  const path = typeof file === "string" ? file.replace(/\\/g, "/") : "";
+  if (/\.skel\.bytes$/i.test(path)) {
+    return path;
+  }
+  if (/\.atlas\.txt$/i.test(path)) {
+    return path.replace(/\.atlas\.txt$/i, ".skel.bytes");
+  }
+  return "";
+}
+
+/** The directory part of a workspace path: "" for a bare name. */
+export function spineDirOf(file) {
+  const path = typeof file === "string" ? file.replace(/\\/g, "/") : "";
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/** The file-name part of a workspace path. */
+export function spineBaseOf(file) {
+  const path = typeof file === "string" ? file.replace(/\\/g, "/") : "";
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** A page image's workspace path, given the atlas path and the page name. */
+export function spinePagePath(atlasPath, pageName) {
+  const dir = spineDirOf(atlasPath);
+  const name = typeof pageName === "string" ? pageName : "";
+  return dir === "" ? name : `${dir}/${name}`;
+}
+
+/** How far one frame may advance playback, in seconds. */
+const SPINE_MAX_STEP = 0.1;
+
+/** Playback speeds the toolbar offers. */
+const SPINE_SPEEDS = [0.25, 0.5, 1, 2];
+
+/** Zoom limits, in device pixels per skeleton unit. */
+const SPINE_ZOOM_MIN = 0.02;
+const SPINE_ZOOM_MAX = 40;
+
+/** `requestAnimationFrame` where it exists, a timer where it does not. */
+function scheduleFrame(fn) {
+  if (typeof requestAnimationFrame === "function") {
+    return { raf: requestAnimationFrame(fn) };
+  }
+  return { timer: setTimeout(() => fn(Date.now()), 16) };
+}
+
+function cancelFrame(handle) {
+  if (handle === null || typeof handle !== "object") {
+    return;
+  }
+  if (handle.raf !== undefined && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(handle.raf);
+  }
+  if (handle.timer !== undefined) {
+    clearTimeout(handle.timer);
+  }
+}
+
+/**
+ * The spine card.  `handle` exposes the loaded model and the pose controls so
+ * the app (and a probe) can drive the card without synthesising clicks.
+ */
+function renderSpine(card, ctx) {
+  const { client, app } = ctx;
+
+  const state = {
+    /** The skeleton the card shows; the atlas beside it is derived from it. */
+    file: typeof card.file === "string" ? card.file : "",
+    skeleton: null,
+    atlas: null,
+    /** Page name -> decoded bitmap, or an error message in `pageErrors`. */
+    textures: new Map(),
+    pageErrors: new Map(),
+    /** Region key -> small canvas already in display orientation. */
+    caches: new Map(),
+    animations: [],
+    animationIndex: -1,
+    /** -1 is "default skin" -- the skin the skeleton names, or its first. */
+    skinIndex: -1,
+    time: 0,
+    playing: false,
+    speed: 1,
+    showBones: card.bones !== false,
+    selectedBone: -1,
+    /** `{scale, tx, ty}`, world -> view, or null until the first paint fits it. */
+    camera: null,
+    /** The last draw list, for the status line and for a probe. */
+    list: null,
+    error: null,
+    busy: false,
+    frame: null,
+    lastTick: 0,
+    destroyed: false,
+  };
+
+  const cleanups = [];
+
+  function listen(target, type, handler, options) {
+    target.addEventListener(type, handler, options);
+    cleanups.push(() => target.removeEventListener(type, handler, options));
+  }
+
+  /* -- the chrome ---------------------------------------------------- */
+
+  const tools = h("div", "spine-tools", { attrs: { "data-role": "spine-tools" } });
+
+  const fileInput = h("input", "spine-file", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "path/to/Rig.skel.bytes",
+      "data-role": "spine-file",
+      title: "the skeleton to show; its atlas and page are read beside it",
+    },
+  });
+  fileInput.value = state.file;
+
+  const animSelect = h("select", "spine-select", {
+    attrs: { "data-role": "spine-animation", title: "the animation to pose" },
+  });
+  const skinSelect = h("select", "spine-select", {
+    attrs: { "data-role": "spine-skin", title: "the skin to show" },
+  });
+  const playButton = h("button", "spine-button", {
+    attrs: { type: "button", "data-role": "spine-play", title: "play or pause the animation" },
+    text: "Play",
+  });
+  const speedSelect = h("select", "spine-select spine-select-speed", {
+    attrs: { "data-role": "spine-speed", title: "playback speed" },
+  });
+  for (const speed of SPINE_SPEEDS) {
+    speedSelect.append(h("option", "", {
+      attrs: { value: String(speed) },
+      text: `${speed}x`,
+    }));
+  }
+  speedSelect.value = "1";
+  const bonesButton = h("button", "spine-button", {
+    attrs: { type: "button", "data-role": "spine-bones-toggle", title: "show or hide the bones" },
+    text: "Bones",
+  });
+  const fitButton = h("button", "spine-button", {
+    attrs: { type: "button", "data-role": "spine-fit", title: "frame the whole rig" },
+    text: "Fit",
+  });
+  const timeRange = h("input", "spine-time", {
+    attrs: {
+      type: "range",
+      min: "0",
+      max: "0",
+      step: "0.001",
+      value: "0",
+      "data-role": "spine-time",
+      title: "the pose time",
+    },
+  });
+  const timeLabel = h("span", "spine-time-label", { text: "0.00 / 0.00 s" });
+
+  tools.append(
+    fileInput,
+    animSelect,
+    playButton,
+    speedSelect,
+    timeRange,
+    timeLabel,
+    skinSelect,
+    bonesButton,
+    fitButton,
+  );
+
+  const canvas = h("canvas", "spine-canvas", {
+    attrs: {
+      "data-role": "spine-canvas",
+      tabindex: "0",
+      title: "wheel zooms, drag pans, click picks a bone, space plays",
+    },
+  });
+  const bonesList = h("div", "spine-bones", { attrs: { "data-role": "spine-bones" } });
+  const stage = h("div", "spine-stage", { children: [canvas] });
+  const main = h("div", "spine-main", { children: [stage, bonesList] });
+  const status = makeStatus();
+  const body = h("div", "card-body card-body-spine", { children: [tools, main, status] });
+  const shell = cardShell(card, body);
+
+  /* -- state helpers ------------------------------------------------- */
+
+  function currentAnimation() {
+    if (state.animationIndex < 0 || state.animationIndex >= state.animations.length) {
+      return null;
+    }
+    const entry = state.animations[state.animationIndex];
+    const animations = state.skeleton !== null && Array.isArray(state.skeleton.animations)
+      ? state.skeleton.animations
+      : [];
+    return animations[entry.index] ?? null;
+  }
+
+  function currentSkin() {
+    const skins = state.skeleton !== null && Array.isArray(state.skeleton.skins) ? state.skeleton.skins : [];
+    return state.skinIndex >= 0 && skins[state.skinIndex] !== undefined ? skins[state.skinIndex] : null;
+  }
+
+  function currentSkinAttachments() {
+    const skin = currentSkin();
+    if (skin !== null && Array.isArray(skin.attachments)) {
+      return skin.attachments;
+    }
+    /*
+     * No skin chosen means the composition, not "no attachments": these rigs
+     * keep the body, the eyes and the mouth in separate skins and the game
+     * stacks them, so the single setup skin would show a character with a
+     * missing face.  `mergedSkins` says exactly which pieces that is.
+     */
+    return mergedSkins(state.skeleton);
+  }
+
+  function say(message, level = "") {
+    status.textContent = message;
+    status.className = level === "" ? "card-status" : `card-status is-${level}`;
+  }
+
+  function writeToBoard() {
+    card.file = state.file;
+    const animation = currentAnimation();
+    card.animation = animation === null || typeof animation.name !== "string" ? "" : animation.name;
+    const skin = currentSkin();
+    card.skin = skin === null || typeof skin.name !== "string" ? "" : skin.name;
+    card.bones = state.showBones;
+    if (typeof app.boardTouched === "function") {
+      app.boardTouched();
+    }
+  }
+
+  /* -- controls ------------------------------------------------------ */
+
+  function updateTimeline() {
+    const animation = currentAnimation();
+    const duration = animation === null || !Number.isFinite(animation.duration) ? 0 : animation.duration;
+    timeRange.max = String(Math.max(0, duration));
+    timeRange.value = String(Math.max(0, Math.min(duration, state.time)));
+    timeLabel.textContent = `${state.time.toFixed(2)} / ${duration.toFixed(2)} s`;
+    timeRange.disabled = animation === null;
+  }
+
+  function refreshBones() {
+    const bones = state.skeleton !== null && Array.isArray(state.skeleton.bones) ? state.skeleton.bones : [];
+    bonesList.textContent = "";
+    if (bones.length === 0) {
+      bonesList.append(h("div", "spine-bones-empty", { text: "no bones" }));
+      return;
+    }
+    fillRows(bonesList, bones.map((bone, index) => {
+      const label = typeof bone.name === "string" ? bone.name : `bone ${index}`;
+      const parent = typeof bone.parentIndex === "number" ? bones[bone.parentIndex] : undefined;
+      const parentName = parent !== undefined && typeof parent.name === "string" ? parent.name : "";
+      const slots = state.skeleton.slots.filter((slot) => slot.boneIndex === index).length;
+      return {
+        label,
+        meta: parentName === "" ? "root" : `parent ${parentName}`,
+        title: `bone ${index}${slots === 0 ? "" : `, ${slots} slot(s)`}`,
+        empty: false,
+        onClick: () => selectBone(index),
+      };
+    }));
+    markBones();
+  }
+
+  function fillSelects() {
+    animSelect.textContent = "";
+    for (const animation of state.animations) {
+      animSelect.append(h("option", "", {
+        attrs: { value: String(animation.index) },
+        text: animation.name,
+      }));
+    }
+    skinSelect.textContent = "";
+    skinSelect.append(h("option", "", { attrs: { value: "-1" }, text: "all skins (merged)" }));
+    const skins = state.skeleton !== null && Array.isArray(state.skeleton.skins) ? state.skeleton.skins : [];
+    for (let index = 0; index < skins.length; index += 1) {
+      const name = typeof skins[index].name === "string" ? skins[index].name : `skin ${index}`;
+      skinSelect.append(h("option", "", { attrs: { value: String(index) }, text: name }));
+    }
+  }
+
+  function refreshControls() {
+    playButton.textContent = state.playing ? "Pause" : "Play";
+    playButton.setAttribute("aria-pressed", state.playing ? "true" : "false");
+    bonesButton.classList.toggle("is-on", state.showBones);
+    animSelect.value = state.animationIndex < 0 ? "" : String(state.animations[state.animationIndex]?.index ?? "");
+    animSelect.disabled = state.animations.length === 0;
+    skinSelect.value = String(state.skinIndex);
+    shell.label.textContent = state.file === "" ? "(no skeleton)" : spineBaseOf(state.file);
+    updateTimeline();
+  }
+
+  /* -- reading ------------------------------------------------------- */
+
+  async function readBytes(path) {
+    const result = await client.call("file.read_bytes", { path });
+    return bytesFromBase64(String(result.base64 || ""));
+  }
+
+  async function readText(path) {
+    const result = await client.call("file.read", { path });
+    return typeof result.text === "string" ? result.text : "";
+  }
+
+  async function decodeBitmap(path, bytes) {
+    if (typeof Blob === "function" && typeof createImageBitmap === "function") {
+      return await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    }
+    const canObjectUrl = typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
+    if (typeof Image === "function" && canObjectUrl) {
+      const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+      try {
+        return await new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error(`cannot decode ${path}`));
+          image.src = url;
+        });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+    throw new Error("this environment has no image decoder");
+  }
+
+  async function loadTextures(atlasPath, atlas) {
+    state.textures.clear();
+    state.pageErrors.clear();
+    for (const page of Array.isArray(atlas.pages) ? atlas.pages : []) {
+      const path = spinePagePath(atlasPath, page.name);
+      try {
+        state.textures.set(page.name, await decodeBitmap(path, await readBytes(path)));
+      } catch (err) {
+        state.pageErrors.set(page.name, err.message);
+      }
+    }
+  }
+
+  function fail(message) {
+    state.error = message;
+    state.skeleton = null;
+    state.atlas = null;
+    state.list = null;
+    state.caches.clear();
+    state.animations = [];
+    state.animationIndex = -1;
+    state.skinIndex = -1;
+    state.camera = null;
+    animSelect.textContent = "";
+    skinSelect.textContent = "";
+    refreshBones();
+    refreshControls();
+    state.busy = false;
+    say(message, "error");
+    paint();
+    return false;
+  }
+
+  /**
+   * Read one skeleton and the atlas beside it.  A file that is not a Spine
+   * export is a refusal, not a guess: the card shows the reader's own message,
+   * byte offset included, instead of an empty canvas that looks like a rig with
+   * nothing in it.
+   */
+  async function load(file) {
+    if (state.busy) {
+      return false;
+    }
+    const wanted = typeof file === "string" ? file.trim().replace(/\\/g, "/") : state.file;
+    const skeletonPath = spineSkeletonPath(wanted);
+    const atlasPath = spineAtlasPath(wanted);
+    if (skeletonPath === "") {
+      return fail(`spine: ${wanted === "" ? "(no file)" : wanted} is not a .skel.bytes or .atlas.txt path`);
+    }
+    state.busy = true;
+    state.error = null;
+    state.file = skeletonPath;
+    fileInput.value = skeletonPath;
+    say(`reading ${spineBaseOf(skeletonPath)}…`);
+    try {
+      const [skeletonBytes, atlasText] = await Promise.all([readBytes(skeletonPath), readText(atlasPath)]);
+      let skeleton = null;
+      let atlas = null;
+      const problems = [];
+      try {
+        skeleton = readSkeletonBinary(skeletonBytes);
+      } catch (err) {
+        problems.push(`skeleton: ${err.message}`);
+      }
+      try {
+        atlas = parseAtlas(atlasText);
+      } catch (err) {
+        problems.push(`atlas: ${err.message}`);
+      }
+      if (skeleton === null || atlas === null) {
+        return fail(problems.join("; "));
+      }
+      state.skeleton = skeleton;
+      state.atlas = atlas;
+      state.caches.clear();
+      state.camera = null;
+      state.selectedBone = -1;
+      state.animations = (Array.isArray(skeleton.animations) ? skeleton.animations : []).map((animation, index) => ({
+        index,
+        name: typeof animation.name === "string" ? animation.name : `animation ${index}`,
+        duration: typeof animation.duration === "number" && Number.isFinite(animation.duration) ? animation.duration : 0,
+      }));
+      const wantedAnimation = state.animations.findIndex((animation) => animation.name === card.animation);
+      state.animationIndex = wantedAnimation >= 0
+        ? wantedAnimation
+        : (state.animations.length > 0 ? 0 : -1);
+      const skins = Array.isArray(skeleton.skins) ? skeleton.skins : [];
+      const wantedSkin = skins.findIndex((skin) => skin.name === card.skin);
+      state.skinIndex = wantedSkin;
+      state.time = 0;
+      fillSelects();
+      refreshBones();
+      refreshControls();
+      await loadTextures(atlasPath, atlas);
+      state.busy = false;
+      writeToBoard();
+      paint();
+      return true;
+    } catch (err) {
+      return fail(`could not read ${spineBaseOf(skeletonPath)}: ${err.message}`);
+    }
+  }
+
+  /* -- painting ------------------------------------------------------ */
+
+  /** One cached bitmap per atlas region, already turned to display orientation. */
+  function cacheFor(item) {
+    const key = `${item.page}\u0000${item.region.name}`;
+    if (state.caches.has(key)) {
+      return state.caches.get(key);
+    }
+    const bitmap = state.textures.get(item.page);
+    if (bitmap === undefined || bitmap === null) {
+      state.caches.set(key, null);
+      return null;
+    }
+    const region = item.region;
+    const width = Math.max(1, Math.round(item.size.width));
+    const height = Math.max(1, Math.round(item.size.height));
+    const cache = document.createElement("canvas");
+    cache.width = width;
+    cache.height = height;
+    const context = cache.getContext("2d");
+    if (context === null) {
+      state.caches.set(key, null);
+      return null;
+    }
+    /*
+     * A rotated atlas region is stored turned a quarter turn clockwise in the
+     * page (`rotate: true` and `rotate: 90` both mean that), so it is turned
+     * back here, around the centre of its displayed rectangle.  The page holds
+     * `region.w` x `region.h`; the displayed pair is swapped, and `item.size`
+     * carries that already.
+     */
+    const degrees = Number.isFinite(region.rotate) ? region.rotate : 0;
+    context.translate(width / 2, height / 2);
+    context.rotate((-Math.PI / 180) * degrees);
+    context.drawImage(
+      bitmap,
+      region.x, region.y, region.w, region.h,
+      -region.w / 2, -region.h / 2, region.w, region.h,
+    );
+    state.caches.set(key, cache);
+    return cache;
+  }
+
+  function viewSize() {
+    const rect = canvas.getBoundingClientRect();
+    const fallbackWidth = Math.max(320, Math.round(Number(card.w) || 560) - 24);
+    const fallbackHeight = Math.max(240, Math.round(Number(card.h) || 500) - 96);
+    const width = Math.max(1, Math.round(rect.width || fallbackWidth));
+    const height = Math.max(1, Math.round(rect.height || fallbackHeight));
+    const ratio = typeof devicePixelRatio === "number" && devicePixelRatio > 0 ? Math.min(3, devicePixelRatio) : 1;
+    return { width, height, ratio };
+  }
+
+  function drawBones(context, pixel, transforms, ratio) {
+    for (const line of spineBoneLines(state.skeleton, transforms)) {
+      const origin = pixel(line.origin);
+      const tip = pixel(line.tip);
+      const selected = line.index === state.selectedBone;
+      context.strokeStyle = selected ? "#ffd166" : "rgba(94, 187, 255, 0.72)";
+      context.lineWidth = (selected ? 3 : 1.4) * ratio;
+      context.beginPath();
+      context.moveTo(origin.x, origin.y);
+      context.lineTo(tip.x, tip.y);
+      context.stroke();
+      context.fillStyle = selected ? "#ffd166" : "rgba(94, 187, 255, 0.9)";
+      context.beginPath();
+      context.arc(origin.x, origin.y, (selected ? 3.4 : 2.2) * ratio, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+
+  function summaryText(list) {
+    const skeleton = state.skeleton;
+    const parts = [
+      `${skeleton.bones.length} bones`,
+      `${skeleton.slots.length} slots`,
+      `${state.animations.length} animations`,
+      `${list.items.length} regions`,
+    ];
+    if (list.missing.length > 0) {
+      parts.push(`${list.missing.length} not in the atlas`);
+    }
+    if (list.unsupported.length > 0) {
+      parts.push(`${list.unsupported.length} attachments not drawn`);
+    }
+    const pageErrors = [...state.pageErrors.entries()];
+    if (pageErrors.length > 0) {
+      parts.push(`${pageErrors.length} page(s) failed: ${pageErrors.map(([name]) => name).join(", ")}`);
+    }
+    return parts.join(" \u00b7 ");
+  }
+
+  function paint() {
+    if (state.destroyed) {
+      return;
+    }
+    const view = viewSize();
+    const pixelWidth = Math.max(1, Math.round(view.width * view.ratio));
+    const pixelHeight = Math.max(1, Math.round(view.height * view.ratio));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    const context = canvas.getContext("2d");
+    if (context === null) {
+      return;
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = "#0d1015";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    updateTimeline();
+    if (state.skeleton === null || state.atlas === null) {
+      return;
+    }
+    const scene = sceneAt(state.skeleton, currentAnimation(), state.time, {
+      skin: currentSkinAttachments(),
+    });
+    const list = spineDrawList(scene, state.atlas);
+    state.list = list;
+    state.transforms = scene.transforms;
+    if (state.camera === null) {
+      state.camera = spineFit(spineDrawBounds(list.items), view.width, view.height);
+    }
+    const camera = state.camera;
+    const pixel = (point) => ({
+      x: ((point.x - camera.tx) * camera.scale + view.width / 2) * view.ratio,
+      y: (view.height / 2 - (point.y - camera.ty) * camera.scale) * view.ratio,
+    });
+    for (const item of list.items) {
+      const cache = cacheFor(item);
+      if (cache === null) {
+        continue;
+      }
+      const alpha = Array.isArray(item.colour) && Number.isFinite(item.colour[3])
+        ? Math.max(0, Math.min(1, item.colour[3]))
+        : 1;
+      if (alpha <= 0) {
+        continue;
+      }
+      const topLeft = pixel(item.quad.tl);
+      const topRight = pixel(item.quad.tr);
+      const bottomLeft = pixel(item.quad.bl);
+      const width = Math.max(1, item.size.width);
+      const height = Math.max(1, item.size.height);
+      context.save();
+      context.globalAlpha = alpha;
+      context.setTransform(
+        (topRight.x - topLeft.x) / width, (topRight.y - topLeft.y) / width,
+        (bottomLeft.x - topLeft.x) / height, (bottomLeft.y - topLeft.y) / height,
+        topLeft.x, topLeft.y,
+      );
+      context.drawImage(cache, 0, 0);
+      context.restore();
+    }
+    if (state.showBones) {
+      drawBones(context, pixel, scene.transforms, view.ratio);
+    }
+    say(state.error === null ? summaryText(list) : state.error, state.error === null ? "" : "error");
+  }
+
+  /* -- time ---------------------------------------------------------- */
+
+  function advance(seconds) {
+    const animation = currentAnimation();
+    const duration = animation === null || !Number.isFinite(animation.duration) ? 0 : animation.duration;
+    if (duration <= 0) {
+      state.time = 0;
+      return;
+    }
+    state.time = (state.time + seconds) % duration;
+    if (state.time < 0) {
+      state.time += duration;
+    }
+  }
+
+  function tick(now) {
+    if (state.destroyed || !state.playing) {
+      return;
+    }
+    const elapsed = state.lastTick === 0 ? 0 : Math.min(SPINE_MAX_STEP, Math.max(0, (now - state.lastTick) / 1000));
+    state.lastTick = now;
+    advance(elapsed * state.speed);
+    paint();
+    if (state.playing) {
+      state.frame = scheduleFrame(tick);
+    }
+  }
+
+  function play() {
+    if (state.skeleton === null || state.playing) {
+      return;
+    }
+    state.playing = true;
+    state.lastTick = 0;
+    refreshControls();
+    state.frame = scheduleFrame(tick);
+  }
+
+  function pause() {
+    state.playing = false;
+    cancelFrame(state.frame);
+    state.frame = null;
+    refreshControls();
+  }
+
+  function togglePlay() {
+    if (state.playing) {
+      pause();
+    } else {
+      play();
+    }
+  }
+
+  function setTime(seconds) {
+    const animation = currentAnimation();
+    const duration = animation === null || !Number.isFinite(animation.duration) ? 0 : animation.duration;
+    state.time = Math.max(0, Math.min(duration, Number.isFinite(seconds) ? seconds : 0));
+    paint();
+  }
+
+  function markBones() {
+    const rows = bonesList.querySelectorAll(".mod-row");
+    rows.forEach((row, index) => {
+      row.classList.toggle("is-selected", index === state.selectedBone);
+    });
+  }
+
+  function selectBone(index) {
+    state.selectedBone = typeof index === "number" && Number.isFinite(index) ? index : -1;
+    if (!state.showBones && state.selectedBone >= 0) {
+      state.showBones = true;
+      writeToBoard();
+      refreshControls();
+    }
+    paint();
+    markBones();
+  }
+
+  /* -- wiring -------------------------------------------------------- */
+
+  listen(animSelect, "change", () => {
+    const index = state.animations.findIndex((animation) => String(animation.index) === animSelect.value);
+    state.animationIndex = index;
+    state.time = 0;
+    state.camera = null;
+    writeToBoard();
+    refreshControls();
+    paint();
+  });
+
+  listen(skinSelect, "change", () => {
+    state.skinIndex = Number(skinSelect.value);
+    if (!Number.isFinite(state.skinIndex)) {
+      state.skinIndex = -1;
+    }
+    writeToBoard();
+    refreshControls();
+    paint();
+  });
+
+  listen(playButton, "click", togglePlay);
+
+  listen(speedSelect, "change", () => {
+    const speed = Number(speedSelect.value);
+    state.speed = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  });
+
+  listen(timeRange, "input", () => {
+    setTime(Number(timeRange.value));
+  });
+
+  listen(bonesButton, "click", () => {
+    state.showBones = !state.showBones;
+    writeToBoard();
+    refreshControls();
+    paint();
+  });
+
+  listen(fitButton, "click", () => {
+    state.camera = null;
+    paint();
+  });
+
+  listen(fileInput, "change", () => {
+    if (fileInput.value.trim() !== "") {
+      load(fileInput.value.trim());
+    }
+  });
+
+  listen(fileInput, "keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (fileInput.value.trim() !== "") {
+      load(fileInput.value.trim());
+    }
+  });
+
+  listen(canvas, "wheel", (event) => {
+    if (state.camera === null) {
+      return;
+    }
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left - rect.width / 2;
+    const offsetY = event.clientY - rect.top - rect.height / 2;
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    const scale = Math.min(SPINE_ZOOM_MAX, Math.max(SPINE_ZOOM_MIN, state.camera.scale * factor));
+    const worldX = state.camera.tx + offsetX / state.camera.scale;
+    const worldY = state.camera.ty - offsetY / state.camera.scale;
+    state.camera = { scale, tx: worldX - offsetX / scale, ty: worldY + offsetY / scale };
+    paint();
+  }, { passive: false });
+
+  let pan = null;
+  listen(canvas, "mousedown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    pan = { x: event.clientX, y: event.clientY };
+  });
+  listen(window, "mousemove", (event) => {
+    if (pan === null || state.camera === null) {
+      return;
+    }
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    pan = { x: event.clientX, y: event.clientY };
+    state.camera = {
+      scale: state.camera.scale,
+      tx: state.camera.tx - dx / state.camera.scale,
+      ty: state.camera.ty + dy / state.camera.scale,
+    };
+    paint();
+  });
+  listen(window, "mouseup", () => {
+    pan = null;
+  });
+
+  listen(canvas, "click", (event) => {
+    if (state.skeleton === null || state.list === null || !state.showBones) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const camera = state.camera;
+    if (camera === null) {
+      return;
+    }
+    const world = {
+      x: camera.tx + (x - rect.width / 2) / camera.scale,
+      y: camera.ty - (y - rect.height / 2) / camera.scale,
+    };
+    const transforms = state.transforms ?? [];
+    let best = -1;
+    let bestDistance = Infinity;
+    for (const line of spineBoneLines(state.skeleton, transforms)) {
+      const distance = Math.hypot(line.origin.x - world.x, line.origin.y - world.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = line.index;
+      }
+    }
+    const limit = 10 / camera.scale;
+    selectBone(bestDistance <= limit ? best : -1);
+  });
+
+  listen(canvas, "keydown", (event) => {
+    if (event.key === " ") {
+      event.preventDefault();
+      togglePlay();
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const animation = currentAnimation();
+    const duration = animation === null || !Number.isFinite(animation.duration) ? 0 : animation.duration;
+    const step = (duration > 0 ? duration : 1) / 60;
+    setTime(state.time + (event.key === "ArrowRight" ? step : -step));
+  });
+
+  /* -- go ------------------------------------------------------------ */
+
+  canvas.setAttribute("aria-label", "the posed skeleton");
+  refreshBones();
+  refreshControls();
+  if (state.file !== "") {
+    load(state.file);
+  } else {
+    say("no skeleton yet: open one with `spine <path.skel.bytes>`");
+  }
+  paint();
+
+  /*
+   * The first paint runs while the card is still detached, so the canvas can
+   * measure 0 and the camera would be fitted to nothing.  One repaint after the
+   * layout is where the environment has frames; the probe paints again through
+   * the same path once it has laid the card out.
+   */
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => paint());
+  }
+
+  return {
+    el: shell.el,
+    handle: {
+      kind: "spine",
+      hasPath(path) {
+        return state.file === path;
+      },
+      load,
+      skeleton() {
+        return state.skeleton;
+      },
+      atlas() {
+        return state.atlas;
+      },
+      drawList() {
+        return state.list;
+      },
+      animations() {
+        return state.animations.slice();
+      },
+      animation() {
+        return currentAnimation();
+      },
+      setAnimation(name) {
+        const index = state.animations.findIndex((animation) => animation.name === name);
+        if (index >= 0) {
+          state.animationIndex = index;
+          state.time = 0;
+          state.camera = null;
+          writeToBoard();
+          refreshControls();
+          paint();
+        }
+        return index >= 0;
+      },
+      setTime,
+      time() {
+        return state.time;
+      },
+      play,
+      pause,
+      isPlaying() {
+        return state.playing;
+      },
+      setBones(value) {
+        state.showBones = value === true;
+        writeToBoard();
+        refreshControls();
+        paint();
+      },
+      showBones() {
+        return state.showBones;
+      },
+      selectBone,
+      selectedBone() {
+        return state.selectedBone;
+      },
+      fit() {
+        state.camera = null;
+        paint();
+      },
+      /** The last page error per page, for a caller that wants to say so. */
+      pageErrors() {
+        return [...state.pageErrors.entries()].map(([page, message]) => ({ page, message }));
+      },
+    },
+    destroy() {
+      state.destroyed = true;
+      state.playing = false;
+      cancelFrame(state.frame);
+      state.frame = null;
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+      cleanups.length = 0;
+      state.textures.clear();
+      state.caches.clear();
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* the game's mod surfaces                                              */
 /* ------------------------------------------------------------------ */
 
@@ -6706,6 +7677,16 @@ registerCardKind({
   // back with the board.
   create: () => ({ file: "", width: PIXEL_NEW_SIZE, height: PIXEL_NEW_SIZE, palette: PIXEL_PALETTE.slice() }),
   render: renderPixel,
+});
+
+registerCardKind({
+  kind: "spine",
+  title: "Spine",
+  describe: (card) => `spine ${card.file || "(no skeleton)"}`,
+  // The document keeps what a reopening card should come back to; the pose time
+  // and the camera do not belong to the board.
+  create: () => ({ file: "", animation: "", skin: "", bones: true }),
+  render: renderSpine,
 });
 
 /* -- the three game surfaces ------------------------------------------ */

@@ -1399,6 +1399,10 @@ function createApp() {
       return null;
     }
     const wanted = path.trim().replace(/\\/g, "/");
+    // A rig has a card of its own: the editor would show bytes it cannot read.
+    if (/\.(skel\.bytes|atlas\.txt)$/i.test(wanted)) {
+      return openSpineCard(wanted);
+    }
     for (const entry of mounted.values()) {
       if (entry.handle.kind === "editor" && entry.handle.hasPath && entry.handle.hasPath(wanted)) {
         focusCard(entry.card.id);
@@ -1560,6 +1564,58 @@ function createApp() {
     return card;
   }
 
+  /**
+   * The spine card showing a rig, if there is one.
+   *
+   * One skeleton, one card: the card's view state (animation, skin, playhead)
+   * is worth keeping, and a second card on the same rig would only be a second
+   * copy of the same picture.  `path` is either half of the pair -- the atlas
+   * and the skeleton are found from each other.
+   */
+  function spineCardFor(path) {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind !== "spine" || typeof entry.handle.hasPath !== "function") {
+        continue;
+      }
+      if (entry.handle.hasPath(path)) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put a spine card on the board for one `.skel.bytes` (or its
+   * `.atlas.txt`).  The card reads both files and the page images beside them;
+   * the document only remembers which rig is shown and how it was framed.
+   */
+  function openSpineCard(path, options = {}) {
+    if (typeof path !== "string" || path.trim() === "") {
+      log("warn", "spine: give a workspace-relative .skel.bytes path");
+      return null;
+    }
+    const wanted = path.trim().replace(/\\/g, "/");
+    const existing = spineCardFor(wanted);
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      log("info", `spine card focused (${wanted}) — the rig is shown, not changed`);
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.spine;
+    const centre = centreWorld();
+    const card = addCard(
+      "spine",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      { file: wanted, animation: "", skin: "", bones: true },
+      size,
+    );
+    log("info",
+      `spine card added (${wanted}) — bones, skins and the timeline; nothing is written`);
+    return card;
+  }
+
   const app = {
     log,
     boardTouched,
@@ -1570,6 +1626,7 @@ function createApp() {
     openEditors,
     revealCard,
     openPixelCard,
+    openSpineCard,
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
     // selected card first: a handle that answers `true` took the step itself
@@ -1769,6 +1826,17 @@ function createApp() {
           options.height = height;
         }
         openPixelCard(wanted, options);
+        return;
+      }
+      case "spine": {
+        /* `spine <path.skel.bytes>` (or its `.atlas.txt`): a path with a space
+           in it is a path, so the whole rest of the line is the file. */
+        const wanted = line.replace(/^\s*spine\s*/i, "").trim().replace(/\\/g, "/");
+        if (wanted === "") {
+          log("warn", "usage: spine <path.skel.bytes>");
+          return;
+        }
+        openSpineCard(wanted);
         return;
       }
       case "run": {

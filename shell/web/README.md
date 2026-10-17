@@ -90,6 +90,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `files` | a workspace listing, filtered | `filter` |
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
+| `spine` | a Spine rig from the game: bones, skins, an animation timeline | `file`, `animation`, `skin`, `bones` |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`:
@@ -173,6 +174,7 @@ sheet [title]            drop a structured-data card (typed cells, not text)
 story <path> [table.csv] [commands.json]
                          edit a story beside its translations, with completion
 pixel <path.png> [w] [h] draw a PNG: the pixels are the file, not the board
+spine <path.skel.bytes>  a Spine rig: its bones, skins and animation timeline
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)
@@ -502,6 +504,38 @@ What it deliberately does **not** do: it does not build, validate, edit a define
 or write a Yarn file — those are the cards' jobs (`mod`, `problems`, `docs`), and
 the view only decides where they are drawn. It has no keyboard shortcut, for the
 same reason the classic view has none: a hidden keystroke is not discoverable.
+
+### The Spine card reads the rig's own bytes
+
+The game ships its characters as a Spine 4.2 export: a `.skel.bytes` skeleton, a
+`.atlas.txt` page description and a PNG per page. `spine <path.skel.bytes>` opens
+the three together, and opening either half of the pair as a file does the same.
+
+Three modules do the work, and only the first one knows the file format:
+`spine.mjs` parses the binary skeleton and the text atlas (a *layout* parser — it
+draws nothing, so it runs in Node too, and a buffer it refuses is refused with
+the byte offset that broke it); `spinepose.mjs` turns a skeleton and a time into
+world transforms and the four corners of every region attachment; `spineframe.mjs`
+maps those corners onto the atlas's rectangles, where a trimmed region's `offsets`
+and its quarter-turned `rotate` have to be undone. All three are pure, so
+`selftest.mjs` pins them with no DOM.
+
+**No skin selected means every skin merged, in skin order.** These rigs split a
+character across skins — body in `Body/*`, eyes in `Eyes/*`, mouth in `Mouth/*` —
+and the game stacks them at runtime; `Journalist`'s single setup skin is six hair
+meshes and would draw a bodyless head. Merging is what makes the card useful, and
+picking a named skin still narrows the picture to exactly that skin, which is the
+point of the picker.
+
+The rest is a viewer: a selectable bones overlay, an animation picker, a timeline
+that also steps (`←`/`→`), playback at 0.25×–2× (`Space`), wheel zoom, drag pan,
+and a click that picks the nearest bone. It draws region attachments only — a
+mesh, a path, a point, a bounding box or a clipping attachment is counted in the
+status line as *not drawn* rather than skipped silently — and it applies a slot's
+alpha but not (yet) its colour tint or blend mode. Nothing is written back: the
+document keeps `file`, `animation`, `skin` and `bones`, the pose time and the
+camera stay local, and a closing card is not asked about unsaved work because
+there is none.
 
 ### Known limitations (deliberate, documented rather than hidden)
 

@@ -101,6 +101,7 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1321,7 +1322,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 #: Every one of them has to be reachable in both tiles.
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
-    "sheet", "story", "pixel", "mod", "problems", "docs",
+    "sheet", "story", "pixel", "spine", "mod", "problems", "docs",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1338,6 +1339,7 @@ CARD_COMMANDS = (
     "sheet smoke sheet",
     "story main.yarn",
     "pixel icon.png",
+    "spine rig.skel.bytes",
     "mod NewMod",
     "problems",
     "docs",
@@ -1996,6 +1998,76 @@ pre{white-space:pre-wrap}
 """
 
 
+def _varint(value: int) -> bytes:
+    """libGDX's ``DataOutput.writeInt(value, true)``: 7 bits a byte, low group first."""
+    out = bytearray()
+    while True:
+        chunk = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(chunk | 0x80)
+        else:
+            out.append(chunk)
+            return bytes(out)
+
+
+def _spine_string(text: str | None) -> bytes:
+    """libGDX's ``DataOutput.writeString``: 0 means null, else the byte count plus one."""
+    if text is None:
+        return _varint(0)
+    raw = text.encode("utf-8")
+    return _varint(len(raw) + 1) + raw
+
+
+def _spine_f32(*values: float) -> bytes:
+    return b"".join(struct.pack(">f", value) for value in values)
+
+
+def _spine_rig() -> tuple[bytes, str]:
+    """A synthetic Spine 4.2 skeleton and its atlas: one bone, one slot, one region.
+
+    The card round trip only needs the kind to open and mount, and the game's own
+    rigs are not in this repository -- so the fixture is written here, to the
+    layout ``shell/web/spine.mjs`` documents, rather than committing a binary
+    blob nobody can read.  It is not an export from Spine: it is the smallest
+    buffer that reader accepts, which is exactly what this test needs and no more
+    (a real rig, with meshes and animations, is what the card is for).
+    """
+    #: Version 4.2.43, an 8-byte zero hash, and the bounds/scale header.
+    skeleton = bytearray(b"\x00" * 8)
+    skeleton += _spine_string("4.2.43")
+    skeleton += _spine_f32(0.0, 0.0, 64.0, 64.0, 1.0)
+    skeleton += b"\x00"  # nonessential = false, so no fps/paths and no extra fields
+    #: The string table: "body", referenced by the slot and the attachment.
+    skeleton += _varint(1) + _spine_string("body")
+    #: One bone: root, length 100, inherit mode 0 (normal), not skin-required.
+    skeleton += _varint(1) + _spine_string("root")
+    skeleton += _spine_f32(0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 100.0)
+    skeleton += b"\x00\x00"
+    #: One slot: "body" on bone 0, opaque white, no dark colour, "body" attached.
+    skeleton += _varint(1) + _spine_string("body") + _varint(0)
+    skeleton += struct.pack(">i", -1) + struct.pack(">i", -1)
+    skeleton += _varint(1) + b"\x00"
+    #: No IK, transform, path or physics constraints.
+    skeleton += b"\x00\x00\x00\x00"
+    #: The default skin: one slot, one region attachment keyed "body".
+    skeleton += _varint(1) + _varint(0) + _varint(1) + _varint(1)
+    skeleton += b"\x00"  # region flags: no name, no path, no colour, no sequence
+    skeleton += _spine_f32(0.0, 0.0, 1.0, 1.0, 64.0, 64.0)
+    #: No named skins, no events, no animations.
+    skeleton += b"\x00\x00\x00"
+    atlas = (
+        "rig.png\n"
+        "size: 64,64\n"
+        "format: RGBA8888\n"
+        "filter: Linear,Linear\n"
+        "pma: true\n"
+        "body\n"
+        "bounds: 0,0,64,64\n"
+    )
+    return bytes(skeleton), atlas
+
+
 def _cards_workspace(sandbox: Path) -> None:
     """The workspace the card round trip runs in: a real file for each kind.
 
@@ -2014,6 +2086,12 @@ def _cards_workspace(sandbox: Path) -> None:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
         )
     )
+    # The spine card reads three files beside each other: the skeleton, its
+    # atlas, and the page image the atlas names.
+    rig, atlas = _spine_rig()
+    (sandbox / "rig.skel.bytes").write_bytes(rig)
+    (sandbox / "rig.atlas.txt").write_text(atlas, encoding="utf-8")
+    shutil.copyfile(sandbox / "icon.png", sandbox / "rig.png")
     package = sandbox / "NewMod"
     package.mkdir(parents=True, exist_ok=True)
     (package / "mod.json").write_text(

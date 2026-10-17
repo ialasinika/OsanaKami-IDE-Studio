@@ -1761,3 +1761,118 @@ button.mod-row:hover { background: var(--card-hi); color: var(--fg); }
 }
 .mod-row-extra:hover { color: var(--accent); border-color: var(--accent); }
 
+/* -- the spine card --------------------------------------------------- */
+
+/* A rig is a picture with a list beside it: the canvas takes the room, the
+   bones take a fixed column so the picture does not resize as the list grows. */
+.card-body-spine {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.spine-tools {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.spine-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.spine-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-deep);
+  border-right: 1px solid var(--line-soft);
+}
+
+.spine-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+}
+.spine-canvas:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+.spine-canvas.is-panning { cursor: grabbing; }
+
+.spine-bones {
+  flex: 0 0 150px;
+  overflow: auto;
+  padding: 2px 0;
+}
+
+.spine-bones-empty {
+  padding: 6px 8px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+/* A selected bone is a line on the picture and a row in the list, so both say
+   which one: the canvas colours the line, the list marks the row. */
+.spine-bones .mod-row.is-selected {
+  background: var(--accent-dim);
+  color: var(--fg);
+}
+
+.spine-file,
+.spine-select,
+.spine-button {
+  background: var(--card-hi);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  font: 10.5px/1 var(--mono-font);
+  padding: 3px 6px;
+}
+
+.spine-file {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--fg);
+}
+
+.spine-file:focus,
+.spine-select:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+.spine-select { max-width: 150px; }
+.spine-select-speed { max-width: 60px; }
+
+.spine-button { cursor: pointer; }
+.spine-button:hover { color: var(--fg); border-color: var(--accent-dim); }
+.spine-button.is-on {
+  color: var(--bg-deep);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.spine-time {
+  flex: 1 1 90px;
+  min-width: 60px;
+  accent-color: var(--accent);
+}
+
+.spine-time-label {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font: 10.5px/1 var(--mono-font);
+  white-space: nowrap;
+}
+
