@@ -41,8 +41,11 @@ workbench](#the-board-as-a-mod-workbench-mode-mod)). Neither creates a card,
 moves a card or saves anything — the tabs are the editor cards, in board order.
 The board is the document; the views are what you can do with it.
 
-A window opens in `classic`, and the HUD switch offers `classic` and `mod`
-(`views.mjs`'s `DEFAULT_VIEW` and `SWITCH_VIEWS`). Those are the only two modes:
+A window opens in `mod` — that is where a mod author works, and the `?mod=`
+shortcut lands there too — and the HUD switch offers `classic` and `mod`
+(`views.mjs`'s `SWITCH_VIEWS`; `BOOT_VIEW` in `main.mjs` is the one the window
+starts in, while `views.mjs`'s `DEFAULT_VIEW` stays `classic` as the name a
+fallback takes). Those are the only two modes:
 `mode board` is not a mode any more, and the command line answers it the way it
 answers any other unknown word — `unknown view "board". Try \`mode classic\`,
 \`mode mod\`.` The document still carries every card's `x`, `y`, `w` and `h`, so
@@ -141,6 +144,9 @@ pixel <path.png> [w] [h] draw a PNG: the pixels are the file, not the board
 run <cmd>                start a command in a runner card
 files [glob]             open the file list card
 project [glob]           open the project panel (the workspace as one project)
+mod <dir>                open a mod package card
+problems <dir>           open a validation card and run it
+docs [query]             open the knowledge-base card
 link <from> <to> [label] connect two cards
 unlink <linkId>          remove a connection
 mode <name>              draw by another view: classic | mod
@@ -155,6 +161,24 @@ clear                    empty the log
 
 An unknown command prints one line in the log and moves on. Nothing is modal,
 nothing steals focus.
+
+The three mod commands need a mods root, and the repository ships one — its own
+worked example, `examples/Mods/Lantern`, with no game install involved:
+
+```sh
+node shell/main.mjs serve --workspace . --mods-root examples/Mods --no-open
+```
+
+```
+mod Lantern                 the package card: manifest, defines, yarn files
+problems Lantern            the report panel: its D006 and M008 findings
+story examples/Mods/Lantern/Yarn/Lantern.yarn examples/Mods/Lantern/Yarn/Lantern_en.csv
+docs Lantern                the knowledge base, searched for the name
+```
+
+`examples/Mods/Lantern/README.txt` lists every file and the two flaws left in
+on purpose; the same package is what `tools/input_smoke.py` drives, so the
+browser suite runs without the game's own `Mods` folder.
 
 `story` is the one command that can open two files: the `.yarn` and, when you
 name one, the translation table beside it. The table moves a frame at a time
@@ -187,8 +211,8 @@ the trade-off is explicit rather than discovered.
 | `cards.mjs` | the tile still lays out, but the cards it arranges have no renderers. |
 | `history.mjs` | `Ctrl+Z` stops existing: every gesture still edits the board, but nothing is remembered, and the undo ring starts empty. |
 | `watch.mjs` | nothing polls for changes made outside the app. Cards still read and write files; a file rewritten by another program is simply not noticed until the card is reopened. |
-| `classic.mjs` | the document works as always, but there is no conventional-IDE arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode. |
-| `views.mjs` | the views have no names and the HUD cannot say which one is on, so the mode switch goes and `mode classic` / `mode mod` are no longer modes. |
+| `classic.mjs` | the document works as always, but there is no conventional-IDE arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode — the window still opens on the mod tile. |
+| `views.mjs` | the views have no names and the HUD cannot say which one is on, so the mode switch goes, the window cannot open on its mod tile, and `mode classic` / `mode mod` are no longer modes. |
 | `modview.mjs` | the document works as always, but there is no mod workbench: no package tree, no report panel, and `mode mod` is not a mode. |
 | `style.css` | the shell still works, but it renders as unstyled white boxes stacked at the origin. The editor's colour layer and text layer stop lining up. |
 | `main.mjs` | `index.html` has nothing to boot: a blank dark page. |
@@ -313,8 +337,10 @@ neither the painted height nor a click is visible to a DOM-less test.
 
 ### The same cards as a code area: `mode classic`
 
-A window **opens here**: `DEFAULT_VIEW` in `views.mjs` names this mode, and the
-board is the one that has to be asked for. `mode classic` — or the `Classic`
+A window **starts on the mod tile**, not here: `BOOT_VIEW` in `main.mjs` is
+`mod`, because that is where a mod author works, and `views.mjs`'s
+`DEFAULT_VIEW` is the name a fallback takes, not the boot view. `mode classic`
+— or the `Classic`
 button in the HUD's view switch, whose buttons come from `SWITCH_VIEWS` and whose
 current one is marked — draws the board a second way:
 

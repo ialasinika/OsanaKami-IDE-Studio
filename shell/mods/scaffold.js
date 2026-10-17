@@ -62,7 +62,7 @@ function _pngChunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-/** 占位图主题色（与 IDE 主色 / Aistalt 配色一致）。 */
+/** 占位图主题色（与 IDE 主色一致）。 */
 const PLACEHOLDER_RGB = [0x7c, 0x4e, 0xc1];
 
 /**
@@ -219,42 +219,36 @@ function describeTemplates() {
 }
 
 /* ------------------------------------------------------------------ *
- * 3. 角色配色 / 知识库（可选，缺失时用内置兜底）
+ * 3. 角色配色 / 知识库（可选；没有知识库时不编造游戏角色）
  * ------------------------------------------------------------------ */
 
-const KNOWLEDGE_PATH = path.join(__dirname, '..', 'knowledge', 'knowledge.json');
+/**
+ * 知识库的位置：本目录的 knowledge.json。
+ *
+ * 这里刻意没有任何内置角色表：那七个角色名与配色是游戏数据，不能编译进分发物
+ * （docs/EDITOR_GAPS.md §14.1）。没有知识库时角色表就是空的 —— 调用方要么自己传
+ * characters，要么由 defaultStoryNodes 用 modName 兜底。
+ */
+const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
 
-/** 生成 Yarn 时优先使用的真实角色名（来自 MyMod/NewProject.yarnproject）。 */
-const FALLBACK_CHARACTERS = [
-  { name: 'Aistalt', colour: '#7c4ec1' },
-  { name: 'Biden', colour: '#42b35a' },
-  { name: 'Company', colour: '#36dd39' },
-  { name: 'Cop', colour: '#2bc551' },
-  { name: 'Greta', colour: '#389f3b' },
-  { name: 'Journalist', colour: '#222baa' },
-  { name: 'Judge', colour: '#d18829' },
-];
+/** 上一次 scaffoldMod 显式给的知识库路径；null = 用 KNOWLEDGE_PATH。 */
+let knowledgePathOverride = null;
 
 function stripBom(s) {
   return s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
 
-/** 读取知识库里的角色表；任何失败都退化成内置列表。 */
+/**
+ * 读取知识库里的角色表；没有知识库 / 没有角色表时返回空数组。
+ * @returns {Array<{name:string,colour:string}>}
+ */
 function loadKnowledgeCharacters() {
-  try {
-    const raw = stripBom(fs.readFileSync(KNOWLEDGE_PATH, 'utf8'));
-    const kb = JSON.parse(raw);
-    const list = kb && kb.localization && kb.localization.characters;
-    if (Array.isArray(list) && list.length) {
-      const cleaned = list
-        .filter((c) => c && typeof c.name === 'string' && c.name)
-        .map((c) => ({ name: c.name, colour: typeof c.colour === 'string' && c.colour ? c.colour : '#39c690' }));
-      if (cleaned.length) return cleaned;
-    }
-  } catch {
-    /* 知识库缺失/损坏：使用内置兜底 */
-  }
-  return FALLBACK_CHARACTERS.slice();
+  const kb = knowledge();
+  const list = kb && kb.localization && kb.localization.characters;
+  if (!Array.isArray(list) || !list.length) return [];
+  return list
+    .filter((c) => c && typeof c.name === 'string' && c.name)
+    .map((c) => ({ name: c.name, colour: typeof c.colour === 'string' && c.colour ? c.colour : '#39c690' }));
 }
 
 function normalizeCharacters(input) {
@@ -551,8 +545,9 @@ function formatNode(node) {
 
 /** 默认生成的 3 个互相跳转的节点（含变量声明、条件分支、选项）。 */
 function defaultStoryNodes(modName, characters) {
-  const names = (characters && characters.length ? characters : FALLBACK_CHARACTERS).map((c) => c.name);
-  const lead = names[0] || 'Aistalt';
+  // 没有角色表时用 mod 自己的名字当说话人：这是调用方给的名字，不是游戏角色。
+  const names = (Array.isArray(characters) ? characters : []).map((c) => c && c.name).filter(Boolean);
+  const lead = names[0] || modName;
   const second = names[Math.min(1, names.length - 1)] || lead;
   const third = names[Math.min(2, names.length - 1)] || lead;
 
@@ -735,20 +730,56 @@ function renderLocalisationCsv(opts) {
  * 8. ScriptableObject 定义生成（字段严格来自 schema）
  * ------------------------------------------------------------------ */
 
-const SCHEMA_DIR = 'C:\\Users\\PC\\Documents\\deepseek-harness\\default-workspace\\ModsFull\\Mods\\SODefines\\Schema';
-const DEFINES_DIR = 'C:\\Users\\PC\\Documents\\deepseek-harness\\default-workspace\\ModsFull\\Mods\\SODefines\\Defines';
+/**
+ * 这次生成生效的游戏 Mods 目录；null = 没有（这时只用知识库里的 schema）。
+ * 解析顺序与 index.js/gamepath.js 一致：显式参数 → 环境变量 → 没有。
+ * 这里不写死任何本机路径。
+ */
+let activeGameModsDir = null;
 
-/** 已读 schema 的缓存：typeName -> schema 对象 | null */
+/** 已读 schema 的缓存：`<游戏目录>\0<TypeName>` -> schema 对象 | null */
 const schemaCache = new Map();
 
-function loadSchema(typeName) {
-  if (schemaCache.has(typeName)) return schemaCache.get(typeName);
-  let schema = null;
+/** 目录是否存在（schema 探测用）。 */
+function dirExists(p) {
+  try {
+    return !!p && fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 解析这次生成要用的游戏 Mods 目录。显式参数优先，其次环境变量；
+ * 找不到就是 null（index.js 会把它自己探测到的目录传进来）。
+ */
+function resolveGameModsDir(explicit) {
+  const fromEnv = process.env.INFANTGOD_MODS_DIR;
+  const gameHome = process.env.INFANTGOD_GAME_DIR;
   const candidates = [
-    path.join(SCHEMA_DIR, `${typeName}.schema.json`),
-    path.join(__dirname, '..', 'knowledge', 'schema', `${typeName}.schema.json`),
-    path.join(__dirname, '..', 'knowledge', 'schemas', `${typeName}.schema.json`),
+    explicit,
+    fromEnv,
+    gameHome ? path.join(String(gameHome), 'Mods') : null,
+    gameHome ? path.join(String(gameHome), 'ModsFull', 'Mods') : null,
   ];
+  for (const c of candidates) {
+    if (c == null || String(c).trim() === '') continue;
+    const abs = path.resolve(String(c));
+    if (dirExists(abs)) return abs;
+  }
+  return null;
+}
+
+function loadSchema(typeName) {
+  const key = `${activeGameModsDir || ''}\u0000${typeName}`;
+  if (schemaCache.has(key)) return schemaCache.get(key);
+  let schema = null;
+  const candidates = [];
+  if (activeGameModsDir) {
+    candidates.push(path.join(activeGameModsDir, 'SODefines', 'Schema', `${typeName}.schema.json`));
+  }
+  candidates.push(path.join(__dirname, 'knowledge', 'schema', `${typeName}.schema.json`));
+  candidates.push(path.join(__dirname, 'knowledge', 'schemas', `${typeName}.schema.json`));
   for (const p of candidates) {
     try {
       schema = JSON.parse(stripBom(fs.readFileSync(p, 'utf8')));
@@ -758,15 +789,24 @@ function loadSchema(typeName) {
     }
   }
   if (!schema) schema = loadSchemaFromKnowledge(typeName);
-  schemaCache.set(typeName, schema);
+  schemaCache.set(key, schema);
   return schema;
 }
 
-let knowledgeCache = null;
+let knowledgeCache; // undefined = 还没读过；null = 读过但没有
+let knowledgeCachePath = null;
+
+/** 这次生效的知识库路径（scaffoldMod 的 opts.knowledgePath 可覆盖）。 */
+function knowledgePath() {
+  return knowledgePathOverride || KNOWLEDGE_PATH;
+}
+
 function knowledge() {
-  if (knowledgeCache) return knowledgeCache;
+  const p = knowledgePath();
+  if (knowledgeCachePath === p && knowledgeCache !== undefined) return knowledgeCache;
+  knowledgeCachePath = p;
   try {
-    knowledgeCache = JSON.parse(stripBom(fs.readFileSync(KNOWLEDGE_PATH, 'utf8')));
+    knowledgeCache = JSON.parse(stripBom(fs.readFileSync(p, 'utf8')));
   } catch {
     knowledgeCache = null;
   }
@@ -1077,7 +1117,11 @@ function renderReadme(meta) {
   lines.push('- `<<jump 节点名>>` / `<<detour 节点名>>` 的目标节点必须真实存在，否则编译报错。');
   lines.push('- 变量以 `$` 开头，使用前用 `<<declare $X = 0>>` 声明。');
   lines.push('- 注释是整行的 `//`。');
-  lines.push('- 说话人建议只用真实存在的角色（' + meta.characters.slice(0, 8).map((c) => c.name).join('、') + ' 等），否则没有配色。');
+  if (meta.characters.length) {
+    lines.push('- 说话人建议只用真实存在的角色（' + meta.characters.slice(0, 8).map((c) => c.name).join('、') + ' 等），否则没有配色。');
+  } else {
+    lines.push('- 没有角色表（没有知识库，或知识库里没有角色）：说话人写你自己 Mod 的角色名，配色会缺省。');
+  }
   lines.push('');
   lines.push('### 本地化 CSV');
   lines.push('');
@@ -1116,6 +1160,14 @@ async function scaffoldMod(destDir, opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
   const modName = normalizeModName(o.modName);
 
+  // 每次生成都按这次给的路径/游戏目录重设派生缓存：同一进程连做两次生成
+  // （selftest 就是这么干的）不能拿到上一次的知识库或 schema。
+  knowledgePathOverride = o.knowledgePath ? path.resolve(String(o.knowledgePath)) : null;
+  knowledgeCache = undefined;
+  knowledgeCachePath = null;
+  activeGameModsDir = resolveGameModsDir(o.gameModsDir);
+  schemaCache.clear();
+
   if (destDir === undefined || destDir === null || String(destDir).trim() === '') {
     throw new Error('scaffoldMod: destDir is required');
   }
@@ -1152,6 +1204,15 @@ async function scaffoldMod(destDir, opts) {
   }
   meta.locales = normalizeLocales(o.locales, meta.baseLanguage);
   meta.characters = normalizeCharacters(o.characters);
+
+  // 没有知识库时把状态说出来：定义字段是占位、校验能力不可用（G6）。
+  // 有知识库但这次没传角色表不算异常 —— 角色表本来就是空的。
+  const kb = knowledge();
+  if (meta.characters.length === 0 && !(kb && kb.schemas && Object.keys(kb.schemas).length > 0)) {
+    meta.warnings.push(
+      `没有可用的知识库（${knowledgePath()}）：定义字段与角色表都用占位，校验能力不可用。`,
+    );
+  }
 
   if (!meta.locales.includes(meta.baseLanguage)) {
     meta.warnings.push(
@@ -1318,8 +1379,6 @@ Object.defineProperty(module.exports, '__internal', {
   DEFAULT_AUTHOR,
   DEFAULT_LOCALES,
   DEFAULT_BASE_LANGUAGE,
-  SCHEMA_DIR,
-  DEFINES_DIR,
   parseYarnStory,
   yarnStoryToEntries,
   loadSchema,

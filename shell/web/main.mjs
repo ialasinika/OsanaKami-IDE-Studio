@@ -31,7 +31,6 @@ import { createHistory } from "./history.mjs";
 import { classicLayout, classicTabLabel } from "./classic.mjs";
 import { modLayout } from "./modview.mjs";
 import {
-  DEFAULT_VIEW,
   SWITCH_VIEWS,
   VIEWS,
   VIEW_LABELS,
@@ -185,6 +184,55 @@ export function saveOutcomeMessage(outcome) {
 }
 
 /* ------------------------------------------------------------------ */
+/* the window's boot view and the events that move it                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The view a window opens in.
+ *
+ * Deliberately not `views.mjs`'s `DEFAULT_VIEW`: that constant is the
+ * *fallback* for a word that names no view (`mode board` still has to print
+ * something), and the decision that a window opens on the mod view is about the
+ * window, not about what a typo should say.  `mode classic` still moves a
+ * window to the other tile.
+ */
+export const BOOT_VIEW = "mod";
+
+/**
+ * What one `view.changed` revision means now that the save it may belong to has
+ * settled.  `revision` is the event's revision, `boardRevision` the revision of
+ * the document on the board (`null` before the first load) and `dirty` whether
+ * the board has edits the disk copy does not have.
+ *
+ * "echo" is our own write coming back.  The kernel notifies *before* it answers
+ * the write (core/src/rpc.c), so the page sees that event while `saving` is
+ * still true and `boardRevision`/`dirty` still describe the document before the
+ * write.  The caller therefore queues events while a save is in flight and asks
+ * this function only after the reply has updated both values; without the queue
+ * every autosave's own echo was read as another writer's edit and warned.
+ */
+export function classifyViewEvent({ revision, boardRevision, dirty }) {
+  if (revision === boardRevision) return "echo";
+  return dirty ? "warn" : "adopt";
+}
+
+/**
+ * The mod directory a `?mod=` boot asks for, or null when the URL names none.
+ *
+ * This is how the File menu's "新建模组" hands its result to the window: the
+ * Electron main process reloads the page with `?mod=<absolute path>`, and the
+ * page opens that package on its mod card.  `search` is `location.search`
+ * ("?mod=...", leading `?` included); a blank value is the same as absent.
+ */
+export function requestedModFromSearch(search) {
+  if (typeof search !== "string" || search === "") return null;
+  const value = new URLSearchParams(search).get("mod");
+  if (typeof value !== "string") return null;
+  const dir = value.trim();
+  return dir === "" ? null : dir;
+}
+
+/* ------------------------------------------------------------------ */
 /* the app                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -195,8 +243,9 @@ const HINT_SIZE = { w: 380, h: 340 };
 const HINT_TEXT = [
   "One document, two ways to look at it.",
   "",
-  "This is the classic view: a sidebar, a tab strip and a code area.",
-  "`mode mod` shows the same cards arranged around a mod package.",
+  "This is the mod view: the package on the left, the code in the middle, the",
+  "problems it reports underneath.  `mode classic` shows the same cards as a",
+  "sidebar, a tab strip and a code area.",
   "Neither view is saved anywhere — switching is free.",
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
   "those keys undo the typing, as they do anywhere else.",
@@ -245,7 +294,7 @@ function createApp() {
     button.type = "button";
     button.dataset.view = name;
     button.title = VIEW_TITLES[name];
-    button.setAttribute("aria-pressed", name === DEFAULT_VIEW ? "true" : "false");
+    button.setAttribute("aria-pressed", name === BOOT_VIEW ? "true" : "false");
     modeSwitch.append(button);
     return button;
   });
@@ -275,9 +324,17 @@ function createApp() {
   /* Which of the two views is on screen: "classic" or "mod".  In memory only,
      deliberately -- the document is the cards, and a view that survived a
      reload would be a document of its own.  Reloading the page always starts in
-     `DEFAULT_VIEW` (views.mjs), never in whatever the last window was left
+     `BOOT_VIEW` (the mod view), never in whatever the last window was left
      showing. */
-  let viewMode = DEFAULT_VIEW;
+  let viewMode = BOOT_VIEW;
+  /* Revisions the kernel announced while a save was in flight.  They cannot be
+     classified until the reply to that save has updated `boardRevision` and
+     `dirty` -- the kernel notifies before it answers, so classifying on arrival
+     reads our own echo as another writer.  Drained in `saveBoard`'s `finally`. */
+  let queuedViewRevisions = [];
+  /* A `?mod=` boot is handled once per page: a reconnect boots again, and
+     re-opening the same package would dirty the board for nothing. */
+  let requestedModHandled = false;
   /* The view's class on `<body>` is the stylesheet's half of the switch, and a
      window opens *in* a view: it is painted here, before anything is drawn, not
      only when a switch changes it.  `setView` returns early when the mode asked
@@ -915,6 +972,10 @@ function createApp() {
       return false;
     } finally {
       saving = false;
+      // Now that the reply has updated `boardRevision`/`dirty`, the events that
+      // arrived while this write was in flight can be told apart: our own echo
+      // compares equal, another writer does not (D3's race).
+      settleQueuedViewChanges();
       if (saveAgain) {
         saveAgain = false;
         const againForce = saveAgainForce;
@@ -927,6 +988,35 @@ function createApp() {
         }
       }
     }
+  }
+
+  /**
+   * The Electron main process asks for this before it reloads the window: a
+   * reload started from the main process is decided before the old page can
+   * answer `beforeunload`, so the page exposes the save itself.  It answers
+   * `{status}`; the caller logs "failed", and the reload still happens -- the
+   * mod the user just created has to be shown.
+   */
+  async function flushBoard() {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!dirty) {
+        return { status: "clean" };
+      }
+      if (saving) {
+        // A save is already running; its own `finally` clears `saving`.
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
+      if (await saveBoard({})) {
+        return { status: "saved" };
+      }
+      return { status: "failed", detail: "the log says why the board could not be written" };
+    }
+    return { status: "failed", detail: "a save was still in flight" };
+  }
+
+  if (typeof window !== "undefined") {
+    window.__infantgodFlushBoard = flushBoard;
   }
 
   /**
@@ -1766,18 +1856,53 @@ function createApp() {
       log(event.code === 0 ? "info" : "warn", `run ${event.run_id} finished (exit ${event.code})`);
     });
     client.on("view.changed", (event) => {
-      if (event.revision === boardRevision) {
-        return; // our own save echoing back
-      }
-      if (dirty) {
-        log("warn", `the board on disk is now rev ${event.revision}; you have unsaved changes.`);
+      if (saving) {
+        // Our own save may be the writer -- the kernel notifies before it
+        // answers it -- and until the reply lands `boardRevision` and `dirty`
+        // still describe the document before the write.  Queue the revision and
+        // decide once the reply has had its say, or every autosave's echo is
+        // read as another writer's edit and warns.
+        queuedViewRevisions.push(event.revision);
         return;
       }
-      // Nothing local to lose, so follow the disk.
-      adoptDiskBoard(`another writer moved the board to rev ${event.revision}`).catch(
-        (err) => log("error", `reloading the board failed: ${err.message}`),
-      );
+      settleViewChange(event.revision);
     });
+  }
+
+  /**
+   * Answer one `view.changed` revision.  Both the idle path and the queue drain
+   * end here, so a queued echo and an arriving one cannot be judged differently.
+   */
+  function settleViewChange(revision) {
+    const verdict = classifyViewEvent({ revision, boardRevision, dirty });
+    if (verdict === "echo") {
+      return;
+    }
+    if (verdict === "warn") {
+      log("warn", `the board on disk is now rev ${revision}; you have unsaved changes.`);
+      return;
+    }
+    // Nothing local to lose, so follow the disk.
+    adoptDiskBoard(`another writer moved the board to rev ${revision}`).catch(
+      (err) => log("error", `reloading the board failed: ${err.message}`),
+    );
+  }
+
+  /**
+   * Decide the revisions that arrived while a save was in flight.  Called from
+   * `saveBoard`'s `finally`, after the reply has updated `boardRevision` and
+   * `dirty`: our own echo now compares equal and stays quiet, while a genuine
+   * external write keeps the old rules (dirty -> warn, clean -> adopt).
+   */
+  function settleQueuedViewChanges() {
+    if (queuedViewRevisions.length === 0) {
+      return;
+    }
+    const revisions = queuedViewRevisions;
+    queuedViewRevisions = [];
+    for (const revision of revisions) {
+      settleViewChange(revision);
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -2024,6 +2149,43 @@ function createApp() {
   }
 
   /**
+   * Open the package a `?mod=` URL named.  This is how the File menu's
+   * "新建模组" hands its result to the window: main.js reloads the page with
+   * the directory in the query string, and boot calls this once the board is
+   * mounted.  The directory goes on the mod card -- a board card, so the next
+   * boot opens it from the document, not from the URL -- and `setDir` runs the
+   * same `mod.open` a click on the card would.
+   *
+   * The card the shortcut needs usually already exists (the scaffolded board
+   * has one with `dir: ""`); a board without one gets a mod card rather than
+   * silently doing nothing.
+   */
+  async function openRequestedMod() {
+    const requested = requestedModFromSearch(typeof location === "undefined" ? "" : location.search);
+    if (requested === null || requestedModHandled) {
+      return;
+    }
+    requestedModHandled = true;
+    let target = null;
+    for (const card of board.cards) {
+      if (card.kind === "mod") {
+        target = card;
+      }
+    }
+    if (target === null) {
+      target = addCard("mod", 80, 200, { dir: requested });
+    }
+    const entry = target === null ? undefined : mounted.get(target.id);
+    if (entry === undefined || entry === null || entry.handle === null || entry.handle === undefined
+        || typeof entry.handle.setDir !== "function") {
+      log("warn", `could not open ${requested}: the board has no mod card to put it on`);
+      return;
+    }
+    setView("mod");
+    await entry.handle.setDir(requested);
+  }
+
+  /**
    * Connect, then load the board.  Safe to call again after a failure, which is
    * how the "kernel not reachable" state recovers without a page reload: each
    * attempt builds a fresh client, so a dead event stream is never reused and
@@ -2105,6 +2267,9 @@ function createApp() {
     }
     initializing = false;
     renderAll();
+    // The File menu's new-mod shortcut reloads the window with `?mod=`; the
+    // board is mounted by now, so the package can be opened on its card.
+    await openRequestedMod();
     // The cards exist now, so there is something to watch. A reconnect re-tests
     // the kernel (it may have been replaced by one without `file.stat`), but the
     // timer itself is never doubled.
@@ -2238,7 +2403,10 @@ export const LIMITATIONS = [
   "Undo is document-level and in memory: Ctrl+Z takes back edits in this window,",
   "not the typing inside a card, and a reload forgets the steps.",
   "Every view is a projection, never a document: nothing about the tile is saved, a",
-  "reload starts in DEFAULT_VIEW, and a card the tile has no place for is hidden, not moved.",
+  "reload starts in the mod view, and a card the tile has no place for is hidden, not moved.",
   "It tiles the cards the document already has -- one code area (the focused editor), no",
   "split panes, and no way to close a tab except closing the card.",
+  "Closing the window asks before dropping unsaved board edits; a reload started by the",
+  "Electron main process saves them first (window.__infantgodFlushBoard) because a",
+  "main-process reload is decided before beforeunload can say no.",
 ];

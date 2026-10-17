@@ -508,6 +508,248 @@ tree.
   backup's "the clone had no board" branch is no longer guarded on the test
   having installed the starter board, because the host autosaves one anyway.
 
+### A worked example, inside this repository
+
+- New `examples/Mods/Lantern/`: twenty-two files, every byte of them written here
+  rather than copied from the game — `mod.json` (`loadOrder: 5`), `README.txt` (the
+  walkthrough), `Lantern.yarnproject`, `Yarn/Lantern.yarn` (two nodes, five spoken
+  lines, each with a `#line:` id, exercising `#state:`, `#vo:`, `#Check:`, `#Topic:`
+  and `#Modify:`, one line calling `<<AdvanceTime 1>>`), the base table
+  `Yarn/Lantern.csv` and its `Yarn/Lantern_en.csv` translation (the game's eight
+  columns; the base table carries no language suffix and the `en` table is mapped
+  by the yarnproject, the way the game's own projects do it), four 32×32 8-bit
+  sprites under `Sprites/` — three RGBA and one **RGB**, the case the reader used to
+  hand back with an alpha byte — drawn pixel by pixel with the repository's own PNG
+  writer, two small 8 kHz 16-bit PCM files under `Audio/` (made by a scratch script,
+  not the game's), a placeholder `Spine/Warden_Rig.json`, and `Defines/` with a
+  character (portrait, email portrait, spine asset path), a character state, a pixel
+  animation (bone and physics tracks, an audio event), an audio event, a song, a
+  voice-over definition and three attachments.
+- Two defects are there on purpose, so the checks that look for them have something
+  real to find: `Defines/Attachment/Lantern_Broken.json` names a sprite that does
+  not exist (`D006`, and the pixel card's own entry point into creating it), and
+  `Lantern_en.csv` is missing one of the three lines while another line's lock
+  disagrees with the base table (so one row reads as missing and one as stale in the
+  story card's translation column).
+- `tools/input_smoke.py` needs no game install any more: its mods root is
+  `examples/Mods` and its mod is `Lantern`.  The >4 MiB table it opens through a blob
+  session is built by the run itself (`build/__input_smoke_table.csv`, 4,500,403
+  bytes, 14,369 rows — and the last row past the 4 MiB single-read cap), the `D006`
+  check points at the example's missing sprite (and the pixel card opens at the size
+  that definition declares), and one check asserts that the suite used the
+  repository's own mod and a table it made.  The suite is falsifiable about both: put
+  the missing sprite back and the `D006` check fails; point `MODS_ROOT` at a game
+  installation and that check fails — and that second run exposed a real defect of its
+  own (the detail line computed a relative path and crashed the run instead of failing
+  the check; it now reports the outside path as a failure).
+- The example is a coverage matrix rather than a sample: it names every kind of file
+  the tooling claims to understand, and the checks assert what the tools *do* with
+  them instead of what the tags promise.  Three new checks were added for it, and
+  `tools/input_smoke.py` now runs 43 checks (four more than the first delivery), all
+  of them green twice in a row; three breaks — the RGB sprite swapped for RGBA, the
+  `#vo:` line deleted, an audio event pointing at a file that is not there — each
+  turned its own check red, and every file came back byte-identical.  The honest
+  result of the matrix is that the gaps are now named rather than hidden: the RGB
+  sprite is read and comes back as RGBA because the writer always emits colour type 6
+  (**G20** in `docs/EDITOR_GAPS.md`), the story card carries `#vo:`/`#Check:`/`#Topic:`/
+  `#Modify:` without validating or resolving any of them and diagnoses only the one
+  unknown `#state:Calm` (`Y104`) — **G21** and **G22** — and a package check finds
+  exactly the two deliberate defects it should: one `D006` error and one `M008`
+  warning, with both WAV files read and named.
+- `docs/MODS.md` gains "The worked example we ship" — a per-file table of the
+  example, what each deliberately broken thing is for, what the checks prove and
+  which gaps are still open.
+- `shell/web/README.md` gains the `mod`, `problems` and `docs` command rows plus a
+  walkthrough that runs the shell with `--mods-root examples/Mods`.
+
+### A new mod, from the File menu
+
+- Electron's File menu gained **新建模组…**: a submenu of the engine's own four
+  scaffolding templates (`最小可加载`, `对话剧情`, `定义包`, `完整工程`, the first
+  on `CmdOrCtrl+N`), inserted right after "Choose Mods Folder…".  Choosing one opens
+  a native save dialog (title `新建模组`, default `<the folder used last>\NewMod`,
+  button `创建`) whose folder and file name are the mod's name and folder; the menu
+  then scaffolds it over the shell's own JSON-RPC — one `POST <endpoint>/rpc`
+  carrying the existing `mod.scaffold` frame — so no protocol method was added and
+  nothing new is spoken.  A packaged window's shell lives at
+  `process.resourcesPath/shell` and is loaded by URL, so the menu reaches it through
+  the loopback endpoint (`session.url`) and never `require`s `shell/mods/` out of the
+  archive.
+- The logic that can be tested by itself lives in `electron/newmod.js` (CommonJS,
+  imports only `node:path`; no Electron and no `shell/**` at runtime): the template
+  table (ids and labels are the engine's own `nameZh`, and a drift between the two
+  fails a check), `defaultParent` (the mods root when there is one, else the
+  workspace), `plan` (a blank name, `.`, `..`, a path separator, a trailing dot or a
+  Windows-hostile character is refused rather than guessed at, and `dir` is the
+  parent `mod.scaffold` wants — so the folder the dialog names is the mod's own
+  folder, not a parent of it), the exact JSON-RPC frame, and `createMod`, which
+  raises the server's own error instead of swallowing it.
+- Afterwards the mod is expanded in the workspace that is already open: when the new
+  folder is inside it, the window reloads so the project panel lists the mod; when it
+  is not, a message box asks whether to make the new mod's parent the workspace.  The
+  parent is remembered (the `newModDir` setting) so the second mod starts where the
+  first went, and every failure goes to the same `新建模组失败` report as the rest of
+  the menu — a click never ends in silence.
+- `shell/mods/selftest.mjs` carries the testable half (the `mods` suite: 84 → 106
+  checks): template parity against `scaffold.js`, `defaultParent`, the name refusals,
+  the menu fragment and each item's id, the request frame, a refused scaffold raising
+  the server's error, and a live endpoint that scaffolds `Probe` onto a sandbox
+  through `plan` and asserts the dialog's folder is the mod's own folder.  That last
+  check is the seam where a first cut nested the mod one level deep (the chosen
+  folder left empty, the mod in `<chosen>\<name>`): restoring the old
+  `dir: path.join(parent, modName)` turns five checks red and prints
+  `…\Probe\Probe`.  Six such breaks were each caught by their own check, with
+  `electron/newmod.js` byte-identical after every restore.
+- An independent pass re-drove the whole path with its own endpoint and harness: the
+  four template ids come back in the engine's order with the engine's names, a second
+  scaffold into a non-empty folder is refused by name with the first one's files
+  kept, a missing parameter is `-32602 missing non-empty string \`dir\``, an
+  out-of-bounds folder is refused (the mod layer tags that error `EOUTSIDE`, but the
+  dispatcher wraps anything that is not an `RpcError`, so the wire shows
+  `SHELL_ERROR 路径越界，已拒绝: …` — `docs/MODS.md` now says that instead of naming
+  a code a client will never see), and a chosen path really becomes the mod root.
+  The same pass found the nesting defect, which is why the check above exists.
+
+### The window opens on the mod view, and a new mod opens with it
+
+- A cold window now boots into the **mod** tile.  The classic tile is one click
+  away and `mode classic` still names it; `DEFAULT_VIEW` keeps `classic` only as
+  the fallback for a view name nobody recognises.  A tester's first screen is the
+  thing this fork exists for, not a file tree.
+- File → 新建模组… now *opens* what it created.  Changing the window's URL replaces
+  the document, so the old path reloaded and landed on whatever the board had
+  managed to autosave: the package was on disk but the window showed an empty mod
+  card whose "Mods/MyMod" is a placeholder that reads like a value, with three
+  section headings that were plain text.  The menu now flushes the board through
+  `window.__infantgodFlushBoard` and loads `/?mod=<folder>`; the page's boot reads
+  that query, finds the last mod card or adds one, points it at the folder and
+  switches to the mod view.  A mod opened by hand from the panel's own input goes
+  through the same `setDir` path.
+- The three section headings are targets now: `MOD.JSON`, `DEFINES` and `YARN` are
+  buttons (mouse, `Enter`, `Space`) that open `mod.json`, the first definition and
+  the first yarn file, each section says `（空）` when it has nothing and shows the
+  package-relative hint while no package is open.  Opening a bad relative name now
+  says so in the card's status line and in the app log instead of calling a
+  `refresh()` that does not exist — the click no longer ends in silence.
+- The "another writer changed this document" warning no longer fires on the
+  window's own save: the save notification can overtake the reply, so a page was
+  told about a revision it had itself just written.  `classifyViewEvent({revision,
+  boardRevision, dirty})` sorts a view event into *our own echo*, *follow* (a dirty
+  or older page adopts the newer revision) or *warn*, and events that arrive while
+  a save is in flight are queued and judged when it settles.  A real external write
+  still warns — that case is a check.
+- `shell/web/selftest.mjs` 225 → 227, `shell/mods/selftest.mjs` 143 → 148 (five unit
+  checks for the URL builder), `tools/browser_smoke.py` 5 → 11 (six: a cold boot
+  lands on the mod tile, `?mod=` opens the package the menu wrote, the three
+  headings open their files, a page's own save is not logged as another writer, a
+  real external write still warns, a wrong relative name fails visibly while the
+  right one opens) and `tools/input_smoke.py` 42 → 43.  Five breaks
+  (`build/falsify_task17.py`: the boot view put back to classic, `?mod=` parsing
+  made to return null, the save queue removed, the heading listeners removed, the
+  open-failure log removed) each turned its own check red, and all fourteen files
+  came back byte-identical.
+- `shell/mods/selftest.mjs`'s real-endpoint group is gated on
+  `build/infantgod.exe`; when the binary is absent those three checks are *skipped*
+  (the count then reads 145 executed, 1 skipped) rather than silently passing.
+  Copying the kernel out of the frozen payload — the same bytes the installer
+  ships — restored 148/148 with nothing skipped.  The gate stays: it is an
+  environment fact, and the report says which one.
+- Not machine-verified, and recorded as such: the native save dialog and a real
+  menu click need an Electron window with a display, which this session does not
+  have.  The two halves the click wires together — the `/?mod=` URL the menu builds
+  and the `POST /rpc` frame it sends — are both covered.
+
+### An installer we build ourselves
+
+- The setup program is no longer electron-builder's NSIS target.
+  electron-builder builds an installer in two passes: the first compiles an
+  installer, *runs* it to make it write the uninstaller
+  (`NsisTarget.js:347`: `execWine(installerPath, null, [],
+  { env: { __COMPAT_LAYER: "RunAsInvoker" } })`), then compiles the real one.  On
+  this machine the middle run exits 2 and electron-builder reports
+  `⨯ Exit code: 2` — but leaves the pass-one artifact in `dist/`, and double-clicking
+  *that* is the "Error writing temporary file.  Make sure your temp folder is valid."
+  dialog.  A minimal installer compiled with the same `makensis.exe` (the one
+  electron-builder caches) ran silently, exit 0, with both the inherited environment
+  and a replaced one — so the toolchain was never the problem; the chained wrapper
+  was.
+- The replacement is `tools/installer.nsi` (166 lines, MUI2, Unicode, per-user
+  `$LOCALAPPDATA\Programs\InfantGod Studio`, Start Menu shortcut, an uninstall entry
+  and a working uninstaller) driven by `tools/make-installer.mjs` (one `makensis`
+  call over a frozen payload, then sign and verify, then a JSON summary in
+  `build/make-installer.json`).  `package.json`'s `dist` is electron-builder
+  `--dir` for the payload followed by this script; `dist:nsis` keeps the old path
+  for comparison.
+- The setup's licence page is `EULA.txt`, copied into the program directory along
+  with `LICENSE.electron.txt` and `LICENSES.chromium.html`: `Install: 5 pages
+  (320 bytes)` against a licence-less control's `4 pages (256 bytes)`, 4,472 bytes
+  apart.  The payload is installed verbatim (127 files, 386,117,895 bytes) and
+  compressed with zlib: `/SOLID lzma` silently installs *nothing* at this payload
+  size on this machine, measured rather than assumed (116 MB vs 157.8 MB for a
+  package that works).
+- Every build walks the payload and refuses to finish on a game marker or a machine
+  path outside a printed allow-list.  The allow-list has three entries today —
+  `resources/shell/mods/knowledge.json`, `shell/mods/scaffold.js` and
+  `shell/mods/search.js` — each with the reason it is still there and
+  `TODO: must be empty before public distribution`; four audit cases (clean
+  baseline, a planted scrap, the scrap removed, an allow-listed hit) and three
+  template breaks all behaved, with the template byte-identical after each.  The
+  audit is **red** right now on 41 hits in 14 files (the §14.1 cleanup: the example
+  mods, the language files, three shell modules and the electron README still name
+  the game), so `npm run dist` exits 1 until that lands; release candidates are
+  built with `--no-audit` and this entry says so.
+- End to end, 19 checks on a copy of the shipped bytes (18 when the payload
+  executable is not named, which skips the payload-hash check): silent install into
+  a scratch directory, every one of the 127 payload files compared byte for byte,
+  shortcut and both HKCU keys, the three licence files, then `/S` uninstall leaving
+  no directory, no shortcut and neither key.  One caveat is written down in
+  `build/e2e-final5.out`: running the same bytes straight out of `dist/` from this
+  sandboxed session does not reproduce (exit 0 in one second, nothing installed,
+  while the identical copy in `build/` installs in eight); the artifact is
+  byte-identical by sha256, so this is a session/environment effect, not the
+  package.  The installer rebuilt from the final tree was checked again the same
+  way, out of `build/`, against its own payload (`build/e2e-final-lead2.out`):
+  install, all 127 files, the three licence files, the shortcut, both keys, then
+  uninstall — exit 0 throughout, nothing left behind.
+
+### A knowledge base that can be rebuilt, and a machine with no game
+
+- `tools/gen_knowledge.mjs` rebuilds the facts half of the knowledge base from
+  `SODefines/{Schema,Defines}` (plus Yarn and CSV when a mod is given): commands,
+  functions, variables, nodes, schemas, locales.  It deliberately drops the
+  descriptions, the `#region` comments and the 53-character palette, and it can
+  compare itself to a knowledge base that already exists — `--check` exits 0 on a
+  match, 1 on drift and 2 when it cannot run, and `--diff` prints, section by
+  section, the names only one side knows.
+- `shell/mods/gamepath.js` is the one place that finds a game: an explicit setting,
+  then `INFANTGOD_MODS_DIR` / `INFANTGOD_GAME_DIR`, then relative guesses (the
+  checkout's parent, `ModsFull/Mods`, a Steam library, the home directory) — all of
+  them relative, none of them this machine.  `DEFAULT_GAME_MODS_DIR` is gone and so
+  is the absolute path `scaffold.js` used to write into new projects;
+  `git grep -E "[A-Za-z]:[\\/]Users[\\/]" -- shell` is empty.
+- A machine with no game is now a state instead of a crash or a lie:
+  `knowledge()` answers `{present: false}`, a package validation gains a named
+  `E000` error and `knowledge: "missing"` (an absent knowledge base used to be `{}`
+  — "check nothing" — and reported `ok: true`), scaffolding no longer invents the
+  seven built-in characters or defaults a speaker to `Aistalt` (it uses the mod's
+  own names), and emotion suggestions come from the knowledge base when there is
+  one (`source: "knowledge-base"`) or from a neutral six-name list
+  (`source: "neutral"`) instead of a literal table of the game's fifteen states.
+  Which source answered is part of the answer.
+- The committed knowledge base stays the one that ships, minus the two machine
+  paths it carried (`gameModsDir` and `localization.projectPath`; 295,902 →
+  295,678 bytes, every fact unchanged).  Regenerating it onto the package would be
+  a silent regression: the committed copy knows 136 commands, 63 functions and 678
+  variables where the generator sees 87, 38 and 810 — swapping them would delete 49
+  commands and turn legal Yarn into "unknown command" diagnostics.  "Rebuildable"
+  is therefore checkable and its drift is data (`--diff`), not a claim; removing the
+  knowledge base from the package needs it to be loaded from the user's own install
+  at runtime, which is the next step.
+- Twenty-six new checks cover the discovery order, the named no-knowledge state and
+  the generator's `--check` against a fixture the test builds itself; eleven more
+  cover the tag sources and `--diff`.  Nine breaks and four breaks respectively each
+  turned their own check red, and every file came back byte-identical.
+
 ### Docs
 
 - New `docs/VIEWS.md`: what the kernel defines (that a view exists — a place, a
@@ -540,9 +782,10 @@ tree.
 
 ### Checks
 
-- `make test` (e2e 22, kernel probe, cli-check, version-check, JSON, blob 130/130,
-  langs 91/91, selftest 225/225, mods 84/84) and `make smoke` (browser smoke 5,
-  input smoke 38) are green.  The blob layer was held to the same bar rather than
+- `make test` (e2e 22/22 in full mode, and 19 passed + 3 skipped against the kernel
+  alone, kernel probe, cli-check, version-check, JSON, blob 130/130, langs 91/91,
+  selftest 227/227, mods 148/148) and `make smoke` (browser smoke 11, input smoke
+  43) are green.  The blob layer was held to the same bar rather than
   to "it compiles": ten breaks in `build/sabotage_blob.py` — a stale base not
   compared, a session table that answers to any id, an idle reaper that closes
   live sessions, a read cap and an append cap not enforced, an append at the wrong
@@ -658,7 +901,25 @@ tree.
   restored byte-identical after every case.  What no DOM-less suite can see — that the
   window really has no canvas, no `#links` and no `#hud-zoom`, that `mode board` is
   refused and that the tile does not move — is read out of a real browser by
-  `tools/input_smoke.py`, whose count went from 34 to 38.
+  `tools/input_smoke.py`, whose count went from 34 to 38 and then — with the worked
+  example's matrix and the mod view's entry points — to 43.
+- This release's newer promises were held to the same bar.  The installer: nineteen
+  end-to-end checks on a copy of the shipped bytes (silent install, every payload
+  file compared byte for byte, shortcut, both HKCU keys, the three licence files,
+  then `/S` uninstall leaving nothing), a licence-page control that must differ from
+  the licence-less build by one page and 4,472 bytes, four payload-audit
+  falsifications and three template breaks — each case caught, the template and
+  every source byte-identical after restore.  The worked example: three breaks
+  (RGBA swapped in for the RGB sprite, the `#vo:` line deleted, an audio event
+  pointing at a file that is not there).  The knowledge base: nine breaks around
+  discovery, the named no-knowledge state and the generator's `--check`, and four
+  around the tag sources and `--diff` (`searchroot`, `fullfirst`, `noe000`,
+  `invent`, `descr`, `checkequal`, `lang`, `delfact`, `kbpath`, `literal`,
+  `diffsilent`, `diffexit`).  The mod view: five breaks (`bootview`,
+  `requestedmod`, `savequeue`, `headings`, `openlog`), each caught by the check
+  that claims it (`build/falsify_task17.py` prints, per case, the failing check
+  name and a `restore ok`).  Every file involved was restored byte-identical, by
+  sha256, and the counts above are from a final clean run.
 
 ### Licence
 
@@ -678,6 +939,13 @@ tree.
   sabotage run that turns a check red — which is part of judging an early build
   rather than a footnote to it.  Plain text with a UTF-8 BOM, because NSIS's licence
   page is not Markdown and does not guess an encoding.
+- §5.1 of that notice and the licence paragraph of `README.md` now say whose names
+  these are: the product is not affiliated with or endorsed by the game's authors,
+  the game's names are the trademarks of their respective owners, and this program
+  names them only to say what it is compatible with.  That is the descriptive-use
+  half of the naming question in `docs/EDITOR_GAPS.md` §14.3; whether the product
+  name itself may keep the game's name is a separate decision, still open, and this
+  release does only the part that needs no rename.
 
 ### Tools and CI a clone can run
 

@@ -1,0 +1,14 @@
+{
+  "techName": "Calm",
+  "skins": [
+    {
+      "skin": "Body",
+      "value": "Warden_Calm"
+    }
+  ],
+  "enablePixelAnimations": [
+    "Lantern_Idle"
+  ],
+  "disablePixelAnimations": [],
+  "showDebugInfo": false
+}

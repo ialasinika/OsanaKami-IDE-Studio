@@ -114,13 +114,22 @@ You do not touch `core/`. You have two configurations, both already supported:
   `shell/web/README.md` describes each tile and `docs/MODS.md` what the mod one
   is showing.
 
-  A window opens in `classic` (`views.mjs`'s `DEFAULT_VIEW`), and the HUD switch
-  offers the two tilings (`SWITCH_VIEWS`). There is no third one: the spatial
+  A window opens in `mod`, because that is where a mod author works
+  (`shell/web/main.mjs`'s `BOOT_VIEW`; `views.mjs`'s `DEFAULT_VIEW` stays
+  `classic` as the fallback for a word that names no view), and the HUD switch
+  offers the two tilings (`SWITCH_VIEWS`). `mode classic` moves a window to the
+  other tile and `mode mod` comes back. There is no third view: the spatial
   plane the `x`/`y` of a card once described was never a view anybody could
   choose, so it is gone along with its pan and zoom, and `mode board` is no
   longer a name the command line answers. The document is untouched by all of
   it -- every card keeps its `x`/`y` on disk, and nothing was removed from the
   schema.
+
+  A window can also be asked for a package by URL: `?mod=<absolute path>` (the
+  File menu's 「新建模组」 hands its result over this way) makes the boot open
+  that directory on the mod card and switch to the mod view. The only code that
+  writes the URL is `openModUrl` in `electron/newmod.js`, and the page side is
+  `requestedModFromSearch` + `openRequestedMod` in `shell/web/main.mjs`.
 
 A view that shares the *file* with another view is the interesting case: two
 clients, the same `path`, one `base_revision` rail between them.

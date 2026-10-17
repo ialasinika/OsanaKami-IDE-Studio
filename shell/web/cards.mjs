@@ -5481,6 +5481,21 @@ export function groupDefines(defines) {
     }));
 }
 
+/**
+ * The mod-root-relative path of one define entry, or "".  `mod.open` names it
+ * `file`; a host that still says `path` is read too, because a heading and a row
+ * that cannot name their file are the same dead click.
+ */
+export function defineRel(item) {
+  if (item === null || typeof item !== "object") {
+    return "";
+  }
+  if (typeof item.file === "string" && item.file !== "") {
+    return item.file;
+  }
+  return typeof item.path === "string" ? item.path : "";
+}
+
 /** The headline a `mod` card shows for an opened package. */
 export function modHeadline(opened) {
   if (opened === null || typeof opened !== "object") {
@@ -5533,13 +5548,36 @@ function button(label, title, onClick) {
 /**
  * A collapsible-looking section: a heading plus clickable rows.  Every row is
  * `{label, meta, onClick, severity}`; a row without `onClick` is inert text,
- * and `severity` tints it with the shared `.sev-*` colours.  `extra` is one
+ * `empty: true` marks the one placeholder row of a section with nothing in it,
+ * and `severity` tints the row with the shared `.sev-*` colours.  `extra` is one
  * more control on the row -- `{label, onClick, title}` -- for a row whose
  * second target would otherwise be unreachable (a D006 sprite row points at
  * two files: the image that is missing and the JSON that asks for it).
+ *
+ * `onClick` makes the *title* a target too, which is how the mod card's three
+ * section headings open the file they head.  It is a keyboard-reachable div and
+ * not a <button>: the stylesheet draws the heading as an inert label, and a
+ * button element would paint its own chrome over it.
  */
-function section(className, title, count) {
-  const head = h("div", "mod-section-title", { text: count === undefined ? title : `${title} (${count})` });
+function section(className, title, count, onClick) {
+  const label = count === undefined ? title : `${title} (${count})`;
+  const head = h("div", "mod-section-title", {
+    text: label,
+    attrs: onClick
+      ? { role: "button", tabindex: "0", title: `open the ${title} file` }
+      : {},
+  });
+  if (onClick) {
+    head.style.cursor = "pointer";
+    head.addEventListener("click", onClick);
+    head.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      onClick(event);
+    });
+  }
   const rows = h("div", "mod-rows");
   return { el: h("div", `mod-section ${className}`, { children: [head, rows] }), rows };
 }
@@ -5549,6 +5587,7 @@ function fillRows(container, rows) {
   for (const row of rows) {
     const classes = ["mod-row"];
     if (row.dir) classes.push("is-dir");
+    if (row.empty) classes.push("mod-row-empty");
     if (row.severity) classes.push(`sev-${row.severity}`);
     const el = h(row.onClick ? "button" : "div", classes.join(" "), {
       attrs: row.onClick ? { type: "button", title: row.title ?? "" } : {},
@@ -5591,20 +5630,32 @@ function renderMod(card, ctx) {
   const { client, app } = ctx;
 
   const dirInput = h("input", "mod-dir", {
-    attrs: { type: "text", spellcheck: "false", placeholder: "Mods/MyMod" },
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      // `Mods/MyMod` pointed at `<workspace>/Mods/MyMod`, which is not where
+      // `mod.open` resolves a relative name: it joins the *mods root* (the
+      // workspace itself under `serve`). The example has to be a name that
+      // works, and the hint under it says how relative paths are read.
+      placeholder: "NewMod",
+      title: "a name relative to the mods root, or an absolute path",
+    },
   });
   dirInput.value = typeof card.dir === "string" ? card.dir : "";
 
-  const openButton = button("open", "read mod.json and list the package", () => refresh());
+  const openButton = button("open", "read mod.json and list the package", () => openMod());
   const validateButton = button("validate", "check every define and Yarn file", () => validate());
   const controls = h("div", "mod-controls", { children: [dirInput, openButton, validateButton] });
 
   const headline = h("div", "mod-headline");
   const counts = h("div", "mod-counts");
-  const modJsonSection = section("mod-manifest", "mod.json");
-  const definesSection = section("mod-defines", "Defines");
-  const yarnSection = section("mod-yarn", "Yarn");
+  const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"));
+  const definesSection = section("mod-defines", "Defines", undefined, () => openSectionFile("defines"));
+  const yarnSection = section("mod-yarn", "Yarn", undefined, () => openSectionFile("yarn"));
   const status = makeStatus();
+
+  /** What the last successful `mod.open` returned, or null before the first. */
+  let opened = null;
 
   const body = h("div", "card-body card-body-mod", {
     children: [controls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
@@ -5614,25 +5665,78 @@ function renderMod(card, ctx) {
 
   let requestSeq = 0;
 
+  /**
+   * The file a section heading opens, or null when the package has nothing for
+   * that section yet.  `mod.json` is always `<root>/mod.json`; Defines opens the
+   * first define file and Yarn the first Yarn file, in the order the rows list
+   * them, so the heading that names a file does open that file.
+   */
+  function sectionFile(kind) {
+    const root = opened !== null && typeof opened.root === "string" && opened.root !== ""
+      ? opened.root
+      : dirInput.value.trim();
+    if (root === "") {
+      return null;
+    }
+    if (kind === "mod.json") {
+      return modPath(root, "mod.json");
+    }
+    if (kind === "defines") {
+      // `mod.open` names a define's file `file`; older hosts called it `path`.
+      const first = groupDefines(opened === null ? [] : opened.defines)
+        .flatMap((group) => group.items)
+        .map((item) => defineRel(item))
+        .find((rel) => rel !== "");
+      return first === undefined ? null : modPath(root, first);
+    }
+    const yarnFiles = opened !== null && Array.isArray(opened.yarnFiles) ? opened.yarnFiles : [];
+    const first = yarnFiles.find((entry) => typeof (typeof entry === "string" ? entry : entry.path) === "string");
+    if (first === undefined) {
+      return null;
+    }
+    return modPath(root, typeof first === "string" ? first : first.path);
+  }
+
+  const SECTION_NAMES = { "mod.json": "mod.json", defines: "Defines", yarn: "Yarn" };
+
+  function openSectionFile(kind) {
+    const path = sectionFile(kind);
+    if (path === null || path === "") {
+      app.log("warn", `the ${SECTION_NAMES[kind] ?? kind} section has nothing to open yet`);
+      return;
+    }
+    app.openFile(path);
+  }
+
+  /** Fill a section, or its one placeholder row when there is nothing in it. */
+  function fillOrEmpty(sectionEl, rows) {
+    fillRows(sectionEl.rows, rows.length === 0 ? [{ label: "（空）", empty: true }] : rows);
+  }
+
   async function openMod() {
     const dir = dirInput.value.trim();
     if (dir === "") {
       status.textContent = "give a mod directory first";
+      app.log("warn", "mod: type NewMod (relative to the mods root) or an absolute path first");
       return;
     }
     const seq = requestSeq + 1;
     requestSeq = seq;
     status.textContent = "opening…";
-    let opened;
+    let result;
     try {
-      opened = await client.call("mod.open", { dir });
+      result = await client.call("mod.open", { dir });
     } catch (err) {
       status.textContent = `open failed: ${err.message}`;
+      // A failed open used to leave only this one line inside the card, which
+      // is clipped in the default tile layout: the log gives it a second exit.
+      app.log("warn", `cannot open ${dir}: ${err.message}`);
       return;
     }
     if (seq !== requestSeq) {
       return;
     }
+    opened = result;
 
     card.dir = dir;
     shell.label.textContent = dir;
@@ -5646,25 +5750,28 @@ function renderMod(card, ctx) {
     ].join(" · ");
 
     const manifest = opened.manifest ?? {};
-    fillRows(modJsonSection.rows, Object.keys(manifest).map((key) => ({
+    fillOrEmpty(modJsonSection, Object.keys(manifest).map((key) => ({
       label: key,
       meta: typeof manifest[key] === "object" ? JSON.stringify(manifest[key]) : String(manifest[key]),
     })));
 
     const root = opened.root ?? dir;
     const grouped = groupDefines(opened.defines);
-    fillRows(definesSection.rows, grouped.flatMap((group) => [
+    fillOrEmpty(definesSection, grouped.flatMap((group) => [
       { label: group.type, meta: `${group.items.length}`, title: group.type },
-      ...group.items.map((item) => ({
-        label: `  ${item.techName}`,
-        meta: item.path ?? "",
-        title: item.path ?? "",
-        onClick: item.path ? () => app.openFile(modPath(root, item.path)) : undefined,
-      })),
+      ...group.items.map((item) => {
+        const rel = defineRel(item);
+        return {
+          label: `  ${item.techName}`,
+          meta: rel,
+          title: rel,
+          onClick: rel === "" ? undefined : () => app.openFile(modPath(root, rel)),
+        };
+      }),
     ]));
 
     const yarnFiles = Array.isArray(opened.yarnFiles) ? opened.yarnFiles : [];
-    fillRows(yarnSection.rows, yarnFiles.map((entry) => {
+    fillOrEmpty(yarnSection, yarnFiles.map((entry) => {
       const rel = typeof entry === "string" ? entry : entry.path;
       return {
         label: typeof rel === "string" ? rel.split("/").pop() : String(rel),
@@ -5674,7 +5781,27 @@ function renderMod(card, ctx) {
       };
     }));
 
-    status.textContent = `opened ${opened.root ?? dir}`;
+    /*
+     * `mod.open` is tolerant by design: a missing directory, a broken mod.json
+     * and an unreadable file all come back as diagnostics rather than an error,
+     * so the card can still list whatever it did find.  Tolerant is not the same
+     * as silent -- a package the host called an error (`OPEN001` when the path is
+     * not a directory, `M001` for a missing or broken manifest) is a failed open,
+     * and before this it kept the "opened <root>" line and hid the reason.
+     */
+    const diagnostics = Array.isArray(opened.diagnostics) ? opened.diagnostics : [];
+    const errors = diagnostics.filter((one) => one !== null && one !== undefined && one.severity === "error");
+    if (errors.length > 0) {
+      const first = errors[0];
+      const reason = typeof first.message === "string" && first.message !== ""
+        ? first.message
+        : String(first.code ?? "the package cannot be opened");
+      status.textContent = `open failed: ${reason}`;
+      app.log("warn", `cannot open ${dir}: ${reason}`);
+    } else {
+      status.textContent = `opened ${root}`;
+      app.log("info", `opened ${root}`);
+    }
     app.boardTouched(true);
   }
 
@@ -5682,6 +5809,7 @@ function renderMod(card, ctx) {
     const dir = dirInput.value.trim();
     if (dir === "") {
       status.textContent = "give a mod directory first";
+      app.log("warn", "mod validate: type NewMod (relative to the mods root) or an absolute path first");
       return;
     }
     status.textContent = "validating…";
@@ -5690,6 +5818,7 @@ function renderMod(card, ctx) {
       report = await client.call("mod.validate", { root: dir });
     } catch (err) {
       status.textContent = `validate failed: ${err.message}`;
+      app.log("warn", `cannot validate ${dir}: ${err.message}`);
       return;
     }
     const s = report.summary ?? {};
@@ -5707,10 +5836,17 @@ function renderMod(card, ctx) {
     }
   });
 
+  // An unopened card says how the input is read and shows each section's
+  // placeholder: a blank rectangle gave no clue that `Mods/MyMod` was wrong.
+  counts.textContent = "relative paths resolve against the mods root; an absolute path also works";
+  fillOrEmpty(modJsonSection, []);
+  fillOrEmpty(definesSection, []);
+  fillOrEmpty(yarnSection, []);
+
   if (dirInput.value !== "") {
     openMod();
   } else {
-    status.textContent = "open a mod directory, e.g. Mods/MyMod";
+    status.textContent = "NewMod (relative to the mods root) or an absolute path, then Enter";
   }
 
   return {

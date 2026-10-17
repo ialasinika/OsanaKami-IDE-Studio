@@ -1,0 +1,14 @@
+{
+    "projectFileVersion": 4,
+    "sourceFiles": [
+        "**/*.yarn"
+    ],
+    "excludeFiles": [],
+    "localisation": {
+        "en": {
+            "strings": "Lantern_en.csv"
+        }
+    },
+    "baseLanguage": "zh-CN",
+    "definitions": []
+}

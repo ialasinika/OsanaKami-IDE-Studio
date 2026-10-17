@@ -11,7 +11,9 @@
     "start": "electron .",
     "cert": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/make_cert.ps1",
     "pack": "node tools/sign.mjs --win --x64 --dir",
-    "dist": "node tools/sign.mjs --win --x64"
+    "dist": "node tools/sign.mjs --win --x64 --dir && node tools/make-installer.mjs",
+    "installer": "node tools/make-installer.mjs",
+    "dist:nsis": "node tools/sign.mjs --win --x64"
   },
   "devDependencies": {
     "electron": "^44.7.2",
@@ -34,11 +36,24 @@
       },
       {
         "from": "shell",
-        "to": "shell"
+        "to": "shell",
+        "filter": [
+          "**/*",
+          "!mods/selftest.mjs",
+          "!web/selftest.mjs"
+        ]
       },
       {
         "from": "langs",
-        "to": "langs"
+        "to": "langs",
+        "filter": [
+          "**/*",
+          "!selftest.mjs"
+        ]
+      },
+      {
+        "from": "examples",
+        "to": "examples"
       }
     ],
     "win": {

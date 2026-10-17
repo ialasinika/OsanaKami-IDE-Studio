@@ -1,0 +1,8 @@
+{
+  "EditorNote": "Broken on purpose: Sprites/Missing.png is not in this package, so PROBLEMS reports D006 for it and clicking the row opens the pixel card for the sprite that is not there.",
+  "nameKey": "Lantern_Broken_name",
+  "techName": "Lantern_Broken",
+  "mediaType": "Image",
+  "textKey": "",
+  "image": "Sprites/Missing.png"
+}

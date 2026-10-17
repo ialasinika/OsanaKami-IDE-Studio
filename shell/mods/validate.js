@@ -761,15 +761,27 @@ function countSeverities(diagnostics) {
  *
  * @param {string} modRoot  含 mod.json 的 Mod 文件夹
  * @param {object} opts     { kb, otherMods? }
- * @returns {{ ok:boolean, manifest:object|null, summary:object, diagnostics:Array, types:string[] }}
+ * @returns {{ ok:boolean, knowledge:'present'|'missing', manifest:object|null,
+ *            summary:object, diagnostics:Array, types:string[] }}
  */
 function validateModPackage(modRoot, opts) {
   const o = opts || {};
   const kb = isPlainObject(o.kb) ? o.kb : {};
   const schemas = isPlainObject(kb.schemas) ? kb.schemas : {};
+  /**
+   * 有没有真的知识库。缺知识库时绝不能悄悄给 ok:true —— 那等于「什么都没校验」
+   * （docs/EDITOR_GAPS.md §14.1 / G6）。这里用一个具名诊断 + knowledge 状态说清楚。
+   */
+  const kbPresent = isPlainObject(o.kb) && isPlainObject(o.kb.schemas) && Object.keys(o.kb.schemas).length > 0;
   const root = path.resolve(String(modRoot == null ? '.' : modRoot));
 
   const diagnostics = [];
+  if (!kbPresent) {
+    diagnostics.push(diag('error', 'E000', '', '',
+      '没有知识库（knowledge.json）：这次校验只看了文件结构，定义类型、必填字段和基线撞名都没有被校验。',
+      'No knowledge base (knowledge.json): this run checked file structure only; definition types, ' +
+      'required fields and baseline collisions were NOT checked.'));
+  }
   const byType = {};
   const typeSet = new Set();
   const otherMods = Array.isArray(o.otherMods) ? o.otherMods : [];
@@ -1118,6 +1130,7 @@ function validateModPackage(modRoot, opts) {
 
   return {
     ok: counts.errors === 0,
+    knowledge: kbPresent ? 'present' : 'missing',
     manifest: manifest,
     summary: summary,
     diagnostics: diagnostics,

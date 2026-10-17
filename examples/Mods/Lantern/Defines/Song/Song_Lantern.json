@@ -1,0 +1,10 @@
+{
+  "EditorNote": "A song stub written for this example: the image is one of our sprites, the audio file is one of our WAVs.",
+  "id": "song-lantern",
+  "techName": "Song_Lantern",
+  "nameKey": "Song_Lantern_name",
+  "singerKey": "Warden",
+  "externalAudioFile": "Audio/Lantern_Hum.wav",
+  "image": "Sprites/Lantern.png",
+  "isInitial": false
+}

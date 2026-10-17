@@ -1,0 +1,14 @@
+{
+  "note": "A stand-in for a Spine skeleton, authored for this example. It is not a real Spine asset and no code reads it: the editor does not validate spineAssetPath today (docs/EDITOR_GAPS.md G22), so this file exists only to give the field something inside the package to point at.",
+  "skeleton": "Warden_Rig",
+  "bones": [
+    "root",
+    "lantern_body",
+    "hood"
+  ],
+  "slots": [
+    "body",
+    "hood",
+    "lantern"
+  ]
+}

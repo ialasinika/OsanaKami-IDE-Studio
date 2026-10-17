@@ -1,0 +1,8 @@
+{
+  "EditorNote": "Example attachment: a second sprite, also in this package.",
+  "nameKey": "Lantern_Off_name",
+  "techName": "Lantern_Off",
+  "mediaType": "Image",
+  "textKey": "",
+  "image": "Sprites/Lantern_Glow.png"
+}

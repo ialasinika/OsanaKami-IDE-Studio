@@ -27,13 +27,18 @@ const yarnCore = require('./yarn.js');
 const validateCore = require('./validate.js');
 const scaffoldCore = require('./scaffold.js');
 const searchCore = require('./search.js');
+const gamepath = require('./gamepath.js');
 
 /** knowledge.json 的位置（本模块同目录）。 */
 const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
 
-/** 抽出来的游戏 Mods 目录：Mod 不带自己的 schema/定义时从这里读基线。 */
-const DEFAULT_GAME_MODS_DIR =
-  'C:\\Users\\PC\\Documents\\deepseek-harness\\default-workspace\\ModsFull\\Mods';
+/**
+ * 游戏 Mods 目录不再写死。解析顺序见 gamepath.js：
+ *   1. 显式 options.gameModsDir（shell 的 --game-dir / 设置项）
+ *   2. 环境变量 INFANTGOD_MODS_DIR，或 INFANTGOD_GAME_DIR 下的 Mods / ModsFull/Mods
+ *   3. 自动探测本机 Steam 库
+ *   4. 都没有 = 「没找到」（null）：只用 knowledge.json，绝不猜路径
+ */
 
 /** #state 合法值（照抄原 api.js:284）。 */
 const STATE_TAGS = [
@@ -203,9 +208,12 @@ function createMods(options) {
 
   const knowledgePath = path.resolve(opts.knowledgePath || KNOWLEDGE_PATH);
   const modsRoot = opts.modsRoot ? path.resolve(String(opts.modsRoot)) : null;
-  const gameModsDir = path.resolve(
-    opts.gameModsDir || process.env.INFANTGOD_MODS_DIR || DEFAULT_GAME_MODS_DIR
-  );
+  const gameMods = gamepath.discoverGameModsDir({
+    gameModsDir: opts.gameModsDir != null ? opts.gameModsDir : opts.gameDir,
+    env: process.env
+  });
+  /** 游戏 Mods 目录；null = 本机没找到（「没找到」本身也是要报出来的状态）。 */
+  const gameModsDir = gameMods.dir;
 
   /** 所有按 root 缓存的派生状态；openMod 换根时整块清掉。 */
   const cache = {
@@ -309,8 +317,8 @@ function createMods(options) {
     const baseline = Object.assign({}, base.baseline || {});
     let touched = false;
 
-    const schemaDir = path.join(gameModsDir, 'SODefines', 'Schema');
-    if (isDir(schemaDir)) {
+    const schemaDir = gameModsDir ? path.join(gameModsDir, 'SODefines', 'Schema') : null;
+    if (schemaDir && isDir(schemaDir)) {
       let names = [];
       try {
         names = fs.readdirSync(schemaDir).filter((f) => /\.schema\.json$/i.test(f));
@@ -331,8 +339,8 @@ function createMods(options) {
       }
     }
 
-    const definesDir = path.join(gameModsDir, 'SODefines', 'Defines');
-    if (isDir(definesDir)) {
+    const definesDir = gameModsDir ? path.join(gameModsDir, 'SODefines', 'Defines') : null;
+    if (definesDir && isDir(definesDir)) {
       let typeDirs = [];
       try {
         typeDirs = fs.readdirSync(definesDir, { withFileTypes: true }).filter((e) => e.isDirectory());
@@ -824,6 +832,7 @@ function createMods(options) {
     });
     return {
       ok: !!result.ok,
+      knowledge: result.knowledge === 'present' ? 'present' : 'missing',
       manifest: result.manifest,
       summary: result.summary,
       diagnostics: result.diagnostics,
@@ -843,9 +852,10 @@ function createMods(options) {
     if (dir == null || String(dir).trim() === '') throw new Error('scaffold: dir is required');
 
     const destRoot = resolveArg(dir, 'dir');
-    const sopts = {};
+    const sopts = { knowledgePath: knowledgePath };
     if (p.modName != null) sopts.modName = p.modName;
     if (p.template != null) sopts.template = p.template;
+    if (gameModsDir) sopts.gameModsDir = gameModsDir;
     for (const key of ['version', 'gameVersion', 'loadOrder', 'author', 'description',
       'baseLanguage', 'locales', 'characters', 'overwrite']) {
       if (p[key] !== undefined) sopts[key] = p[key];
@@ -950,10 +960,42 @@ function createMods(options) {
     return { locales: locales, baseLanguage: baseLanguage };
   }
 
+  /* ---------------- 游戏目录 / 知识库状态 ---------------- */
+
+  /**
+   * 这次进程解析出来的游戏 Mods 目录。没找到也要说得出来：
+   * `source === 'not found'` 且 `tried` 列出找过的地方。
+   */
+  function gameModsInfo() {
+    return {
+      dir: gameModsDir,
+      source: gameMods.source,
+      found: !!gameModsDir,
+      tried: Array.isArray(gameMods.tried) ? gameMods.tried.slice() : []
+    };
+  }
+
+  /**
+   * 知识库状态：present = 有 schema 可用；missing = 没有知识库，
+   * 校验只给文件结构结论（validate.js 会带一条具名 E000 说出来）。
+   */
+  function knowledgeState() {
+    const kb = knowledge();
+    const schemas = kb && kb.schemas && typeof kb.schemas === 'object' ? Object.keys(kb.schemas).length : 0;
+    return {
+      state: schemas > 0 ? 'present' : 'missing',
+      path: knowledgePath,
+      schemas: schemas,
+      loadError: kb && kb.loadError ? String(kb.loadError) : null
+    };
+  }
+
   /* ---------------- 门面 ---------------- */
 
   return {
     knowledge: knowledge,
+    knowledgeState: knowledgeState,
+    gameMods: gameModsInfo,
     stats: stats,
     types: types,
     characters: characters,

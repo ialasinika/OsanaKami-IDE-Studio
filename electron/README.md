@@ -95,9 +95,29 @@ the mod verbs are bounded by the workspace, exactly as on the command line.
 | --- | --- | --- |
 | File | Choose Workspace… | `Ctrl+O` — pick a directory, restart the endpoint on it |
 | File | Choose Mods Folder… | `Ctrl+M` — pick the game's `Mods` folder |
+| File | 新建模组… | `Ctrl+N` — scaffold a template into a folder (最小可加载 / 对话剧情 / 定义包 / 完整工程) |
 | File | Open Workspace / Mods Folder | reveal it in Explorer |
 | View | Reload, DevTools, zoom, fullscreen | the Electron roles |
 | Help | About / Endpoint… | the live URLs and the settings path |
+
+**File → 新建模组…** is the one menu item that does not act on the window: it
+asks the shell for the files. A native save dialog picks the folder (and the
+name), then one `mod.scaffold` frame goes to `POST <endpoint>/rpc` on the
+endpoint the window is already talking to — `electron/main.js` never imports
+`shell/mods/`, because a packaged app keeps the shell outside `app.asar`. The
+four labels are `shell/mods/scaffold.js`'s `nameZh` verbatim, and
+`shell/mods/selftest.mjs` fails if the two lists drift apart. `mod.*` stays
+bounded by the mods root, so a folder outside it is refused by name
+(`EOUTSIDE`) and the menu reports that rather than guessing. After a successful
+create the new mod is expanded in the current workspace: the window navigates to
+`<endpoint>/?mod=<encoded package root>` — the page sets the mod card's
+directory, runs `mod.open` and switches to the mod view, the same boot path a
+hand-typed `?mod=` takes (`newmod.openModUrl()` builds the address; the page's
+`requestedModFromSearch()` reads it). A board with unsaved layout is flushed
+first (`window.__infantgodFlushBoard()` over `executeJavaScript`), so navigating
+loses nothing; a bare `reload()` used to reopen the board with the mod card's
+`dir` still empty. When the folder is outside the workspace the menu offers to
+make the mod's parent the workspace instead.
 
 There is no `Edit` menu: the board's canvas has no clipboard model of its own,
 and the roles Electron would add (`cut`/`copy`/`paste`) apply to the focused

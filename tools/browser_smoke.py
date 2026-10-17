@@ -64,9 +64,18 @@ Honesty about what is *not* proven here:
   lives in a ``<textarea>``'s ``value`` property is not serialized at all.  The
   note check names both limits in its failure message rather than papering over
   them.
-* only the five assertions above are made.  A green run says the page booted,
-  the HUD and the board agree, and the command vocabulary shipped -- not that
-  the UI is correct in any wider sense.
+* the five assertions above judge one dump of the board.  After them the run
+  drives a *second* page: the new-mod round trip scaffolds a package in a
+  throwaway workspace and lets a same-origin wrapper page
+  (``shell/web/__browser_smoke_mod.html``, written and removed by the run)
+  frame the app and click and type into it.  Its six checks cover what the
+  0.1.0 new-mod defect broke -- the default mod view, ``?mod=`` opening the
+  package the menu created, the three headings opening their files, a save's
+  own echo not being read as another writer, a real external write still
+  warning, and a wrong relative name failing visibly.
+* a green run says the page booted, the HUD and the board agree, the command
+  vocabulary shipped, and the new-mod path works -- not that the UI is correct
+  in any wider sense.
 
 Exit codes
     0   every check passed -- or the browser is not installed (a SKIP line)
@@ -91,6 +100,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -402,14 +412,18 @@ def _kill_stray(profile: Path) -> int:
         return 0
 
 
-def dump_dom(edge, url: str, profile: Path, timeout: float):
+def dump_dom(edge, url: str, profile: Path, timeout: float, flags=EDGE_FLAGS):
     """Fetch *url* headless and return ``(dom, error)``; exactly one is None.
 
     ``error`` means the browser could not be run at all, as opposed to
     answering with a page: a leftover profile lock after a timeout is the usual
     cause, and the caller retries rather than reporting a false failure.
+
+    ``flags`` exists for the round-trip section below, whose wrapper page awaits
+    several RPCs and so needs a larger ``--virtual-time-budget`` than the board
+    dump does.
     """
-    argv = [str(edge), *EDGE_FLAGS, f"--user-data-dir={profile}", "--dump-dom", url]
+    argv = [str(edge), *flags, f"--user-data-dir={profile}", "--dump-dom", url]
     try:
         done = subprocess.run(argv, capture_output=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
@@ -445,26 +459,36 @@ def _looks_painted(text: str) -> bool:
     return READY_TEXT in text and "card-title" in text
 
 
-def grab_dom(edge, url: str, profile: Path, timeout: float, budget: float):
+def grab_dom(edge, url: str, profile: Path, timeout: float, budget: float, flags=EDGE_FLAGS, painted=None):
     """Keep dumping until the page looks painted, or *budget* seconds elapse.
 
     Returns ``(dom, launches, note)``.  ``--virtual-time-budget`` is
     deterministic from the page's point of view, but if the kernel answers one
     RPC after that budget expired the dump is genuinely incomplete; re-dumping
     is the cheap, honest fix, and the longest dump seen is the one reported.
+
+    ``painted`` is the "a retry cannot improve this" predicate.  It defaults to
+    the board's HUD-and-card test; the wrapper page below passes its own, since
+    it has neither a HUD of its own nor any board markup outside the iframe.
     """
+    painted = _looks_painted if painted is None else painted
+    unfinished = (
+        "the dump never showed both the ready HUD and a painted card"
+        if painted is _looks_painted
+        else "the wrapper page never reported its result"
+    )
     deadline = time.monotonic() + budget
     launches, last_error, best = 0, "", ""
     while True:
         launches += 1
-        raw, error = dump_dom(edge, url, profile, timeout)
+        raw, error = dump_dom(edge, url, profile, timeout, flags=flags)
         if raw is not None:
             text = dom_of(raw)
             if len(text) > len(best):
                 best = text
-            if _looks_painted(text):
+            if painted(text):
                 return text, launches, ""
-            last_error = "the dump never showed both the ready HUD and a painted card"
+            last_error = unfinished
         else:
             last_error = error
         remaining = deadline - time.monotonic()
@@ -779,6 +803,501 @@ class BoardBackup:
 # entry point
 
 
+# --------------------------------------------------------------------------
+# the new-mod round trip (D1-D4 and item 8)
+#
+# ``File -> 新建模组`` used to leave the package invisible: the window reloaded
+# to a board that still said ``mod(dir: "")``, so the card painted "(no dir)",
+# its three headings did nothing, and the log repeated "you have unsaved
+# changes" while the save echo raced the page.  The fix hands the created root
+# to the page in the boot URL, makes the headings targets, tells the user where
+# a relative name resolves, and queues the save echo instead of mistaking it for
+# another writer.
+#
+# None of that is visible to ``--dump-dom`` on its own: the page draws its board
+# in ``#cards`` and the dump is one snapshot with no input.  So this section
+# uses the same same-origin wrapper technique as ``tools/input_smoke.py``: write
+# a page next to the app that frames it and reaches into the frame, drive it
+# with real clicks and a real keystroke, and have it write ``name=value`` lines
+# into ``<pre id="result">`` -- the only text a dump keeps from inside a frame.
+
+#: The wrapper page this section writes into ``shell/web/``, the one static
+#: directory the shell serves.  It is removed in the same ``finally`` as the
+#: sandbox, so a green run leaves no page and no workspace behind.
+MOD_WRAPPER_NAME = "__browser_smoke_mod.html"
+MOD_WRAPPER = REPO_ROOT / "shell" / "web" / MOD_WRAPPER_NAME
+
+#: ``<pre id="result">`` is the channel out of the iframe: a dump serializes the
+#: top document only, so every fact has to be copied up here by the page itself.
+MOD_RESULT_RE = re.compile(r'<pre id="result">(.*?)</pre>', re.S)
+
+#: Virtual clock for the wrapper.  Its probe awaits several RPCs and polls
+#: between them, which the board's 9 s budget cannot cover.
+MOD_BUDGET_MS = 60000
+
+#: The number of assertions ``define_newmod_checks`` makes, for the "browser is
+#: not installed" summary line, which is printed before any check exists.
+NEWMOD_CHECK_COUNT = 6
+
+#: The wrapper page.  It is deliberately dumb: no imports, no build, plain
+#: browser JS, so what it observes is what the shipped page does.  ``?app=`` in
+#: the wrapper's own query string is the address to frame -- the caller encodes
+#: it, which keeps ``?mod=C:\...`` out of the wrapper's parsing job.
+MOD_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>browser smoke: new mod round trip</title>
+<style>
+body{margin:0;font:12px monospace}
+iframe{width:1500px;height:900px;border:0}
+pre{white-space:pre-wrap}
+</style>
+</head>
+<body>
+<iframe id="app" src="/"></iframe>
+<pre id="result">pending</pre>
+<script>
+(() => {
+  const lines = [];
+  const out = document.getElementById("result");
+  const say = (name, value) => lines.push(name + "=" + String(value).replace(/\\s+/g, " ").trim());
+  const finish = () => { out.textContent = lines.join("\\n") + "\\ndone=1"; };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const frame = document.getElementById("app");
+  const appUrl = new URLSearchParams(location.search).get("app") || "/";
+  const wantsMod = appUrl.indexOf("mod=") !== -1;
+  const doc = () => frame.contentDocument;
+  const win = () => frame.contentWindow;
+  const textOf = (selector) => {
+    const el = doc().querySelector(selector);
+    return el === null ? "" : (el.textContent || "");
+  };
+  const logText = () => {
+    const el = doc().getElementById("log");
+    return el === null ? "" : (el.textContent || "");
+  };
+  const labels = () => Array.from(doc().querySelectorAll("#cards [data-card-id] [data-role=card-label]"))
+    .map((el) => (el.textContent || "").trim());
+  const viewClass = () => (doc().body === null ? "" : doc().body.className);
+  const waitFor = async (probe, tries) => {
+    const limit = tries || 240;
+    for (let index = 0; index < limit; index += 1) {
+      try {
+        const value = probe();
+        if (value) { return value; }
+      } catch (err) { /* the frame is not ready yet */ }
+      await sleep(50);
+    }
+    return null;
+  };
+  const rpc = async (method, params) => {
+    const response = await fetch("/rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    const reply = await response.json();
+    if (reply.error) { throw new Error(reply.error.message || JSON.stringify(reply.error)); }
+    return reply.result;
+  };
+  const runLine = (text) => {
+    const box = doc().getElementById("command");
+    box.value = text;
+    box.dispatchEvent(new (win().KeyboardEvent)("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+  };
+  const clickMod = (label) => {
+    const buttons = Array.from(doc().querySelectorAll(".card-mod .card-button"));
+    const button = buttons.find((el) => (el.textContent || "").trim() === label);
+    if (button === undefined) { return false; }
+    button.click();
+    return true;
+  };
+  (async () => {
+    try {
+      frame.src = appUrl;
+      await waitFor(() => doc() && doc().readyState === "complete");
+      /* Item 8: which tile the window opens on. The boot sets one of these two
+       * classes on <body> and the log says which view is showing. */
+      const booted = await waitFor(() => (/(^|\\s)is-(mod|classic)(\\s|$)/.test(viewClass()) ? viewClass() : ""));
+      say("view", booted || viewClass());
+      say("log_mod_note", logText().indexOf("the mod view is showing") !== -1);
+      say("log_classic_note", logText().indexOf("the classic view is showing") !== -1);
+      /* The HUD switch is the other witness that the window is on a tile: the
+       * button for the view on screen is the pressed one. */
+      const pressed = Array.from(doc().querySelectorAll("#mode-switch [data-view]"))
+        .filter((el) => el.getAttribute("aria-pressed") === "true")
+        .map((el) => el.getAttribute("data-view"));
+      say("hud_pressed", pressed.join(","));
+      say("error", "");
+      if (!wantsMod) { finish(); return; }
+      if (!/(^|\\s)is-mod(\\s|$)/.test(booted || "")) { finish(); return; }
+      /* D1: the package the URL named opened itself: a title, rows, a log line. */
+      const headline = await waitFor(() => textOf(".card-mod .mod-headline").trim());
+      say("headline", headline || "");
+      say("status", textOf(".card-mod [data-role=card-status]"));
+      say("label", textOf(".card-mod [data-role=card-label]"));
+      const dirInput = doc().querySelector(".card-mod .mod-dir");
+      say("dir", dirInput === null ? "" : dirInput.value);
+      say("rows", doc().querySelectorAll(".card-mod .mod-row").length);
+      say("log_opened", logText().indexOf("opened ") !== -1);
+      /* D2: each heading is a target and opens the file it heads. */
+      const titles = Array.from(doc().querySelectorAll(".card-mod .mod-section-title"));
+      say("titles", titles.length);
+      say("title_roles", titles.length > 0 && titles.every((el) => el.getAttribute("role") === "button"));
+      const before = labels();
+      if (titles.length > 0) { titles[0].click(); }
+      const manifest = await waitFor(() => labels().find((one) => one.indexOf("mod.json") !== -1 && before.indexOf(one) === -1));
+      say("manifest_card", manifest || "");
+      if (titles.length > 1) { titles[1].click(); }
+      const defineCard = await waitFor(() => labels().find((one) => before.indexOf(one) === -1
+        && one.indexOf("mod.json") === -1 && /\\.json$/.test(one)));
+      say("define_card", defineCard || "");
+      if (titles.length > 2) { titles[2].click(); }
+      const yarnCard = await waitFor(() => labels().find((one) => before.indexOf(one) === -1 && /\\.yarn$/.test(one)));
+      say("yarn_card", yarnCard || "");
+      /* D3, first half: a real save from this page must not be mistaken for a
+       * second writer.  A note dirties the board synchronously, so the manual
+       * `save` below is the save whose echo races its own reply. */
+      runLine("note e2e echo probe");
+      runLine("save");
+      const saved = await waitFor(() => logText().indexOf("board saved (rev") !== -1);
+      say("saved", Boolean(saved));
+      await sleep(400);
+      say("echo_warn", logText().indexOf("you have unsaved changes") !== -1);
+      /* D3, second half: a write from outside the page still warns while the
+       * page holds unsaved layout.  The note dirties the board; the external
+       * save then moves the disk revision under it. */
+      runLine("note e2e external writer");
+      await sleep(120);
+      let external = false;
+      for (let attempt = 0; attempt < 3 && !external; attempt += 1) {
+        const loaded = await rpc("view.load", { path: ".infantgod/board.json" });
+        say("loaded_revision", loaded.revision);
+        /* Revisions are content hashes (core/src/blob.c), so writing the same
+         * document back would keep the revision and the page would rightly call
+         * that its own echo.  A real external writer changes the board: this one
+         * adds a note card. */
+        const document_ = loaded.document;
+        if (!Array.isArray(document_.cards)) { document_.cards = []; }
+        document_.cards.push({
+          id: "external-writer",
+          kind: "note",
+          x: 24,
+          y: 24,
+          w: 220,
+          h: 120,
+          z: 1,
+          text: "written by the smoke test",
+        });
+        try {
+          await rpc("view.save", {
+            path: ".infantgod/board.json",
+            document: document_,
+            base_revision: loaded.revision,
+          });
+          external = true;
+        } catch (err) {
+          say("external_error", (err && err.message) || String(err));
+          await sleep(150);
+        }
+      }
+      say("external_save", external);
+      const warned = await waitFor(() => logText().indexOf("you have unsaved changes") !== -1);
+      say("external_warn", Boolean(warned));
+      say("log_after_ext", logText().slice(-400));
+      /* D4 plus the placeholder: `Mods/MyMod` is not what a relative name means
+       * here, so it has to fail in the status line and the log; `NewMod` is. */
+      const input = doc().querySelector(".card-mod .mod-dir");
+      input.value = "Mods/MyMod";
+      clickMod("open");
+      const failed = await waitFor(() => textOf(".card-mod [data-role=card-status]").indexOf("open failed") !== -1);
+      say("bad_status", failed ? textOf(".card-mod [data-role=card-status]") : "");
+      say("bad_log", logText().indexOf("cannot open Mods/MyMod:") !== -1);
+      input.value = "NewMod";
+      clickMod("open");
+      const relative = await waitFor(() => {
+        const status = textOf(".card-mod [data-role=card-status]");
+        return status.indexOf("opened ") !== -1 && status.indexOf("NewMod") !== -1 ? status : "";
+      });
+      say("relative_status", relative || "");
+      say("relative_label", textOf(".card-mod [data-role=card-label]"));
+    } catch (err) {
+      say("error", (err && err.message) || String(err));
+    }
+    finish();
+  })();
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _wrapper_finished(text: str) -> bool:
+    """True when the wrapper page put its ``done=1`` line in the dump."""
+    match = MOD_RESULT_RE.search(text)
+    return match is not None and "done=1" in html.unescape(match.group(1))
+
+
+def _wrapper_facts(dom: str) -> dict:
+    """Parse the ``name=value`` lines the wrapper wrote, as a dict of strings."""
+    match = MOD_RESULT_RE.search(dom)
+    if match is None:
+        return {}
+    facts = {}
+    for line in html.unescape(match.group(1)).splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name and name.replace("_", "").isalnum():
+            facts[name] = value
+    return facts
+
+
+def rpc_call(host: Host, method: str, params: dict, timeout: float = 20.0) -> dict:
+    """One JSON-RPC call against *host*; raise :class:`DriverError` on any failure."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
+    request = urllib.request.Request(
+        host.url + "rpc",
+        data=body,
+        method="POST",
+        headers={"content-type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            reply = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise DriverError(f"POST {host.url}rpc ({method}) failed: {exc}") from exc
+    if reply.get("error"):
+        error = reply["error"] or {}
+        raise DriverError(f"{method} answered an error: {error.get('message') or error!r}")
+    return reply.get("result") or {}
+
+
+def _sandbox_workspace(sandbox: Path) -> None:
+    """Give the round trip its own board, with the defective card on it.
+
+    The reported defect is exactly ``mod(dir: "")``: the scaffold created the
+    package and the page never learned where.  The board starts with such a
+    card so ``?mod=`` has something to repair rather than something to add.
+    """
+    board = json.loads(STARTER_BOARD.read_text(encoding="utf-8"))
+    board.setdefault("cards", []).append(
+        {"id": "c-mod", "kind": "mod", "x": 1080, "y": 40, "w": 380, "h": 460, "z": 4, "dir": ""}
+    )
+    target = sandbox / ".infantgod" / "board.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(board, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _drive_wrapper(edge, args, profile: Path, url: str, label: str) -> dict:
+    """Dump one wrapper page and return the facts it reported."""
+    flags = tuple(item for item in EDGE_FLAGS if not item.startswith("--virtual-time-budget")) + (
+        f"--virtual-time-budget={MOD_BUDGET_MS}",
+    )
+    dom, attempts, note = grab_dom(
+        edge, url, profile, args.timeout, budget=min(args.timeout, 90.0),
+        flags=flags, painted=_wrapper_finished,
+    )
+    show(f"e2e dom ({label})", f"{len(dom)} chars from {attempts} browser launch(es)")
+    if note:
+        show(f"e2e note ({label})", note)
+    return _wrapper_facts(dom)
+
+
+def newmod_round_trip(edge, args) -> dict:
+    """Scaffold a package in a sandbox, then drive the page the way the menu does.
+
+    Returns ``{"cold": facts, "trip": facts, "mod_root": str}``.  Raises
+    :class:`DriverError` when the sandbox itself cannot be brought up; a page
+    that merely reports the wrong facts is for the checks below to judge.
+    """
+    sandbox = Path(tempfile.mkdtemp(prefix="infantgod-smoke-modws-"))
+    profile = Path(tempfile.mkdtemp(prefix="infantgod-smoke-e2e-"))
+    host = None
+    written = False
+    try:
+        _sandbox_workspace(sandbox)
+        MOD_WRAPPER.write_text(MOD_PAGE, encoding="utf-8")
+        written = True
+        port = free_port()
+        host = Host(
+            port,
+            [
+                "node", str(SHELL_MAIN),
+                "serve",
+                "--workspace", str(sandbox),
+                "--mods-root", str(sandbox),
+                "--port", str(port),
+                "--no-open",
+            ],
+        )
+        host.start()
+        show("e2e host", f"{host.url} (workspace {sandbox})")
+        host.wait_ready(args.timeout)
+        status = host.probe(timeout=min(10.0, args.timeout))
+        if status != 200:
+            raise DriverError(f"GET / on the round-trip host answered {status}, expected 200")
+        created = rpc_call(host, "mod.scaffold", {"dir": str(sandbox), "modName": "NewMod", "template": "full"})
+        mod_root = created.get("modRoot")
+        if not isinstance(mod_root, str) or mod_root == "":
+            raise DriverError(f"mod.scaffold created no modRoot (answer keys: {sorted(created)})")
+        files = created.get("created") or []
+        show("e2e package", f"{mod_root} ({len(files)} file(s))")
+
+        cold = _drive_wrapper(edge, args, profile, f"{host.url}{MOD_WRAPPER_NAME}?app=%2F", "cold start")
+        # The package root is encoded once here and decoded once by the wrapper,
+        # so the address it frames carries an encoded `?mod=` -- a raw Windows
+        # path in a URL is not something the browser promises to keep.
+        app = "/?mod=" + urllib.parse.quote(mod_root, safe="")
+        trip = _drive_wrapper(
+            edge, args, profile,
+            f"{host.url}{MOD_WRAPPER_NAME}?app={urllib.parse.quote(app, safe='')}",
+            "?mod= round trip",
+        )
+        return {"cold": cold, "trip": trip, "mod_root": mod_root}
+    finally:
+        if host is not None:
+            host.close()
+        if written:
+            MOD_WRAPPER.unlink(missing_ok=True)
+        shutil.rmtree(profile, ignore_errors=True)
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def define_newmod_checks(facts: dict) -> list:
+    """The six round-trip assertions, as ``(name, callable)`` pairs."""
+    cold = facts.get("cold") or {}
+    trip = facts.get("trip") or {}
+
+    def reported(report: dict, label: str) -> None:
+        require(
+            report,
+            f"the {label} wrapper page reported nothing: the browser dump carried no #result block, "
+            "so the page never ran its probe",
+        )
+        require(not report.get("error"), f"the {label} wrapper page failed: {report.get('error')}")
+
+    def cold_boot_is_mod():
+        reported(cold, "cold-start")
+        require(
+            "is-mod" in cold.get("view", "").split(),
+            f"a cold boot did not open on the mod view (body class is {cold.get('view')!r}); "
+            "item 8 makes the mod tile the default",
+        )
+        require(
+            cold.get("hud_pressed") == "mod",
+            f"the HUD switch does not show the mod tile as the pressed one "
+            f"(pressed: {cold.get('hud_pressed')!r})",
+        )
+        require(
+            cold.get("log_classic_note") == "false",
+            "the boot log says the classic view is showing, so the default changed in the layout only",
+        )
+        return (
+            f"body class {cold.get('view')!r}; HUD pressed {cold.get('hud_pressed')!r}; "
+            "the log never names the classic view"
+        )
+
+    def mod_url_opens_package():
+        reported(trip, "round-trip")
+        headline = trip.get("headline", "")
+        require(
+            "NewMod" in headline,
+            f"the ?mod= boot did not open the created package: the card's title is {headline!r} "
+            f"(status {trip.get('status')!r})",
+        )
+        rows = trip.get("rows", "0")
+        require(
+            rows.isdigit() and int(rows) > 0,
+            f"the opened package lists no rows ({rows!r}); the manifest, defines and Yarn files "
+            "all failed to paint",
+        )
+        require(trip.get("log_opened") == "true", "the log never said which package it opened")
+        require(
+            trip.get("status", "").startswith("opened "),
+            f"the card's status line is {trip.get('status')!r}, not 'opened <root>'",
+        )
+        return f"title {headline!r}, {rows} row(s), status {trip.get('status')!r}"
+
+    def headings_open_files():
+        reported(trip, "round-trip")
+        require(
+            trip.get("titles") == "3" and trip.get("title_roles") == "true",
+            f"the card shows {trip.get('titles')!r} section heading(s) and roles {trip.get('title_roles')!r}; "
+            "all three headings must be targets",
+        )
+        require(
+            "mod.json" in trip.get("manifest_card", ""),
+            f"clicking the mod.json heading opened no card naming mod.json "
+            f"(new card label {trip.get('manifest_card')!r})",
+        )
+        require(
+            trip.get("define_card", "").endswith(".json"),
+            f"clicking the Defines heading opened no define file (new card label {trip.get('define_card')!r})",
+        )
+        require(
+            trip.get("yarn_card", "").endswith(".yarn"),
+            f"clicking the Yarn heading opened no Yarn file (new card label {trip.get('yarn_card')!r})",
+        )
+        return (
+            f"mod.json -> {trip.get('manifest_card')!r}, Defines -> {trip.get('define_card')!r}, "
+            f"Yarn -> {trip.get('yarn_card')!r}"
+        )
+
+    def save_echo_is_not_a_warning():
+        reported(trip, "round-trip")
+        require(trip.get("saved") == "true", "no save from the page reached the disk, so its echo could not be tested")
+        require(
+            trip.get("echo_warn") == "false",
+            "a save from the page still logs 'you have unsaved changes'; the page is reading its own "
+            "echo as another writer",
+        )
+        return "the page's own save reached the disk with no 'unsaved changes' warning"
+
+    def external_writer_still_warns():
+        reported(trip, "round-trip")
+        require(
+            trip.get("external_save") == "true",
+            "the test's own external view.save never landed, so nothing external was tested",
+        )
+        require(
+            trip.get("external_warn") == "true",
+            "an external view.save while the page held unsaved layout did not warn; "
+            "the queued echo fix must not swallow other writers",
+        )
+        return "an external view.save while dirty logged 'you have unsaved changes'"
+
+    def wrong_relative_name_is_visible():
+        reported(trip, "round-trip")
+        bad_status = trip.get("bad_status", "")
+        require(
+            bad_status.startswith("open failed"),
+            f"`Mods/MyMod` left the status line at {bad_status!r}; a failed open must say so",
+        )
+        require(
+            trip.get("bad_log") == "true",
+            "a failed open never reached the log strip; the failure has to be visible in both places",
+        )
+        require(
+            trip.get("relative_status", "").startswith("opened ")
+            and "NewMod" in trip.get("relative_status", ""),
+            f"`NewMod`, the name the placeholder shows, did not open: status {trip.get('relative_status')!r}",
+        )
+        return (
+            f"`Mods/MyMod` -> status {bad_status!r} and a log line; "
+            f"`NewMod` -> {trip.get('relative_status')!r}"
+        )
+
+    return [
+        ("item 8: a cold boot opens on the mod view", cold_boot_is_mod),
+        ("D1: ?mod= opens the package the menu just created", mod_url_opens_package),
+        ("D2: the three mod headings open the files they head", headings_open_files),
+        ("D3: a page's own save is not logged as another writer", save_echo_is_not_a_warning),
+        ("D3: a real external write still warns", external_writer_still_warns),
+        ("D4: a wrong relative name fails visibly, the right one opens", wrong_relative_name_is_visible),
+    ]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="browser_smoke.py",
@@ -849,6 +1368,18 @@ def _run(host: Host, backup: BoardBackup, edge, args, style: Style) -> int:
 
         harness = Harness(dom, style, sys.stdout)
         for name, check in define_checks(facts, BOARD_PATH, dom):
+            harness.run(name, check)
+
+        # The board dump cannot see a click, a keystroke or an iframe, so the
+        # round trip drives its own page in a sandbox workspace and reports what
+        # it saw; the checks below only judge that report.
+        print(style.dim("-" * 68))
+        show("e2e", "new-mod round trip, in a throwaway workspace")
+        try:
+            mod_facts = newmod_round_trip(edge, args)
+        except DriverError as exc:
+            raise DriverError(f"the new-mod round trip could not run: {exc}") from exc
+        for name, check in define_newmod_checks(mod_facts):
             harness.run(name, check)
         passed = sum(1 for item in harness.results if item["ok"])
         failed = sum(1 for item in harness.results if not item["ok"])
@@ -934,7 +1465,7 @@ def main(argv=None) -> int:
     except DriverError as exc:
         show("SKIP", f"no browser available: {exc}")
         show("how to fix", "pass --edge PATH, or install Microsoft Edge")
-        print("summary: 0 passed, 0 failed, 5 skipped (no browser)")
+        print(f"summary: 0 passed, 0 failed, {5 + NEWMOD_CHECK_COUNT} skipped (no browser)")
         return 0
 
     show("InfantGod Studio browser smoke", str(REPO_ROOT))

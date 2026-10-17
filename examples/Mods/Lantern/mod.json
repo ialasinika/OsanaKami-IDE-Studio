@@ -1,0 +1,8 @@
+{
+  "name": "Lantern",
+  "version": "0.2.0",
+  "gameVersion": "1.0",
+  "loadOrder": 5,
+  "author": "InfantGodIDE examples",
+  "description": "The worked example mod written for this repository: two yarn nodes and five spoken lines carrying the whole tag surface, a base translation table plus an English one, a character wired to portraits and a spine stub, a character state, a pixel animation with bone and physics tracks, a song and a voice-over definition over two small PCM WAVs, four sprites (one of them 8-bit RGB) and four attachments (one of them deliberately pointing at a sprite that is not here). Nothing in this package is copied from the game's own mods."
+}

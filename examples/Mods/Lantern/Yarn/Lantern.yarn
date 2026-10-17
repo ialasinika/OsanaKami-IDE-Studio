@@ -1,0 +1,20 @@
+title: Lantern_Awake
+subtitle: Lantern_Awake_day
+when: always
+tags: #example #lantern #day
+---
+Lantern: 灯亮着。 #state:Calm #vo:Vo_Lantern #line:1a2b3c4
+Warden: 我进来看看。 #line:2b3c4d5
+<<AdvanceTime 1>>
+Warden: 我把它调暗了。 #Modify:$lantern_lit=false #Topic:Lantern_Awake #line:6e7f8a9
+<<jump Lantern_Goodnight>>
+===
+
+title: Lantern_Goodnight
+subtitle: Lantern_Goodnight_night
+when: always
+tags: #example #lantern #night
+---
+Lantern: 房间应了一声。 #Check:$lantern_lit #line:5d6e7f8
+Lantern: 晚安。 #line:9c0d1e2
+===

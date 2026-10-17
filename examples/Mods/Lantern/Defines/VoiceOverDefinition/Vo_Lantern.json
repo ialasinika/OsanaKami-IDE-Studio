@@ -1,0 +1,13 @@
+{
+  "techName": "Vo_Lantern",
+  "mainAudioEvents": [
+    "Audio_Lantern_Hum"
+  ],
+  "programmerEventPath": "Audio/Lantern_Voice.wav",
+  "voiceOverFolder": "Audio",
+  "voiceOverFiles": [
+    "Lantern_Voice.wav"
+  ],
+  "voiceFrequencyUnits": 0.25,
+  "lipsFrequencyUnits": 0.25
+}

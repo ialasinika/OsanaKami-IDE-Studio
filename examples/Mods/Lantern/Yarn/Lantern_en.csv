@@ -1,0 +1,5 @@
+language,id,text,file,node,lineNumber,lock,comment
+en,line:1a2b3c4,Lantern: The lamp is lit.,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,6,f29c3d78,Line metadata: state:Calm
+en,line:2b3c4d5,Warden: Let me look inside.,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,7,25df767e,
+en,line:6e7f8a9,Warden: I turned it down.,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,9,fba86739,
+en,line:5d6e7f8,Lantern: The room answered.,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Goodnight,18,00000000,

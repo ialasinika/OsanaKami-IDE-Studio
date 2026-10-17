@@ -132,7 +132,14 @@ import {
  * element stub further down, so a typed command can be driven through the real
  * `mode` switch rather than through a copy of its rules.
  */
-import { createApp, saveOutcomeMessage, wireChoiceStrip } from "./main.mjs";
+import {
+  BOOT_VIEW,
+  classifyViewEvent,
+  createApp,
+  requestedModFromSearch,
+  saveOutcomeMessage,
+  wireChoiceStrip,
+} from "./main.mjs";
 
 import { createHistory, describeChange } from "./history.mjs";
 import {
@@ -2676,11 +2683,14 @@ test("views: every view is a tile, and nothing else is one", () => {
   assert.equal(tiledView("sideways"), false, "an unknown view is not a tile, so it cannot be drawn");
 });
 
-test("views: the window opens on a tile, and the switch offers every view there is", () => {
-  assert.equal(DEFAULT_VIEW, "classic", "a window opens where a mod author works, not on a canvas");
-  assert.equal(VIEWS.indexOf(DEFAULT_VIEW) !== -1, true, "the default has to be a name `mode` accepts");
+test("views: the window opens on the mod view, and the switch offers every view there is", () => {
+  assert.equal(BOOT_VIEW, "mod", "a window opens where a mod author works: the mod view");
+  assert.equal(VIEWS.indexOf(BOOT_VIEW) !== -1, true, "the boot view has to be a name `mode` accepts");
+  assert.ok(VIEWS.length > 1, "there is more than one view, so booting in one leaves a way out");
+  assert.equal(DEFAULT_VIEW, "classic", "the *fallback* word stays classic: only the window's own choice moved");
+  assert.equal(VIEWS.indexOf(DEFAULT_VIEW) !== -1, true, "the fallback still has to be a name `mode` accepts");
   assert.deepEqual(SWITCH_VIEWS, VIEWS, "every view is on the switch, and no switch offers a name `mode` refuses");
-  assert.equal(SWITCH_VIEWS.indexOf(DEFAULT_VIEW) !== -1, true, "the view a window opens in must be one you can leave");
+  assert.equal(SWITCH_VIEWS.indexOf(BOOT_VIEW) !== -1, true, "the view a window opens in must be one you can leave");
   assert.equal(VIEWS.indexOf("board"), -1, "the board is a document and a file, not a way to look at them");
   assert.equal(SWITCH_VIEWS.indexOf("board"), -1);
 });
@@ -2754,11 +2764,11 @@ await testAsync("views: `mode board` is refused by the real command line, and mo
   const dom = stubAppDom();
   try {
     const app = createApp();
-    assert.deepEqual(dom.viewClasses(), ["is-classic"], "a window opens in the default view");
-    await app.runCommand("mode mod");
-    assert.deepEqual(dom.viewClasses(), ["is-mod"], "`mode mod` moves the view, so the next check says something");
+    assert.deepEqual(dom.viewClasses(), ["is-mod"], "a window opens in the mod view");
+    await app.runCommand("mode classic");
+    assert.deepEqual(dom.viewClasses(), ["is-classic"], "`mode classic` moves the view, so the next check says something");
     await app.runCommand("mode board");
-    assert.deepEqual(dom.viewClasses(), ["is-mod"], "`mode board` cannot move a view that no longer exists");
+    assert.deepEqual(dom.viewClasses(), ["is-classic"], "`mode board` cannot move a view that no longer exists");
     const lines = dom.logLines();
     const last = lines[lines.length - 1];
     assert.ok(last !== undefined, "the command answered");
@@ -2770,6 +2780,54 @@ await testAsync("views: `mode board` is refused by the real command line, and mo
   } finally {
     dom.restore();
   }
+});
+
+/*
+ * D3: the user saw "the board on disk is now rev N; you have unsaved changes"
+ * after their own autosave.  The kernel notifies *before* it answers the write,
+ * so the event arrives while `saving` is still true and `boardRevision` still
+ * names the document before it; judging on arrival made every save's own echo
+ * look like another writer.  The rule below is the whole decision, and it is
+ * asked only after the reply has updated the two values it reads.
+ */
+test("D3: a view.changed revision is our own echo, a warning, or news to follow", () => {
+  assert.equal(classifyViewEvent({ revision: 7, boardRevision: 7, dirty: false }), "echo", "our own write: quiet");
+  assert.equal(classifyViewEvent({ revision: 7, boardRevision: 7, dirty: true }), "echo", "even with more edits pending");
+  assert.equal(
+    classifyViewEvent({ revision: 8, boardRevision: 7, dirty: true }),
+    "warn",
+    "another writer arriving while we have unsaved edits: warn, never overwrite",
+  );
+  assert.equal(
+    classifyViewEvent({ revision: 8, boardRevision: 7, dirty: false }),
+    "adopt",
+    "another writer with nothing of ours to lose: follow the disk",
+  );
+  assert.equal(
+    classifyViewEvent({ revision: 8, boardRevision: null, dirty: false }),
+    "adopt",
+    "an event before any revision is known has nothing to be an echo of",
+  );
+});
+
+/*
+ * D1: File -> "新建模组" used to reload the window and leave the scaffolded
+ * package invisible, because the board on disk still held `mod(dir: "")`.  The
+ * reload now carries the directory in the URL; this is the reader for it.
+ */
+test("D1: a ?mod= boot reads the package directory out of the query string", () => {
+  assert.equal(
+    requestedModFromSearch("?mod=C%3A%5Cwork%5CNewMod"),
+    "C:\\work\\NewMod",
+    "the path is decoded, backslashes included",
+  );
+  assert.equal(requestedModFromSearch("?mod=/tmp/NewMod"), "/tmp/NewMod", "an absolute POSIX path survives");
+  assert.equal(requestedModFromSearch("?a=1&mod=Mods%2FNewMod"), "Mods/NewMod", "not just the first parameter");
+  assert.equal(requestedModFromSearch("?mod="), null, "an empty value names no package");
+  assert.equal(requestedModFromSearch("?mod=%20"), null, "nor does whitespace");
+  assert.equal(requestedModFromSearch(""), null, "no query string: nothing to open");
+  assert.equal(requestedModFromSearch("?mod"), null, "a flag with no value: nothing to open");
+  assert.equal(requestedModFromSearch(undefined), null, "a non-string search is not a crash");
 });
 
 /*

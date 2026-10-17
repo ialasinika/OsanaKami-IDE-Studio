@@ -1,0 +1,13 @@
+{
+  "techName": "Warden",
+  "nameKey": "Warden_name",
+  "descKey": "Warden_desc",
+  "portrait": "Sprites/Warden.png",
+  "emailPortrait": "Sprites/Warden.png",
+  "spineAssetPath": "Spine/Warden_Rig.json",
+  "initialCharacterStates": [
+    "Calm"
+  ],
+  "voiceFrequencyUnits": 0.25,
+  "lipsFrequencyUnits": 0.25
+}

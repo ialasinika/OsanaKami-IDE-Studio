@@ -6,10 +6,11 @@
  * 设计约束：
  *   1. 同时运行于 Node（主进程 / 测试）与 Electron 渲染进程（<script> 或打包）。
  *      —— 因此内部**不读取任何文件**，不使用 fs / path / require，所有数据由
- *      `buildIndex(kb)` 的参数传入。
- *   2. 导出 API（严格保持签名）：
+ *      `buildIndex(kb, options)` 的参数传入（`options.emotionTags` 可选：给表情标签
+ *      一个显式来源，例如调用方从活动游戏目录扫到的状态名）。
+ *   2. 导出 API（原签名不变，末尾新增一个只读查询）：
  *        buildIndex, search, getEntry, docFor, listDefines, listTypes,
- *        suggest, signatureOf, fuzzyScore
+ *        suggest, signatureOf, fuzzyScore, emotionTagsOf
  *   3. 所有名字索引统一小写，展示时保留原始大小写。
  *
  * Index 结构（普通对象，可缓存 / 可结构化克隆）：
@@ -18,7 +19,9 @@
  *     types:      [{ type, defineCount, propertyCount, required }],
  *     defines:    { <TypeName>: techName[] },
  *     characters: [...], locales: [...],
- *     meta:       { commands, functions, variables, nodes, types, defines, ... },
+ *     emotionTags: [...],  // 表情标签；来源见 meta.emotionSource
+ *     meta:       { commands, functions, variables, nodes, types, defines,
+ *                   emotionTags, emotionSource, ... },
  *     // 内部辅助（下划线前缀，渲染进程可忽略）
  *     _maps, _entries, _typeInfo, _builtinUsage, _undocumented
  *   }
@@ -47,11 +50,13 @@ const YARN_BUILTINS = [
 /** `#` 之后的常用元数据键。 */
 const TAG_KEYS = ['line', 'state', 'vo'];
 
-/** 常用对话表情标签。 */
-const EMOTION_TAGS = [
-  'Happy', 'Sad', 'Idle', 'Shy', 'Funny', 'Bored', 'Angry', 'Cold', 'Fear',
-  'Hate', 'Naughty', 'Complex', 'Horror', 'Suprised', 'Confused',
-];
+/**
+ * 表情 / 情绪标签的**中性兜底**：这几个词是我们自己挑的，不是《幼神》自己的状态名。
+ * 游戏的状态名优先从知识库 `baseline.CharacterState`（或调用方通过
+ * `buildIndex(kb, { emotionTags })` 传进来的列表）取；只有那两路都没有时才用这一套，
+ * 并且 index.meta.emotionSource 会如实写明用的是哪一路，调用方与界面据此可分辨。
+ */
+const NEUTRAL_EMOTION_TAGS = ['Neutral', 'Calm', 'Bright', 'Gloomy', 'Tense', 'Tender'];
 
 /** 内建 / 运行时指令的中文速览（悬停与补全说明用）。 */
 const BUILTIN_DOCS = {
@@ -253,9 +258,53 @@ function detailFor(kind, raw) {
   }
 }
 
+/* ============================== 表情标签来源 ============================== */
+
+/**
+ * 表情标签从哪来（优先级从高到低）：
+ *   1. 调用方显式给的 `options.emotionTags`（例如从活动游戏目录扫出来的状态名）；
+ *   2. 知识库里的游戏状态名 `baseline.CharacterState`；
+ *   3. 知识库自带的 `emotionTags` 字段；
+ *   4. 我们的中性兜底 NEUTRAL_EMOTION_TAGS（并如实标注 source: 'neutral'）。
+ * 返回 { tags, source }，source ∈ 'caller' | 'knowledge-base' | 'neutral'。
+ */
+function resolveEmotionTags(kb, options) {
+  const src = kb && typeof kb === 'object' ? kb : {};
+  const opts = options && typeof options === 'object' ? options : {};
+  const clean = (list) => {
+    const out = [];
+    const seen = new Set();
+    for (const v of toArray(list)) {
+      const name = String(v == null ? '' : v).trim();
+      if (name === '' || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out;
+  };
+  const fromCaller = clean(opts.emotionTags);
+  if (fromCaller.length) return { tags: fromCaller, source: 'caller' };
+  const baseline = src.baseline && typeof src.baseline === 'object' ? src.baseline : {};
+  const fromGame = clean(baseline.CharacterState);
+  if (fromGame.length) return { tags: fromGame, source: 'knowledge-base' };
+  const fromKb = clean(src.emotionTags);
+  if (fromKb.length) return { tags: fromKb, source: 'knowledge-base' };
+  return { tags: NEUTRAL_EMOTION_TAGS.slice(), source: 'neutral' };
+}
+
+/** 只读查询：某个 index 用了哪套表情标签、来源是什么（界面可据此标注）。 */
+function emotionTagsOf(index) {
+  const idx = index && typeof index === 'object' ? index : {};
+  const meta = idx.meta && typeof idx.meta === 'object' ? idx.meta : {};
+  return {
+    tags: toArray(idx.emotionTags).slice(),
+    source: meta.emotionSource || 'neutral',
+  };
+}
+
 /* ============================== buildIndex ============================== */
 
-function buildIndex(kb) {
+function buildIndex(kb, options) {
   const src = kb && typeof kb === 'object' ? kb : {};
   const commands = toArray(src.commands).slice();
   const functions = toArray(src.functions).slice();
@@ -268,6 +317,7 @@ function buildIndex(kb) {
   const locales = toArray(localization.locales).slice();
   const undocumented = toArray(src.undocumentedCommands).slice();
   const undeclared = toArray(src.undeclaredVariables).slice();
+  const emotion = resolveEmotionTags(src, options);
 
   /* ---- types（baseline ∪ schemas，按 type 名称升序） ---- */
   const typeNames = [];
@@ -425,6 +475,8 @@ function buildIndex(kb) {
     yarnFiles: stats.yarnFiles,
     lineIds: stats.lineIds,
     stats: stats,
+    emotionTags: emotion.tags.length,
+    emotionSource: emotion.source,
   };
 
   return {
@@ -436,6 +488,7 @@ function buildIndex(kb) {
     defines: defines,
     characters: characters,
     locales: locales,
+    emotionTags: emotion.tags,
     meta: meta,
     _maps: maps,
     _entries: entries,
@@ -910,8 +963,12 @@ function candidatesFor(index, ctx, typeName) {
       out.push(makeItem(c.name, 'character', '角色 ' + c.name + (c.colour ? ' ' + c.colour : ''), c.name,
         { usage: 0, docKind: 'character', docName: c.name }));
     }
-    for (const e of EMOTION_TAGS) {
-      out.push(makeItem(e, 'tag', '表情 / 情绪标签 ' + e, e, { usage: 0, doc: '常用对话表情标签。' }));
+    for (const e of toArray(index.emotionTags)) {
+      const source = index.meta && index.meta.emotionSource;
+      const doc = source === 'neutral'
+        ? '表情 / 情绪标签 ' + e + '（IDE 自带的中性兜底，不是游戏状态名）'
+        : '表情 / 情绪标签 ' + e + '（来自' + (source === 'caller' ? '调用方给定的列表' : '知识库') + '）';
+      out.push(makeItem(e, 'tag', doc, e, { usage: 0, doc: doc }));
     }
     return out;
   }
@@ -1056,6 +1113,7 @@ const InfantGodSearch = {
   suggest: suggest,
   signatureOf: signatureOf,
   fuzzyScore: fuzzyScore,
+  emotionTagsOf: emotionTagsOf,
 };
 
 // Node / CommonJS

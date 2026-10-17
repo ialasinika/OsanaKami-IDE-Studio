@@ -77,7 +77,7 @@ synchronous except `mod.scaffold`.
 | `mod.templates` | — | `[{id, title, titleEn, description, descriptionEn, files[]}]` |
 | `mod.characters` | — | `[{techName, nameKey, colour, …}]` |
 | `mod.open` | `dir` | `{root, manifest, defines[], yarnFiles[], csvFiles[], sprites[], summary, diagnostics}` |
-| `mod.validate` | `root` | `{ok, manifest, summary, diagnostics[], types}` |
+| `mod.validate` | `root` | `{ok, manifest, summary, diagnostics[], types, knowledge}` |
 | `mod.validateDefine` | `type`, `text`, `relPath?` | `{diagnostics[]}` |
 | `mod.diagnose` | `text`, `fileName?`, `root?` | `{available, diagnostics[], nodes[]}` |
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
@@ -102,11 +102,52 @@ is no `file` member — the pointer suffix is part of `path`.
 the reply's `modRoot` is what you then pass to every other verb. This follows
 `scaffold.js`'s own contract. Every other verb takes the package root directly.
 
+### A machine with no game is a state, not a guess
+
+The knowledge base is the baseline the checker compares against (type names, the
+game's commands and functions, its character states). It is optional: the mod layer
+finds one from the shipped `shell/mods/knowledge.json` or from a game installation,
+and it says which it got.
+
+- Discovery order: an explicit `--mods-root`/setting, then `INFANTGOD_MODS_DIR` or
+  `INFANTGOD_GAME_DIR`, then relative guesses (the checkout's parent,
+  `ModsFull/Mods`, a Steam library, the home directory). Nothing is hard-coded to a
+  machine, and `git grep -E "[A-Za-z]:[\\/]Users[\\/]" -- shell` is part of the mod
+  suite for that reason.
+- When there is none, the answer is named, not silent: `knowledge()` reports
+  `{present: false}`, `mod.validate`'s reply carries `knowledge: "missing"` and
+  `ok: false` with one `E000` error, and scaffolding falls back to the mod's own
+  names instead of inventing the game's built-in characters. Before this, an absent
+  knowledge base was `{}` — every check passed because no check ran — and a
+  scaffolder that never touched a game still named seven of its characters.
+- `mod.suggest`'s tag suggestions say where they came from: `knowledge-base` when
+  the baseline answered, `neutral` (a short generic list) when it did not. Which
+  source answered is part of the reply.
+- The shipped knowledge base is the richer copy, deliberately: it knows 136 commands,
+  63 functions and 678 variables where `tools/gen_knowledge.mjs` can regenerate 87,
+  38 and 810. Regenerating it is a checkable operation rather than a silent one —
+  `node tools/gen_knowledge.mjs --check shell/mods/knowledge.json` exits 1 and
+  `--diff` lists, per section, the names only one side knows. Loading the knowledge
+  base from the user's own install at runtime, so the package need not carry one,
+  is the next step; see `docs/EDITOR_GAPS.md` G26.
+
 ## Containment
 
 `--mods-root DIR` bounds every `mod.*` call (default: `--workspace`). A path
-that resolves outside it is refused with `EOUTSIDE` and the message
-`路径越界，已拒绝: <arg>`, as a normal JSON-RPC error frame.
+that resolves outside it is refused with the message `路径越界，已拒绝: <arg>`,
+as a normal JSON-RPC error frame. What a client sees is `SHELL_ERROR`
+(`-32603`), *not* `EOUTSIDE`: the mod layer tags the error `EOUTSIDE`
+(`shell/mods/index.js:243`), but the shell's dispatcher wraps any error that is
+not an `RpcError` as `SHELL_ERROR` (`shell/main.mjs:596-598`), so the tag never
+reaches the wire. Three measured refusals, each of the shape
+`{"code":-32603,"name":"SHELL_ERROR","message":…}`:
+
+- a directory inside the workspace but outside the mods root —
+  `路径越界，已拒绝: <workspace>/Thing`;
+- a directory outside both — `路径越界，已拒绝: C:/Windows/Temp`;
+- a relative path that escapes the root — `路径越界，已拒绝: ../outside`
+  (relative paths resolve against the mods root, not the process's working
+  directory).
 
 This is a *second* boundary, not a replacement for the kernel's. The kernel
 refuses any path outside `--workspace`; `--mods-root` can only narrow that.
@@ -115,6 +156,53 @@ The verbs are async-safe: `mod.scaffold` may reject, and `dispatch` awaits it,
 so a refusal becomes an error frame. Before that await existed, a refused
 scaffold killed the shell with an unhandled rejection — `shell/mods/selftest.mjs`
 now pins that behaviour.
+
+## Creating a mod from the File menu
+
+`mod.scaffold` has one caller in the app that is not a command line: the
+Electron wrapper's **File → 新建模组…** (`electron/newmod.js`, wired into the
+menu by `electron/main.js`). It is the only `mod.*` verb a user reaches without
+typing anything, and it is what makes a mod creatable before the game's own
+folder is anywhere in sight.
+
+- The submenu carries one item per template, in `mod.templates` order, labelled
+  with `scaffold.js`'s `nameZh` — 最小可加载, 对话剧情, 定义包, 完整工程 — and
+  最小可加载 is also `Ctrl+N`. `electron/newmod.js` holds that list, and
+  `shell/mods/selftest.mjs` fails if it drifts from the engine's.
+- A native save dialog names the mod's folder. Its default is `NewMod` under
+  the folder used last time, which is remembered in Electron's settings (see
+  `electron/README.md`), so a second mod is not a repeat of the same walk.
+- What goes on the wire is exactly one frame — `POST <endpoint>/rpc` with
+  `mod.scaffold {dir, modName, template}` — aimed at the endpoint the window is
+  already serving. No method is added for the menu and no second process is
+  started: `electron/newmod.js` imports `node:path` and nothing else, because a
+  packaged app keeps `shell/` outside `app.asar`.
+- `mod.scaffold`'s `dir` is the *parent* (the asymmetry above) while the folder
+  the dialog named is the mod itself, so the folder's parent is what `dir` has
+  to be and its basename is the `modName`.
+- The name is checked before anything is sent: blank, `.`, `..`,
+  `< > : " / \ | ? *`, control characters and a trailing dot are refused with
+  the dialog still open, because Windows would otherwise create a folder named
+  something other than what the user typed. Everything the client cannot know —
+  a folder that is not empty, a `modName` the scaffold rejects, a path outside
+  the mods root — comes back as the shell's own error frame and is shown in a
+  dialog, never swallowed.
+- After a create the mod is shown in the workspace: the window is reloaded when
+  the new package already sits inside the current workspace, and when it does
+  not the menu offers the package's parent as the workspace — the project panel
+  *is* the workspace, so there is no other way to show a folder that is not in
+  it.
+
+The same frame is one command from a terminal, with no window anywhere in it:
+
+```sh
+curl -s http://127.0.0.1:<port>/rpc -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"mod.scaffold","params":{"dir":"…/Mods","modName":"Lantern","template":"minimal"}}'
+```
+
+The menu is Electron's: a browser tab opened by `serve` alone has no 新建模组
+item, and the same four templates are reachable there over the protocol as
+`mod.scaffold`.
 
 ## Data facts worth knowing
 
@@ -137,27 +225,103 @@ These are properties of the game's own shipped data, not defects in this fork:
 ## Running it
 
 ```sh
+node shell/main.mjs serve --workspace . --mods-root examples/Mods
 node shell/main.mjs serve --workspace . --mods-root "…/StreamingAssets/Mods"
 ```
 
 `--mods-root` is what makes a mod card able to see a directory the board itself
-is not rooted at. Then, on the command line at the bottom of the board:
+is not rooted at. The first line points at the worked example below, so nothing
+here needs the game installed; the second is the real mods folder. Then, on the
+command line at the bottom of the board:
 
 ```
-mod MyMod
-problems MyMod
+mod Lantern
+problems Lantern
 docs Love
 ```
+
+## The worked example we ship
+
+`examples/Mods/Lantern` is the repository's own mod: 22 files, every byte
+written here, no game asset, small enough to read in one sitting. It is the
+package `tools/input_smoke.py` drives, so the browser suite passes on a machine
+with no 幼神 install at all, and it is what `--mods-root examples/Mods` above
+opens. Since the game's own data is not part of this checkout (G26), it is also
+the only package here that exercises every file kind the mod layer can read.
+
+| file | what it is for |
+| --- | --- |
+| `mod.json` | the manifest: `name`, `version`, `gameVersion`, `loadOrder`, `author`, `description` |
+| `Lantern.yarnproject` | the project file: its one source file, the language map (`en` → `Lantern_en.csv`) and the base language |
+| `Yarn/Lantern.yarn` | two nodes with `title`/`subtitle`/`when`/`tags`, five spoken lines, one `<<AdvanceTime 1>>`, one `<<jump>>`, and the six tags discussed below |
+| `Yarn/Lantern.csv` | the base table. Like the game's own `MyMod`, the base language's table carries **no** language suffix (`NewProject.csv` there, `Lantern.csv` here) |
+| `Yarn/Lantern_en.csv` | the English table, mapped by the project file |
+| `Sprites/*.png` | four 32×32 images: `Lantern.png`, `Lantern_Glow.png` and `Warden.png` are 8-bit RGBA, `Lantern_Rgb.png` is 8-bit RGB (colour type 2). All four were drawn pixel by pixel by `build/scratch_make_sprites.py` |
+| `Defines/Character/Warden.json` | a `Character`: `portrait`/`emailPortrait` are one of those sprites, `initialCharacterStates` is `Calm`, and `spineAssetPath` names a stub rig |
+| `Defines/CharacterState/Calm.json` | a `CharacterState` that skins the body and switches on the pixel animation below |
+| `Defines/PixelAnimation/Lantern_Idle.json` | a `PixelAnimation` with a bone track, a physics track and an `audioEvent` |
+| `Defines/AudioEvent/Audio_Lantern_Hum.json` | the `AudioEvent` that the animation and the voice-over definition refer to by `TechName` |
+| `Defines/Song/Song_Lantern.json` | a `Song` whose `image` is a sprite and whose `externalAudioFile` names a wav |
+| `Defines/VoiceOverDefinition/Vo_Lantern.json` | a `VoiceOverDefinition` naming the audio event and a wav |
+| `Defines/Attachment/*.json` | three `Attachment`s; one of them names a sprite that is not in the package |
+| `Audio/*.wav` | two small 8 kHz mono 16-bit PCM files, synthesised by `build/scratch_make_audio.py`; a sample big enough to be realistic would be megabytes, so the test that needs one generates it at run time instead of committing it |
+| `Spine/Warden_Rig.json` | a stand-in named by `spineAssetPath`; nothing in the tools opens it |
+| `README.txt` | the same story for someone who has only the mod folder: a tutorial, not a data sheet |
+
+The story's tag surface is part of the example, and what the tools make of it is
+recorded rather than assumed. Its five lines carry six tags: `#line:<7 hex>` on
+every line (the id the CSV matches a row by), `#state:Calm`, `#vo:Vo_Lantern`,
+`#Check:$lantern_lit`, `#Topic:Lantern_Awake` and `#Modify:$lantern_lit=false`.
+`shell/mods/index.js` knows exactly three tag names — `line`, `state` and `vo` —
+so `#state:Calm` is judged against the game's own emotion states and earns a
+`Y104` warning (`Calm` is this package's `CharacterState`, not one of the game's
+states), while `#Check:`, `#Topic:` and `#Modify:` reach the card as unexplained
+text with no diagnostic at all. `tools/input_smoke.py` asserts both halves: every
+tag is on screen, and the three tag names the tools know are the only three they
+judge.
+
+Two flaws are left in on purpose, because an example that validates clean proves
+nothing about the diagnostics:
+
+* `Defines/Attachment/Lantern_Broken.json` names `Sprites/Missing.png`, which is
+  not in the package: `problems Lantern` shows the `D006` error, and clicking
+  that row opens the pixel card for the *sprite*, not for the JSON that declared
+  it.
+* `Yarn/Lantern_en.csv` is a row short of the story (`line:9c0d1e2` has no
+  English row) and the row it does carry for `line:5d6e7f8` has a `lock` that
+  does not match the source line: with the story card on `Yarn/Lantern.yarn` and
+  that table, one line reads `ok`, one `stale` and one `missing`, and the
+  package-level row-count check reports the gap as `M008`.
+
+`README.txt` inside the package says the same things to someone who has only the
+mod folder, and ends with how to copy the package into the game's own mods
+folder. It also names the three places where the tools are still silent: the
+audio files three of the defines point at and nothing looks for (G21),
+`spineAssetPath` (G22), and the 8-bit RGB sprite whose bytes come back as RGBA
+when the pixel card saves it (G20).
 
 ## Testing
 
 ```sh
 node shell/mods/selftest.mjs                 # 81 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
+python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
 ```
 
 The suite covers the knowledge-base counts, the game's own `MyMod` and
 `SODefines` packages, a freshly scaffolded mod validating clean, the locale
 mapping, the protocol seam with a kernel that throws if it is ever consulted,
-and the containment refusal.
+and the containment refusal. `tools/input_smoke.py` no longer touches `Mods`
+next to the repository: it drives `examples/Mods/Lantern`, generates its own
+4.5 MB translation table under `build/` (past the kernel's 4 MiB whole-file
+read, so the story card can only open it through a `file.blob*` session), and
+proves the D006 click-through on the example mod's missing sprite.
+
+Three of its 42 checks pin the example's own claims rather than the UI's: the
+8-bit RGB sprite is read as colour type 2 and written back as colour type 6
+(G20); the whole tag surface reaches the story card while the tools judge
+exactly the three tag names they know; and the package's only findings are its
+two deliberate ones, with the three audio references earning nothing at all
+(G21). Each was falsified once — a sabotaged package fails exactly the check it
+should and nothing else — before being trusted.

@@ -26,6 +26,7 @@ const { app, BrowserWindow, Menu, dialog, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const newMod = require("./newmod.js");
 
 /* ------------------------------------------------------------------ */
 /* paths                                                              */
@@ -289,6 +290,11 @@ function openDialog(options) {
   return win === null ? dialog.showOpenDialog(options) : dialog.showOpenDialog(win, options);
 }
 
+/* The save dialog is overloaded on the parent window the same way. */
+function saveDialog(options) {
+  return win === null ? dialog.showSaveDialog(options) : dialog.showSaveDialog(win, options);
+}
+
 function messageBox(options) {
   return win === null ? dialog.showMessageBox(options) : dialog.showMessageBox(win, options);
 }
@@ -363,16 +369,141 @@ async function pickModsRoot() {
 }
 
 /* ------------------------------------------------------------------ */
+/* a new mod                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ask the page to write its unsaved board before navigating it.  The page has
+ * `beforeunload` for the user's own navigations, but that does not cover a
+ * reload main.js starts: the new document is on its way before the old one can
+ * put up a dialog, and the layout from the last autosave window would be gone.
+ * `__infantgodFlushBoard` (shell/web/main.mjs) saves only when there is
+ * something unsaved and answers `{status: "clean"|"saved"|"failed"}`.
+ *
+ * A page without the hook (not the app) or a flush that fails is logged and the
+ * navigation still happens: a mod the user just created has to be shown.
+ */
+async function flushBoardBeforeNavigation() {
+  if (win === null) return;
+  let outcome;
+  try {
+    outcome = await win.webContents.executeJavaScript(
+      "typeof window.__infantgodFlushBoard === \"function\" ? window.__infantgodFlushBoard() : null",
+    );
+  } catch (err) {
+    log(`flush before navigation failed: ${(err && err.message) || err}`);
+    return;
+  }
+  if (outcome !== null && typeof outcome === "object" && outcome.status === "failed") {
+    log(`flush before navigation failed: ${outcome.detail || "the board could not be written"}`);
+  }
+}
+
+/**
+ * File -> "新建模组…": a save dialog names the folder, then the shell's own
+ * `mod.scaffold` -- over the endpoint this window is already talking to --
+ * writes the template.  Nothing here reads `shell/mods/` directly: a packaged
+ * app keeps the shell outside `app.asar`.
+ *
+ * `templateId` is one of electron/newmod.js's TEMPLATES, chosen by the menu
+ * item; the dialog only decides where, so the same code serves all four.
+ */
+async function pickNewMod(templateId) {
+  if (session === null) return;
+  const remembered = readSettings().newModDir;
+  const parent =
+    typeof remembered === "string" && remembered !== ""
+      ? remembered
+      : newMod.defaultParent(session);
+
+  try {
+    const result = await saveDialog({
+      title: "新建模组",
+      defaultPath: path.join(parent, "NewMod"),
+      buttonLabel: "创建",
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    });
+    if (result.canceled || !result.filePath) return;
+
+    const chosen = result.filePath;
+    const target = newMod.plan({ parent: path.dirname(chosen), typedName: path.basename(chosen) });
+    const created = await newMod.createMod({
+      endpoint: session.url,
+      dir: target.dir,
+      modName: target.modName,
+      template: templateId,
+    });
+    writeSettings({ ...readSettings(), newModDir: path.dirname(chosen) });
+    log(`newmod: ${created.modRoot} (${created.created.length} files, template ${templateId})`);
+
+    await messageBox({
+      type: "info",
+      title: "新建模组",
+      message: `已在 ${created.modRoot} 生成模组`,
+      detail:
+        [...created.created, ...(created.warnings || [])].map(String).join("\n") || "（没有新增文件）",
+      buttons: ["好"],
+    });
+
+    /*
+     * "展开在选择的工作区": the project panel *is* the workspace, so a mod that
+     * already sits inside it only needs the window pointed at it.  One that
+     * does not gets offered the one change that would make it visible -- the
+     * mod's parent as the workspace -- rather than a path the shell would
+     * refuse.
+     *
+     * A bare reload used to be enough here, and it left the new package
+     * invisible: the board on disk still held `mod(dir: "")`, so the window
+     * came back with "(no dir)" and three empty sections.  The reload now
+     * carries the package in the URL (`?mod=`), which is how the page knows
+     * which directory to open; unsaved layout is flushed first because a
+     * reload is decided before the old page can answer a dialog.
+     */
+    const container = path.dirname(created.modRoot);
+    if (newMod.isInside(created.modRoot, session.workspace)) {
+      await flushBoardBeforeNavigation();
+      if (win !== null) await win.loadURL(newMod.openModUrl(session, created.modRoot));
+      return;
+    }
+    const answer = await messageBox({
+      type: "question",
+      title: "新建模组",
+      message: `${created.modRoot} 不在当前工作区内（${session.workspace}）`,
+      detail: `要把 ${container} 设为工作区吗？`,
+      buttons: ["是", "否"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (answer.response === 0) await reboot({ workspace: container });
+  } catch (err) {
+    // A refused scaffold, an unwritable folder, a name Windows dislikes: all
+    // of them are the user's to see, never a silent no-op.
+    reportFailure("新建模组失败", err);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* menus                                                              */
 /* ------------------------------------------------------------------ */
 
 function buildMenu() {
+  /*
+   * The template list and the fragment come from electron/newmod.js, so the
+   * menu and its parity check (shell/mods/selftest.mjs) read one array.
+   * `minimal` gets the accelerator: it is the item someone reaches for while
+   * the workspace is still open.
+   */
+  const newModItems = newMod.menuTemplate({ onPick: pickNewMod });
+  const minimal = newMod.TEMPLATES.findIndex((template) => template.id === "minimal");
+  if (minimal !== -1) newModItems[0].submenu[minimal].accelerator = "CmdOrCtrl+N";
+
   const template = [
     {
       label: "File",
       submenu: [
         { label: "Choose Workspace…", accelerator: "CmdOrCtrl+O", click: () => pickWorkspace().catch((e) => reportFailure("切换工作区失败", e)) },
         { label: "Choose Mods Folder…", accelerator: "CmdOrCtrl+M", click: () => pickModsRoot().catch((e) => reportFailure("切换 Mods 目录失败", e)) },
+        ...newModItems,
         { type: "separator" },
         {
           label: "Open Workspace Folder",

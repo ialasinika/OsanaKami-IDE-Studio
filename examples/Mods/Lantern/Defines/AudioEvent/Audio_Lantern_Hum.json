@@ -1,0 +1,12 @@
+{
+  "EditorNote": "The hum the lantern makes, written for this example.",
+  "id": "lantern-hum",
+  "techName": "Audio_Lantern_Hum",
+  "TechName": "Audio_Lantern_Hum",
+  "eventReference": {
+    "Path": "Audio/Lantern_Hum.wav"
+  },
+  "EventReference": {
+    "Path": "Audio/Lantern_Hum.wav"
+  }
+}

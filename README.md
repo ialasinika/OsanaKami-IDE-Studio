@@ -31,6 +31,12 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, search and completion. Pure Node, zero npm.
+- **`File → New Mod…`** — the desktop shell asks the game layer for a scaffold
+  plan and writes a loadable package into a directory you pick (five templates,
+  from the minimal loadable package to the full one), says what it is about to
+  create first, refuses to overwrite anything, and opens the result as cards.
+  The same layer, reached through the protocol: see
+  [electron/README.md](electron/README.md) and `docs/MODS.md`.
 
 See [docs/MODS.md](docs/MODS.md) for the verb table, the three card kinds and
 the containment rules.
@@ -103,12 +109,13 @@ The board file is the only document, and the shell draws it two ways — `mode
 classic` puts the focused editor into a code area, the open files into a tab
 strip above it and a `project`/`files` card, when the document has one, into a
 sidebar; `mode mod` arranges that same tile around a mod package — and a window
-opens on the classic one. Both are *projections*: switching to either creates no
-card, moves none, and nothing about them is written to `board.json`. A fork that
-deletes a view loses a way of looking, not a piece of project state; the document
-is still where the project is. The geometry (`x`/`y`/`w`/`h`, `viewport`) stays
-in the file for any view that wants to draw a plane, but no shipped view reads
-it, and `mode board` is no longer a mode.
+opens on the mod one, because that is where a mod author works (`mode classic`
+moves it to the other tile). Both are *projections*: switching to either creates
+no card, moves none, and nothing about them is written to `board.json`. A fork
+that deletes a view loses a way of looking, not a piece of project state; the
+document is still where the project is. The geometry (`x`/`y`/`w`/`h`,
+`viewport`) stays in the file for any view that wants to draw a plane, but no
+shipped view reads it, and `mode board` is no longer a mode.
 
 ### 2. No Electron in the core
 
@@ -250,14 +257,14 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the classic view a window opens in: 26 checks
+python tools/browser_smoke.py                        # renders the real window; 11 checks; SKIP (exit 0) with no browser
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 43 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 225/225 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 84/84 checks passed
+node shell/web/selftest.mjs                    # ok 227/227 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 148/148 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -276,7 +283,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 5 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 11 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -286,8 +293,8 @@ on its own and reloads, that a card with unsaved edits is warned instead of
 overwritten, and that deleting the file under a card is reported with the text
 still in the card, that the editor's gutter holds one number per line and that a
 click on it hides it and another brings it back, that a window opens on the
-classic tile, and that `mode classic` draws the
-tile it promises (`input_smoke.py`, 26
+mod tile and that `mode classic` draws the
+tile it promises (`input_smoke.py`, 43
 checks). On a clone that
 has no
 document yet both install `examples/board.json` for the run and remove it again
@@ -306,9 +313,13 @@ with no DOM. A fork that trims `file.stat` out of its kernel does not break the
 app: the watcher turns itself off with one log line
 ([`docs/PROTOCOL.md`](docs/PROTOCOL.md#file-stat)).
 
-**A window opens on the classic tile.** It is the view `DEFAULT_VIEW` names, the
-`Classic` button in the HUD's view switch marks it as the one that is on, and
-`mode classic` is how you come back to it. It arranges the focused
+**A window opens on the mod tile.** That is where a mod author works: the
+package on the left, the editor in the middle and the validation report
+underneath (`BOOT_VIEW` in `shell/web/main.mjs`; `views.mjs`'s `DEFAULT_VIEW`
+stays `classic` as the fallback for a word that names no view). The `Mod` button
+in the HUD's view switch marks it as the one that is on, and `mode classic` is
+how you reach the other tile; `mode mod` comes back. The classic tile arranges
+the focused
 editor as a code area,
 the other open files as tabs above it and a `project`/`files` card, if the document has
 one, as a sidebar. The
@@ -583,7 +594,10 @@ translate it, rewrite it for your fork, keep the attribution. Two licences, two
 scopes, both spelled out in [LICENSE-DOCS](LICENSE-DOCS). InfantGod Studio is a
 derivative of the MIT-licensed seIDE, and a rename does not change what a
 licence allows: the kernel, the shell, the tools and the fixtures are MIT, and
-only the prose is CC BY 4.0.
+only the prose is CC BY 4.0. InfantGod Studio is not affiliated with, endorsed
+by or authorised by the makers of the game it edits, and it claims no
+trademark in that game's names or marks; it names the game only to say what it
+is compatible with.
 
 The installer shows [EULA.txt](EULA.txt) on its licence page instead of the MIT
 file, because this build is early and not stable, and the one thing worth saying

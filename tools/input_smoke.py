@@ -16,11 +16,14 @@ already taken.  The wrapper is same-origin with the app it frames, so it can
 reach into the iframe and do what a person does:
 
 1. wait for the app to reach "kernel ready", and read which view the window
-   opened on: the canvas view is gone, so the only view a window can open on is
-   the classic tile, and what the wrapper reports is the HUD switch's own
+   opened on: the canvas view is gone, so a window opens on the classic or the
+   mod tile, and what the wrapper reports is the HUD switch's own
    ``aria-pressed``, the body's class, and the absence of the canvas's layers
    (its ``#hud-zoom`` readout, its ``#links`` SVG and the stage's transform);
-2. add a card with the ``note`` command -- the same line a person would type --
+   the window is expected to open on the **mod** tile (``BOOT_VIEW``), with no
+   "classic view" line in the message strip;
+2. type ``mode classic`` -- the other tile, which this run measures later -- add
+   a card with the ``note`` command -- the same line a person would type --
    and then type the ``mode board`` a person might: it has to be refused as an
    unknown view, with a warning in the message strip, and leave the classic tile
    exactly where it was;
@@ -57,7 +60,15 @@ reach into the iframe and do what a person does:
    the code area moved to that file; wheel the code area and the strip and check
    every card is exactly where it was -- the tile has no viewport to move; then
    ``mode mod`` and back to ``mode classic``, and check both views render and
-   the classic tile comes back on the same pixels.
+   the classic tile comes back on the same pixels;
+10. draw on the pixel cards and click the D006 row of the example mod this
+   repository ships (``examples/Mods/Lantern``) -- the run passes
+   ``--mods-root examples/Mods`` -- so the problems card has something to show
+   with no game install;
+11. open the story card the run generates: a two-line yarn over a 4.5 MB
+   translation table it writes under ``build/``, past the kernel's 4 MiB
+   whole-file read, and read back the card's own row count, its status line and
+   the translation it paints for the first and the last row of the table.
 
 The board is backed up and restored byte-for-byte, and the host is killed by pid.
 The file step 7 rewrites lives at ``build/__watch_smoke.txt`` and is removed in
@@ -77,8 +88,8 @@ counts card *deltas* from whatever the workspace already holds.
 
 import argparse
 import csv
+import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -127,30 +138,50 @@ PIXEL_STROKES = (
 )
 PIXEL_PNGS = tuple(REPO_ROOT / relative for _, relative in PIXEL_STROKES)
 
-#: The mod beside the repository whose PROBLEMS card carries the D006 rows
-#: ("Sprite file not found") the pixel card's click-through is for.  ``serve``
-#: resolves every ``mod.*`` root under ``--mods-root`` (default: the workspace),
-#: so this directory goes on the host's command line.
-MODS_ROOT = REPO_ROOT.parent / "Mods"
-MOD_NAME = "SODefines"
+#: The example mod this repository ships, under ``examples/Mods``: the run's
+#: PROBLEMS card must show one, and it must be reachable from the host's own
+#: ``--mods-root`` with no game install.  ``Lantern`` is a complete small package
+#: -- a manifest, a project file, a yarn, two localisation CSVs (the suffix-less
+#: base table and the English one), three sprites (two items and the character's
+#: portrait), one character define and three attachment defines -- and it carries
+#: exactly two findings on purpose: the D006 row the pixel card's click-through
+#: opens (an attachment whose sprite file is not on disk) and an M008 warning (the
+#: English CSV is a row short of the base).  Its three dialogue lines exercise the
+#: translation column as well: one row matches, one row's lock is wrong (stale)
+#: and one row is absent.
+MODS_ROOT = REPO_ROOT / "examples" / "Mods"
+MOD_NAME = "Lantern"
 
-#: The real game's Russian translation table: 5,751,617 bytes, far past the
-#: kernel's 4 MiB whole-file read, so the story card can only open it by paging a
-#: ``file.blob*`` session.  It lives *beside* the repository while the kernel's
-#: root is the repository (``serve --workspace`` below), and ``file.*`` refuses
-#: both spellings that would reach it from there: ``../Mods/...`` and an absolute
-#: path are "path escapes the workspace" (``sde_wksp_resolve`` in wksp.c), and
-#: plain ``Mods/...`` resolves to a directory the root does not have.  The run
-#: therefore hard-links the table -- the same file, one inode, not a copy -- under
-#: ``build/`` and opens that, which the kernel may reach and which is still the
-#: real bytes.  The yarn names the first and the last line id the table holds, so
-#: the card paints a translation for both ends of the file; the last row sits
-#: past the 4 MiB mark, where a whole-file read could never have got.
-STORY_TABLE_SRC = MODS_ROOT / "MyMod" / "Yarn" / "NewProject_RU.csv"
+#: The example mod ships one 8-bit RGB sprite (colour type 2) beside its RGBA
+#: ones: the pixel card reads both shapes but writes colour type 6 back, so the
+#: copy this run plants under ``build/`` is what gets saved, and comparing the
+#: two headers is how the run records G20 ("saving rewrites the bytes") without
+#: writing to the package itself.
+RGB_SPRITE_SRC = MODS_ROOT / MOD_NAME / "Sprites" / "Lantern_Rgb.png"
+RGB_SPRITE_REL = "build/__input_smoke_rgb.png"
+RGB_SPRITE = REPO_ROOT / "build" / "__input_smoke_rgb.png"
+
+#: The line the pixel half writes for the 8-bit RGB sprite it opened, saved and
+#: then closed again.
+RGB_RES = re.compile(r"pixel-rgb: (\{.*\})")
+
+#: The line the pixel half writes with every row of the PROBLEMS card on it.
+PROBLEMS_RES = re.compile(r"problems-rows: (\{.*\})")
+
+#: The story half's own translation table.  It is *generated* here rather than
+#: read from the game: this run must not need a game install, and it must still be
+#: past the kernel's 4 MiB whole-file read, so the card can only open it by paging
+#: a ``file.blob*`` session.  The table is written under ``build/``, which the
+#: kernel reaches because its root is this repository.  Its first and last rows
+#: are the two lines of the yarn written beside it, so the card paints a
+#: translation for both ends of the file -- and the last row sits past the 4 MiB
+#: mark, where a read that stopped at the old cap could never have reached it.
 STORY_TABLE_REL = "build/__input_smoke_table.csv"
 STORY_TABLE = REPO_ROOT / "build" / "__input_smoke_table.csv"
 STORY_YARN_REL = "build/__input_smoke_story.yarn"
 STORY_YARN = REPO_ROOT / "build" / "__input_smoke_story.yarn"
+#: How large the generated table is: comfortably past the whole-file cap below.
+STORY_TABLE_BYTES = 4_500_000
 #: The whole-file cap the story card's old read ran into, and the frame a blob
 #: session moves, both quoted in the check's detail line.
 STORY_WHOLE_CAP = 4 * 1024 * 1024
@@ -158,53 +189,84 @@ STORY_FRAME = 1024 * 1024
 STORY_RES = re.compile(r"story-table: (\{.*\})")
 
 
-def read_story_table() -> dict:
-    """What the real table says, computed from the file rather than from the card.
+def lock_for(text: str) -> str:
+    """The 8 hex the story card's own parser computes for a line's source text.
 
-    The card's parser drops the header row (``storycsv.parseCsv`` folds it into
-    ``header``), so the count below is data rows and ``head``/``tail`` are the
-    first and last of those.  ``tail_at`` is where the last row's id sits in the
-    file, quoted because it is past ``STORY_WHOLE_CAP``: a read that stopped at
-    the old cap could not have seen it.
+    ``storycsv.lockOf`` hashes the line's text (speaker and words) and keeps the
+    first four bytes, so a generated row that wants to read as "ok" rather than
+    "stale" has to carry the lock of the line it translates.
     """
-    data = STORY_TABLE_SRC.read_bytes()
-    text = data.decode("utf-8")
-    rows = list(csv.reader(text.splitlines()))
-    body = rows[1:]
-    tail = body[-1]
-    return {
-        "bytes": len(data),
-        "rows": len(body),
-        "head_id": body[0][1],
-        "head_text": body[0][2],
-        "tail_id": tail[1],
-        "tail_text": tail[2],
-        "tail_at": text.rfind(tail[1]),
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
+
+def build_story_table() -> tuple[str, dict]:
+    """Write a translation table past the whole-file cap, and say what is in it.
+
+    The table is the localisation of the two-line yarn below: the first and the
+    last row carry a *translation* of the yarn's two lines, with the lock of the
+    line each translates, so the words the card paints in the translation column
+    can only have come from the table.  The dict is computed here, from the
+    assembled text, so the check compares the card against this run's own bytes
+    rather than against itself.
+    """
+    header = "language,id,text,file,node,lineNumber,lock,comment"
+    head_source = "Lantern: 灯亮着。"
+    head_text = "Lantern: 灯还亮着。"
+    tail_source = "News: 晚安。"
+    tail_text = "News: 晚安，明天见。"
+
+    def row(index: int, text: str, lock: str) -> str:
+        return ",".join(("zh-CN", f"line:{index:07x}", text, STORY_YARN_REL,
+                         "Table_Smoke", str(index + 2), lock, ""))
+
+    head_id = f"line:{1:07x}"
+    lines = [header, row(1, head_text, lock_for(head_source))]
+    size = sum(len(line.encode("utf-8")) + 2 for line in lines)
+    index = 1
+    while size < STORY_TABLE_BYTES:
+        index += 1
+        text = f"Lantern: 第 {index:05d} 句译文 —— 灯影落在墙上，房间应了一声。" * 3
+        lines.append(row(index, text, lock_for(text)))
+        size += len(lines[-1].encode("utf-8")) + 2
+    index += 1
+    lines.append(row(index, tail_text, lock_for(tail_source)))
+    text = "\r\n".join(lines) + "\r\n"
+    tail_id = f"line:{index:07x}"
+    # Where the last row's id sits, in *bytes*: the column is three bytes a
+    # character, so a character offset would understate how far into the file the
+    # row is and the detail line would quote a number below the cap.
+    tail_at = len(text[:text.rfind(tail_id)].encode("utf-8"))
+    return text, {
+        "bytes": len(text.encode("utf-8")),
+        "rows": len(lines) - 1,
+        "head_id": head_id,
+        "head_source": head_source,
+        "head_text": head_text,
+        "tail_id": tail_id,
+        "tail_source": tail_source,
+        "tail_text": tail_text,
+        "tail_at": tail_at,
         "crlf": text.count("\r\n"),
     }
 
 
-def plant_story_table(real: dict) -> str:
-    """Put the real table where the kernel can reach it, and a story to open it.
+def plant_story_table(text: str, real: dict) -> str:
+    """Put the generated table where the kernel reaches it, and a story to open it.
 
-    Returns "" on success or the reason it could not be planted.
+    Returns "" on success or the reason it could not be written.
     """
     try:
-        STORY_TABLE.unlink(missing_ok=True)
-        try:
-            os.link(STORY_TABLE_SRC, STORY_TABLE)
-        except OSError:
-            shutil.copyfile(STORY_TABLE_SRC, STORY_TABLE)
+        STORY_TABLE.write_text(text, encoding="utf-8", newline="")
         STORY_YARN.write_text(
             "title: Table_Smoke\n---\n"
-            f"Aistalt: hi. #line:{real['head_id'].split(':', 1)[-1]}\n"
-            f"News: bye. #line:{real['tail_id'].split(':', 1)[-1]}\n"
+            f"{real['head_source']} #line:{real['head_id'].split(':', 1)[-1]}\n"
+            f"{real['tail_source']} #line:{real['tail_id'].split(':', 1)[-1]}\n"
             "===\n",
             encoding="utf-8",
             newline="\n",
         )
     except OSError as exc:
-        return f"could not plant the table: {exc}"
+        return f"could not write the table: {exc}"
     return ""
 
 #: Gives the page as much virtual time as it needs for five settled steps plus
@@ -358,15 +420,19 @@ async function main() {
   const doc = frame.contentDocument, win = frame.contentWindow;
   await sleep(400);
 
-  /* This window opens on the classic tile, and every step below is about the
-     document rather than a particular view: the card `note` adds, the Ctrl+Z
-     ring, the card's own wheel.  What the view itself has to answer for is
-     reported first -- the default (views.mjs's DEFAULT_VIEW) is a claim the
-     product makes and this is the only suite that can see a running window make
-     it, the HUD switch has to offer exactly the two tiled views, the canvas's
-     own layers and its zoom readout have to be gone, and `mode board` has to be
-     refused as the unknown view it now is. */
-  say("view-default: classic=" + doc.body.classList.contains("is-classic"));
+  /* The window now opens on the mod tile (item 8, the default view), and every
+     step below is about the document rather than a particular view: the card
+     `note` adds, the Ctrl+Z ring, the card's own wheel.  What the view itself
+     has to answer for is reported first -- the default is a claim the product
+     makes and this is the only suite that can see a running window make it, the
+     HUD switch has to offer exactly the two tiled views and show the mod one as
+     pressed, the canvas's own layers and its zoom readout have to be gone, and
+     the boot log must not name the classic view. */
+  const bootLog = doc.getElementById("log").textContent || "";
+  say("view-default: mod=" + doc.body.classList.contains("is-mod")
+    + " classic=" + doc.body.classList.contains("is-classic")
+    + " hud-mod=" + hudPressed("mod")
+    + " log-classic=" + (bootLog.indexOf("the classic view is showing") !== -1));
   say("view-hud: classic=" + hudPressed("classic") + " mod=" + hudPressed("mod")
     + " buttons=" + hudButtons().length);
   const gone = canvasGone();
@@ -388,12 +454,25 @@ async function main() {
   say("log-boot: hidden=" + logAtBoot + " open=" + logWhenOpened + " shut=" + logWhenShut
     + ' button="' + (logToggleEl.textContent || "").trim() + '"');
 
+  /* The steps below measure the classic tile, so move there first: `mode board`
+     must leave the tile it refused to leave alone, and the tile itself is
+     measured later in this run.  Getting there is itself worth reporting -- a
+     window now opens on the mod tile, so `mode classic` is the way in, and this
+     proves the switch answers on a real boot instead of the boot class merely
+     agreeing with views.mjs. */
+  const commandEl = doc.getElementById("command");
+  commandEl.value = "mode classic";
+  commandEl.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+  await waitUntil(() => doc.body.classList.contains("is-classic"), 40, 100);
+  say("classic-switch: classic=" + doc.body.classList.contains("is-classic")
+    + " mod=" + doc.body.classList.contains("is-mod")
+    + " hud-classic=" + hudPressed("classic"));
+
   /* `mode board` is the view that is gone.  A person who still has it in their
      fingers gets the app's own refusal -- an unknown-view warning in the message
      strip -- and, because a refused switch must not half-switch, the classic
      tile has to be exactly where it was: the body class, the HUD's pressed
      button and the cards. */
-  const commandEl = doc.getElementById("command");
   commandEl.value = "mode board";
   commandEl.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
   await sleep(500);
@@ -483,6 +562,13 @@ async function main() {
     const scratch = "@@SCRATCH@@";
     // cmd.exe wants backslashes; make one without typing one.
     const nativePath = scratch.split("/").join(String.fromCharCode(92));
+    /* How long to wait for the host to run a child process and for the
+       filesystem to tell the card about it.  This used to be 60 probes (15 s),
+       which a *loaded* machine can miss: the write is a real child process and
+       the notification is a real event, and when the box is busy both can be
+       seconds late.  The budget is only ever spent when something is wrong --
+       every loop leaves as soon as its condition holds. */
+    const patience = 120;
     let nextId = 0;
     const rpc = async (method, params) => {
       const answer = await fetch("/rpc", {
@@ -502,7 +588,7 @@ async function main() {
        the host, and virtual time stands still while a request is in flight. */
     const readBack = async (want) => {
       let last = "";
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < patience; i++) {
         try {
           const result = await rpc("file.read", { path: scratch });
           if (typeof result.text === "string" && result.text.indexOf(want) !== -1) return result;
@@ -515,7 +601,7 @@ async function main() {
       return null;
     };
     const vanished = async () => {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < patience; i++) {
         try {
           const answer = await rpc("file.stat", { path: scratch });
           if (answer.exists !== true) return answer;
@@ -550,12 +636,12 @@ async function main() {
     await outside("one");
     const first = await readBack("one");
     runLine("open " + scratch);
-    await waitUntil(() => editorHolding() !== null, 60, 250);
+    await waitUntil(() => editorHolding() !== null, patience, 250);
     const held = editorHolding();
     /* Wait for the read to answer: a card that has been made but has not read
        the file yet holds no revision, which is the one thing this section is
        about. */
-    if (held !== null) await waitUntil(() => held.area.value.indexOf("one") === 0, 60, 250);
+    if (held !== null) await waitUntil(() => held.area.value.indexOf("one") === 0, patience, 250);
     say("watch-open: open=" + (held !== null)
       + " text=" + JSON.stringify(held === null ? "" : held.area.value)
       + " status=" + JSON.stringify(statusOf(held)));
@@ -563,7 +649,7 @@ async function main() {
     /* A second writer rewrites it.  A clean card takes the bytes. */
     await outside("two");
     await readBack("two");
-    const reloaded = await waitUntil(() => statusOf(held).indexOf("reloaded from disk") !== -1, 60, 250);
+    const reloaded = await waitUntil(() => statusOf(held).indexOf("reloaded from disk") !== -1, patience, 250);
     say("watch-reload: reloaded=" + reloaded
       + " text=" + JSON.stringify(held === null ? "" : held.area.value)
       + " status=" + JSON.stringify(statusOf(held)));
@@ -580,7 +666,7 @@ async function main() {
     await sleep(80);
     await outside("three");
     await readBack("three");
-    const warned = await waitUntil(() => statusOf(held).indexOf("changed on disk") !== -1, 60, 250);
+    const warned = await waitUntil(() => statusOf(held).indexOf("changed on disk") !== -1, patience, 250);
     say("watch-warn: warned=" + warned
       + " kept=" + (held !== null && held.area.value === kept)
       + " status=" + JSON.stringify(statusOf(held)));
@@ -589,7 +675,7 @@ async function main() {
     await rpc("exec.start", { cmd: 'cmd /c del "' + nativePath + '"', card_id: "" });
     const gone = await vanished();
     const reported = gone !== null
-      && await waitUntil(() => statusOf(held).indexOf("gone from disk") !== -1, 60, 250);
+      && await waitUntil(() => statusOf(held).indexOf("gone from disk") !== -1, patience, 250);
     say("watch-gone: gone=" + reported
       + " kept=" + (held !== null && held.area.value === kept)
       + " status=" + JSON.stringify(statusOf(held)));
@@ -1217,6 +1303,61 @@ async function main() {
     }
     say(d006Line);
 
+    /* 5b. the 8-bit RGB sprite the example package ships.  The pixel card reads
+       colour type 2 and the save writes the file back as RGBA -- that is the
+       only thing the encoder writes, and it is what this pins.  The *copy* under
+       build/ is the file the card opened, so the package's own sprite is never
+       the one written; the Python half compares the two headers afterwards. */
+    let rgbOk = false;
+    let rgbLine = "pixel-rgb: no card";
+    try {
+      const rgbName = "__input_smoke_rgb";
+      runLine("pixel @@SPRITE_RGB@@");
+      await waitUntil(() => pixelsNow().some((node) => textOf(node, ".card-label").indexOf(rgbName) >= 0), 60, 250);
+      const rgbFound = pixelsNow().find((node) => textOf(node, ".card-label").indexOf(rgbName) >= 0) || null;
+      const rgbCard = rgbFound === null ? null : await settle(textOf(rgbFound, ".card-label"));
+      if (rgbCard === null) {
+        rgbLine = "pixel-rgb: " + JSON.stringify({ opened: false, why: "no card for " + rgbName });
+      } else {
+        const size = valueOf(rgbCard, '[data-role="pixel-width"]') + "x"
+          + valueOf(rgbCard, '[data-role="pixel-height"]');
+        const loaded = statusOf(rgbCard);
+        const ink = await inkAt(rgbCard, 16, 16);
+        const saved = await saveNow(rgbCard);
+        const after = await inkAt(rgbCard, 16, 16);
+        rgbOk = ink !== "" && ink === after;
+        rgbLine = "pixel-rgb: " + JSON.stringify({
+          opened: true, size: size, loaded: loaded, ink: ink, after: after, saved: saved,
+        });
+      }
+    } catch (error) {
+      rgbLine = "pixel-rgb: " + JSON.stringify({
+        opened: false, why: String(error && error.message ? error.message : error),
+      });
+    }
+    say(rgbLine);
+
+    /* 5c. every row of the PROBLEMS card, not just its D006 one: the two findings
+       the package carries on purpose, and the audio files it names -- which no
+       diagnostic mentions, because nothing checks them.  The count line is the
+       card's own words. */
+    let refsLine = "problems-rows: no card";
+    {
+      const host = problemsCard();
+      refsLine = host === null
+        ? "problems-rows: " + JSON.stringify({ card: false, mod: modName })
+        : "problems-rows: " + JSON.stringify({
+          card: true,
+          counts: textOf(host, ".mod-counts"),
+          rows: rowsOf(host).map((item) => ({
+            label: textOf(item, ".mod-row-name"),
+            meta: textOf(item, ".mod-row-meta"),
+          })),
+          text: (host.textContent || "").trim(),
+        });
+    }
+    say(refsLine);
+
     /* 6. and nothing is left behind: the cards this half opened, not the ones the
        workspace came with.  The sprite card was never saved, so no file was
        created for it either. */
@@ -1227,19 +1368,19 @@ async function main() {
     const left = added.filter((id) => cardsNow().some((node) => node.dataset.cardId === id)).length;
     const others = pixelsNow().map((node) => textOf(node, ".card-label")).sort().join(",");
     say("pixel-cards: added=" + added.length + " left=" + left + " others=" + JSON.stringify(others));
-    pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk && left === 0;
+    pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk && rgbOk && left === 0;
     say("phase: pixel t=" + elapsed() + "ms");
   } catch (error) {
     pixelOk = false;
     say("pixel-error: " + (error && error.message ? error.message : String(error)));
   }
 
-  /* The real game's Russian translation table is 5.75 MB, past the kernel's 4 MiB
-     whole-file read, so the story card can only open it by paging a blob session.
-     The run plants the table and a two-line story beside it; what this reads back
-     is the card's own row count, the words it paints for the first and the last
-     row of the table, and its status line -- a fallback read would leave the
-     status saying "could not read" and paint no translation at all. */
+  /* The story card opens a translation table this run generates under build/:
+     4.5 MB, past the kernel's 4 MiB whole-file read, so the card can only have
+     opened it by paging a blob session.  What this reads back is the card's own
+     row count, the words it paints for the first and the last row of the table,
+     and its status line -- a fallback read would leave the status saying "could
+     not read" and paint no translation at all. */
   let storyOk = false;
   let storyLine = "story-table: the card never opened";
   try {
@@ -1299,7 +1440,10 @@ PAGE = PAGE.replace("@@PIXEL2@@", PIXEL_STROKES[1][1])
 PAGE = PAGE.replace("@@PIXEL3@@", PIXEL_STROKES[2][1])
 #: ...and the mod whose D006 rows its problems card has to offer.
 PAGE = PAGE.replace("@@MOD@@", MOD_NAME)
-#: ...and the story the story half opens, with the real 5.75 MB table it names.
+#: ...and the 8-bit RGB sprite the pixel half opens and saves; the copy the card
+#: writes to is planted under build/ from the package's own sprite before the run.
+PAGE = PAGE.replace("@@SPRITE_RGB@@", RGB_SPRITE_REL)
+#: ...and the story the story half opens, with the 4.5 MB table it names.
 PAGE = PAGE.replace("@@STORY_YARN@@", STORY_YARN_REL)
 PAGE = PAGE.replace("@@STORY_TABLE@@", STORY_TABLE_REL)
 
@@ -1495,13 +1639,17 @@ def decode_rgba(path: Path):
     The pixel card writes 8-bit RGBA colour type 6, non-interlaced, one IDAT and
     no ancillary chunks, so unfiltering a few scanlines of ``zlib.decompress`` is
     the whole decoder -- and the check then reads the file the card really wrote
-    rather than what the card says about it.  All five filter types are honoured
-    in case the encoder grows a better one.
+    rather than what the card says about it.  Colour type 2 -- the 8-bit RGB the
+    example package also ships -- is read too, with ``0xff`` standing in for the
+    alpha it does not carry, so the same decoder can compare the two files pixel
+    for pixel.  All five filter types are honoured in case the encoder grows a
+    better one.
     """
     raw = path.read_bytes()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError(f"{path.name} does not start with a png signature")
     width = height = None
+    channels = None
     packed = bytearray()
     at = 8
     while at + 8 <= len(raw):
@@ -1512,16 +1660,18 @@ def decode_rgba(path: Path):
         if kind == b"IHDR":
             width = int.from_bytes(body[0:4], "big")
             height = int.from_bytes(body[4:8], "big")
-            if body[8] != 8 or body[9] != 6:
-                raise ValueError(f"{path.name}: bit depth {body[8]}, colour type {body[9]}, want 8/6")
+            channels = {2: 3, 6: 4}.get(body[9])
+            if body[8] != 8 or channels is None:
+                raise ValueError(f"{path.name}: bit depth {body[8]}, colour type {body[9]}, "
+                                 f"want 8/6 (RGBA) or 8/2 (RGB)")
         elif kind == b"IDAT":
             packed += body
         elif kind == b"IEND":
             break
-    if width is None or height is None:
+    if width is None or height is None or channels is None:
         raise ValueError(f"{path.name}: no IHDR")
     data = zlib.decompress(bytes(packed))
-    stride = width * 4
+    stride = width * channels
     rows = []
     previous = bytearray(stride)
     at = 0
@@ -1530,9 +1680,9 @@ def decode_rgba(path: Path):
         line = bytearray(data[at + 1:at + 1 + stride])
         at += 1 + stride
         for i in range(stride):
-            left = line[i - 4] if i >= 4 else 0
+            left = line[i - channels] if i >= channels else 0
             up = previous[i]
-            corner = previous[i - 4] if i >= 4 else 0
+            corner = previous[i - channels] if i >= channels else 0
             if kind == 1:
                 line[i] = (line[i] + left) & 0xFF
             elif kind == 2:
@@ -1546,7 +1696,11 @@ def decode_rgba(path: Path):
                 line[i] = (line[i] + guess) & 0xFF
             elif kind != 0:
                 raise ValueError(f"{path.name}: filter type {kind} on row {len(rows)}")
-        rows.append(bytes(line))
+        if channels == 3:
+            rows.append(b"".join(bytes(line[i:i + 3]) + b"\xff"
+                                 for i in range(0, len(line), 3)))
+        else:
+            rows.append(bytes(line))
         previous = line
     return width, height, rows
 
@@ -1566,6 +1720,111 @@ def ink_of(text: str):
         return (0, 0, 0, 0)
     if re.fullmatch(r"#[0-9a-fA-F]{6}", text):
         return tuple(int(text[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
+    return None
+
+
+def png_header(path: Path):
+    """``(width, height, bit depth, colour type)`` of a .png, or four zeroes.
+
+    The header is the only place a png records the shape of its pixels: colour
+    type 2 is 8-bit RGB, 6 is 8-bit RGBA.  The pixel card reads both and writes
+    the second (``docs/EDITOR_GAPS.md`` G20), which is what the check that calls
+    this compares across the package's file and the copy the card saved.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return (0, 0, 0, 0)
+    if len(raw) < 26 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return (0, 0, 0, 0)
+    return (int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big"),
+            raw[24], raw[25])
+
+
+def parse_rgb(body: str) -> dict:
+    """The pixel half's line about the 8-bit RGB sprite: what the card opened."""
+    found = RGB_RES.search(body)
+    if found is None:
+        return {}
+    try:
+        report = json.loads(found.group(1))
+    except ValueError:
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
+def parse_problems(body: str) -> dict:
+    """The PROBLEMS card's own count line, rows and text, as the page read them."""
+    found = PROBLEMS_RES.search(body)
+    if found is None:
+        return {}
+    try:
+        report = json.loads(found.group(1))
+    except ValueError:
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
+def csv_rows(path: Path) -> list:
+    """A localisation CSV as dicts, ``[]`` when it cannot be read.
+
+    The columns are ``language,id,text,file,node,lineNumber,lock,comment``: the
+    id is ``line:<7 hex>`` and the lock is the one the row was generated against,
+    so a row whose lock no longer matches the story is stale by construction.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return list(csv.DictReader(text.splitlines()))
+
+
+#: Ask ``shell/mods`` what it makes of the example story, in a fresh node
+#: process: the module the host runs, so the Yarn card's diagnostics box and the
+#: check below cannot disagree.  Inline so a fresh checkout needs nothing from
+#: ``build/``.  The root arrives as the last argv entry (``-e`` has no script
+#: name, so ``process.argv[1]`` is the first argument and the last one is the
+#: directory).
+YARN_DIAG_JS = """
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+const require = createRequire(path.join(process.cwd(), "tools", "input_smoke.py"));
+const { createMods } = require(path.join(process.cwd(), "shell", "mods", "index.js"));
+const root = process.argv[process.argv.length - 1];
+const text = readFileSync(path.join(root, "Yarn", "Lantern.yarn"), "utf8");
+const report = createMods({}).diagnoseYarn({ text: text, fileName: "Yarn/Lantern.yarn", root: root });
+console.log(JSON.stringify((report.diagnostics || []).map((d) => ({
+  code: d.code, severity: d.severity, line: d.line, message: d.messageEn || d.message,
+}))));
+"""
+
+
+def yarn_diagnostics(root: Path):
+    """What ``diagnoseYarn`` reports for the example story, or ``None``.
+
+    ``None`` means node could not run the module at all; the check says that
+    rather than reporting a silence it did not observe.
+    """
+    try:
+        done = subprocess.run(["node", "--input-type=module", "-e", YARN_DIAG_JS, str(root)],
+                              cwd=str(REPO_ROOT), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    #  The module prints one JSON array; anything else on stdout (a warning
+    #  from node itself) is skipped, and the last parsable line wins.
+    for line in reversed((done.stdout or "").splitlines()):
+        line = line.strip()
+        if line[:1] not in ("[", "{"):
+            continue
+        try:
+            found = json.loads(line)
+        except ValueError:
+            continue
+        return found if isinstance(found, list) else None
     return None
 
 
@@ -1599,20 +1858,32 @@ def main(argv=None) -> int:
           f"{'' if backup.existed else ' (absent -- this run will create and remove it)'}")
     print("-" * 68)
     profile = Path(tempfile.mkdtemp(prefix="infantgod-input-smoke-"))
-    # The story half opens the real 5.75 MB translation table.  ``file.*`` cannot
-    # reach it beside the repository, so the run hard-links it (one inode, the same
-    # bytes) under build/ and writes the two-line story that names the first and the
-    # last row the table holds -- then opens that.  Both files go away in the
-    # finally below; the table they point at never does.
-    real = read_story_table() if STORY_TABLE_SRC.is_file() else {}
-    story_fixture = (plant_story_table(real) if real
-                     else f"no translation table at {STORY_TABLE_SRC}")
+    # The story half opens a translation table this run generates: 4.5 MB, past
+    # the kernel's 4 MiB whole-file read, so the card can only open it by paging a
+    # blob session.  It is written under build/ -- reachable because the kernel's
+    # root is this repository -- together with the two-line story that names the
+    # table's first and last row.  Both files go away in the finally below.
+    story_text, real = build_story_table()
+    story_fixture = plant_story_table(story_text, real)
+    # The pixel half opens the example's 8-bit RGB sprite and saves it: the copy
+    # planted here is the file that gets written, so the package's own sprite is
+    # never touched -- the check afterwards compares the two headers, and the
+    # copy is taken away with the pixel half's other .png files.
+    rgb_fixture = ""
+    if RGB_SPRITE_SRC.is_file():
+        try:
+            RGB_SPRITE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(RGB_SPRITE_SRC, RGB_SPRITE)
+        except OSError as exc:
+            rgb_fixture = f"could not copy {RGB_SPRITE_SRC} to {RGB_SPRITE}: {exc}"
+    else:
+        rgb_fixture = f"{RGB_SPRITE_SRC} is missing"
     WRAPPER.write_text(PAGE, encoding="utf-8", newline="\n")
     # ``serve`` resolves every ``mod.*`` root under ``--mods-root``, which
-    # defaults to the workspace; the mod whose D006 rows the pixel check opens
-    # sits beside the repository, so the host is browser_smoke's default command
-    # plus that one flag.  Without it the problems card answers
-    # "路径越界，已被拒绝: SODefines" and there is no row to click.
+    # defaults to the workspace; the mod the pixel check opens is the example this
+    # repository ships, so the host is browser_smoke's default command plus that
+    # one flag.  Without it the problems card would answer from the workspace,
+    # which holds no mod, and there would be no D006 row to click.
     port = args.port or free_port()
     host_argv = None
     if MODS_ROOT.is_dir():
@@ -1665,8 +1936,9 @@ def main(argv=None) -> int:
         # The watch half writes this with a real child process; take it away
         # whether or not the checks got that far.
         SCRATCH.unlink(missing_ok=True)
-        # The story half's story, and the hard link that made the real table
-        # reachable from the workspace; removing the link leaves the table itself.
+        # The table the story half opens is one this run generated under build/,
+        # with the two-line story that names its first and last row; both go away
+        # together, and nothing outside the repository was ever touched.
         STORY_YARN.unlink(missing_ok=True)
         STORY_TABLE.unlink(missing_ok=True)
         # The pixel half's cards create their .png on the first save and the
@@ -1684,26 +1956,38 @@ def main(argv=None) -> int:
     wheel = parse_wheel(body)
     booted = "kernel ready: true" in body
     results.check("the app boots in an iframe and reaches kernel ready", booted)
-    opened = re.search(r"view-default: classic=(\w+)", body)
+    opened = re.search(r"view-default: mod=(\w+) classic=(\w+) hud-mod=(\w+) log-classic=(\w+)", body)
     hud = re.search(r"view-hud: classic=(\w+) mod=(\w+) buttons=(\d+)", body)
     canvas = re.search(r"canvas-gone: zoom=(\w+) links=(\w+) stage-transform=(\w+)", body)
+    switched = re.search(r"classic-switch: classic=(\w+) mod=(\w+) hud-classic=(\w+)", body)
     to_board = re.search(r"view-board: warned=(\w+) classic=(\w+) mod=(\w+) hud-classic=(\w*)", body)
     folded = re.search(r'log-boot: hidden=(\w+) open=(\w+) shut=(\w+) button="([^"]*)"', body)
-    results.check("a window opens on the classic tile with the message strip folded away",
+    results.check("a window opens on the mod tile with the message strip folded away",
                   opened is not None and opened.group(1) == "true"
+                  and opened.group(2) == "false" and opened.group(3) == "true"
+                  and opened.group(4) == "false"
                   and folded is not None and folded.group(1) == "true"
                   and folded.group(2) == "true" and folded.group(3) == "true",
-                  f"at boot classic={opened.group(1) if opened else '?'}; "
+                  f"at boot mod={opened.group(1) if opened else '?'} "
+                  f"classic={opened.group(2) if opened else '?'} "
+                  f"hud-mod={opened.group(3) if opened else '?'} "
+                  f"log-classic={opened.group(4) if opened else '?'}; "
                   f"strip hidden={folded.group(1) if folded else '?'} "
                   f"open={folded.group(2) if folded else '?'} "
                   f"shut={folded.group(3) if folded else '?'} "
                   f"button={folded.group(4) if folded else '?'}")
     results.check("the HUD offers exactly the classic and mod views",
-                  hud is not None and hud.group(1) == "true" and hud.group(2) == "false"
+                  hud is not None and hud.group(1) == "false" and hud.group(2) == "true"
                   and hud.group(3) == "2",
                   f"buttons={hud.group(3) if hud else '?'} "
                   f"classic-pressed={hud.group(1) if hud else '?'} "
                   f"mod-pressed={hud.group(2) if hud else '?'}")
+    results.check("`mode classic` moves the window off the mod tile",
+                  switched is not None and switched.group(1) == "true"
+                  and switched.group(2) == "false" and switched.group(3) == "true",
+                  f'classic={switched.group(1) if switched else "?"} '
+                  f'mod={switched.group(2) if switched else "?"} '
+                  f'hud-classic={switched.group(3) if switched else "?"}')
     results.check("the HUD has no zoom readout",
                   canvas is not None and canvas.group(1) == "true",
                   f"#hud-zoom gone={canvas.group(1) if canvas else '?'}")
@@ -2007,29 +2291,179 @@ def main(argv=None) -> int:
                   f"added={cards[0]} left={cards[1]} others={cards[2]}"
                   if cards else pixel_detail("cards"))
 
-    # The real game's translation table is 5.75 MB, past the kernel's 4 MiB
-    # whole-file read, so the card can only have opened it by paging a blob
-    # session.  The card's own row count is compared with the count computed here
-    # from the file, and the words it painted for the first and the last row the
-    # table holds -- the last row sits past the 4 MiB mark, which a read that
-    # stopped at the old cap could not have reached.  A fallback read leaves
-    # "could not read" in the status line and no translation cell at all.  The
-    # expected count is quoted in the detail line either way.
+    # The story card opens a translation table this run generates: 4.5 MB, past
+    # the kernel's 4 MiB whole-file read, so the card can only have assembled it
+    # by paging a blob session.  The card's own row count is compared with the
+    # count computed here from the text the run wrote, and the words it painted
+    # for the first and the last row -- the last row sits past the 4 MiB mark,
+    # which a read that stopped at the old cap could not have reached.  A
+    # fallback read leaves "could not read" in the status line and no translation
+    # cell at all.  The expected count is quoted in the detail line either way.
     story = parse_story(body)
     story_cells = story.get("cells") or []
-    story_ok = (not story_fixture and bool(real)
+    story_ok = (not story_fixture
                 and story.get("rows") == real.get("rows")
                 and story_cells[:2] == [real.get("head_text"), real.get("tail_text")]
-                and "could not read" not in str(story.get("status", "")))
+                and "could not read" not in str(story.get("status", ""))
+                and real.get("bytes", 0) > STORY_WHOLE_CAP
+                and real.get("tail_at", 0) > STORY_WHOLE_CAP)
     if story_fixture:
         story_detail = story_fixture
     else:
-        story_detail = (f"{STORY_TABLE_SRC.name}: {real.get('bytes')} bytes, {real.get('rows')} rows, "
+        story_detail = (f"{STORY_TABLE_REL}: {real.get('bytes')} bytes, {real.get('rows')} rows, "
                         f"the last of them at byte {real.get('tail_at')} (computed here); card rows="
                         f"{story.get('rows')} table={story.get('table')!r} status={story.get('status')!r} "
                         f"cells={story_cells!r}")
-    results.check("the story card reads the real 5.75 MB translation table whole, through a blob session",
+    results.check("the story card reads the 4.5 MB table this run generates whole, through a blob session",
                   story_ok, story_detail)
+
+    # The two properties that make the paragraph above true and keep this suite
+    # runnable on a machine without the game: the mods root is the repository's
+    # own example package (the game's ``MyMod``/``SODefines`` are not under it),
+    # and the 4.5 MB table was written by ``build_story_table()`` during this run,
+    # under ``build/``, rather than read from the game's ``NewProject_RU.csv``.
+    example = MODS_ROOT / MOD_NAME
+    # A label that cannot raise: this check's whole point is that the mods root
+    # may be the *wrong* one, and a detail line that only formatted when the root
+    # was already right would crash the run instead of reporting the FAIL.
+    try:
+        mods_label = str(MODS_ROOT.relative_to(REPO_ROOT)).replace("\\", "/")
+    except ValueError:
+        mods_label = str(MODS_ROOT)
+    example_ok = (MODS_ROOT == REPO_ROOT / "examples" / "Mods"
+                  and not (MODS_ROOT / "MyMod").exists()
+                  and not (MODS_ROOT / "SODefines").exists()
+                  and (example / "mod.json").is_file()
+                  and (example / "Yarn" / "Lantern.yarn").is_file()
+                  and (example / "Yarn" / "Lantern.csv").is_file()
+                  and (example / "Yarn" / "Lantern_en.csv").is_file()
+                  and (example / "Sprites" / "Warden.png").is_file()
+                  and (example / "Defines" / "Character" / "Warden.json").is_file()
+                  and not (example / "Sprites" / "Missing.png").exists()
+                  and str(STORY_TABLE).startswith(str(REPO_ROOT / "build"))
+                  and real.get("bytes", 0) > STORY_WHOLE_CAP
+                  and real.get("crlf") == real.get("rows", 0) + 1)
+    results.check("the run drives the repository's own example mod and generates its own big table",
+                  example_ok,
+                  f"mods-root={mods_label} mod={MOD_NAME} "
+                  f"table={STORY_TABLE_REL} {real.get('bytes')} bytes {real.get('rows')} rows "
+                  f"crlf={real.get('crlf')} whole-file-cap={STORY_WHOLE_CAP} (no game install)")
+
+    # The example's other sprite shape: 8-bit RGB, opened by the pixel card and
+    # saved.  The card reads colour type 2 and writes colour type 6 back, so the
+    # copy under build/ comes out RGBA -- G20's "saving an RGB sprite rewrites its
+    # bytes", still open, is pinned here rather than described.  The package's own
+    # sprite is not the file that was written, and the pixel the card read is
+    # compared with the pixel in both files, so what this asserts is about bytes.
+    rgb_line = parse_rgb(body)
+    rgb_shipped = png_header(RGB_SPRITE_SRC)
+    rgb_saved = png_header(RGB_SPRITE)
+    rgb_ink = ink_of(str(rgb_line.get("ink", "")))
+    rgb_status = str(rgb_line.get("loaded", ""))
+    rgb_pixels = None
+    if not rgb_fixture:
+        try:
+            rgb_pixels = (rgba_at(decode_rgba(RGB_SPRITE_SRC)[2], 16, 16),
+                          rgba_at(decode_rgba(RGB_SPRITE)[2], 16, 16))
+        except (OSError, ValueError, IndexError):
+            rgb_pixels = None
+    rgb_ok = (not rgb_fixture
+              and bool(rgb_line) and rgb_line.get("opened") is True
+              and re.search(r"32\s*[x×]\s*32", rgb_status) is not None
+              and str(rgb_line.get("saved", "")) not in ("", "not saving", "nothing to save")
+              and rgb_ink is not None and rgb_line.get("ink") == rgb_line.get("after")
+              and rgb_shipped == (32, 32, 8, 2) and rgb_saved == (32, 32, 8, 6)
+              and rgb_pixels is not None and rgb_pixels[0] == rgb_pixels[1]
+              and rgb_pixels[0] == rgb_ink)
+    if rgb_fixture:
+        rgb_detail = rgb_fixture
+    else:
+        rgb_detail = (f"shipped={RGB_SPRITE_SRC.name} {rgb_shipped} saved-copy={RGB_SPRITE_REL} "
+                      f"{rgb_saved} pixel(16,16) source={rgb_pixels[0] if rgb_pixels else None} "
+                      f"saved={rgb_pixels[1] if rgb_pixels else None} card-ink={rgb_line.get('ink')!r} "
+                      f"card-loaded={rgb_status!r} saved-status={rgb_line.get('saved')!r}")
+    results.check("the pixel card reads the example's 8-bit RGB sprite and saves it back as RGBA",
+                  rgb_ok, rgb_detail)
+
+    # The example story's tag surface, and what the tools make of it.  `#state:`
+    # is judged -- against the *game's* sixteen states, so the package's own
+    # CharacterState name is not one of them and the tool warns -- while `#vo:`,
+    # `#Check:`, `#Topic:` and `#Modify:` are not judged at all.  Both facts come
+    # from ``shell/mods`` itself, asked in a fresh node process, and the two
+    # defects the translation table carries on purpose (one en row missing, one
+    # lock zeroed) have to still be exactly those two.
+    try:
+        yarn_text = (example / "Yarn" / "Lantern.yarn").read_text(encoding="utf-8")
+    except OSError:
+        yarn_text = ""
+    base_rows = csv_rows(example / "Yarn" / "Lantern.csv")
+    en_rows = csv_rows(example / "Yarn" / "Lantern_en.csv")
+    base_ids = [row.get("id", "") for row in base_rows]
+    en_ids = [row.get("id", "") for row in en_rows]
+    base_locks = {row.get("id", ""): (row.get("lock") or "").lower() for row in base_rows}
+    en_locks = {row.get("id", ""): (row.get("lock") or "").lower() for row in en_rows}
+    stale_id = "line:5d6e7f8"    # the en row whose lock is 00000000 on purpose
+    missing_id = "line:9c0d1e2"  # the en row that is deliberately not there
+    story_tags = ("#state:", "#vo:", "#Check:", "#Topic:", "#Modify:")
+    tag_hits = [tag for tag in story_tags if tag in yarn_text]
+    line_ids = re.findall(r"#line:([0-9a-f]{7})", yarn_text)
+    known_keys = None
+    try:
+        index_js = (REPO_ROOT / "shell" / "mods" / "index.js").read_text(encoding="utf-8")
+    except OSError:
+        index_js = ""
+    keys_match = re.search(r"KNOWN_META_KEYS\s*=\s*\[([^\]]*)\]", index_js)
+    if keys_match is not None:
+        known_keys = re.findall(r"[\"']([^\"']+)[\"']", keys_match.group(1))
+    yarn_report = yarn_diagnostics(example)
+    yarn_codes = [(item.get("code"), int(item.get("line") or 0), str(item.get("message", "")))
+                  for item in (yarn_report or [])]
+    state_warn = [item for item in yarn_codes if item[0] == "Y104" and "#state:" in item[2]]
+    unjudged = [item for item in yarn_codes
+                if any(tag in item[2] for tag in ("#vo:", "#Check:", "#Topic:", "#Modify:"))]
+    tags_ok = (tag_hits == list(story_tags)
+               and len(line_ids) == 5 and len(set(line_ids)) == 5
+               and base_ids == ["line:" + value for value in line_ids]
+               and en_ids == [value for value in base_ids if value != missing_id]
+               and en_locks.get(stale_id) == "00000000"
+               and all(en_locks.get(value) == base_locks.get(value)
+                       for value in base_ids if value not in (stale_id, missing_id))
+               and known_keys == ["line", "state", "vo"]
+               and yarn_report is not None and len(yarn_codes) == 1
+               and len(state_warn) == 1 and not unjudged)
+    tags_detail = (f"tags={tag_hits!r} line-ids={line_ids!r} base={len(base_rows)} rows "
+                   f"en={len(en_rows)} rows missing={missing_id not in en_locks} "
+                   f"stale-lock={en_locks.get(stale_id)!r} KNOWN_META_KEYS={known_keys!r} "
+                   f"diagnostics={yarn_codes!r}")
+    results.check("the example story carries the whole tag surface, and the tools judge one of the four extra tags",
+                  tags_ok, tags_detail)
+
+    # What the package's own PROBLEMS card says: exactly the two findings it
+    # carries on purpose -- a sprite it names that is not there (D006) and the
+    # second language's row count (M008) -- and no D005, which is what every
+    # cross-reference in the package resolving means.  The two WAV files the
+    # defines name are not mentioned anywhere on it: nothing in the IDE checks an
+    # audio file (G21), and this records that rather than implying otherwise.
+    refs = parse_problems(body)
+    ref_labels = [str(row.get("label", "")) for row in (refs.get("rows") or [])]
+    ref_codes = sorted(label.split(" ")[0] for label in ref_labels if label)
+    ref_text = str(refs.get("text", ""))
+    audio = [example / "Audio" / "Lantern_Hum.wav", example / "Audio" / "Lantern_Voice.wav"]
+    defines = [example / "Defines" / kind / name for kind, name in (
+        ("Character", "Warden.json"), ("CharacterState", "Calm.json"),
+        ("PixelAnimation", "Lantern_Idle.json"), ("AudioEvent", "Audio_Lantern_Hum.json"),
+        ("Song", "Song_Lantern.json"), ("VoiceOverDefinition", "Vo_Lantern.json"))]
+    counts = str(refs.get("counts", ""))
+    refs_ok = (bool(refs) and refs.get("card") is True
+               and ref_codes == ["D006", "M008"]
+               and counts.startswith("1 errors") and "1 warnings" in counts and "0 infos" in counts
+               and ".wav" not in ref_text.lower()
+               and all(path.is_file() for path in defines + audio))
+    refs_detail = (f"counts={counts!r} codes={ref_codes} wav-mentioned={'.wav' in ref_text.lower()} "
+                   f"defines={sum(1 for path in defines if path.is_file())}/{len(defines)} "
+                   f"audio={[path.name + ':' + str(path.stat().st_size) for path in audio if path.is_file()]}")
+    results.check("the example package's only findings are its two deliberate ones, and its audio is named by nobody",
+                  refs_ok, refs_detail)
 
     results.check("the board is back as it was found", restored,
                   "byte-identical" if backup.existed else "absent again")
@@ -2037,7 +2471,7 @@ def main(argv=None) -> int:
         results.check("the host is gone", False, "still running -- kill it by hand")
     # Every check that reads a .png the pixel cards wrote has had its look; the
     # cards made these files and nothing else this run survives it.
-    for png in PIXEL_PNGS:
+    for png in (*PIXEL_PNGS, RGB_SPRITE):
         png.unlink(missing_ok=True)
     code = results.report(attempts)
     if args.keep and WRAPPER.exists():

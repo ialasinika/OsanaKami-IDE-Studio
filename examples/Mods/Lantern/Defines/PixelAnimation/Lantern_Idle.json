@@ -1,0 +1,53 @@
+{
+  "techName": "Lantern_Idle",
+  "onEndBehave": "LoopState",
+  "audioEvent": "Audio_Lantern_Hum",
+  "isRandom": false,
+  "randomIntervalMin": 2.0,
+  "randomIntervalMax": 6.0,
+  "parameterRandomScaleMin": 0.9,
+  "parameterRandomScaleMax": 1.1,
+  "parameterRandomAllowReverse": false,
+  "boneTracks": [
+    {
+      "boneName": "lantern_body",
+      "axis": "Y",
+      "interpolation": "SmoothStep",
+      "keyframes": [
+        {
+          "frame": 0,
+          "value": 0.0
+        },
+        {
+          "frame": 12,
+          "value": 2.0
+        },
+        {
+          "frame": 24,
+          "value": 0.0
+        }
+      ]
+    }
+  ],
+  "physicsTracks": [
+    {
+      "parameter": "Wind",
+      "interpolation": "Linear",
+      "keyframes": [
+        {
+          "frame": 0,
+          "value": 0.1
+        },
+        {
+          "frame": 24,
+          "value": 0.4
+        },
+        {
+          "frame": 48,
+          "value": 0.1
+        }
+      ]
+    }
+  ],
+  "slotTracks": []
+}

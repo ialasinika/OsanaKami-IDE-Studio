@@ -10,3 +10,6 @@
 *.png binary
 *.exe binary
 *.ico binary
+
+# Sound is binary too: keep a checkout from rewriting the demo audio.
+*.wav binary

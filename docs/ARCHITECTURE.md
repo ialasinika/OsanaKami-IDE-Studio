@@ -314,6 +314,13 @@ The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
 `./main.mjs` as a module, and the browser resolves the rest of the imports.
 
+`electron/` is not a third front end: it spawns the HTTP front end under
+`ELECTRON_RUN_AS_NODE=1` and loads the loopback URL in an Electron window
+(`electron/README.md`). Everything that speaks protocol from outside the page —
+`tools/seide_cli.py`, the File menu's 新建模组… — goes through the same
+`POST /rpc`, so a UI never grows a method of its own: the menu's one frame is
+`mod.scaffold`, which already existed.
+
 ---
 
 ## What the build proves
@@ -331,9 +338,9 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, against its own scratch directory under `build/` (130 checks) |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
-| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip (208 checks), no DOM |
-| — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and a window is checked to open on the classic tile -- the only view there is -- which is why the spatial steps say so out loud before they place a card (26 checks) |
+| — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM, line endings, derived `lock` and row states, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip (227 checks), no DOM |
+| — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens (11 checks) |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D006` row opening the sprite it names, and a window checked to open on the mod tile (43 checks) |
 
 `smoke` runs the last two and needs a browser.
 
@@ -345,7 +352,10 @@ The Makefile's verification targets, in the order `make test` runs them:
   megabytes, a download in the build, and a Node-and-Chromium process tree. The
   prototype uses the system's Edge/Chromium in `--app=` mode with a throwaway
   profile instead. This is a prototype tradeoff, not a product answer; the
-  product answer is WRY/Tauri (`docs/FORK.md`).
+  product answer is WRY/Tauri (`docs/FORK.md`). The rejection is about what
+  `core/` may depend on, not about the wrapper this fork ships: `electron/`
+  spawns that same HTTP front end and speaks no protocol of its own (see "The
+  shell, inside"), so it adds no method to the kernel.
 - **A Rust kernel.** Dropped because a dependency's build script needed a C
   compiler, which breaks constraint 4 (fully offline, no configure step). C89
   has no build script and no dependency graph to resolve.
