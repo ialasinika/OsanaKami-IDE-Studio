@@ -1158,6 +1158,46 @@ section("finding the game without a path written into the source");
     gamepath.defaultSearchRoots({}).some((r) => r === resolve(ROOT, "..")),
     JSON.stringify(gamepath.defaultSearchRoots({}).slice(-2)));
 
+  /*
+   * Steam 的默认位置按平台不同，而测试机器只有一个平台。所以平台和 env 都可以
+   * 注入，三条检查用同一份注入数据说三个平台的话——它们不需要真的装一个 Steam。
+   */
+  const fakeHome = join(base, "home");
+  const winDirs = gamepath.steamInstallDirs({ "ProgramFiles(x86)": "C:\\PF86" }, "win32");
+  check("on Windows the Steam install directory comes from ProgramFiles(x86)",
+    JSON.stringify(winDirs) === JSON.stringify([join("C:\\PF86", "Steam")]), JSON.stringify(winDirs));
+
+  const linuxDirs = gamepath.steamInstallDirs({ HOME: fakeHome }, "linux");
+  check("on Linux the default Steam roots are ~/.local/share/Steam and ~/.steam/steam",
+    linuxDirs.includes(join(fakeHome, ".local", "share", "Steam")) &&
+      linuxDirs.includes(join(fakeHome, ".steam", "steam")),
+    JSON.stringify(linuxDirs));
+
+  const macDirs = gamepath.steamInstallDirs({ HOME: fakeHome }, "darwin");
+  check("on macOS the default Steam root is ~/Library/Application Support/Steam",
+    macDirs.includes(join(fakeHome, "Library", "Application Support", "Steam")),
+    JSON.stringify(macDirs));
+
+  check("a Linux discovery uses the injected HOME, not the machine's",
+    gamepath.defaultSearchRoots({ HOME: fakeHome }, "linux").includes(join(fakeHome, ".local", "share", "Steam")),
+    JSON.stringify(gamepath.defaultSearchRoots({ HOME: fakeHome }, "linux").slice(0, 3)));
+
+  check("describeDiscovery says where the folder was found, and by what",
+    gamepath.describeDiscovery({ found: true, dir: join(base, "Mods"), source: "discover" }) ===
+      `found ${join(base, "Mods")} (discover)`,
+    gamepath.describeDiscovery({ found: true, dir: join(base, "Mods"), source: "discover" }));
+
+  check("describeDiscovery on a miss counts the places it looked, with a plural",
+    gamepath.describeDiscovery({ found: false, tried: [{}, {}, {}] }) === "not found; looked in 3 places" &&
+      gamepath.describeDiscovery({ found: false, tried: [{}] }) === "not found; looked in 1 place",
+    gamepath.describeDiscovery({ found: false, tried: [{}, {}, {}] }));
+
+  check("an injected platform reaches discovery: no Windows ProgramFiles is needed on Linux",
+    gamepath
+      .discoverGameModsDir({ env: { HOME: fakeHome }, platform: "linux", searchRoots: [base] })
+      .dir === corpus,
+    JSON.stringify({ dir: gamepath.discoverGameModsDir({ env: { HOME: fakeHome }, platform: "linux", searchRoots: [base] }).dir }));
+
   const info = mods.gameMods();
   check("the facade reports where the game folder came from",
     info !== null && typeof info.source === "string" &&

@@ -681,10 +681,10 @@ async function runConfigSection(tempRoot) {
   });
 
   await check("defaultUserDataDir uses the platform's convention", () => {
-    const win = defaultUserDataDir({ APPDATA: "C:\\Users\\x\\AppData\\Roaming" }, "win32");
-    assert.equal(win, path.join("C:\\Users\\x\\AppData\\Roaming", "OsanaKami IDE Studio"));
-    const linux = defaultUserDataDir({ HOME: "/home/x" }, "linux");
-    assert.equal(linux, path.join("/home/x", ".config", "OsanaKami IDE Studio"));
+    const win = defaultUserDataDir({ APPDATA: "C:\\Users\\someone\\AppData\\Roaming" }, "win32");
+    assert.equal(win, path.join("C:\\Users\\someone\\AppData\\Roaming", "OsanaKami IDE Studio"));
+    const linux = defaultUserDataDir({ HOME: "/home/someone" }, "linux");
+    assert.equal(linux, path.join("/home/someone", ".config", "OsanaKami IDE Studio"));
   });
 }
 

@@ -92,33 +92,66 @@ function candidatesUnder(root) {
   return out;
 }
 
-/** Steam 库根目录：Steam 安装目录 + libraryfolders.vdf 里登记的每个 path。 */
-function steamLibraryRoots(env) {
+/**
+ * Steam 的默认安装位置：三个平台不一样，但 libraryfolders.vdf 的格式一样。
+ * 平台可以注入（`options.platform`），所以测试不需要真的装一个 Steam。
+ */
+function steamInstallDirs(env, platform) {
   const e = env || {};
+  const p = platform || process.platform;
+  if (p === 'win32') {
+    const programFiles = e['ProgramFiles(x86)'] || e.ProgramFiles || 'C:\\Program Files (x86)';
+    return [path.join(programFiles, 'Steam')];
+  }
+  const home = e.HOME || e.USERPROFILE || os.homedir();
+  if (!home) return [];
+  if (p === 'darwin') {
+    return [
+      path.join(home, 'Library', 'Application Support', 'Steam'),
+      path.join(home, '.steam', 'steam'),
+    ];
+  }
+  return [
+    path.join(home, '.local', 'share', 'Steam'),
+    path.join(home, '.steam', 'steam'),
+  ];
+}
+
+/** Steam 库根目录：Steam 安装目录 + libraryfolders.vdf 里登记的每个 path。 */
+function steamLibraryRoots(env, platform) {
   const roots = [];
-  const programFiles = e['ProgramFiles(x86)'] || e.ProgramFiles || 'C:\\Program Files (x86)';
-  const steam = path.join(programFiles, 'Steam');
-  roots.push(steam);
-  try {
-    const text = fs.readFileSync(path.join(steam, 'steamapps', 'libraryfolders.vdf'), 'utf8');
-    for (const m of text.matchAll(/"path"\s+"([^"]+)"/g)) {
-      roots.push(m[1].replace(/\\\\/g, '\\'));
+  for (const steam of steamInstallDirs(env, platform)) {
+    if (!roots.includes(steam)) roots.push(steam);
+    try {
+      const text = fs.readFileSync(path.join(steam, 'steamapps', 'libraryfolders.vdf'), 'utf8');
+      for (const m of text.matchAll(/"path"\s+"([^"]+)"/g)) {
+        const candidate = m[1].replace(/\\\\/g, '\\');
+        if (!roots.includes(candidate)) roots.push(candidate);
+      }
+    } catch {
+      /* 没装 Steam / 没有 vdf：这个安装目录仍是候选 */
     }
-  } catch {
-    /* 没装 Steam / 没有 vdf：只有默认安装目录一个候选 */
   }
   return roots;
 }
 
 /** 默认探测根：Steam 库 + 用户主目录 + checkout 的上一级（只列一层，靠候选列表收敛）。 */
-function defaultSearchRoots(env) {
-  const roots = steamLibraryRoots(env);
-  const home = (env && env.USERPROFILE) || os.homedir();
+function defaultSearchRoots(env, platform) {
+  const roots = steamLibraryRoots(env, platform);
+  const home = (env && (env.HOME || env.USERPROFILE)) || os.homedir();
   if (home) roots.push(home);
   /* 提取出来的游戏树常和仓库并排放（<workspace>/ModsFull/Mods）。这是相对位置，
      不是本机绝对路径：别人的 checkout 放在哪里都照样成立。 */
   roots.push(path.resolve(__dirname, '..', '..', '..'));
   return roots;
+}
+
+/** 一句人话：找到在哪、怎么找到的；或者「没找到，找过几处」。 */
+function describeDiscovery(result) {
+  const r = result || {};
+  if (r.found && r.dir) return `found ${r.dir} (${r.source})`;
+  const n = Array.isArray(r.tried) ? r.tried.length : 0;
+  return `not found; looked in ${n} place${n === 1 ? '' : 's'}`;
 }
 
 /**
@@ -166,7 +199,7 @@ function discoverGameModsDir(options) {
   const roots =
     Array.isArray(o.searchRoots) && o.searchRoots.length
       ? o.searchRoots
-      : defaultSearchRoots(env);
+      : defaultSearchRoots(env, o.platform);
   for (const root of roots) {
     if (root == null || String(root).trim() === '') continue;
     const absRoot = path.resolve(String(root));
@@ -187,7 +220,9 @@ module.exports = {
   isDir,
   looksLikeGameModsDir,
   candidatesUnder,
+  steamInstallDirs,
   steamLibraryRoots,
   defaultSearchRoots,
+  describeDiscovery,
   discoverGameModsDir,
 };

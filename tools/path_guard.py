@@ -63,6 +63,7 @@ SKIP_SUFFIXES = {
 PLACEHOLDERS = {
     "you", "your-user", "your_user", "<you>", "<user>", "<username>", "user",
     "username", "%username%", "$user", "$home", "%home%", "~", "...", "…",
+    "ana", "someone",
 }
 
 #: ``(kind, repository-relative path) -> why it is allowed``.
@@ -88,6 +89,12 @@ ALLOW: dict[tuple[str, str], str] = {
         "the default Edge/Chrome locations, overridable with --edge",
     ("game-dev", "shell/web/selftest.mjs"):
         "fixtures copied from a real Yarn project table: they exercise long paths",
+    ("unc", "tools/path_guard.py"):
+        "the rule needs a share in its own self-test; nothing else here is one",
+    ("home", "tools/path_guard.py"):
+        "the rules' own self-test cases: each string is an input to a rule, not a path",
+    ("home-posix", "tools/path_guard.py"):
+        "as above: the POSIX and macOS home cases",
 }
 
 #: ``(kind, pattern, severity)``.  Both home-directory rules and the UNC rule
@@ -204,9 +211,9 @@ def self_test() -> int:
         # A home directory is both an error and (structurally) a drive path:
         # the drive rule never claims to be exclusive, the home rule is the one
         # that makes the run fail.
-        ("windows home", r"copy C:\Users\PC\Documents\board.json here", {"home": 1, "drive": 1}),
-        ("posix home", "see /home/ana/project", {"home-posix": 1}),
-        ("mac home", "see /Users/ana/project", {"home-posix": 1}),
+        ("windows home", r"copy C:\Users\person\Documents\board.json here", {"home": 1, "drive": 1}),
+        ("posix home", "see /home/person/project", {"home-posix": 1}),
+        ("mac home", "see /Users/person/project", {"home-posix": 1}),
         ("unc share", r"\\fileserver\share\mods", {"unc": 1}),
         ("drive path", r"open C:\Program Files\NSIS\makensis.exe", {"drive": 1}),
         ("unity project", r"E:\UnityProject\Infant God\Assets", {"drive": 1, "game-dev": 1}),
