@@ -205,10 +205,10 @@ the `#if SDE_WITH_EXEC` block in `rpc.c`, and the `sde_execset_new` /
 
 - Protocol loses `exec.start`, `exec.stop`, `exec.list`, and the `exec.output` /
   `exec.exit` notifications.
-- The `runner` card in the shell has nothing to call: `cards.mjs`'s runner
-  renderer becomes a dead button. Trim the kind from `CARD_KINDS` in
-  `shell/web/board.mjs` and delete the runner's `registerCardKind` call at the
-  end of `shell/web/cards.mjs` — the registry is the only place a kind exists.
+- The `runner` card in the shell has nothing to call: the runner module under
+  `shell/web/cards/` becomes a dead button. Trim the kind from `CARD_KINDS` in
+  `shell/web/board.mjs` and delete the runner's `registerCardKind` call from the
+  `cards.mjs` barrel — the registry is the only place a kind exists.
 - **Survives:** files, the board, the whole editor, the whole language layer.
 - **Shell must change too:** yes, or the runner card is a control that fails.
 

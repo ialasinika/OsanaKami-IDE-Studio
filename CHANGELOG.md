@@ -16,6 +16,32 @@ stands in this tree.
 
 ## Unreleased
 
+### The card layer is nineteen modules behind one barrel
+
+- `shell/web/cards.mjs` was 8,884 lines: thirteen renderers, their models, the
+  token helpers, the sheet and story arithmetic, the blob transfer and the
+  registry in one file.  Every card edit scrolled past twelve other cards, and
+  every agent working on a different card touched the same file.
+- It is now `shell/web/cards/`: one module per card family (`card-editor.mjs`,
+  `card-story.mjs`, …), plus the shared `dom.mjs` (card chrome and `renderCard`),
+  `registry.mjs` (the kinds, `COMMAND_HELP`, the unknown-card placeholder),
+  `blob.mjs` (chunked reads and writes), `text.mjs` (tokens, listings, command
+  parsing), `sheet.mjs` and `story.mjs` (the pure models).  `cards.mjs` is 247
+  lines: the re-export list and the thirteen `registerCardKind` calls, in their
+  original order.
+- Nothing else moved: the 84 exported names are the same 84, so `main.mjs`,
+  `board.mjs` and `selftest.mjs` import the barrel unchanged and the board file
+  does not know the difference.  The suites confirm it — web 284, browser smoke
+  61, input smoke 43, mods 431, AI 86 (1 skipped) — so no count changes here.
+- The move was generated, not retyped, from the old file, and a throwaway probe
+  under the gitignored `build/` proved that every one of the 120 original
+  declaration bodies appears exactly once across the new modules (0 missing,
+  0 duplicated) before any suite was run.  The docs that named `cards.mjs` as the
+  place a renderer lives — `AGENTS.md`, `README.md`, `shell/web/README.md`,
+  `docs/ARCHITECTURE.md`, `docs/SURFACES.md`, `docs/VIEWS.md`,
+  `docs/PARADIGM.md`, `docs/PROJECT.md`, `docs/MODS.md`, `docs/TRIM.md`,
+  `docs/FORK.md` — now name the module or the barrel as each sentence means it.
+
 ### The demo that ships is reachable, and the install ships only the demo
 
 - The installed payload no longer carries the checkout's test scaffolding:

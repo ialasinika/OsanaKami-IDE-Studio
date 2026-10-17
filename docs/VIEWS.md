@@ -38,7 +38,7 @@ Everything else. In this repository that client is `shell/web/`:
 | --- | --- | --- |
 | the document's schema | `shell/web/board.mjs` | `cards`, `links`, `viewport`, `version`, card `kind`s |
 | its validation | `isValidCard`, `normaliseDocument`, `serialize` | which members are required, which are repaired, which card ids may repeat |
-| its meaning | `shell/web/cards.mjs` | what an editor card is, what a note card draws |
+| its meaning | `shell/web/cards.mjs` (the barrel over `shell/web/cards/`) | what an editor card is, what a note card draws |
 | its address | `BOARD_PATH = ".infantgod/board.json"` | the file name and directory are the client's convention |
 | its default | `createBoard` | what an empty board looks like |
 | its id space | `makeId` | card ids are allocated in the browser; the kernel issues none |

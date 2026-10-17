@@ -130,11 +130,11 @@ than a fact.
 
 | piece | where |
 | --- | --- |
-| `projectRows(listing, {open, filter, now})` | `shell/web/cards.mjs`, pure |
-| `projectSummary(counts)` | `shell/web/cards.mjs`, pure |
-| `dirNameOf` | `shell/web/cards.mjs`, pure |
-| `renderProject(card, ctx)` | `shell/web/cards.mjs`, DOM |
-| registration + command + help text | `shell/web/cards.mjs`, `shell/web/main.mjs` |
+| `projectRows(listing, {open, filter, now})` | `shell/web/cards/text.mjs`, pure |
+| `projectSummary(counts)` | `shell/web/cards/text.mjs`, pure |
+| `dirNameOf` | `shell/web/cards/text.mjs`, pure |
+| `renderProject(card, ctx)` | `shell/web/cards/card-project.mjs`, DOM |
+| registration + command + help text | `shell/web/cards/card-project.mjs`, `shell/web/cards/registry.mjs`, `shell/web/main.mjs` |
 | default size `{w: 340, h: 580}` | `shell/web/board.mjs` |
 
 The pure half is what `shell/web/selftest.mjs` drives under Node; the DOM half

@@ -45,8 +45,8 @@ registerCardKind({
 
 That is the whole extension mechanism — **one call, one object**. There is no
 manifest, no loading, no discovery, no sandbox, no version negotiation and no
-registry file to edit. A fork adds its calls to `shell/web/cards.mjs` or to a
-module it imports next to it.
+registry file to edit. A fork adds its calls to `shell/web/cards.mjs` (the
+barrel over `shell/web/cards/`) or to a module it imports next to it.
 
 | member | required | contract |
 |---|---|---|
@@ -157,7 +157,7 @@ kind can depend on *both* the filesystem and the board without changing either.
 | kernel (`core/`) | stores the view document verbatim, whatever its shape — no field is read, no kind is known | `core/src/view.c` |
 | protocol | a card payload is arbitrary nested JSON; unknown kinds are never rejected | `docs/PROTOCOL.md` |
 | board model | deep-clones payloads (`cloneDocument`) and never interprets them | `shell/web/board.mjs` |
-| board UI | an unregistered kind renders as an "unknown card" that is **preserved, not deleted** | `renderUnknown` in `shell/web/cards.mjs` |
+| board UI | an unregistered kind renders as an "unknown card" that is **preserved, not deleted** | `renderUnknown` in `shell/web/cards/dom.mjs` |
 | command line | `focus`, `delete`, `link` work on any card id regardless of kind | `shell/web/main.mjs` |
 
 The last two matter: add a kind to a `board.json` and open it in a build that

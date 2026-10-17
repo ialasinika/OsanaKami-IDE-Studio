@@ -5,7 +5,7 @@ Everything 《幼神》-specific in this fork lives in two places:
 | where | what | owns |
 | --- | --- | --- |
 | `shell/mods/` | game knowledge: schemas, the baseline corpus, Yarn diagnosis, scaffolding, search | Node, no browser |
-| `shell/web/cards.mjs` | the `mod`, `problems` and `docs` card kinds | the DOM |
+| `shell/web/cards/` | the `mod`, `problems` and `docs` card kinds (`card-mod.mjs`, `card-problems.mjs`, `card-docs.mjs`) | the DOM |
 
 The kernel is not involved in either. It validates a card's *shape* — id, kind,
 geometry — and deliberately not its vocabulary, so a new card kind needs no C

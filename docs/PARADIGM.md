@@ -136,6 +136,7 @@ the schema, and `docs/VIEWS.md` states the seam: those thirteen kinds are
 conventions the shell implements, and a fork that invents `timeline` or
 `waveform` changes the shell and nothing else. A card with an unknown kind still
 loads, still saves, and still renders — `renderCard` in `shell/web/cards.mjs`
+(the barrel over `shell/web/cards/`)
 falls through to a placeholder that says the card is preserved in `board.json`
 and lists the kinds that build does know.
 
@@ -226,8 +227,9 @@ palette that steals focus and it is not a menu; it is a place to type a verb.
   new card is not placed at the origin and is not placed where a viewport
   happened to be either.
 
-The authoritative help text lives in `COMMAND_HELP` in `shell/web/cards.mjs`,
-kept there (per its own comment) so the README and the UI agree.
+The authoritative help text lives in `COMMAND_HELP` in
+`shell/web/cards/registry.mjs`, re-exported by `shell/web/cards.mjs` and kept
+next to the registry (per its own comment) so the README and the UI agree.
 
 The command line is the same surface whatever the window is showing and with
 nothing selected. That is the point: it does not care what is in front of it, so

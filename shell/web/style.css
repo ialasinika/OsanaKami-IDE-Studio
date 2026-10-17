@@ -5,13 +5,13 @@
  * never looks like a document list), the cards are the only raised things, and
  * the bottom strip is where every message goes instead of a dialog.
  *
- * Layout metrics that *must* stay in sync with cards.mjs:
+ * Layout metrics that *must* stay in sync with the card layer (`cards/`):
  *   .ed-view (the coloured <pre>) and .ed-input (the transparent textarea) share
  *   font-family/size/line-height/padding/tab-size exactly, or the caret and the
  *   colouring shear apart.  Both are set here from --code-* variables.
  *
  * DELETE THIS FILE and the board still works, but it renders as unstyled white
- * boxes stacked at the origin; the class names in cards.mjs and main.mjs are the
+ * boxes stacked at the origin; the class names in the card modules and main.mjs are the
  * contract this file satisfies.
  */
 
@@ -431,7 +431,7 @@ body.is-mod .card[data-kind="problems"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Per-kind card hooks.  cards.mjs puts `card-<kind>` on every card shell, so a
+/* Per-kind card hooks.  The card layer puts `card-<kind>` on every card shell, so a
    fork can restyle one kind by touching one line here.  Each kind carries its
    own accent, which the title's kind label picks up -- that is what keeps a
    board readable at a glance once the cards are too small to read. */
@@ -934,7 +934,7 @@ body.is-mod .card[data-kind="problems"] {
 .tok-command  { color: #82aaff; font-weight: 600; }
 .tok-punct    { color: #98a2b3; }
 .tok-plain    { color: inherit; }
-/* The tokenizer also names `ident` and `ws`, but cards.mjs folds those -- and
+/* The tokenizer also names `ident` and `ws`, but the card layer folds those -- and
    `plain` -- into the uncoloured run *between* spans, so no span ever carries
    these two classes today.  They are defined as the plain colour so the sheet
    still covers every documented kind if a tokenizer starts labelling them. */

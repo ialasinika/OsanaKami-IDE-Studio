@@ -173,9 +173,11 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers thirteen kinds — `editor`, `runner`, `note`, `files`,
-`project` and `sheet` in the core of `cards.mjs`, then `story`, `pixel`, `rig`,
-`mod`, `problems`, `docs` and `settings` — `sheet` being a structured-data grid
+The shell registers thirteen kinds from `shell/web/cards/` — one module per card
+family — through the barrel `shell/web/cards.mjs`, which re-exports the public
+names and makes the thirteen calls: `editor`, `runner`, `note`, `files`,
+`project` and `sheet`, then `story`, `pixel`, `rig`, `mod`, `problems`, `docs`
+and `settings`, `sheet` being a structured-data grid
 (typed cells, rows, columns, TSV export) that exists to prove nothing downstream
 assumes text, `project` being the workspace as one project: what the project
 contains, merged with what the document has open, `rig` being a skeleton and its
@@ -493,10 +495,12 @@ shell/                  the front end and the endpoints
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
     selftest.mjs        node shell/mods/selftest.mjs -- 431 checks, no kernel
-  web/                  the front end: index.html, style.css, board.mjs, cards.mjs,
-                        views.mjs, history.mjs, rpc.mjs, watch.mjs, classic.mjs,
-                        modview.mjs, main.mjs, story.mjs, storycsv.mjs, ysls.mjs,
-                        pixelpng.mjs, selftest.mjs, README.md
+  web/                  the front end: index.html, style.css, board.mjs, cards.mjs
+                        (the barrel), cards/ (thirteen kinds, one family per
+                        module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
+                        classic.mjs, modview.mjs, main.mjs, story.mjs,
+                        storycsv.mjs, ysls.mjs, pixelpng.mjs, selftest.mjs,
+                        README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

@@ -11,7 +11,8 @@ rpc.mjs       POST /rpc + GET /events client (SSE framing, RpcError)
 board.mjs     the board document, viewport, selection and mutations
 history.mjs   the undo ring: document snapshots, coalescing, redo branch
 watch.mjs     what a card should do when the file moves under it (pure)
-cards.mjs     one renderer per card kind + the pure helpers
+cards.mjs     the barrel: re-exports cards/ and registers the thirteen kinds
+cards/        one module per card family, plus the dom/registry/blob helpers
 classic.mjs   the same cards as a code area, tabs and a sidebar (pure)
 views.mjs     the views by name, and what the HUD says in each (pure)
 modview.mjs   the same cards as a package tree, editor and problems (pure)
@@ -94,7 +95,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `settings` | the machine, not the project: AI provider, the view a window opens in, poll interval | none |
 
 A kind exists because it was registered, and registering is one call at the end
-of `cards.mjs`:
+of `cards.mjs`, the barrel:
 
 ```js
 registerCardKind({ kind, title, create, describe, render });
@@ -104,8 +105,8 @@ That is a **fork-time hook, not a plugin system** (there is no loading, no
 discovery, no manifest and no sandbox): the call runs while this module graph is
 evaluated. `renderCard` dispatches through the registry, so an unregistered kind
 cannot crash the UI — it renders as a placeholder that names the kinds this
-build does know and points at `cards.mjs`. The kernel stores unknown kinds and
-their fields verbatim, so nothing is destroyed in the meantime.
+build does know and points at `shell/web/cards/`. The kernel stores unknown kinds
+and their fields verbatim, so nothing is destroyed in the meantime.
 
 `shell/web/selftest.mjs` covers the hook itself (including that a probe kind
 survives a save/load round trip). The full contract, and `sheet` as a worked
@@ -247,7 +248,8 @@ the trade-off is explicit rather than discovered.
 | --- | --- |
 | `rpc.mjs` | nothing can reach the kernel: no file is read, nothing is saved, and the status light can never turn green. |
 | `board.mjs` | there is no document model: cards cannot be added, linked or serialised. `import` fails, so the UI does not boot. |
-| `cards.mjs` | the tile still lays out, but the cards it arranges have no renderers. |
+| `cards.mjs` | the tile still lays out, but nothing re-exports `cards/` or registers a kind, so the cards it arranges have no renderers. |
+| `cards/` | deleting one module loses the family it holds and every name the other cards take from it; delete all of them and `cards.mjs` has nothing to re-export. |
 | `history.mjs` | `Ctrl+Z` stops existing: every gesture still edits the board, but nothing is remembered, and the undo ring starts empty. |
 | `watch.mjs` | nothing polls for changes made outside the app. Cards still read and write files; a file rewritten by another program is simply not noticed until the card is reopened. |
 | `classic.mjs` | the document works as always, but there is no conventional-IDE arrangement: no code area, no tab strip, no sidebar column, and `mode classic` is not a mode — the window still opens on the mod tile. |

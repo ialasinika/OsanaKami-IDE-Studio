@@ -38,7 +38,7 @@ Cheapest step. The name appears in these places:
 | `core/src/main.c` | `SDE_VERSION`, `usage()`, `cmd_modules()`'s banner |
 | `shell/main.mjs` | `SHELL_VERSION`, the `USAGE` text, `DEFAULT_KERNEL`'s path |
 | `shell/web/index.html` | `<title>`, `.hud-brand` |
-| `shell/web/cards.mjs` | `COMMAND_HELP` if it names the product |
+| `shell/web/cards/registry.mjs` | `COMMAND_HELP` if it names the product (re-exported by `cards.mjs`) |
 | `tools/*.py`, `tools/README.md` | banners and the `--kernel` / `--kernel-cmd` flags |
 | `.gitignore` | if you rename `.infantgod/` |
 
@@ -88,7 +88,7 @@ having them.
 The **classic view** is a shell-level cut of the same kind, and it is mechanical
 for the reason it exists: it never wrote to the document. `shell/web/classic.mjs`
 is one pure module imported only by `main.mjs`; the rest of the cut is the
-`mode` row and its `COMMAND_HELP` line in `shell/web/cards.mjs`, the classic
+`mode` row and its `COMMAND_HELP` line in `shell/web/cards/registry.mjs`, the classic
 branches in `renderStage`/`renderCards`/`renderHud` plus `renderTabs`/
 `renderSideHint`/`installView`, the `#tabs` and `#mode-switch` elements in
 `index.html` and their rules in `style.css`. No `.infantgod/board.json` changes
@@ -157,7 +157,7 @@ layer, and it is stated in both `port.h` and the `Makefile`.
 and stores it verbatim, and the board model clones whatever fields you attach.
 So a new kind is purely a shell change, and mostly a single registration:
 
-1. `shell/web/cards.mjs` — one call:
+1. a module under `shell/web/cards/`, registered by the `cards.mjs` barrel — one call:
 
    ```js
    registerCardKind({
@@ -177,7 +177,8 @@ So a new kind is purely a shell change, and mostly a single registration:
 2. `shell/web/board.mjs` — add the kind to `CARD_KINDS` (documentation only) and
    give it a default in `DEFAULT_SIZE` so a new card is not 0x0.
 3. `shell/web/main.mjs` — if the kind needs a command-line verb, add a `case` to
-   the command switch (copy the `sheet` case) and a row to `COMMAND_HELP`.
+   the command switch (copy the `sheet` case) and a row to `COMMAND_HELP` (in
+   `shell/web/cards/registry.mjs`).
 4. `shell/web/style.css` — the card shell (`.card`, `.card-title`, `.card-kind`,
    `.card-label`, `.card-tools`, `.card-grip`) is already styled; add your own
    kind's styles under a `.card-body-<kind>` class.
@@ -341,7 +342,7 @@ the step you do first and the rest of the prototype becomes your backend.
 | 1. Rename | docs, 5 source files, 4 tool files | 1 hour | low | yes |
 | 2. Trim | `core/`, `Makefile`, `main.c`, `rpc.c` | hours | low | yes |
 | 3. Port the platform layer | `core/port/*`, `Makefile`, `infantgod_cfg.h` | 1 day+ | medium (spawn, atomic replace, threads) | yes |
-| 4. Add a card kind | `shell/web/board.mjs`, `cards.mjs`, `main.mjs`, `style.css` | hours | low | yes |
+| 4. Add a card kind | `shell/web/board.mjs`, `shell/web/cards/` (a new module), `main.mjs`, `style.css` | hours | low | yes |
 | 5. Add a language | `langs/<id>.lang` | 10 minutes | very low | yes |
 | 6. Move the transport | `core/src/serve.c` or `shell/main.mjs` | hours | low if framing and single-writer are preserved | yes |
 | 7. WRY/Tauri window | `shell/main.mjs` + a new Rust host | days | high | **no** — adds a dependency graph and a fetch |

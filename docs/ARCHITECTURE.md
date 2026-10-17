@@ -288,7 +288,8 @@ The browser side, `shell/web/`, is module-per-concern:
 | `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
-| `cards.mjs` | one renderer and behaviour set per card kind | no card has anything to draw with |
+| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the thirteen kinds | no card has anything to draw with |
+| `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs` and `story.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
 | `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
 | `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the app has no tiling to open in -- `DEFAULT_VIEW` would name a view nobody draws |
 | `modview.mjs` | the same cards arranged as a mod workbench: a package column, a code area and a report panel (pure) | the app has no second tiling to switch to |

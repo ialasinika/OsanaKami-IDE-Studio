@@ -151,7 +151,7 @@ Rules of thumb:
 | `core/port/` | the only OS-aware layer (`sys_win32.c`, `proc_win32.c`) |
 | `core/tests/` | `test_json.c`, `test_blob.c` |
 | `shell/main.mjs` | CLI, HTTP/stdio endpoints, `serve` / `rpc` verbs |
-| `shell/web/` | the browser UI: `main.mjs`, `cards.mjs`, `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `history.mjs`, `rpc.mjs`, the card kinds, `selftest.mjs`, `README.md` |
+| `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (thirteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
 | `shell/mods/` | the game layer: schema validation, Yarn diagnosis, scaffolding, search |
 | `shell/ai/` | the AI layer (config, provider, tools); self-test runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |
@@ -191,8 +191,10 @@ area:
 Recipes:
 
 - **Add a card kind**: register it with `registerCardKind(...)` in
-  `shell/web/cards.mjs`, add its renderer and any drag/selection behaviour, add
-  its command to `COMMAND_HELP`, then document it in `shell/web/README.md` and
+  `shell/web/cards/` (the module for its family; `cards.mjs` is the barrel that
+  re-exports `cards/` and holds the registration list), add its renderer and any
+  drag/selection behaviour, add its command to `COMMAND_HELP`, then document it
+  in `shell/web/README.md` and
   the "shipped kinds" sentence in `README.md`, and cover its pure arithmetic in
   `shell/web/selftest.mjs`.
 - **Add a protocol method**: `sde_methods[]` in `core/src/rpc.c`, the handler in

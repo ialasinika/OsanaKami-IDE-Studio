@@ -673,7 +673,7 @@ def define_checks(facts: dict, board_path: Path, dom: str) -> list:
             "module that defines the commands ran -- the HUD and board painted); NOT proven: "
             "the hint text, because no keys are typed and --dump-dom drives no input, so "
             "#command-hint is empty and the shipped rows ('project [glob]', 'files [glob]') "
-            "stay inside shell/web/cards.mjs's COMMAND_HELP array"
+            "stay inside shell/web/cards/registry.mjs's COMMAND_HELP array"
         )
 
     return [
