@@ -318,7 +318,10 @@ The editor card answers the keys a person reaches for before trusting a text box
 | `Shift+Tab` | outdents those lines, or removes one unit before the caret |
 | `Enter` | keeps the current line's indentation, and steps in one more level after `{`, `(` or `[` |
 | `Ctrl+F` | opens the in-card find bar: query, live `3 / 7` count, previous, next, a replacement box, Replace, Replace All |
-| `Esc` | closes the find bar |
+| `Esc` | closes the find bar (or the completion menu, if that is what is open) |
+| `Ctrl+Space` | asks the Yarn language service for the completion menu now, without waiting for the debounce |
+| `↑` `↓` | moves through the open completion menu, wrapping at both ends |
+| `Enter` `Tab` | accepts the active candidate: the prefix is replaced and the caret lands after the inserted text |
 
 `Enter` splits by the line **up to the caret**, not the whole line, so pressing it
 in the middle of a deeply indented line does not leave the tail indented.
@@ -340,7 +343,52 @@ The arithmetic is pure and exported — `indentSelection`, `indentAfterEnter`,
 `findMatches`, `replaceMatchAt`, `replaceAllMatches`, `markHits` — and
 `shell/web/selftest.mjs` checks it with no DOM at all.
 
+### The Yarn language strips
+
+A card whose label ends in `.yarn` asks the mod layer two questions about the
+**buffer, not the file**: `mod.complete` (the candidates around the caret) and
+`mod.hover` (what the thing under the caret is). The wire calls are
+`client.call("mod.complete", {text, caret, limit: 200})` and
+`client.call("mod.hover", {text, caret})`; the text sent is what is in the
+textarea, so an unsaved line is described exactly as accurately as a saved one.
+Non-Yarn files never ask (`isYarnPath`), and neither does a card whose shell
+answers with an error once (`state.langOff`) — a trimmed kernel must lose the
+strips, not turn every keystroke into a warning.
+
+Both answers are drawn as **strips inside the card**, not as popups at the caret:
+
+| strip | where | when |
+| --- | --- | --- |
+| completion menu (`.ed-complete`) | between the code and the card's status line | `mod.complete` has candidates; at most `COMPLETION_LIMIT` (8) rows, at most that many again hidden behind the `title`'s total |
+| hover (`.ed-hover`) | at the very bottom of the card | `mod.hover` has something to say |
+
+A caret-anchored popup would have to be repositioned on every scroll, resize and
+view switch — and the card is a box in a tiled document, so "where the caret is"
+is a question with four answers. A strip cannot be misplaced, and the same rows
+are what the keyboard walks. Both strips are `hidden` until there is something
+to say, so a card with no mod layer looks exactly as it always did.
+
+The arithmetic is pure and exported: `completionState` (an answer + caret →
+`{open, kind, kindLabel, items, total, more}`; it clamps the service's offsets
+to the buffer and trims the list while remembering the real total),
+`applyCompletion` (replace exactly the candidate's span, caret after the text),
+`stepCompletion` (wrap both ways), `completionKindLabel` (`COMPLETION_KIND_LABELS`:
+指令/说话人/变量/标签/标签值/参数, and an unknown kind prints itself rather than
+nothing) and `hoverLine` (one plain line; markdown emphasis goes, the `<<`/`>>`
+spelling of the language stays). `shell/web/selftest.mjs` pins all six with no
+DOM; `tools/browser_smoke.py` types into a real textarea in a real window and
+reads the real strips back — menu opens, Enter accepts, Escape closes, Ctrl+Space
+skips the debounce, a non-Yarn card stays quiet, hover follows the caret.
+
+Typing the same `<<jum` twice must not let the first answer overwrite the second:
+each question carries a sequence number and an answer that arrives after the
+caret moved is dropped. Completion is debounced by 160 ms, hover by 300 ms (the
+hover is asked on `input`, `keyup`, `click` and `mouseup`, because all four move
+the caret).
+
 ### Line numbers
+
+
 
 The editor draws a gutter down its left: one number per line, `1` at the top, and
 it is **on** when a file is opened — the answer to "where am I" should not have to
@@ -485,6 +533,10 @@ same reason the classic view has none: a hidden keystroke is not discoverable.
   programmatic edit (a `Tab` or a Replace All is one step, not a character at a
   time), no per-key bindings, no code folding, and the find bar is **literal
   text only** — no regular expressions, no match-case and no whole-word toggles.
+  The Yarn strips are completion and hover only: no signature help, no
+  diagnostics drawn in the editor (a `problems` card is where validation lands),
+  no paging past the first `COMPLETION_LIMIT` rows, and no mod-layer-aware
+  colouring — the colour layer is always `lang.tokenize`'s, in every card.
 * The tiled views are **views**: no split panes, no drag-to-resize on the sidebar
   or the report panel, no tab reordering that survives anything, no second layout
   to save, and no effect on the protocol or on `board.json`. A tab closes with

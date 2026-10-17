@@ -1345,8 +1345,9 @@ CARD_COMMANDS = (
 
 #: The close facts the card page prints after the reachability walk: the three
 #: strip gestures (x, middle click, Ctrl+W), the neighbour rule when the last tab
-#: closes, and the unsaved-text question's three answers.  Named after the key
-#: the page prints, and used by the "browser is not installed" summary line.
+#: closes, the unsaved-text question's three answers, the same two gestures in the
+#: mod view, and the undo that puts a closed card back.  Named after the key the
+#: page prints, and used by the "browser is not installed" summary line.
 CLOSE_CHECK_KEYS = (
     "x_close",
     "middle_close",
@@ -1356,13 +1357,31 @@ CLOSE_CHECK_KEYS = (
     "ask_discard",
     "ask_save",
     "ask_gestures",
+    "mod_x_close",
+    "mod_ctrl_w",
+    "undo_close",
 )
 CLOSE_CHECK_COUNT = len(CLOSE_CHECK_KEYS)
 
+#: The Yarn language strips: the menu for `<<`, accepting a row, Escape, the
+#: Ctrl+Space shortcut, a non-Yarn file staying quiet, and hover following the
+#: caret.  Same rules as CLOSE_CHECK_KEYS.
+LANG_CHECK_KEYS = (
+    "lang_menu",
+    "lang_accept",
+    "lang_escape",
+    "lang_ctrl_space",
+    "lang_non_yarn",
+    "lang_hover",
+)
+LANG_CHECK_COUNT = len(LANG_CHECK_KEYS)
+
 #: One assertion per (view, kind), plus the one that every mounted card is
-#: reachable somewhere, plus the close facts.  Used by the "browser is not
-#: installed" summary line.
-CARD_CHECK_COUNT = len(CARD_KINDS) * len(CARD_VIEWS) + 1 + CLOSE_CHECK_COUNT
+#: reachable somewhere, plus the close facts and the language-strip facts.  Used
+#: by the "browser is not installed" summary line.
+CARD_CHECK_COUNT = (
+    len(CARD_KINDS) * len(CARD_VIEWS) + 1 + CLOSE_CHECK_COUNT + LANG_CHECK_COUNT
+)
 
 #: The wrapper page.  Same rules as ``MOD_PAGE``: plain browser JS, no imports,
 #: and every fact copied into ``#result`` because a dump serializes only the top
@@ -1396,8 +1415,7 @@ pre{white-space:pre-wrap}
   const doc = () => frame.contentDocument;
   const win = () => frame.contentWindow;
   const viewClass = () => (doc().body === null ? "" : doc().body.className);
-  const inView = (view) => new RegExp("(^|\\s)is-" + view + "(\\s|$)").test(viewClass());
-  const waitFor = async (probe, tries) => {
+  const inView = (view) => new RegExp("(^|\\s)is-" + view + "(\\s|$)").test(viewClass());  const waitFor = async (probe, tries) => {
     const limit = tries || 240;
     for (let index = 0; index < limit; index += 1) {
       try {
@@ -1412,6 +1430,17 @@ pre{white-space:pre-wrap}
     const box = doc().getElementById("command");
     box.value = text;
     box.dispatchEvent(new (win().KeyboardEvent)("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+  };
+  /* The board's own redraws are queued on an animation frame, and a headless
+   * page can go a while without servicing one; a card added between frames then
+   * has its root but no tab yet.  A view switch repaints synchronously, so this
+   * is how the probe asks the page to redraw before it trusts the strip -- the
+   * outcome (a real tab, a real button) is still the only thing measured. */
+  const syncStrip = async (view) => {
+    runLine("mode " + (view === "mod" ? "classic" : "mod"));
+    await sleep(180);
+    runLine("mode " + view);
+    await sleep(240);
   };
   /* The last root of a kind: the commands run after the boot-time hint note, so
    * the card this probe opened is the last one the board mounted. */
@@ -1694,6 +1723,7 @@ pre{white-space:pre-wrap}
       runLine("mode classic");
       await waitFor(() => inView("classic"));
       await sleep(350);
+      await syncStrip("classic");
 
       /* x on the *active* tab: the neighbour that slides into its place takes the
        * selection and the keyboard.  Activating it first is what makes the
@@ -1742,6 +1772,185 @@ pre{white-space:pre-wrap}
       await discardCheck();
       await saveCheck();
       await gestureAskCheck();
+
+      /* ---------------- the same close, in the mod view ---------------- */
+      /* The assertions above prove the classic strip's gestures; the mod view
+       * tiles the board differently (sidebar / panel / its own tab list), so a
+       * close there is driven for real too -- "the card is reachable" is not
+       * "the card closes and the right neighbour takes over". */
+      runLine("mode mod");
+      await waitFor(() => inView("mod"));
+      await sleep(350);
+      const lastNoteRoot = () => {
+        const roots = Array.from(doc().querySelectorAll('#cards .card[data-kind="note"]'));
+        return roots.length === 0 ? null : roots[roots.length - 1];
+      };
+      /* Close one clean card -- a fresh note, which has nothing to lose, so the
+       * question must not open -- and report the neighbours the strip showed,
+       * so Python can check the neighbour RULE instead of trusting the page. */
+      const closeInMod = async (key, close) => {
+        runLine("note " + key + " probe");
+        await sleep(700);
+        await syncStrip("mod");
+        const root = lastNoteRoot();
+        if (root === null) {
+          say(key, "view=" + (inView("mod") ? 1 : 0)
+            + " closed=- right=- left=- gone=0 next=- shown=0 focused=0 tabs=0");
+          return;
+        }
+        const id = root.getAttribute("data-card-id");
+        await openTab(id);
+        const ids = tabIds();
+        const right = rightOf(ids, id);
+        const left = leftOf(ids, id);
+        close(id);
+        await sleep(600);
+        say(key, "view=" + (inView("mod") ? 1 : 0)
+          + " closed=" + id
+          + " right=" + (right === null ? "-" : right)
+          + " left=" + (left === null ? "-" : left)
+          + " " + gestureFacts(id, right !== null ? right : left));
+      };
+      await closeInMod("mod_x_close", closeWithX);
+      await closeInMod("mod_ctrl_w", () => { closeWithCtrlW(); });
+
+      /* ---------------- undo gives a closed card back ---------------- */
+      runLine("note undo_close probe");
+      await sleep(700);
+      await syncStrip("mod");
+      let undoTarget = null;
+      let undoGone = 0;
+      let undoBack = 0;
+      let undoTab = 0;
+      const undoRoot = lastNoteRoot();
+      if (undoRoot !== null) {
+        undoTarget = undoRoot.getAttribute("data-card-id");
+        await openTab(undoTarget);
+        closeWithX(undoTarget);
+        await sleep(600);
+        undoGone = cardRootOf(undoTarget) === null && tabOf(undoTarget) === null ? 1 : 0;
+        /* Only the board's ring can give a closed card back, and a text field
+         * would keep the keystroke for its own undo -- blur first, the way a
+         * keyboard user leaves the field before pressing Ctrl+Z. */
+        const active = doc().activeElement;
+        if (active !== null && typeof active.blur === "function") {
+          active.blur();
+        }
+        doc().dispatchEvent(
+          new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }),
+        );
+        await sleep(800);
+        undoBack = cardRootOf(undoTarget) !== null ? 1 : 0;
+        undoTab = tabOf(undoTarget) !== null ? 1 : 0;
+      }
+      say("undo_close", "gone=" + undoGone + " back=" + undoBack + " tab=" + undoTab
+        + " id=" + (undoTarget === null ? "-" : undoTarget));
+
+      /* ---------------- the Yarn language strips ----------------
+       * The mod layer answers about the text being edited, so the probe types
+       * into the real textarea, lets the real debounce run, and reads the real
+       * strips.  Facts stay small; the rules are Python's to judge. */
+      runLine("mode mod");
+      await waitFor(() => inView("mod"));
+      await sleep(300);
+      runLine("open main.yarn");
+      await sleep(900);
+      await syncStrip("mod");
+      const lastEditorFor = (pattern) => {
+        const roots = Array.from(doc().querySelectorAll('#cards .card[data-kind="editor"]'));
+        for (let i = roots.length - 1; i >= 0; i -= 1) {
+          const label = roots[i].querySelector(".card-label");
+          if (label !== null && pattern.test(label.textContent || "")) { return roots[i]; }
+        }
+        return null;
+      };
+      const areaOf = (root) => (root === null ? null : root.querySelector("textarea.ed-input"));
+      const shownBar = (root, selector) => {
+        const bar = root === null ? null : root.querySelector(selector);
+        return bar !== null && !bar.hidden;
+      };
+      const rowsOf = (root) => (root === null ? [] : Array.from(
+        root.querySelectorAll(".ed-complete-item .ed-complete-label"),
+      ).map((node) => node.textContent));
+      const typeInto = (root, text, caret) => {
+        const area = areaOf(root);
+        if (area === null) { return false; }
+        area.focus();
+        area.value = text;
+        area.setSelectionRange(caret, caret);
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      };
+      const keyOn = (root, name, extra) => {
+        const area = areaOf(root);
+        if (area === null) { return; }
+        area.focus();
+        area.dispatchEvent(new KeyboardEvent("keydown", Object.assign(
+          { key: name, bubbles: true, cancelable: true }, extra || {},
+        )));
+      };
+      const openMenu = async (root, text, caret) => {
+        typeInto(root, text, caret);
+        await sleep(650);
+        return rowsOf(root);
+      };
+      const menuShown = (root) => (shownBar(root, ".ed-complete") ? 1 : 0);
+      const editorText = (root) => (areaOf(root) === null ? "" : areaOf(root).value);
+
+      let yarn = lastEditorFor(/\.yarn$/i);
+      let rows = await openMenu(yarn, "<<jump", 6);
+      say("lang_menu",
+        "root=" + (yarn !== null ? 1 : 0)
+        + " shown=" + menuShown(yarn)
+        + " rows=" + rows.length
+        + " first=" + encodeURIComponent(rows.length === 0 ? "-" : rows[0]));
+      // Enter accepts the active row: the command lands, the caret moves into
+      // its argument slot, and whatever the argument slot answers next is not
+      // this check's business -- the text change is.
+      keyOn(yarn, "Enter");
+      await sleep(300);
+      say("lang_accept",
+        "text=" + encodeURIComponent(editorText(yarn))
+        + " caret=" + (areaOf(yarn) === null ? -1 : areaOf(yarn).selectionStart));
+      // Escape closes the menu and touches nothing.
+      await openMenu(yarn, "<<jump", 6);
+      const beforeEscape = editorText(yarn);
+      keyOn(yarn, "Escape");
+      await sleep(250);
+      say("lang_escape",
+        "shown=" + menuShown(yarn)
+        + " kept=" + (editorText(yarn) === beforeEscape ? 1 : 0));
+      // Ctrl+Space is the "ask now" gesture: no debounce, the same menu.
+      typeInto(yarn, "<<", 2);
+      keyOn(yarn, " ", { ctrlKey: true });
+      await sleep(300);
+      say("lang_ctrl_space", "shown=" + menuShown(yarn) + " rows=" + rowsOf(yarn).length);
+      // A non-Yarn file never asks, whatever is typed into it.
+      runLine("open README.md");
+      await sleep(900);
+      await syncStrip("mod");
+      const readme = lastEditorFor(/README\.md$/i);
+      typeInto(readme, "<<", 2);
+      await sleep(700);
+      say("lang_non_yarn", "shown=" + menuShown(readme));
+      // Hover follows the caret: on a token it says something, away from one it
+      // clears.  The line itself is data, so it travels encoded.
+      runLine("open main.yarn");
+      await sleep(900);
+      await syncStrip("mod");
+      yarn = lastEditorFor(/\.yarn$/i);
+      typeInto(yarn, "<<jump>>", 8);
+      await sleep(750);
+      const hoverOn = shownBar(yarn, ".ed-hover") ? 1 : 0;
+      const hoverText = hoverOn === 1 ? yarn.querySelector(".ed-hover").textContent : "";
+      // The caret moves onto a plain word (a line below the command): nothing
+      // token-shaped there, so the line must go.
+      typeInto(yarn, "<<jump>>\nplain words", 12);
+      await sleep(750);
+      say("lang_hover",
+        "on=" + hoverOn
+        + " off=" + (shownBar(yarn, ".ed-hover") ? 1 : 0)
+        + " line=" + encodeURIComponent(hoverText));
     } catch (err) {
       say("error", (err && err.message) || String(err));
     }
@@ -2015,6 +2224,69 @@ def define_card_checks(facts: dict) -> list:
         )
         return "Ctrl+W and the middle click both reach the same question, and cancel keeps the card"
 
+    def neighbour_rule(key: str, view: str) -> object:
+        """The classic neighbour rule, driven from the mod view's own strip."""
+
+        def check():
+            line = facts.get(key, "")
+            require(line, f"the wrapper page reported no {key!r} line for the {view} view close")
+            parsed = _split_fact_line(line)
+            require(
+                parsed.get("view") == "1",
+                f"the {view} view was not on screen when its close ran (facts {line!r})",
+            )
+            require(
+                parsed.get("gone") == "1",
+                f"the {view} view: the closed tab and its card are still there (facts {line!r})",
+            )
+            # The rule, checked from what the page saw, not from what it expected:
+            # the right neighbour if there is one, else the left, else nothing.
+            right = parsed.get("right", "-")
+            left = parsed.get("left", "-")
+            expected = right if right not in ("", "-") else left
+            require(
+                expected not in ("", "-"),
+                f"the closed tab had no neighbour to take over in the {view} view (facts {line!r})",
+            )
+            require(
+                parsed.get("next") == expected,
+                f"the selection went to {parsed.get('next')!r}, but the rule names {expected!r} "
+                f"(facts {line!r})",
+            )
+            require(
+                parsed.get("shown") == "1",
+                f"the neighbour {expected} is not drawn in the {view} view's area (facts {line!r})",
+            )
+            require(
+                parsed.get("focused") == "1",
+                f"the neighbour {expected} did not take the keyboard (facts {line!r})",
+            )
+            return f"the {view} view closed the tab and gave the selection to {expected}"
+
+        return check
+
+    def undo_close():
+        line = facts.get("undo_close", "")
+        require(line, "the wrapper page reported no 'undo_close' line")
+        parsed = _split_fact_line(line)
+        require(
+            parsed.get("gone") == "1",
+            f"the close that undo should reverse removed nothing (facts {line!r})",
+        )
+        require(
+            parsed.get("back") == "1",
+            f"Ctrl+Z did not give the closed card back (facts {line!r})",
+        )
+        require(
+            parsed.get("tab") == "1",
+            "the card came back without its tab, so the strip still acts as if it is gone",
+        )
+        require(
+            parsed.get("id", "-") not in ("", "-"),
+            "the page reported no id for the card it closed and undid",
+        )
+        return f"closing is a document edit: Ctrl+Z gave card {parsed.get('id')} and its tab back"
+
     checks.append(("G29: x closes the tab and the neighbour takes over", close_gesture("x_close")))
     checks.append(("G29: a middle click closes the tab like a browser tab", close_gesture("middle_close")))
     checks.append(("G29: Ctrl+W closes the active tab, not the window", close_gesture("ctrl_w")))
@@ -2023,6 +2295,84 @@ def define_card_checks(facts: dict) -> list:
     checks.append(("G29: closing unsaved text answered discard removes it and writes nothing", discard_keeps_file))
     checks.append(("G29: closing unsaved text answered save writes before the card goes", save_before_close))
     checks.append(("G29: Ctrl+W and a middle click ask the same close question", ask_gesture_checks))
+    checks.append(("G29: the mod view's x closes the tab and hands the neighbour the keyboard", neighbour_rule("mod_x_close", "mod")))
+    checks.append(("G29: the mod view's Ctrl+W closes the active tab", neighbour_rule("mod_ctrl_w", "mod")))
+    checks.append(("G29: Ctrl+Z gives a closed card back, tab and all", undo_close))
+
+    def lang_fact(key: str) -> dict:
+        line = facts.get(key, "")
+        require(line, f"the wrapper page reported no {key!r} line for the Yarn language strips")
+        return _split_fact_line(line)
+
+    def lang_menu():
+        parsed = lang_fact("lang_menu")
+        require(parsed.get("root") == "1", "no .yarn editor card was mounted to ask")
+        require(
+            parsed.get("shown") == "1",
+            f"typing `<<jum` into a .yarn card opened no completion menu (facts {parsed!r})",
+        )
+        first = urllib.parse.unquote(parsed.get("first", ""))
+        require(
+            first == "jump",
+            f"the first candidate was {first!r}, expected the `jump` command",
+        )
+        require(int(parsed.get("rows", "0") or "0") >= 1, "the menu opened with no rows")
+        return "typing `<<jum` opens the menu and names `jump` first"
+
+    def lang_accept():
+        parsed = lang_fact("lang_accept")
+        text = urllib.parse.unquote(parsed.get("text", ""))
+        require(
+            text == "<<jump ",
+            f"accepting the `jump` row left the card as {text!r}, expected '<<jump ' -- "
+            "the prefix has to be replaced by the row's insert text",
+        )
+        require(
+            parsed.get("caret") == "7",
+            f"the caret did not land after the inserted text (facts {parsed!r})",
+        )
+        return "Enter accepts the row, replaces the prefix and leaves the caret after the command"
+
+    def lang_escape():
+        parsed = lang_fact("lang_escape")
+        require(parsed.get("shown") == "0", "Escape left the completion menu on screen")
+        require(parsed.get("kept") == "1", "Escape changed the text while only closing the menu")
+        return "Escape closes the menu and leaves the text alone"
+
+    def lang_ctrl_space():
+        parsed = lang_fact("lang_ctrl_space")
+        require(
+            parsed.get("shown") == "1",
+            "Ctrl+Space did not ask for the menu (the debounce never ran in time)",
+        )
+        require(int(parsed.get("rows", "0") or "0") >= 1, "Ctrl+Space opened an empty menu")
+        return "Ctrl+Space asks for the menu immediately"
+
+    def lang_non_yarn():
+        parsed = lang_fact("lang_non_yarn")
+        require(
+            parsed.get("shown") == "0",
+            "a non-Yarn file opened a completion menu -- the cards must only ask for .yarn",
+        )
+        return "a non-Yarn card never opens the menu"
+
+    def lang_hover():
+        parsed = lang_fact("lang_hover")
+        require(parsed.get("on") == "1", "hovering `<<jump>>` printed no line")
+        line = urllib.parse.unquote(parsed.get("line", ""))
+        require("jump" in line, f"the hover line said {line!r}, expected the jump command's doc")
+        require(
+            parsed.get("off") == "0",
+            "the hover line stayed up with the caret on plain text, away from any token",
+        )
+        return "hover prints one line on a token and clears when the caret leaves it"
+
+    checks.append(("Yarn strips: typing `<<jum` opens the menu and names `jump`", lang_menu))
+    checks.append(("Yarn strips: Enter accepts the row and relocates the caret", lang_accept))
+    checks.append(("Yarn strips: Escape closes the menu without touching the text", lang_escape))
+    checks.append(("Yarn strips: Ctrl+Space asks without waiting for the debounce", lang_ctrl_space))
+    checks.append(("Yarn strips: a non-Yarn card never opens the menu", lang_non_yarn))
+    checks.append(("Yarn strips: hover follows the caret on and off a token", lang_hover))
     return checks
 
 

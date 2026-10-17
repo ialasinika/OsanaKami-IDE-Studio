@@ -1939,6 +1939,211 @@ export function markHits(segments, hits, current = -1) {
   return out;
 }
 
+/* -------------------- the Yarn language service, card side -------------------- */
+
+/*
+ * The shell's `mod.complete` / `mod.hover` answer questions about the text in
+ * the editor, never about a file on disk: an author asks about the line they are
+ * typing, which is usually unsaved.  The two verbs are in `shell/main.mjs` and
+ * the answers come from `shell/mods/complete.js`; what lives here is the part
+ * that decides what a card shows and where an accepted candidate goes -- pure
+ * functions, so the selftest can hold the arithmetic still without a browser.
+ *
+ * A shell without the mod layer (an older kernel, a build with the layer cut)
+ * answers with an error.  That is not a reason to break editing: every function
+ * below treats an absent answer as "nothing to show", and the editor simply has
+ * no menu.  The card stops asking after the first error rather than retrying on
+ * every keystroke.
+ */
+
+/** The most candidates the menu shows.  The service answers up to 200. */
+export const COMPLETION_LIMIT = 8;
+
+/**
+ * How each context kind is named in the menu's own line.
+ *
+ * The keys are the `kind` values `classify()` returns in
+ * `shell/mods/complete.js`; `none` has no label because there is no menu.
+ */
+export const COMPLETION_KIND_LABELS = Object.freeze({
+  command: "指令",
+  argument: "参数",
+  variable: "变量",
+  character: "角色",
+  speaker: "角色",
+  tag: "标签",
+  tagvalue: "标签值",
+  none: "",
+});
+
+/** The label for a context kind, or the kind itself when it is one we do not know. */
+export function completionKindLabel(kind) {
+  const key = typeof kind === "string" ? kind : "";
+  return Object.prototype.hasOwnProperty.call(COMPLETION_KIND_LABELS, key)
+    ? COMPLETION_KIND_LABELS[key]
+    : key;
+}
+
+/** Whether this card should ask the language service at all: it is a `.yarn` file. */
+export function isYarnPath(path) {
+  return typeof path === "string" && /\.yarn$/i.test(path);
+}
+
+/**
+ * One candidate, copied into the shape the menu uses: every field is a string,
+ * and the span it replaces is always a real `{startOffset, endOffset}`.
+ *
+ * The service sends the span on each item *and* on the context; the item's own
+ * copy wins, the context is the fallback for a shell that sends only one.
+ */
+function completionCandidate(raw, fallback) {
+  const item = raw === null || typeof raw !== "object" ? {} : raw;
+  const span = item.replace === null || typeof item.replace !== "object" ? fallback : item.replace;
+  const start = Number.isInteger(span && span.startOffset) ? span.startOffset : fallback.startOffset;
+  const end = Number.isInteger(span && span.endOffset) ? span.endOffset : start;
+  return {
+    label: item.label == null ? "" : String(item.label),
+    kind: item.kind == null ? "" : String(item.kind),
+    detail: item.detail == null ? "" : String(item.detail),
+    insertText: item.insertText == null
+      ? (item.label == null ? "" : String(item.label))
+      : String(item.insertText),
+    replace: { startOffset: start, endOffset: end < start ? start : end },
+  };
+}
+
+/**
+ * What to show for one `mod.complete` answer at one caret.
+ *
+ * Answers `{open, text, caret, kind, kindLabel, prefix, replace, items, total,
+ * more}`: `items` is at most `COMPLETION_LIMIT` long, `total` is how many the
+ * service offered and `more` says the menu is hiding some.  `open` is false when
+ * there is nothing to show -- an empty list, a missing answer, or a shell that
+ * answered with junk -- and then `items` is empty and the caller closes the menu.
+ *
+ * @param {string} text   the document as the editor holds it
+ * @param {number} caret  0-based UTF-16 offset, the same unit the service uses
+ * @param {object|null} answer  the `mod.complete` result
+ */
+export function completionState(text, caret, answer) {
+  const src = typeof text === "string" ? text : "";
+  const at = Number.isInteger(caret) && caret >= 0 && caret <= src.length ? caret : src.length;
+  const none = {
+    open: false,
+    text: src,
+    caret: at,
+    kind: "",
+    kindLabel: "",
+    prefix: "",
+    replace: { startOffset: at, endOffset: at },
+    items: [],
+    total: 0,
+    more: false,
+  };
+  if (answer === null || typeof answer !== "object") {
+    return none;
+  }
+  const context = answer.context === null || typeof answer.context !== "object" ? {} : answer.context;
+  const contextSpan = context.replace === null || typeof context.replace !== "object"
+    ? { startOffset: at, endOffset: at }
+    : {
+      startOffset: Number.isInteger(context.replace.startOffset) ? context.replace.startOffset : at,
+      endOffset: Number.isInteger(context.replace.endOffset) ? context.replace.endOffset : at,
+    };
+  const raw = Array.isArray(answer.items) ? answer.items : [];
+  const items = raw.map((item) => completionCandidate(item, contextSpan));
+  const kind = typeof context.kind === "string" ? context.kind : "";
+  if (items.length === 0) {
+    return Object.assign(none, { kind, kindLabel: completionKindLabel(kind), prefix: String(context.prefix == null ? "" : context.prefix) });
+  }
+  return {
+    open: true,
+    text: src,
+    caret: at,
+    kind,
+    kindLabel: completionKindLabel(kind),
+    prefix: String(context.prefix == null ? "" : context.prefix),
+    replace: contextSpan,
+    items: items.slice(0, COMPLETION_LIMIT),
+    total: items.length,
+    more: items.length > COMPLETION_LIMIT,
+  };
+}
+
+/**
+ * Put one accepted candidate into the document.
+ *
+ * The candidate's own span is replaced with its `insertText` and the caret ends
+ * up after the inserted text -- the service already decided what the insertion
+ * looks like (`jump ` for a command, `Aistalt: ` for a speaker), so nothing here
+ * adds separators of its own.
+ *
+ * @returns {{text: string, caret: number}}
+ */
+export function applyCompletion(state, item) {
+  const current = state === null || typeof state !== "object" ? {} : state;
+  const text = typeof current.text === "string" ? current.text : "";
+  const candidate = item === null || typeof item !== "object" ? {} : item;
+  const fallback = current.replace === null || typeof current.replace !== "object"
+    ? { startOffset: text.length, endOffset: text.length }
+    : current.replace;
+  const span = candidate.replace === null || typeof candidate.replace !== "object"
+    ? fallback
+    : candidate.replace;
+  const start = Math.max(0, Math.min(text.length,
+    Number.isInteger(span.startOffset) ? span.startOffset : text.length));
+  const end = Math.max(start, Math.min(text.length,
+    Number.isInteger(span.endOffset) ? span.endOffset : start));
+  const inserted = candidate.insertText == null ? "" : String(candidate.insertText);
+  return {
+    text: `${text.slice(0, start)}${inserted}${text.slice(end)}`,
+    caret: start + inserted.length,
+  };
+}
+
+/**
+ * The index the menu should stand on after moving `delta` rows, wrapping at both
+ * ends.  `-1` when the menu is closed -- there is nothing to move through.
+ */
+export function stepCompletion(state, delta) {
+  const current = state === null || typeof state !== "object" ? null : state;
+  const count = current !== null && Array.isArray(current.items) ? current.items.length : 0;
+  if (count === 0) {
+    return -1;
+  }
+  const from = Number.isInteger(current.index) ? current.index : 0;
+  const step = Number.isInteger(delta) ? delta : 0;
+  return ((from + step) % count + count) % count;
+}
+
+/**
+ * The one line to show under the code for a `mod.hover` answer, as plain text.
+ *
+ * The service marks its prose up in markdown; the card has no renderer and does
+ * not want one, so the markers are collapsed to spaces and runs of whitespace
+ * become one space.  An answer with no content -- null, or an empty `contents`
+ * list -- clears the line, which is the honest state: nothing is known here.
+ *
+ * @param {object|null} answer
+ * @returns {string}
+ */
+export function hoverLine(answer) {
+  if (answer === null || typeof answer !== "object") {
+    return "";
+  }
+  const contents = Array.isArray(answer.contents) ? answer.contents : [];
+  if (contents.length === 0) {
+    return "";
+  }
+  const first = contents[0];
+  const value = first !== null && typeof first === "object" && typeof first.value === "string"
+    ? first.value
+    : "";
+  // One line: markdown emphasis and heading marks go, the little arrows that
+  // are part of the language's own spelling (`<<jump>>`) stay.
+  return value.replace(/[#*_`]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /* -------------------- editor -------------------- */
 
 function renderEditor(card, ctx) {
@@ -2012,8 +2217,34 @@ function renderEditor(card, ctx) {
     ],
   });
 
+  /*
+   * The language strips.  Completion is a list at the bottom of the card rather
+   * than a popup at the caret: the card is a box in a tiled document, and a
+   * caret-anchored popup would have to be repositioned on every scroll, resize
+   * and view switch.  A list under the code cannot be misplaced, and the same
+   * list is what the keyboard moves through.  Hover is one line under it.
+   *
+   * Both are decoration: a card that cannot reach the mod layer has no menu and
+   * still edits, saves and closes like any other.
+   */
+  const completeList = h("ul", "ed-complete-list", {
+    attrs: { "data-role": "completion-list", "aria-label": "completion candidates" },
+  });
+  const completeBar = h("div", "ed-complete", {
+    attrs: { hidden: "", "data-role": "completion-bar" },
+    children: [completeList],
+  });
+  const hoverBar = h("div", "ed-hover", {
+    attrs: { hidden: "", "data-role": "hover-bar", "aria-live": "polite" },
+  });
+
   const status = makeStatus();
-  const body = h("div", "card-body card-body-editor", { children: [findBar, surface, status] });
+  /* Order is the layout the brief asks for: the code, the menu between the code
+     and the status line, the status line, then the hover line at the very
+     bottom of the card. */
+  const body = h("div", "card-body card-body-editor", {
+    children: [findBar, surface, completeBar, status, hoverBar],
+  });
 
   const state = {
     path: typeof card.file === "string" ? card.file : "",
@@ -2030,6 +2261,20 @@ function renderEditor(card, ctx) {
     // the numbers were painted for.
     gutterOn: true,
     gutterLines: 0,
+    // The language service: the open menu (a completionState() result, or
+    // null), where the keyboard stands in it, and the debounce timers.  The
+    // sequence numbers are how a slow answer that arrived after the user typed
+    // on is thrown away instead of painted.
+    complete: null,
+    completeIndex: 0,
+    completeSeq: 0,
+    completeTimer: null,
+    hoverSeq: 0,
+    hoverTimer: null,
+    // Set when the mod layer answered with an error once.  A shell built
+    // without the layer must not be asked on every keystroke for the rest of
+    // the session; completion is simply off.
+    langOff: false,
   };
 
   const shell = cardShell(card, body);
@@ -2163,6 +2408,161 @@ function renderEditor(card, ctx) {
   }
 
   area.addEventListener("scroll", syncScroll);
+
+  /* ---- completion and hover (the Yarn language service) ---- */
+
+  function hideHover() {
+    hoverBar.hidden = true;
+    hoverBar.textContent = "";
+  }
+
+  function hideComplete() {
+    state.complete = null;
+    state.completeIndex = 0;
+    completeBar.hidden = true;
+    completeBar.removeAttribute("data-kind");
+    completeBar.title = "";
+    completeList.textContent = "";
+  }
+
+  /** Paint the open menu, with the active row marked for the keyboard. */
+  function paintComplete() {
+    completeList.textContent = "";
+    const current = state.complete;
+    if (current === null) {
+      hideComplete();
+      return;
+    }
+    current.items.forEach((item, index) => {
+      const row = h("li", "ed-complete-item", {
+        attrs: { "data-index": String(index) },
+        children: [
+          h("span", "ed-complete-label", { text: item.label }),
+          h("span", "ed-complete-insert", { text: item.insertText }),
+        ],
+      });
+      if (item.detail !== "") {
+        row.appendChild(h("span", "ed-complete-detail", { text: item.detail }));
+      }
+      if (index === state.completeIndex) {
+        row.classList.add("is-active");
+        row.setAttribute("aria-selected", "true");
+      }
+      /* The list must not take the caret: a click is an accept, not a focus
+         change, and `preventDefault` on mousedown is what keeps the textarea
+         focused through the click. */
+      row.addEventListener("mousedown", (event) => { event.preventDefault(); });
+      row.addEventListener("click", () => acceptIndex(index));
+      completeList.appendChild(row);
+    });
+    completeBar.hidden = false;
+    completeBar.dataset.kind = current.kind;
+    completeBar.title = current.kindLabel;
+    if (current.more) {
+      /* The count is the honest part of the menu: 8 rows of 137 answers is
+         still "137 answers", not "8". */
+      completeBar.title = `${current.kindLabel} · ${current.total}`;
+    }
+  }
+
+  /** Accept the row at `index`; the caret lands after the inserted text. */
+  function acceptIndex(index) {
+    const current = state.complete;
+    if (current === null) {
+      return;
+    }
+    const item = current.items[index];
+    if (item === undefined) {
+      return;
+    }
+    const applied = applyCompletion(current, item);
+    hideComplete();
+    if (applied.text === area.value) {
+      area.setSelectionRange(applied.caret, applied.caret);
+    } else {
+      rewrite(applied.text, applied.caret, applied.caret);
+    }
+    // After a command the caret sits in the argument slot, so ask again for
+    // what belongs there.
+    scheduleComplete();
+  }
+
+  async function completeNow() {
+    if (state.langOff || !isYarnPath(state.path) || state.findOpen) {
+      return;
+    }
+    const text = area.value;
+    const caret = area.selectionStart;
+    const seq = state.completeSeq + 1;
+    state.completeSeq = seq;
+    let answer = null;
+    try {
+      answer = await client.call("mod.complete", { text, caret, limit: 200 });
+    } catch {
+      // No mod layer (or an older shell): stop asking, show nothing.  This is a
+      // missing feature, not an error to put in front of the author.
+      state.langOff = true;
+      hideComplete();
+      hideHover();
+      return;
+    }
+    if (seq !== state.completeSeq || area.value !== text || area.selectionStart !== caret) {
+      return;
+    }
+    const next = completionState(text, caret, answer);
+    state.complete = next.open ? next : null;
+    state.completeIndex = 0;
+    if (state.complete === null) {
+      hideComplete();
+      return;
+    }
+    paintComplete();
+  }
+
+  function scheduleComplete() {
+    if (state.completeTimer !== null) {
+      clearTimeout(state.completeTimer);
+    }
+    state.completeTimer = setTimeout(() => {
+      state.completeTimer = null;
+      completeNow();
+    }, 160);
+  }
+
+  async function hoverNow() {
+    if (state.langOff || !isYarnPath(state.path) || state.findOpen) {
+      return;
+    }
+    const text = area.value;
+    const caret = area.selectionStart;
+    const seq = state.hoverSeq + 1;
+    state.hoverSeq = seq;
+    let answer = null;
+    try {
+      answer = await client.call("mod.hover", { text, caret });
+    } catch {
+      state.langOff = true;
+      hideComplete();
+      hideHover();
+      return;
+    }
+    if (seq !== state.hoverSeq || area.value !== text || area.selectionStart !== caret) {
+      return;
+    }
+    const line = hoverLine(answer);
+    hoverBar.textContent = line;
+    hoverBar.hidden = line === "";
+  }
+
+  function scheduleHover() {
+    if (state.hoverTimer !== null) {
+      clearTimeout(state.hoverTimer);
+    }
+    state.hoverTimer = setTimeout(() => {
+      state.hoverTimer = null;
+      hoverNow();
+    }, 300);
+  }
 
   /* ---- find and replace ---- */
 
@@ -2431,6 +2831,10 @@ function renderEditor(card, ctx) {
     }
     state.path = path;
     card.file = path;
+    // The strips belong to the file that was open: a new one starts with
+    // nothing known, and a non-Yarn file never asks.
+    hideComplete();
+    hideHover();
     shell.label.textContent = path;
     shell.label.title = path;
     renderStatus("loading…");
@@ -2523,10 +2927,53 @@ function renderEditor(card, ctx) {
     if (state.findOpen) {
       syncFind({ reveal: false });
     }
+    // Typing changes both answers: the menu under the caret and the line about
+    // the token under it.
+    scheduleComplete();
+    scheduleHover();
   });
+
+  // The caret moves with the pointer too -- a click, a drag, a scroll.  Hover
+  // follows the caret, not the pointer, so all three mean "ask again".
+  area.addEventListener("keyup", scheduleHover);
+  area.addEventListener("click", scheduleHover);
+  area.addEventListener("mouseup", scheduleHover);
+  // Losing focus closes the menu: a candidate clicked elsewhere is not accepted.
+  area.addEventListener("blur", hideComplete);
 
   area.addEventListener("keydown", (event) => {
     const mod = event.ctrlKey || event.metaKey;
+    // A menu that is open owns the arrows, Enter, Tab and Escape.  It only
+    // exists while there is something to accept, so the editor's own keys are
+    // untouched the rest of the time.
+    if (state.complete !== null) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        state.completeIndex = stepCompletion(
+          { items: state.complete.items, index: state.completeIndex },
+          event.key === "ArrowDown" ? 1 : -1,
+        );
+        paintComplete();
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        acceptIndex(state.completeIndex);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        hideComplete();
+        return;
+      }
+    }
+    // Ctrl+Space asks for the menu even when the debounce has not fired: it is
+    // the gesture the author reaches for when they know what they want.
+    if (mod && event.key === " ") {
+      event.preventDefault();
+      completeNow();
+      return;
+    }
     if (mod && event.key.toLowerCase() === "s") {
       event.preventDefault();
       save();

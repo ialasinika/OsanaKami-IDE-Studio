@@ -654,6 +654,52 @@ body.is-mod .card[data-kind="problems"] {
 .ed-hit { background: #6fb3ff33; color: inherit; border-radius: 2px; }
 .ed-hit.is-current { background: #ffb86b55; box-shadow: 0 0 0 1px #ffb86b66; }
 
+/* The Yarn language strips: a menu of candidates above the card's status line,
+   and one line of hover under it.  A bar rather than a caret-anchored popup --
+   the card is a box in a tiled document, and a bar cannot be misplaced by a
+   scroll, a resize or a view switch.  Both are `hidden` until there is
+   something to say, so a card with no mod layer looks exactly as it did. */
+.ed-complete {
+  flex: 0 0 auto;
+  max-height: 10em;
+  overflow-y: auto;
+  border-top: 1px solid var(--line-soft);
+  background: #191c21;
+  font: 11px/1.5 var(--mono-font);
+}
+.ed-complete[hidden] { display: none; }
+.ed-complete-list { margin: 0; padding: 2px 0; list-style: none; }
+.ed-complete-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ed-complete-item.is-active { background: var(--accent-dim); }
+.ed-complete-label { color: var(--fg); }
+.ed-complete-insert { color: var(--fg-faint); }
+.ed-complete-detail {
+  margin-left: auto;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ed-hover {
+  flex: 0 0 auto;
+  max-height: 4.4em;
+  overflow: hidden;
+  padding: 3px 10px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--fg-dim);
+  background: #171a1f;
+  font: 11px/1.45 var(--mono-font);
+  white-space: pre-wrap;
+}
+.ed-hover[hidden] { display: none; }
+
 /* ------------------------------------------------------------------ */
 /* runner card                                                         */
 /* ------------------------------------------------------------------ */

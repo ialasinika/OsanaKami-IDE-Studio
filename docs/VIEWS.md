@@ -116,6 +116,11 @@ You do not touch `core/`. You have two configurations, both already supported:
   discards unsaved text and leaves the selection on the neighbour that
   `classicNeighbourAfterClose` names). Closing is a document edit, so `Ctrl+Z`
   takes it back.
+  Neither of these lists is what decides *what a card draws inside its own box*:
+  a `.yarn` editor's completion menu and hover line
+  ([`shell/web/README.md`](../shell/web/README.md#the-yarn-language-strips)) sit
+  inside the card, so either tile gets them without a role rule changing, and a
+  card the tile hides keeps its buffer exactly as it was.
   The list of view names they share lives in `shell/web/views.mjs`;
   `shell/web/README.md` describes each tile and `docs/MODS.md` what the mod one
   is showing.

@@ -50,16 +50,21 @@ import {
 import {
   BLOB_CHUNK_BYTES,
   CARD_KIND_CONTRACT,
+  COMPLETION_KIND_LABELS,
+  COMPLETION_LIMIT,
   INDENT_UNIT,
   OutputBuffer,
   SHEET_TYPES,
   addSheetColumn,
   addSheetRow,
+  applyCompletion,
   applyTokenSpans,
   base64FromBytes,
   bytesFromBase64,
   cardKind,
   coerceSheetValue,
+  completionKindLabel,
+  completionState,
   describeCard,
   diagCounts,
   diagFile,
@@ -72,8 +77,10 @@ import {
   formatListing,
   formatSize,
   groupDefines,
+  hoverLine,
   indentAfterEnter,
   indentSelection,
+  isYarnPath,
   knownCardKinds,
   lineColumn,
   markHits,
@@ -101,6 +108,7 @@ import {
   sheetCell,
   sheetSummary,
   sheetToTSV,
+  stepCompletion,
   storyAcceptSuggestion,
   storyAddLine,
   storyEditableText,
@@ -1245,6 +1253,130 @@ test("find: hits split coloured segments without moving a single character", () 
     split.map((seg) => [seg.start, seg.end, seg.kind, seg.hit]),
     [[0, 1, "keyword", false], [1, 2, "keyword", true], [2, 3, "keyword", false]],
   );
+});
+
+test("language: only a .yarn file asks the service", () => {
+  assert.equal(isYarnPath("main.yarn"), true);
+  assert.equal(isYarnPath("Mods/MyMod/yarn/Main.YARN"), true);
+  assert.equal(isYarnPath("README.md"), false);
+  assert.equal(isYarnPath(""), false);
+  assert.equal(isYarnPath(null), false);
+});
+
+test("language: every context kind the service names has a label", () => {
+  // The keys are the kinds `classify()` answers with; a kind the card meets but
+  // does not know prints itself rather than nothing.
+  assert.deepEqual(Object.keys(COMPLETION_KIND_LABELS).sort(), [
+    "argument", "character", "command", "none", "speaker", "tag", "tagvalue", "variable",
+  ]);
+  assert.equal(completionKindLabel("command"), "指令");
+  assert.equal(completionKindLabel("argument"), "参数");
+  assert.equal(completionKindLabel("tagvalue"), "标签值");
+  assert.equal(completionKindLabel("none"), "");
+  assert.equal(completionKindLabel("something-new"), "something-new");
+  assert.equal(completionKindLabel(null), "");
+});
+
+test("language: the menu shows at most eight rows and says how many it hid", () => {
+  const many = [];
+  for (let n = 0; n < 137; n += 1) {
+    many.push({ label: `cmd${n}`, kind: "command", detail: "", insertText: `cmd${n} ` });
+  }
+  const answer = {
+    context: { kind: "command", prefix: "", replace: { startOffset: 2, endOffset: 2 } },
+    items: many,
+  };
+  const state = completionState("<<", 2, answer);
+  assert.equal(state.open, true);
+  assert.equal(state.kind, "command");
+  assert.equal(state.kindLabel, "指令");
+  assert.equal(state.items.length, COMPLETION_LIMIT);
+  assert.equal(COMPLETION_LIMIT, 8);
+  assert.equal(state.total, 137);
+  assert.equal(state.more, true);
+  assert.deepEqual(state.items[0].replace, { startOffset: 2, endOffset: 2 });
+  // An item without its own span borrows the context's -- the two are the same
+  // range, and a shell may send it once.
+  const borrowed = completionState("<<", 2, {
+    context: { kind: "command", replace: { startOffset: 2, endOffset: 2 } },
+    items: [{ label: "set" }],
+  });
+  assert.deepEqual(borrowed.items[0].replace, { startOffset: 2, endOffset: 2 });
+  assert.equal(borrowed.items[0].insertText, "set");
+});
+
+test("language: nothing to show closes the menu, and a missing answer is nothing", () => {
+  const empty = completionState("<<", 2, {
+    context: { kind: "command", replace: { startOffset: 2, endOffset: 2 } },
+    items: [],
+  });
+  assert.equal(empty.open, false);
+  assert.deepEqual(empty.items, []);
+  assert.equal(empty.total, 0);
+  assert.equal(empty.kindLabel, "指令");
+  // A shell without the mod layer, an older kernel, a thrown call: the caller
+  // passes null and the menu stays shut.
+  const absent = completionState("<<", 2, null);
+  assert.equal(absent.open, false);
+  assert.deepEqual(absent.items, []);
+  assert.equal(absent.kind, "");
+  // Junk in the answer must not throw.
+  assert.equal(completionState("x", 1, { items: "nope" }).open, false);
+  assert.equal(completionState(null, null, { items: [{}] }).open, true);
+});
+
+test("language: accepting a candidate replaces exactly its span, caret after the text", () => {
+  const command = completionState("<<jum", 5, {
+    context: { kind: "command", prefix: "jum", replace: { startOffset: 2, endOffset: 5 } },
+    items: [{ label: "jump", kind: "command", insertText: "jump ", replace: { startOffset: 2, endOffset: 5 } }],
+  });
+  assert.deepEqual(applyCompletion(command, command.items[0]), { text: "<<jump ", caret: 7 });
+  // A speaker at the start of a line becomes the name and its colon; the rest
+  // of the line is untouched.
+  const speaker = completionState("Ai\nnext", 2, {
+    context: { kind: "character", prefix: "Ai", replace: { startOffset: 0, endOffset: 2 } },
+    items: [{ label: "Aistalt", insertText: "Aistalt: ", replace: { startOffset: 0, endOffset: 2 } }],
+  });
+  assert.deepEqual(applyCompletion(speaker, speaker.items[0]), { text: "Aistalt: \nnext", caret: 9 });
+  // A quoted argument's span excludes the quotes the author already typed.
+  const quoted = completionState('<<jump "Ai', 10, {
+    context: { kind: "argument", replace: { startOffset: 8, endOffset: 10 } },
+    items: [{ label: "Aistalt", insertText: "Aistalt", replace: { startOffset: 8, endOffset: 10 } }],
+  });
+  assert.deepEqual(applyCompletion(quoted, quoted.items[0]), { text: '<<jump "Aistalt', caret: 15 });
+  // An out-of-range span is clamped, not trusted: the service's offsets are
+  // for the text it was given, and the buffer is the authority.
+  const wild = applyCompletion(
+    { text: "ab", replace: { startOffset: 0, endOffset: 0 } },
+    { insertText: "x", replace: { startOffset: 90, endOffset: 99 } },
+  );
+  assert.deepEqual(wild, { text: "abx", caret: 3 });
+});
+
+test("language: the arrows wrap at both ends and a closed menu has nowhere to go", () => {
+  const items = [{}, {}, {}];
+  assert.equal(stepCompletion({ items, index: 0 }, 1), 1);
+  assert.equal(stepCompletion({ items, index: 2 }, 1), 0);
+  assert.equal(stepCompletion({ items, index: 0 }, -1), 2);
+  assert.equal(stepCompletion({ items, index: 1 }, 0), 1);
+  assert.equal(stepCompletion({ items: [], index: 0 }, 1), -1);
+  assert.equal(stepCompletion(null, 1), -1);
+});
+
+test("language: hover prints one plain line, and an empty answer clears it", () => {
+  assert.equal(hoverLine(null), "");
+  assert.equal(hoverLine({ contents: [] }), "");
+  assert.equal(hoverLine({ contents: [{ kind: "markdown", value: "" }] }), "");
+  assert.equal(
+    hoverLine({ contents: [{ kind: "markdown", value: "**<<jump>>**\n\njumps to a node." }] }),
+    "<<jump>> jumps to a node.",
+  );
+  // More than one block: the line is the first block, not a pile.
+  assert.equal(
+    hoverLine({ contents: [{ value: "first" }, { value: "second" }] }),
+    "first",
+  );
+  assert.equal(hoverLine({ contents: [{ kind: "markdown", value: "#line:\n\n  a line id  " }] }), "line: a line id");
 });
 
 test("tokens: bad spans are dropped and overlaps are clipped", () => {
