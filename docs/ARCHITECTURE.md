@@ -299,7 +299,8 @@ The browser side, `shell/web/`, is module-per-concern:
 | `pixelpng.mjs` | a PNG reader and writer that carries its own inflate, CRC-32 and Adler-32, and reads the two shapes this game's art is (pure) | a `.png` could only travel as base64 and nothing could show or change a pixel |
 | `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
-| `selftest.mjs` | `node shell/web/selftest.mjs`, no DOM, no network | nothing; it is only a test |
+| `selftest.mjs` | the entry: imports `selftest/` in order and prints the tally (`node shell/web/selftest.mjs`, no DOM, no network) | nothing; it is only a test |
+| `selftest/` | one module per section of the suite (harness, fixtures, rpc, board, cards, project, http, sheet, main, views, story, translation, mods, pixel, spine) | the suite is one 5,900-line file again |
 
 `board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs`,
 `views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs` and `pixelpng.mjs` are

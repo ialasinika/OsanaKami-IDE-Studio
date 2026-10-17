@@ -21,7 +21,8 @@ storycsv.mjs  the translation tables the game keeps beside a story (pure)
 ysls.mjs      the game's own command schema, and where `<<name` is typed (pure)
 pixelpng.mjs  a PNG reader and writer that needs nothing but itself (pure)
 main.mjs      bootstrap: gestures, command line, log, dirty state
-selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
+selftest.mjs  the entry: imports `selftest/` in order, prints the tally (no DOM)
+selftest/     one module per section of the suite
 ```
 
 ---

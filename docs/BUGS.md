@@ -22,6 +22,11 @@ throwaway workspace instead of assuming yours, so it can be run by anyone who
 clones this repository.  The rest of the ledger is pinned by the self-tests
 listed above, which is why those suites grew as the bugs were fixed.
 
+The `selftest.mjs:<line>` references below point into the single-file suite as
+it stood when each check was added (5,902 lines).  That file is now the entry
+`shell/web/selftest.mjs` over fifteen section modules in `shell/web/selftest/`,
+in the same order; the checks themselves are unchanged.
+
 Severity is what the bug costs a *fork*, which is the point of this codebase.
 
 | # | Bug | Severity |

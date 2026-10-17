@@ -16,6 +16,31 @@ stands in this tree.
 
 ## Unreleased
 
+### The browser suite is fifteen sections behind one runner
+
+- `shell/web/selftest.mjs` was 5,902 lines: the assertion harness, every stub
+  (fetch, DOM, event target, the table view's elements), every fixture (story
+  nodes, CSV tables, PNG bytes, Spine rigs) and all 284 checks in one file.
+  It is now a 70-line runner that imports `shell/web/selftest/` — fifteen modules
+  named for what they exercise (harness, fixtures, rpc, board, cards, project,
+  http, sheet, main, views, story, translation, mods, pixel, spine) — in the
+  order the checks were written.
+- The runner adds nothing to the suite but the imports and the tally: it
+  imports each section with `await import(...)` in sequence.  That is deliberate
+  and load-bearing — with static imports Node evaluates the modules before the
+  runner starts, so a leftover timer from one section can fire inside another
+  section's stubbed document.  The split made that pre-existing fragility crash
+  the suite; the sequential imports remove the window rather than paper over it.
+- The suite is unchanged: same 284 checks, same names, same order, same tally
+  line, same `ok 284/284`.  A one-shot verifier walked every code line of the old
+  file against the new modules in order: 4,602 original code lines, 0 missing,
+  0 unexplained, the emitted lines differing only by their `export` prefixes and
+  the `./` → `../` import paths, and the one new function is the harness's
+  `stats()` accessor the runner reads the tally from.
+- `AGENTS.md`, `docs/ARCHITECTURE.md`, `shell/web/README.md` and `docs/BUGS.md`
+  now point at the entry and the sections; the older `selftest.mjs:<line>`
+  references in `docs/BUGS.md` are noted as pointing into the pre-split file.
+
 ### The card layer is nineteen modules behind one barrel
 
 - `shell/web/cards.mjs` was 8,884 lines: thirteen renderers, their models, the

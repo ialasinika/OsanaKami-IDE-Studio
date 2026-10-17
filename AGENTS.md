@@ -196,7 +196,8 @@ Recipes:
   drag/selection behaviour, add its command to `COMMAND_HELP`, then document it
   in `shell/web/README.md` and
   the "shipped kinds" sentence in `README.md`, and cover its pure arithmetic in
-  `shell/web/selftest.mjs`.
+  the section module beside it under `shell/web/selftest/` (`selftest.mjs` is the
+  entry that imports the sections in order and prints the tally).
 - **Add a protocol method**: `sde_methods[]` in `core/src/rpc.c`, the handler in
   the matching `core/src` module, the doc row in `docs/PROTOCOL.md`, the shell's
   client wrapper, and (if it is client-visible) the `seide_cli.py` verb; then
