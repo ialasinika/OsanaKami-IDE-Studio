@@ -7,7 +7,8 @@ read by people who do not own this author's disk.  A path like
 leaked fact about one computer, and it is useless to everyone else.
 
 This tool is the *gradual* half of that rule.  It does not try to know every
-convention; it walks ``git ls-files`` and reports what it finds in two grades:
+convention; it walks ``git ls-files`` (or, in a source tarball with no ``.git``,
+the tree itself) and reports what it finds in two grades:
 
 ``error``
     A home directory (Windows or POSIX) or a UNC share.  These never mean
@@ -130,15 +131,46 @@ RULES = [
 _SEVERITY_ORDER = {"error": 0, "note": 1}
 
 
+#: Directories a tree walk never descends into.  Build output, dependencies and
+#: workspace state are not source, and ``git ls-files`` never lists them either.
+WALK_SKIP_DIRS = {".git", "build", "dist", "node_modules", ".infantgod"}
+
+
+def walk_files() -> list[str]:
+    """Every source file in the tree, for a source tarball with no ``.git``."""
+    names: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(REPO_ROOT)
+        if any(part in WALK_SKIP_DIRS for part in rel.parts):
+            continue
+        names.append(rel.as_posix())
+    return sorted(names)
+
+
 def tracked_files() -> list[str]:
-    """Every path git knows about, with forward slashes, in stable order."""
-    out = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        check=True,
-    ).stdout
+    """Every path git knows about, with forward slashes, in stable order.
+
+    A source tarball has no ``.git``, and a machine may not even have git; then
+    the tree itself is the list.  Both ways answer one question: which files are
+    this project's source.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return walk_files()
     names = [name for name in out.decode("utf-8", "replace").split("\0") if name]
+    # An unpacked copy sitting inside somebody else's checkout answers "nothing"
+    # without failing -- every path in it is untracked there.  No files is not a
+    # clean tree; it is an unanswered question, so ask the tree instead.
+    if not names:
+        return walk_files()
     return sorted(names)
 
 
