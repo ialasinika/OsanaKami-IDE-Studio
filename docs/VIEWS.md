@@ -110,6 +110,12 @@ You do not touch `core/`. You have two configurations, both already supported:
   tree, the editor and the validation report (`shell/web/modview.mjs`). Both
   create nothing, move nothing and save nothing: the kernel never learns about
   tabs or panels, and the file on disk does not change when the rendering does.
+  Both strips carry every card the tile draws nowhere else, so no open card is
+  left without a way in; a tab's `×`, a middle click and `Ctrl+W` all take the
+  same close path (`closeCard` in `shell/web/main.mjs`, which asks before it
+  discards unsaved text and leaves the selection on the neighbour that
+  `classicNeighbourAfterClose` names). Closing is a document edit, so `Ctrl+Z`
+  takes it back.
   The list of view names they share lives in `shell/web/views.mjs`;
   `shell/web/README.md` describes each tile and `docs/MODS.md` what the mod one
   is showing.

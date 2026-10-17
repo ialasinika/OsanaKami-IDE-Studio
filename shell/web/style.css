@@ -143,17 +143,65 @@ body.is-mod .card[data-kind="problems"] {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 220px;
-  padding: 0 10px;
-  border: 0;
   border-right: 1px solid var(--line-soft);
   background: transparent;
   color: var(--fg-dim);
   font: 11.5px/1 var(--mono-font);
   white-space: nowrap;
+  cursor: pointer;
+}
+
+/* The part of the tab that opens the card.  A real button, so Enter and Space
+   work without a key handler of ours; it inherits the strip's type and colour. */
+.tab-open {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
 }
+
+.tab-open:focus-visible,
+.tab-close:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Close stays out of the way until the tab is touched: visible on the active
+   tab, and on hover or keyboard focus for the rest.  Always a real button. */
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-faint);
+  font: 12px/1 var(--mono-font);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.tab:hover .tab-close,
+.tab:focus-within .tab-close,
+.tab.is-active .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover { color: var(--bg-deep); background: var(--warn); }
 
 .tab:hover { color: var(--fg); background: #1b1e24; }
 

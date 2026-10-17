@@ -6,7 +6,8 @@
  * things constantly --
  *
  *   the package    what is in it, grouped the way the game groups it
- *   the file       the one editor card a command would act on
+ *   the strip      one handle per card that has no part of the package view
+ *   the file       the one card a command would act on
  *   the report     what validation says is wrong with it, right now
  *
  * -- so this view puts all three on screen at once: the package in the left
@@ -51,10 +52,22 @@ export const MOD_AREA_MIN = 140;
  *
  * `sidebar` is the mod package when there is one, then the project panel, then
  * the file list -- the three cards that answer "what is in this thing", in the
- * order this view cares about them.  `area` is the card a command would act on
- * (the selection, when it is an editor), because a code area that is not the
- * focused file is an editor you cannot type in.  `panel` is the validation
- * report.  Everything else has no part here.
+ * order this view cares about them.  `panel` is the validation report.
+ *
+ * `tabs` is every card the package view has no part for -- not just editors.
+ * The canvas could show every card at once; this tile draws four parts, so a
+ * note, a runner, a sheet, a pixel card, a story card or a docs card used to be
+ * hidden with no way to bring it back (G29).  The strip is where the tile keeps
+ * them: the tab is the card's handle and the area is where it opens.
+ *
+ * `area` is the card the strip points at: the selection when the strip offers
+ * it (whatever the kind), else the first editor card (a command with no
+ * argument acts on a file), else the first tab (a view whose only open card is a
+ * note still draws that note).  An editor in the area is the focused file, so
+ * the area is still the thing you type into.
+ *
+ * `hidden` is every card not drawn as one of the tile's parts; a hidden card
+ * the strip offers is one click away, so it is not unreachable.
  *
  * A card appears at most once.  Kinds are disjoint, so no card can be both the
  * sidebar and the code area -- but the rule is what the checks pin, not the kind
@@ -77,7 +90,7 @@ export function modRoles(cards, activeId = null) {
 
   const tabs = [];
   for (const card of list) {
-    if (card !== null && card.kind === "editor") {
+    if (card !== null && card.id !== sidebar && card.id !== panel) {
       tabs.push(card.id);
     }
   }
@@ -85,8 +98,13 @@ export function modRoles(cards, activeId = null) {
   let area = null;
   if (activeId !== null && tabs.indexOf(activeId) !== -1) {
     area = activeId;
-  } else if (tabs.length > 0) {
-    area = tabs[0];
+  } else {
+    const editor = list.find((card) => card !== null && card.kind === "editor" && tabs.indexOf(card.id) !== -1);
+    if (editor !== undefined) {
+      area = editor.id;
+    } else if (tabs.length > 0) {
+      area = tabs[0];
+    }
   }
 
   const hidden = [];

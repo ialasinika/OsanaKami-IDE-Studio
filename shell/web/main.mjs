@@ -28,7 +28,7 @@
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE } from "./board.mjs";
 import { createHistory } from "./history.mjs";
-import { classicLayout, classicTabLabel } from "./classic.mjs";
+import { classicLayout, classicNeighbourAfterClose, classicTabLabel } from "./classic.mjs";
 import { modLayout } from "./modview.mjs";
 import {
   SWITCH_VIEWS,
@@ -119,13 +119,90 @@ export function wireChoiceStrip({ strip, buttons, abandonSource }) {
   };
 
   const abandon = () => finish(null);
+  // Escape is "cancel", the same answer as typing something else: the question
+  // is a strip over the board, so the key that dismisses every transient thing
+  // in the window has to dismiss it too.  Both the strip (where the focus
+  // starts, on the cancel button) and the command line (which keeps the
+  // keyboard) are listened to, because either can be focused while it is open.
+  const onKey = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      finish(null);
+    }
+  };
   abandonSource.addEventListener("input", abandon);
-  unbind = () => abandonSource.removeEventListener("input", abandon);
+  abandonSource.addEventListener("keydown", onKey);
+  if (typeof strip.addEventListener === "function") {
+    strip.addEventListener("keydown", onKey);
+  }
+  unbind = () => {
+    abandonSource.removeEventListener("input", abandon);
+    abandonSource.removeEventListener("keydown", onKey);
+    if (typeof strip.removeEventListener === "function") {
+      strip.removeEventListener("keydown", onKey);
+    }
+  };
 
   for (const { el: button, value } of buttons) {
     button.addEventListener("click", () => finish(value));
   }
   return promise;
+}
+
+/**
+ * Should closing this card ask first, and with which answers?
+ *
+ * A clean card has nothing to lose: closing it is immediate, exactly as it was
+ * before the question existed.  A card holding unsaved text is the one case
+ * where the close would destroy something the user cannot get back, so it asks
+ * -- and offers "save and close" only when the card can actually save itself
+ * (an editor can, a docs card cannot).  Escape is wired by `wireChoiceStrip`,
+ * and the strip is not a dialog: this app has no dialogs.
+ *
+ * Pure, so the rule rather than the question is what the checks pin.
+ *
+ * @param {object|null} handle  the card's mounted handle, or null
+ * @returns {{ask: boolean, choices: Array<{label: string, value: string}>}}
+ */
+export function closePlan(handle) {
+  const dirty = handle !== null && handle !== undefined && handle.dirty === true;
+  if (!dirty) {
+    return { ask: false, choices: [] };
+  }
+  const choices = [];
+  if (typeof handle.save === "function") {
+    choices.push({ label: "保存并关闭", value: "save" });
+  }
+  choices.push({ label: "不保存，关闭", value: "discard" });
+  choices.push({ label: "取消", value: "cancel" });
+  return { ask: true, choices };
+}
+
+/**
+ * What an answer to `closePlan` means for the card.
+ *
+ * `saved` is consulted only for "save": `null` means the save has not run yet
+ * (the caller is being told to run it first), `true` means it finished, and
+ * `false` means it threw -- the card then stays, with the unsaved text still in
+ * it.  "cancel", Escape and `null` (the user turned to the command line) all
+ * mean keep.  A plan that did not ask was already decided: delete.
+ *
+ * @returns {"delete"|"keep"|"saveThenDelete"|"saveFailed"}
+ */
+export function applyCloseAnswer(plan, answer, saved = null) {
+  if (plan === null || plan === undefined || plan.ask !== true) {
+    return "delete";
+  }
+  if (answer === "discard") {
+    return "delete";
+  }
+  if (answer === "save") {
+    if (saved === true) {
+      return "delete";
+    }
+    return saved === false ? "saveFailed" : "saveThenDelete";
+  }
+  return "keep";
 }
 
 /**
@@ -508,6 +585,16 @@ function createApp() {
       buttons.push({ el: button, value: choice.value });
     }
     barEl.before(strip);
+    // The focus starts on "cancel", not on the first button: closing is the
+    // destructive half and nothing destructive may be one Enter away by
+    // accident.  Keyboard users reach the other answers with Tab/Shift+Tab
+    // (they are real buttons); the command line keeps working as the escape
+    // hatch it already was.
+    const focusFirst = buttons.filter((button) => button.value === "cancel").pop()
+      || buttons[buttons.length - 1];
+    if (focusFirst !== undefined) {
+      focusFirst.el.focus();
+    }
     // The strip owns the answer and the listener; `wireChoiceStrip` guarantees
     // the listener is gone however the question ends.
     return wireChoiceStrip({ strip, buttons, abandonSource: commandEl });
@@ -613,9 +700,23 @@ function createApp() {
   }
 
   /**
-   * The tab strip: one button per editor card, in board order.
+   * The tab strip: one tab per open card, in board order.
    *
-   * Rebuilt rather than diffed.  There can be as many tabs as there are editor
+   * A tab for *every* card the current tile does not draw elsewhere -- not just
+   * editors.  The canvas could show every card at once; a tile cannot, so the
+   * strip is what keeps a note, a runner, a sheet, a pixel card, a story card, a
+   * docs card or the report reachable (G29).  The tab is the card's handle:
+   * pressing it selects the card, and both tiles put the selection in the area.
+   *
+   * Each tab is a container with two real `<button>`s: the name (which selects
+   * the card, so tab/enter/space work without a key handler of ours) and a close
+   * control.  A button inside a button is not HTML, and the close control has to
+   * be its own tab stop -- an unfocusable span would make closing keyboard-only
+   * in theory and impossible in practice.  Every close path (the x, a middle
+   * click, Ctrl+W) funnels through `closeTab`, which calls the card's own
+   * `app.closeCard`: one way to take a card off the board, not two.
+   *
+   * Rebuilt rather than diffed.  There can be as many tabs as there are open
    * cards and each is a dozen nodes, so a diff would be more code than it saves;
    * what matters is that it is rebuilt from `board.cards` and not kept as a
    * second list that could go stale.  A path that is dirty gets a dot, which is
@@ -634,26 +735,107 @@ function createApp() {
     tabsEl.style.width = `${layout.tabs.w}px`;
     tabsEl.style.height = `${layout.tabs.h}px`;
 
-    const buttons = [];
+    const tabs = [];
     for (const id of roles.tabs) {
       const card = board.findCard(id);
       const entry = mounted.get(id);
       const path = entry && entry.handle && entry.handle.path ? entry.handle.path : "";
-      const button = el("button", "tab");
-      button.type = "button";
-      button.dataset.cardId = id;
+      const label = classicTabLabel(path) || describeCard(card);
+      const tab = el("div", "tab");
+      // The id lives on the container, not on the open button: a press anywhere
+      // on the tab (its padding included) selects the card, and the close button
+      // next to it stays a separate control inside that container.
+      tab.dataset.cardId = id;
+      tab.dataset.kind = card === null || card === undefined ? "" : card.kind;
       if (id === roles.area) {
-        button.classList.add("is-active");
-        button.setAttribute("aria-current", "true");
+        tab.classList.add("is-active");
+        tab.setAttribute("aria-current", "true");
       }
-      button.append(el("span", "tab-name", classicTabLabel(path) || describeCard(card)));
+
+      const open = el("button", "tab-open");
+      open.type = "button";
+      open.append(el("span", "tab-name", label));
       if (entry && entry.handle && entry.handle.dirty) {
-        button.append(el("span", "tab-dirty", "•"));
+        open.append(el("span", "tab-dirty", "•"));
       }
-      button.title = path === "" ? describeCard(card) : path;
-      buttons.push(button);
+      open.title = path === "" ? describeCard(card) : path;
+      open.setAttribute("aria-label", path === "" ? describeCard(card) : path);
+
+      const close = el("button", "tab-close", "×");
+      close.type = "button";
+      close.dataset.closeId = id;
+      close.title = `close ${label} (Ctrl+W)`;
+      close.setAttribute("aria-label", `close ${label}`);
+
+      tab.append(open, close);
+      tabs.push(tab);
     }
-    tabsEl.replaceChildren(...buttons);
+    tabsEl.replaceChildren(...tabs);
+  }
+
+  /* Where the keyboard lands after a tab press: the card the tab opened, by its
+   * own focus if it has one, else the card root.  `tabIndex = -1` on every root
+   * is what makes the second step possible. */
+  function focusCardNode(id) {
+    const entry = mounted.get(id);
+    if (entry === undefined) {
+      return;
+    }
+    if (entry.handle && typeof entry.handle.focus === "function") {
+      // A card with no focused control (the empty-state hint, a docs card) has
+      // a focus() that is deliberately a no-op; check the result instead of
+      // trusting the call.
+      entry.handle.focus();
+    }
+    if (!focusLanded(entry.el)) {
+      entry.el.focus();
+    }
+  }
+
+  /** Did the focus land on or inside `node`?  Guards for a missing DOM too. */
+  function focusLanded(node) {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    if (active === null || active === undefined) {
+      return false;
+    }
+    if (active === node) {
+      return true;
+    }
+    return typeof node.contains === "function" && node.contains(active);
+  }
+
+  /** Pressing a tab: select the card, re-tile (so it is in the area), then focus. */
+  function selectTab(id) {
+    if (board.findCard(id) === null) {
+      return false;
+    }
+    board.setSelection(id);
+    // Render before focusing: the handler used to focus first, while the card
+    // was still `display: none` from the previous arrangement, and focus() on a
+    // hidden element does nothing -- the keyboard stayed on the old card.
+    renderAll();
+    focusCardNode(id);
+    return true;
+  }
+
+  /**
+   * Close a tab.
+   *
+   * Everything about *how* a close happens -- the question for unsaved text, the
+   * removal, the neighbour that takes the selection -- is `app.closeCard`, so the
+   * three strip gestures (x, middle click, Ctrl+W) and the card's own close
+   * cannot drift apart.  This wrapper only refuses an id the strip is not
+   * actually showing.
+   */
+  async function closeTab(id) {
+    if (id === null || id === undefined) {
+      return false;
+    }
+    if (currentLayout().roles.tabs.indexOf(id) === -1) {
+      log("warn", "that card is not a tab of this view, so there is no tab to close");
+      return false;
+    }
+    return appApi.closeCard(id);
   }
 
   /** What stands in the sidebar column when no card can. */
@@ -730,6 +912,11 @@ function createApp() {
         node.el.style.width = `${card.w}px`;
         node.el.style.height = `${card.h}px`;
         node.el.dataset.kind = card.kind;
+        // Programmatically focusable, not a tab stop of its own: the strip is
+        // the keyboard's way in, and after a tab press the card it opened has
+        // to be able to take the focus.  A card root without this can be shown
+        // but never focused, which is half of being unreachable.
+        node.el.tabIndex = -1;
         entry = { ...node, card };
         mounted.set(card.id, entry);
         cardsEl.append(node.el);
@@ -1059,17 +1246,88 @@ function createApp() {
     return true;
   }
 
-  function deleteCard(id) {
-    const entry = mounted.get(id);
-    if (entry !== undefined && entry.handle.dirty) {
-      log("warn", `card ${id} has unsaved text; saving is not implicit — use ^S in the card first`);
-    }
+  /** Take a card off the board, no question asked: the bottom of every close. */
+  function removeCardNow(id) {
     if (!board.removeCard(id)) {
       log("warn", `no card ${id}`);
       return false;
     }
     renderCards();
     boardTouched();
+    return true;
+  }
+
+  /** What a question about this card should call it: its path, else its title. */
+  function closeName(card, handle) {
+    const path = handle !== null && handle !== undefined && typeof handle.path === "string"
+      ? handle.path
+      : "";
+    if (path !== "") {
+      return path;
+    }
+    const title = card !== null && card !== undefined && typeof card.title === "string"
+      ? card.title
+      : "";
+    return title !== "" ? title : describeCard(card);
+  }
+
+  /**
+   * Close a card -- the one path every close goes through.
+   *
+   * A card with unsaved text is asked about first, through `ask()` (the inline
+   * strip, not a dialog: this app has no dialogs).  "save and close" runs the
+   * card's own save and leaves the card alone if that fails, text and all;
+   * "cancel", Escape and typing in the command line keep it; only an explicit
+   * discard removes it.  After removal the selection follows the tab strip's
+   * neighbour rule, so closing the active tab lands the keyboard next to it
+   * instead of nowhere.
+   */
+  async function closeCard(id) {
+    const card = board.findCard(id);
+    if (card === null) {
+      log("warn", `no card ${id}`);
+      return false;
+    }
+    const entry = mounted.get(id);
+    const handle = entry === undefined || entry.handle === null ? null : entry.handle;
+    const plan = closePlan(handle);
+    const layout = currentLayout();
+    const tabbed = layout.roles.tabs.indexOf(id) !== -1;
+    const next = tabbed ? classicNeighbourAfterClose(layout.roles.tabs, id, layout.roles.area) : null;
+    if (plan.ask) {
+      const answer = await ask(`${closeName(card, handle)} has unsaved text.`, plan.choices);
+      const action = applyCloseAnswer(plan, answer);
+      if (action === "keep") {
+        // Deleting nothing must not also lose the keyboard: the strip is gone, so
+        // the card that asked the question takes the focus back.
+        renderAll();
+        focusCardNode(id);
+        return false;
+      }
+      if (action === "saveThenDelete") {
+        try {
+          await handle.save();
+        } catch (err) {
+          // The card stays and its text stays with it: a failed save is not a
+          // reason to be rid of the only copy.
+          log("error", `could not save ${closeName(card, handle)}: ${err.message}`);
+          return false;
+        }
+        if (applyCloseAnswer(plan, answer, true) !== "delete") {
+          return false;
+        }
+      }
+    }
+    if (!removeCardNow(id)) {
+      return false;
+    }
+    if (next !== null && board.findCard(next) !== null) {
+      board.setSelection(next);
+    }
+    renderAll();
+    if (next !== null && board.findCard(next) !== null) {
+      focusCardNode(next);
+    }
     return true;
   }
 
@@ -1096,11 +1354,11 @@ function createApp() {
   /**
    * The editor cards currently on the board, as plain data.
    *
-   * This is what "open" means in OsanaKami IDE Studio: the board is the document
-   * list -- a file is open exactly when a card holds it.  The classic view's tab
-   * strip is drawn from this list and never kept beside it, so a card that is
-   * opened, closed or hidden shows up in (and disappears from) the strip with no
-   * second registry to forget about.
+   * This is what "open file" means in OsanaKami IDE Studio: the board is the
+   * document list -- a file is open exactly when a card holds it.  It is what
+   * the board listeners diff and what the file-facing commands walk; the tab
+   * strip is built from the tile's own roles, which now cover every card kind,
+   * so the strip and this list are not the same question any more.
    */
   function openEditors() {
     const out = [];
@@ -1325,7 +1583,7 @@ function createApp() {
     },
     // Same behaviour as `delete <id>`: the card leaves the board, the file on
     // disk is not touched, and unsaved text is named rather than discarded.
-    closeCard: deleteCard,
+    closeCard,
     onBoardChanged,
     workspace() {
       return workspace;
@@ -1630,7 +1888,7 @@ function createApp() {
           log("warn", "usage: delete <id> (or select a card first)");
           return;
         }
-        deleteCard(id);
+        await closeCard(id);
         return;
       }
       case "save": {
@@ -1789,20 +2047,40 @@ function createApp() {
     }
 
     tabsEl.addEventListener("click", (event) => {
-      const button = event.target instanceof Element ? event.target.closest("button[data-card-id]") : null;
-      if (button === null) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target === null) {
         return;
       }
-      const id = button.dataset.cardId;
-      if (board.findCard(id) === null) {
+      // The close control is checked first: it sits inside the tab container, so
+      // a plain "did the press land on a tab" test would open the card instead
+      // of closing it.
+      const close = target.closest(".tab-close");
+      if (close !== null) {
+        void closeTab(close.dataset.closeId);
         return;
       }
-      board.setSelection(id);
-      const entry = mounted.get(id);
-      if (entry !== undefined && entry.handle.focus) {
-        entry.handle.focus();
+      const tab = target.closest("[data-card-id]");
+      if (tab === null) {
+        return;
       }
-      renderAll();
+      selectTab(tab.dataset.cardId);
+    });
+
+    // A middle click closes the tab under the pointer, active or not -- the
+    // browser-tab gesture, on the same `closeTab` as the x.  `auxclick` is the
+    // event for buttons other than the primary one; without preventDefault the
+    // middle button would also start the browser's autoscroll.
+    tabsEl.addEventListener("auxclick", (event) => {
+      if (event.button !== 1) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const tab = target === null ? null : target.closest("[data-card-id]");
+      if (tab === null) {
+        return;
+      }
+      event.preventDefault();
+      void closeTab(tab.dataset.cardId);
     });
   }
 
@@ -2304,6 +2582,15 @@ function createApp() {
         saveBoard({});
         return;
       }
+      // Ctrl+W closes the active tab, not the window.  It is always ours: letting
+      // it fall through would close the Electron window the board lives in, which
+      // is the one thing worse than doing nothing.  Any unsaved text still gets
+      // its question -- this is the same `closeTab` as the x and the middle click.
+      if ((event.ctrlKey || event.metaKey) && key === "w") {
+        event.preventDefault();
+        void closeTab(currentLayout().roles.area);
+        return;
+      }
       /*
        * Undo and redo.  A text field keeps the browser's own undo -- taking a
        * sentence back inside a note should touch the note, not the board -- so
@@ -2405,7 +2692,9 @@ export const LIMITATIONS = [
   "Every view is a projection, never a document: nothing about the tile is saved, a",
   "reload starts in the mod view, and a card the tile has no place for is hidden, not moved.",
   "It tiles the cards the document already has -- one code area (the focused editor), no",
-  "split panes, and no way to close a tab except closing the card.",
+  "split panes -- and every other open card gets a tab, which closes with its x, a middle",
+  "click or Ctrl+W; a card with unsaved text is asked about first (save/discard/cancel),",
+  "and an editor still open in the window is never dismissed without an answer.",
   "Closing the window asks before dropping unsaved board edits; a reload started by the",
   "Electron main process saves them first (window.__infantgodFlushBoard) because a",
   "main-process reload is decided before beforeunload can say no.",

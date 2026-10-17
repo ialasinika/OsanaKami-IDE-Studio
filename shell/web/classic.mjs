@@ -5,8 +5,8 @@
  * look at that, and it does it without a second document:
  *
  *   sidebar   the project panel (or the file list) in the left column
- *   tabs      one button per editor card, in the strip along the top
- *   area      the editor card a command would act on, filling what is left
+ *   tabs      one button per open card, in the strip along the top
+ *   area      the card the strip is pointing at, filling what is left
  *
  * Everything here is arithmetic on `cards` and returns ids and rectangles.  It
  * reads a card and never writes one -- that is the whole promise of "classic is
@@ -41,12 +41,26 @@ export function classicTabLabel(path) {
  * Which card plays which part, as ids.
  *
  * `sidebar` is the project panel when there is one and the file list when there
- * is not -- the two cards that answer "what is in this project".  `area` is the
- * card a command with no argument would act on (the selection, when it is an
- * editor), because a classic layout whose code area is not the focused file is
- * an editor you cannot type in.  Everything else is hidden: a note, a runner, a
- * sheet or a frame has no place in this arrangement, and emptying the board to
- * make room for the view is exactly what must not happen.
+ * is not -- the two cards that answer "what is in this project".
+ *
+ * `tabs` is every card the tile has no other place for -- not just editors.
+ * The canvas could show every card at once; a tile draws three parts, so a kind
+ * with no part in this arrangement used to be hidden with no way to bring it
+ * back: a note, a runner, a sheet, a pixel card, a story card, a docs card and
+ * the validation report were all rendered and never seen (G29).  The strip is
+ * where the tile keeps them -- the tab is the card's handle, and the area is
+ * where it appears -- so every kind is reachable without a second layout engine
+ * and without the canvas coming back.
+ *
+ * `area` is the card the strip points at: the selection when the strip offers
+ * it (whatever the kind -- pressing a note's tab has to show the note, not an
+ * empty pane), else the first editor card (a command with no argument acts on a
+ * file), else the first tab (a board whose only card is a note still draws that
+ * note).  An editor in the area is the focused file, so the area is still the
+ * thing you type into.
+ *
+ * `hidden` is every card not drawn as one of the tile's parts.  It is not
+ * "unreachable" any more: a hidden card the strip offers is one click away.
  *
  * A card appears at most once.  Kinds are disjoint, so no card can be both the
  * sidebar and the code area -- but the rule is what the checks pin, not the
@@ -66,7 +80,7 @@ export function classicRoles(cards, activeId = null) {
 
   const tabs = [];
   for (const card of list) {
-    if (card !== null && card.kind === "editor") {
+    if (card !== null && card.id !== sidebar) {
       tabs.push(card.id);
     }
   }
@@ -74,8 +88,13 @@ export function classicRoles(cards, activeId = null) {
   let area = null;
   if (activeId !== null && tabs.indexOf(activeId) !== -1) {
     area = activeId;
-  } else if (tabs.length > 0) {
-    area = tabs[0];
+  } else {
+    const editor = list.find((card) => card !== null && card.kind === "editor" && tabs.indexOf(card.id) !== -1);
+    if (editor !== undefined) {
+      area = editor.id;
+    } else if (tabs.length > 0) {
+      area = tabs[0];
+    }
   }
 
   const hidden = [];
@@ -86,6 +105,36 @@ export function classicRoles(cards, activeId = null) {
   }
 
   return { sidebar, tabs, area, hidden };
+}
+
+/**
+ * Which tab takes the selection after `closedId` is closed.
+ *
+ * Closing a tab while it is the active one has to land the keyboard somewhere
+ * predictable, or closing a tab would quietly drop the selection: the right
+ * neighbour first (the tab that slides into the closed one's place), then the
+ * left neighbour (there is no right one at the end of the strip), then nothing
+ * (it was the only tab).  Closing a tab that is *not* active changes nothing --
+ * the active card is still there, and taking the selection away from it would
+ * make a close somewhere else move what the user is typing in.
+ *
+ * Pure, like the rest of this file: `tabs` is the strip's id list, `activeId`
+ * the current selection (null for none).  The caller removes the card; this only
+ * answers where the selection goes, so both tiles reuse one rule.
+ */
+export function classicNeighbourAfterClose(tabs, closedId, activeId = null) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  const at = list.indexOf(closedId);
+  const activeStillThere = activeId !== null && activeId !== closedId && list.indexOf(activeId) !== -1;
+  if (at === -1 || activeId !== closedId) {
+    return activeStillThere ? activeId : null;
+  }
+  const right = list[at + 1];
+  if (right !== undefined) {
+    return right;
+  }
+  const left = list[at - 1];
+  return left === undefined ? null : left;
 }
 
 /** A number, or `fallback` when the value is not one. */

@@ -27,10 +27,12 @@ selftest.mjs  node shell/web/selftest.mjs -- no DOM, no network
 
 ## The board paradigm
 
-There are **no tabs and no file tree**. The document is one persistent set of
-**cards**, and every arrangement you look at is a *view* of it. Opening a file
-does not add a tab; it puts a card in the document. Closing a card does not lose
-the file; it removes the card.
+There is **no tab history and no file tree**: neither is a second document. The
+document is one persistent set of **cards**, and every arrangement you look at is
+a *view* of it. Opening a file does not add a tab entry to some list; it puts a
+card in the document, and the tile gives it a tab because that is the handle by
+which a card is reached. Closing a card does not lose the file; it removes the
+card from the document, and `ctrl/⌘ + Z` puts it back.
 
 There are two arrangements, and each is a *view*: `mode classic` lays the same
 cards out as a code area, a tab strip and, when the board has a
@@ -38,8 +40,10 @@ cards out as a code area, a tab strip and, when the board has a
 view](#the-same-cards-as-a-code-area-mode-classic)); `mode mod` lays them out as
 a package tree, the editor, and the problems the mod reports ([the mod
 workbench](#the-board-as-a-mod-workbench-mode-mod)). Neither creates a card,
-moves a card or saves anything — the tabs are the editor cards, in board order.
-The board is the document; the views are what you can do with it.
+moves a card or saves anything — a tile's tabs are the cards it draws nowhere
+else (a note, a runner, a sheet, a story card, a pixel card, a docs card, …), in
+board order, so every open card has a way in. The board is the document; the
+views are what you can do with it.
 
 A window opens in `mod` — that is where a mod author works, and the `?mod=`
 shortcut lands there too — and the HUD switch offers `classic` and `mod`
@@ -123,6 +127,8 @@ could read.
 | drag a card title | select the card; the views place cards themselves, so a drag does not move it |
 | double-click empty space | drop a new note |
 | `:` | focus the command line |
+| click a tab | show that card in the tile's area, with the keyboard |
+| a tab's `×`, a middle click on the tab, or ctrl/⌘ + W | close that card — the same path `delete <id>` takes |
 | ctrl/⌘ + S | save the board |
 | ctrl/⌘ + Z | take back the last board edit |
 | ctrl/⌘ + shift + Z, or ctrl/⌘ + Y | put it back |
@@ -131,6 +137,32 @@ could read.
 A card's rectangle is the view's arithmetic, not yours: the document keeps
 `x`/`y`/`w`/`h` for any view that wants to draw the plane, but neither shipped
 view reads them, and nothing in the UI can drag a card to a new position.
+
+### Closing a card
+
+A card leaves the document through one function, `closeCard` in `main.mjs`
+(`app.closeCard` on the API; the `delete <id>` command is the same call). The
+strip offers it three ways — the `×` on a tab, a middle click on the tab, and
+`ctrl/⌘ + W` for the card in the area — so the gestures cannot disagree about
+what closing costs.
+
+What it costs is a question when there is something to lose. A card whose handle
+reports unsaved text (`closePlan`) gets the same inline strip a stale revision
+does — *保存并关闭*, *不保存，关闭*, *取消* — not a dialog: this app has no
+dialogs. The focus starts on *取消* (closing is the destructive half, so nothing
+destructive is one `Enter` away), `Esc` answers it, and typing in the command
+line abandons the close. *保存并关闭* runs the card's own `save()` first and, if
+that fails, leaves the card and its text exactly where they were. Only an
+explicit discard removes the card (`applyCloseAnswer` decides which of the four
+outcomes a plan and an answer make).
+
+Closing is a document edit, so it goes into the undo ring: `ctrl/⌘ + Z`
+(`undo`) puts the card back with its text. The selection follows the strip's
+neighbour rule (`classicNeighbourAfterClose` in `classic.mjs`, shared by both
+views): closing the active tab selects the right neighbour, else the left, else
+nothing, and closing a tab that is not active leaves the selection alone. The
+strip is rebuilt from the document on every render, so a closed card has no tab
+and a card the document still holds has one.
 
 ### Command line
 
@@ -347,12 +379,15 @@ current one is marked — draws the board a second way:
 | part | which card | where |
 | --- | --- | --- |
 | sidebar | the first `project` card, else the first `files` card, else nothing | the left column, `CLASSIC_SIDEBAR_W` (280 px) wide, `CLASSIC_SIDEBAR_MIN` (160 px) at the least, and never more than 40% of the board |
-| tab strip | every `editor` card, in board order | `CLASSIC_TAB_H` (34 px) under the HUD, right of the sidebar |
-| code area | the focused `editor` card, else the first editor | all that is left below the strip |
+| tab strip | every card that is not the sidebar card, in board order; the card in the area is the focused one | `CLASSIC_TAB_H` (34 px) under the HUD, right of the sidebar |
+| code area | the selected card when the strip offers it, else the first `editor`, else the first tab | all that is left below the strip |
 
 Every other card is **hidden, not unmounted** (`.card.is-hidden`), so a card's
 text, its scroll position and its listeners survive a walk through the view and
-back. The rules are pure and exported from `classic.mjs` —
+back. A hidden card is not an unreachable one: the strip's tabs are exactly the
+cards the tile has no box for, and a tab brings its card into the area — the
+selection first, which is why the tile stopped rounding to the first editor
+(G29). The rules are pure and exported from `classic.mjs` —
 `CLASSIC_SIDEBAR_KINDS`, `CLASSIC_SIDEBAR_W`, `CLASSIC_SIDEBAR_MIN`,
 `CLASSIC_TAB_H`, `classicTabLabel`, `classicRoles`, `classicLayout` — so
 `selftest.mjs` pins them with no DOM and `input_smoke.py` measures the same
@@ -377,8 +412,8 @@ file in the middle, and what validation says about it underneath:
 | part | which card | where |
 | --- | --- | --- |
 | package tree | the first `mod` card, else the first `project` card, else the first `files` card | the left column, `MOD_SIDEBAR_W` (320 px) wide, `MOD_SIDEBAR_MIN` (180 px) at the least, and never more than 40% of the board |
-| tab strip | every `editor` card, in board order | `MOD_TAB_H` (34 px) under the HUD, right of the tree |
-| code area | the focused `editor` card, else the first editor | all that is left of the column above the report |
+| tab strip | every card that is not the tree card or the report card, in board order; the card in the area is the focused one | `MOD_TAB_H` (34 px) under the HUD, right of the tree |
+| code area | the selected card when the strip offers it, else the first `editor`, else the first tab | all that is left of the column above the report |
 | report | the first `problems` card | along the foot of the column, `MOD_PANEL_H` (200 px) at its tallest and `MOD_PANEL_MIN` (80 px) at its shortest |
 
 The difference from the classic view is what it is *for*. There, the sidebar is
@@ -451,13 +486,13 @@ same reason the classic view has none: a hidden keystroke is not discoverable.
   time), no per-key bindings, no code folding, and the find bar is **literal
   text only** — no regular expressions, no match-case and no whole-word toggles.
 * The tiled views are **views**: no split panes, no drag-to-resize on the sidebar
-  or the report panel, no per-tab close (a card has no close, and the strip is
-  rebuilt from the document on every render), no tab reordering that survives
-  anything, no second layout to save, and no effect on the protocol or on
-  `board.json`. Hide a card and it is still open; the document is what is real.
-  The mod view adds no second panel of its own: the report *is* a `problems`
-  card, so a bottom panel that is not in the document does not exist, and
-  `problems <dir>` is what puts one there.
+  or the report panel, no tab reordering that survives anything, no second layout
+  to save, and no effect on the protocol or on `board.json`. A tab closes with
+  its `×`, a middle click or `Ctrl+W`, and a card holding unsaved text is asked
+  about first ([closing a card](#closing-a-card)); hide a card and it is still
+  open, though — the document is what is real. The mod view adds no second panel
+  of its own: the report *is* a `problems` card, so a bottom panel that is not in
+  the document does not exist, and `problems <dir>` is what puts one there.
 
 ---
 

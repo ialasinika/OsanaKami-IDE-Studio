@@ -814,7 +814,10 @@ async function main() {
     const drawn = (node) => win.getComputedStyle(node).display !== "none";
     const near = (a, b) => Math.abs(a - b) <= 2;
     const strip = () => doc.getElementById("tabs");
-    const tabButtons = () => Array.from(strip().querySelectorAll("button[data-card-id]"));
+    /* One tab container per card the tile draws nowhere else; the id is on the
+       container and the name is the inner button (a tab also owns a close
+       button, so "the tab" is not "the button" any more). */
+    const tabButtons = () => Array.from(strip().querySelectorAll("[data-card-id]"));
     const selectionLine = () => (doc.getElementById("hud-selection").textContent || "").trim();
     const runLine = (text) => {
       const box = doc.getElementById("command");
@@ -874,7 +877,9 @@ async function main() {
           && near(sideRect.bottom, boardRect.bottom))
       && near(areaRect.right, boardRect.right)
       && near(areaRect.bottom, boardRect.bottom);
+    const editorTabs = editors.filter((id) => buttons.some((button) => button.dataset.cardId === id)).length;
     say("classic-mode: on=" + isClassic + " tabs=" + buttons.length + " editors=" + editors.length
+      + " editors-tabs=" + editorTabs
       + " shown=" + shownCards.map((node) => node.dataset.cardId).join(",")
       + " places=" + places + " tile=" + tile + " strip=" + Math.round(stripRect.height)
       + " button=" + JSON.stringify(modeText) + " hud=" + JSON.stringify(hudView()));
@@ -895,11 +900,12 @@ async function main() {
     if (buttons.length >= 2 && areaRect !== null) {
       const other = buttons.find((button) => button.dataset.cardId !== areaNode.dataset.cardId);
       clickedId = other.dataset.cardId;
-      other.click();
+      // The name is the button; the container carries the id.
+      other.querySelector(".tab-open").click();
       await sleep(200);
       const moved = cardsNow().find((node) => node.dataset.cardId === clickedId);
       const movedRect = moved.getBoundingClientRect();
-      const active = strip().querySelector("button.is-active");
+      const active = strip().querySelector(".tab.is-active");
       /* Split the verdict so a failure says which of the three it was: the box,
          the strip's own idea of the current tab, or the selection line. */
       const sameBox = drawn(moved) && near(relLeft(movedRect), relLeft(areaRect))
@@ -982,7 +988,12 @@ async function main() {
       say("view-switch-diff: " + placedAtSwitch + "  ->  " + snapshot());
     }
 
-    classicOk = isClassic && editors.length > 0 && buttons.length === editors.length
+    /* Every editor is a tab (the strip serves every card with no place in the
+       tile, so it may hold more than the editors), and the classic tile still
+       shows no more than the area and the sidebar. */
+    const tabIds = buttons.map((button) => button.dataset.cardId);
+    classicOk = isClassic && editors.length > 0 && buttons.length >= editors.length
+      && editors.every((id) => tabIds.indexOf(id) !== -1)
       && places && tile && tabClick && frozen && back;
     say("phase: classic t=" + elapsed() + "ms");
   } catch (error) {
@@ -1361,9 +1372,24 @@ async function main() {
     /* 6. and nothing is left behind: the cards this half opened, not the ones the
        workspace came with.  The sprite card was never saved, so no file was
        created for it either. */
+    /* `delete` is `app.closeCard`, the one close path, so a card holding text
+       that was never saved asks first; this half answers "discard" -- the
+       question itself is what browser_smoke.py pins. */
+    const discardAsk = async () => {
+      const stripNode = doc.querySelector(".ask");
+      if (stripNode === null) return;
+      const quit = Array.from(stripNode.querySelectorAll(".ask-button"))
+        .find((button) => (button.textContent || "").indexOf("不保存") !== -1);
+      if (quit !== undefined) quit.click();
+      await sleep(320);
+    };
     const added = cardsNow().map((node) => node.dataset.cardId)
       .filter((id) => startedWith.indexOf(id) < 0);
-    for (const id of added) runLine("delete " + id);
+    for (const id of added) {
+      runLine("delete " + id);
+      await sleep(160);
+      await discardAsk();
+    }
     await sleep(300);
     const left = added.filter((id) => cardsNow().some((node) => node.dataset.cardId === id)).length;
     const others = pixelsNow().map((node) => textOf(node, ".card-label")).sort().join(",");
@@ -1566,8 +1592,9 @@ def parse_classic(body: str) -> dict:
     """The classic-view lines the wrapper wrote, as tuples of strings."""
     found = {}
     patterns = (
-        ("mode", r'classic-mode: on=(\w+) tabs=(\d+) editors=(\d+) shown=(\S*)'
-                 r' places=(\w+) tile=(\w+) strip=(\d+) button=("[^"]*") hud=("[^"]*")'),
+        ("mode", r'classic-mode: on=(\w+) tabs=(\d+) editors=(\d+) editors-tabs=(\d+)'
+                 r' shown=(\S*) places=(\w+) tile=(\w+) strip=(\d+) button=("[^"]*")'
+                 r' hud=("[^"]*")'),
         ("canvas", r"classic-canvas: zoom=(\w+) links=(\w+)"),
         ("tab", r'classic-tab: clicked=("[^"]*") moved=(\w+) selection=("[^"]*")'),
         ("wheel", r'classic-wheel: frozen=(\w+) placements=(\d+) hud=("[^"]*")'),
@@ -2126,11 +2153,12 @@ def main(argv=None) -> int:
     mode = classic.get("mode")
     results.check("`mode classic` tiles the same cards into a sidebar, a tab strip and a code area",
                   bool(mode) and mode[0] == "true" and int(mode[2]) >= 1
-                  and int(mode[1]) == int(mode[2]) and mode[3] != ""
-                  and mode[4] == "true" and mode[5] == "true" and int(mode[6]) >= 20
-                  and mode[7].strip('"') == "Classic" and mode[8].strip('"') == "classic",
-                  f"tabs={mode[1]} editors={mode[2]} shown={mode[3]} places={mode[4]} "
-                  f"tile={mode[5]} strip={mode[6]}px button={mode[7]} hud={mode[8]}"
+                  and int(mode[1]) >= int(mode[2]) and int(mode[3]) == int(mode[2])
+                  and mode[4] != "" and mode[5] == "true" and mode[6] == "true"
+                  and int(mode[7]) >= 20
+                  and mode[8].strip('"') == "Classic" and mode[9].strip('"') == "classic",
+                  f"tabs={mode[1]} editors={mode[2]} editors-in-tabs={mode[3]} shown={mode[4]} "
+                  f"places={mode[5]} tile={mode[6]} strip={mode[7]}px button={mode[8]} hud={mode[9]}"
                   if mode else classic_detail("mode"))
     tab = classic.get("tab")
     results.check("clicking a tab makes that file the code area",

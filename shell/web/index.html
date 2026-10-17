@@ -6,12 +6,12 @@
 <meta name="color-scheme" content="dark">
 <title>OsanaKami IDE Studio</title>
 <!--
-  The whole page.  A window opens in `classic`: the same cards a person writes,
-  arranged the way an editor is arranged -- sidebar, tab strip, code area.
-  `mode mod` is that tile pointed at a mod package instead.  Neither is stored:
-  both are *views* of the one board document (see docs/PARADIGM.md), computed by
-  main.mjs from classic.mjs and modview.mjs, which is why switching cannot lose
-  an edit.
+  The whole page.  A window opens in `mod`: the same cards a person writes,
+  arranged for mod development -- package column, tab strip, code area, report.
+  `mode classic` is the same cards arranged the way a general editor is.  Neither
+  is stored: both are *views* of the one board document (see docs/PARADIGM.md),
+  computed by main.mjs from classic.mjs and modview.mjs, which is why switching
+  cannot lose an edit.
 
   There is no canvas that draws a card exactly where the document put it: a tile
   decides where every card goes, and nothing pans or zooms.  See views.mjs.
@@ -32,12 +32,15 @@
     </div>
 
     <!-- The tiled views' own chrome, hidden until one of them is showing.  The
-         tab strip is built by main.mjs -- one button per editor card -- and the
-         hint stands in the sidebar column when the board has no project card to
-         put there.  Both are laid out in pixels by classic.mjs and modview.mjs,
+         tab strip is built by main.mjs -- one tab per open card the tile has no
+         other place for, so every card kind stays one press away from the area;
+         each tab opens its card and carries a close button (the x, a middle
+         click and Ctrl+W all go through the same close path) -- and the hint
+         stands in the sidebar column when the board has no project card to put
+         there.  Both are laid out in pixels by classic.mjs and modview.mjs,
          which is the same arithmetic that places the cards: one source of truth
          for the tile. -->
-    <nav id="tabs" hidden aria-label="open files"></nav>
+    <nav id="tabs" hidden aria-label="open cards"></nav>
     <p id="side-hint" hidden></p>
   </main>
 

@@ -134,7 +134,9 @@ import {
  */
 import {
   BOOT_VIEW,
+  applyCloseAnswer,
   classifyViewEvent,
+  closePlan,
   createApp,
   requestedModFromSearch,
   saveOutcomeMessage,
@@ -146,6 +148,7 @@ import {
   CLASSIC_SIDEBAR_KINDS,
   CLASSIC_TAB_H,
   classicLayout,
+  classicNeighbourAfterClose,
   classicRoles,
   classicTabLabel,
 } from "./classic.mjs";
@@ -657,9 +660,9 @@ function stubEventTarget() {
       const list = listeners.get(type) || [];
       listeners.set(type, list.filter((entry) => entry !== fn));
     },
-    fire(type) {
+    fire(type, detail = {}) {
       for (const fn of [...this.list(type)]) {
-        fn({ type });
+        fn({ type, ...detail });
       }
     },
   };
@@ -2104,6 +2107,17 @@ await testAsync("main: ask's inline choice strip removes its command-line listen
   assert.equal(command.count("input"), 0, "the listener is gone once the question is abandoned");
   assert.equal(panel.removed, 1);
 
+  // Escape is cancel, from the strip itself (where the focus starts) -- and the
+  // command-line listener goes with it, not just the input one.
+  command = stubEventTarget();
+  panel = stubEventTarget();
+  button = stubEventTarget();
+  answer = wireChoiceStrip({ strip: panel, buttons: [{ el: button, value: "yes" }], abandonSource: command });
+  panel.fire("keydown", { key: "Escape", preventDefault() {} });
+  assert.equal(await answer, null, "Escape means the question was cancelled");
+  assert.equal(command.count("input"), 0, "Escape removes the command-line input listener");
+  assert.equal(command.count("keydown"), 0, "and the Escape listener it installed there");
+
   // A strip that cannot detach must not keep the listener or hang the answer.
   command = stubEventTarget();
   panel = { remove() { throw new Error("already detached"); } };
@@ -2566,7 +2580,8 @@ test("watch: a path that is no longer open is forgotten", () => {
  * what makes each one a *view* rather than a second layout engine: nothing it
  * computes is written back to a card (so a switch loses no edit and a save
  * writes the document back untouched), and every card either has one place in
- * the tile or is hidden -- never drawn at 0,0 and never moved.
+ * the tile or is a tab in the strip -- every kind, so no card can be hidden
+ * with no way back (G29) -- and none is ever drawn at 0,0 or moved.
  *
  * The pixels themselves are checked as arithmetic: the tile's pieces have to
  * add up at any window size, which is the part a browser would otherwise be the
@@ -2576,6 +2591,119 @@ test("watch: a path that is no longer open is forgotten", () => {
 
 const cardOf = (id, kind, extras = {}) => ({ id, kind, x: 0, y: 0, w: 100, h: 100, z: 1, ...extras });
 
+/* The shipped registry, walked by the G29 checks so a new kind cannot be born
+ * unreachable: these are exactly the kinds `cards.mjs` registers. */
+const ALL_CARD_KINDS = knownCardKinds();
+
+test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
+  assert.deepEqual(
+    [...CARD_KINDS].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "mod", "problems", "docs"].sort(),
+    "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
+  );
+  for (const kind of CARD_KINDS) {
+    assert.equal(knownCardKinds().includes(kind), true, `${kind} has a renderer, so both tiles can draw it`);
+  }
+});
+
+test("classic: a lone card of any kind is drawn, never quietly hidden", () => {
+  for (const kind of ALL_CARD_KINDS) {
+    const roles = classicRoles([cardOf("k", kind)], null);
+    const drawn = roles.sidebar === "k" || roles.area === "k";
+    assert.equal(drawn || roles.tabs.indexOf("k") !== -1, true, `classic: a lone ${kind} is drawn or has a tab`);
+    assert.equal(roles.hidden.length, 0, `classic: a lone ${kind} is reachable -- hidden would be neither`);
+  }
+});
+
+test("mod: a lone card of any kind is drawn, never quietly hidden", () => {
+  for (const kind of ALL_CARD_KINDS) {
+    const roles = modRoles([cardOf("k", kind)], null);
+    const drawn = roles.sidebar === "k" || roles.area === "k" || roles.panel === "k";
+    assert.equal(drawn || roles.tabs.indexOf("k") !== -1, true, `mod: a lone ${kind} is drawn or has a tab`);
+    assert.equal(roles.hidden.length, 0, `mod: a lone ${kind} is reachable -- hidden would be neither`);
+  }
+});
+
+test("G29: every card of a board with one of each kind is reachable in both views", () => {
+  const cards = ALL_CARD_KINDS.map((kind, index) => cardOf(`c${index}`, kind));
+  cards.push(cardOf("e1", "editor"), cardOf("e2", "editor"));
+  for (const [name, rolesOf] of [["classic", classicRoles], ["mod", modRoles]]) {
+    const roles = rolesOf(cards, null);
+    const reachable = new Set([roles.sidebar, roles.area, roles.panel, ...roles.tabs]);
+    for (const card of cards) {
+      assert.equal(reachable.has(card.id), true, `${name}: card ${card.id} (${card.kind}) is placed or has a tab`);
+    }
+    for (const id of roles.hidden) {
+      assert.equal(roles.tabs.indexOf(id) !== -1, true, `${name}: hidden card ${id} is still one tab away`);
+    }
+  }
+});
+
+test("classic: the tab the strip offers is what fills the area", () => {
+  const board = [cardOf("e1", "editor"), cardOf("n", "note")];
+  const out = classicLayout(board, { width: 1200, height: 800 }, { activeId: "n" });
+  assert.equal(out.boxes.has("e1"), false, "the editor is the tab that is not showing");
+  assert.deepEqual(out.boxes.get("n"), out.area, "the note is drawn where the editor would be");
+});
+
+test("mod: the tab the strip offers is what fills the area", () => {
+  const board = [cardOf("m", "mod"), cardOf("e1", "editor"), cardOf("n", "note")];
+  const out = modLayout(board, { width: 1200, height: 800 }, { activeId: "n" });
+  assert.equal(out.boxes.has("e1"), false, "the editor is the tab that is not showing");
+  assert.deepEqual(out.boxes.get("n"), out.area, "the note is drawn where the editor would be");
+});
+
+test("tabs: a close lands the selection on the right neighbour, else the left, else nowhere", () => {
+  assert.equal(classicNeighbourAfterClose(["a", "b", "c"], "b", "b"), "c", "the tab that slides into place takes it");
+  assert.equal(classicNeighbourAfterClose(["a", "b", "c"], "a", "a"), "b", "the first tab hands over to the right");
+  assert.equal(classicNeighbourAfterClose(["a", "b", "c"], "c", "c"), "b", "the last tab hands over to the left");
+  assert.equal(classicNeighbourAfterClose(["a"], "a", "a"), null, "the only tab leaves nothing to select");
+  assert.equal(classicNeighbourAfterClose([], "a", null), null, "no strip, nothing to select");
+  assert.equal(classicNeighbourAfterClose(["a", "b", "c"], "b", "a"), "a", "closing another tab does not move the selection");
+  assert.equal(classicNeighbourAfterClose(["a", "b"], "zz", "a"), "a", "an id that is not a tab changes nothing");
+  assert.equal(classicNeighbourAfterClose(["a", "b"], "zz", null), null);
+});
+
+test("tabs: closing an active card leaves the strip shorter and the neighbour selected", () => {
+  const board = [cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("n", "note")];
+  const before = classicRoles(board, "n");
+  assert.deepEqual(before.tabs, ["e1", "e2", "n"]);
+  const next = classicNeighbourAfterClose(before.tabs, "n", before.area);
+  assert.equal(next, "e2", "the note's tab closes onto the editor before it");
+  const after = board.filter((card) => card.id !== "n");
+  const roles = classicRoles(after, next);
+  assert.deepEqual(roles.tabs, ["e1", "e2"], "the closed card's tab is gone from the strip");
+  assert.equal(roles.area, "e2", "and the neighbour is what the area shows");
+  // The mod tile shares the strip and therefore the rule.
+  const modAfter = modRoles(after, next);
+  assert.deepEqual(modAfter.tabs, ["e1", "e2"]);
+  assert.equal(modAfter.area, "e2");
+});
+
+test("close: the question is only for a card that has something to lose", () => {
+  assert.equal(closePlan(null).ask, false, "a card with no handle closes at once");
+  assert.equal(closePlan({ dirty: false }).ask, false, "a clean card closes at once");
+  const dirtySaver = closePlan({ dirty: true, save() {} });
+  assert.equal(dirtySaver.ask, true, "a dirty card asks");
+  assert.deepEqual(dirtySaver.choices.map((choice) => choice.value), ["save", "discard", "cancel"],
+    "one that can save offers all three");
+  const dirtyOnly = closePlan({ dirty: true });
+  assert.deepEqual(dirtyOnly.choices.map((choice) => choice.value), ["discard", "cancel"],
+    "one that cannot save offers no dead option");
+  assert.equal(applyCloseAnswer({ ask: false, choices: [] }, undefined), "delete");
+});
+
+test("close: every answer has one outcome, and a failed save keeps the card", () => {
+  const plan = closePlan({ dirty: true, save() {} });
+  assert.equal(applyCloseAnswer(plan, "discard"), "delete");
+  assert.equal(applyCloseAnswer(plan, "cancel"), "keep");
+  assert.equal(applyCloseAnswer(plan, null), "keep", "typing in the command line is cancel");
+  assert.equal(applyCloseAnswer(plan, "escape"), "keep", "anything else is cancel too");
+  assert.equal(applyCloseAnswer(plan, "save"), "saveThenDelete", "save runs before the delete");
+  assert.equal(applyCloseAnswer(plan, "save", true), "delete", "a finished save then deletes");
+  assert.equal(applyCloseAnswer(plan, "save", false), "saveFailed", "a failed save keeps the card");
+});
+
 test("classic: the sidebar is the project panel, and the file list is second choice", () => {
   assert.deepEqual(CLASSIC_SIDEBAR_KINDS, ["project", "files"]);
   const board = [cardOf("e1", "editor"), cardOf("n", "note"), cardOf("f", "files")];
@@ -2583,23 +2711,24 @@ test("classic: the sidebar is the project panel, and the file list is second cho
   assert.equal(classicRoles([...board, cardOf("p", "project")]).sidebar, "p");
 });
 
-test("classic: the code area is the focused editor, and the first one without a focus", () => {
+test("classic: the area follows the focused card, and falls back to the first editor", () => {
   const board = [cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("n", "note")];
   assert.equal(classicRoles(board, "e2").area, "e2", "the focused file is the one a command would act on");
-  assert.equal(classicRoles(board, "n").area, "e1", "a focused note is not a file to edit");
+  assert.equal(classicRoles(board, "n").area, "n", "a note the strip offers fills the area too: pressing its tab has to show it");
   assert.equal(classicRoles(board, null).area, "e1");
-  assert.equal(classicRoles([cardOf("n", "note")]).area, null);
+  assert.equal(classicRoles([cardOf("n", "note")]).area, "n", "a board whose only card is a note still draws the note");
 });
 
-test("classic: one card, at most one role -- and everything else is hidden", () => {
+test("classic: one card, at most one role -- and everything else is a tab", () => {
   const board = [cardOf("p", "project"), cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("f", "frame")];
   const roles = classicRoles(board, "e1");
   assert.deepEqual([roles.sidebar, roles.area], ["p", "e1"]);
-  assert.deepEqual(roles.tabs, ["e1", "e2"], "every editor is a tab, even the one in the code area");
+  assert.deepEqual(roles.tabs, ["e1", "e2", "f"], "every card with no other part is a tab, in board order");
   assert.deepEqual(roles.hidden, ["e2", "f"], "the second editor is a tab, not a second pane");
   const files = classicRoles([cardOf("f", "files")], "f");
   assert.equal(files.sidebar, "f");
-  assert.equal(files.area, null, "a card cannot be the sidebar and the code area at once");
+  assert.deepEqual(files.tabs, [], "a card cannot be the sidebar and a tab at once");
+  assert.equal(files.area, null, "nor the sidebar and the code area");
 });
 
 test("classic: the tile adds up -- no gap and no overlap at any window size", () => {
@@ -2783,6 +2912,66 @@ await testAsync("views: `mode board` is refused by the real command line, and mo
 });
 
 /*
+ * G29: the canvas could show a note, a sheet or a runner at the same time as
+ * the code; a tile cannot, so the strip is what keeps every other kind one
+ * press away.  This drives the real shell: a note opened from the command line
+ * has to appear as a real button in `#tabs` (not as a hidden card with a div
+ * where its tab should be), the card root has to accept the focus that tab
+ * sends it, and selecting it has to put it in the area instead of leaving it
+ * hidden.  Stub DOM: no layout, no focus -- so the classes and the tab data are
+ * the evidence.
+ */
+await testAsync("G29: a note opened from the command line gets a tab, and that tab puts it in the area", async () => {
+  const dom = stubAppDom();
+  // The shell draws on a frame (`scheduleRender`), and the stub's frame is a
+  // zero-delay timer: assertions about what the strip shows have to let it run.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+  try {
+    const app = createApp();
+    assert.equal(dom.viewClasses().includes("is-mod"), true, "a window opens in the mod view");
+    await app.runCommand("note hello from the strip");
+    await settle();
+    const cards = dom.element("cards").children;
+    assert.equal(cards.length, 1, "the note card is mounted");
+    const note = cards[0];
+    const id = note.getAttribute("data-card-id");
+    assert.equal(id, app.board.cards[0].id, "the root is the card the board holds");
+    assert.equal(note.dataset.kind, "note");
+    assert.equal(note.tabIndex, -1, "the card root can take the focus a tab sends it");
+    let tabs = dom.element("tabs").children;
+    assert.equal(tabs.length, 1, "the strip offers the note: one button per open card the tile has no place for");
+    assert.equal(tabs[0].dataset.cardId, id);
+    assert.equal(tabs[0].dataset.kind, "note", "the tab knows which kind it opens");
+    assert.equal(
+      note.classList.contains("is-hidden"),
+      false,
+      "with nothing else open the note takes the area -- the tab is where the other kinds come from",
+    );
+    // A code card takes the area the moment there is one, and the note keeps its
+    // tab: that is the whole point -- the kind the tile used to hide is one press
+    // from the area instead of unreachable.
+    app.board.addCard("editor", 40, 40, { path: "Mods/NewMod/mod.json" }, { w: 600, h: 400 });
+    await settle();
+    assert.equal(note.classList.contains("is-hidden"), true, "a code card takes the area, the note waits in the strip");
+    assert.equal(dom.element("tabs").children.length, 2, "the note kept its tab");
+    await app.runCommand(`focus ${id}`);
+    await settle();
+    assert.equal(note.classList.contains("is-hidden"), false, "selecting the note draws it in the area");
+    assert.match(String(note.style.transform), /^translate\(/, "in the area, not at 0,0");
+    tabs = dom.element("tabs").children;
+    const active = tabs.filter((tab) => tab.getAttribute("aria-current") === "true");
+    assert.equal(active.length, 1, "one tab says it is the one showing");
+    assert.equal(active[0].dataset.cardId, id, "and it is the note's");
+    assert.equal(active[0].classList.contains("is-active"), true, "the strip marks it too");
+    // The frame that drew all of this has landed; a frame still queued when the
+    // document is swapped back would draw into the next test's stub.
+    await settle();
+  } finally {
+    dom.restore();
+  }
+});
+
+/*
  * D3: the user saw "the board on disk is now rev N; you have unsaved changes"
  * after their own autosave.  The kernel notifies *before* it answers the write,
  * so the event arrives while `saving` is still true and `boardRevision` still
@@ -2858,13 +3047,13 @@ test("mod: the package is the sidebar, the report is the panel, both before thei
   assert.equal(modRoles([cardOf("n", "note")]).panel, null, "no report card, no panel");
 });
 
-test("mod: the code area is the focused editor, and a focused note is not one", () => {
+test("mod: the area follows the focused card, and a focused note is not a file", () => {
   const board = [cardOf("e1", "editor"), cardOf("e2", "editor"), cardOf("n", "note")];
   assert.equal(modRoles(board, "e2").area, "e2", "the focused file is the one a command would act on");
-  assert.equal(modRoles(board, "n").area, "e1", "a focused note is not a file to edit");
+  assert.equal(modRoles(board, "n").area, "n", "a note the strip offers fills the area: pressing its tab shows it");
   assert.equal(modRoles(board, null).area, "e1");
-  assert.equal(modRoles([cardOf("n", "note")]).area, null);
-  assert.deepEqual(modRoles(board, "e2").tabs, ["e1", "e2"], "every editor is a tab, in board order");
+  assert.equal(modRoles([cardOf("n", "note")]).area, "n", "a view whose only card is a note still draws the note");
+  assert.deepEqual(modRoles(board, "e2").tabs, ["e1", "e2", "n"], "every card with no part is a tab, in board order");
 });
 
 test("mod: a card has one part, and the parts do not overlap", () => {
@@ -2875,7 +3064,8 @@ test("mod: a card has one part, and the parts do not overlap", () => {
   for (const id of parts) {
     assert.equal(roles.hidden.indexOf(id), -1, `${id} plays a part, so it is not also hidden`);
   }
-  assert.deepEqual(roles.hidden, ["n"], "the note has no part in this view");
+  assert.deepEqual(roles.hidden, ["n"], "the note is a tab, not a second pane");
+  assert.deepEqual(roles.tabs, ["e1", "n"], "and the strip is what keeps it reachable");
   assert.equal(modRoles([cardOf("m", "mod")], "m").area, null, "the package cannot double as the code area");
 });
 

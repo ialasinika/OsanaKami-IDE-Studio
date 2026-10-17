@@ -73,9 +73,15 @@ Honesty about what is *not* proven here:
   package the menu created, the three headings opening their files, a save's
   own echo not being read as another writer, a real external write still
   warning, and a wrong relative name failing visibly.
+* a *third* page follows: the card round trip opens one card of every kind the
+  board ships from the command line, then walks both tiles and presses each
+  card's tab (or focuses the part of the tile it already fills) and reports
+  whether the root element is drawn and can take the keyboard.  Its checks
+  cover G29: every kind is reachable in both views, and no view hides a card
+  without offering the tab that brings it back.
 * a green run says the page booted, the HUD and the board agree, the command
-  vocabulary shipped, and the new-mod path works -- not that the UI is correct
-  in any wider sense.
+  vocabulary shipped, the new-mod path works, and every card kind is reachable
+  -- not that the UI is correct in any wider sense.
 
 Exit codes
     0   every check passed -- or the browser is not installed (a SKIP line)
@@ -88,6 +94,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import os
@@ -1298,6 +1305,727 @@ def define_newmod_checks(facts: dict) -> list:
     ]
 
 
+#: ---------------------------------------------------------------------------
+#: The card round trip (G29).  A card the tile has no place for used to be
+#: hidden with nothing to bring it back; the container mapping now offers it as
+#: a tab.  The round trip drives one page in a sandbox workspace: open one card
+#: of every kind from the command line, then, in each view, press each card's
+#: tab (or focus the part of the tile it already fills) and report whether its
+#: root is drawn and can take the keyboard.
+#: ---------------------------------------------------------------------------
+
+CARD_WRAPPER_NAME = "__browser_smoke_cards.html"
+CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
+
+#: The kinds the board ships, in ``shell/web/board.mjs``'s ``CARD_KINDS`` order.
+#: Every one of them has to be reachable in both tiles.
+CARD_KINDS = (
+    "editor", "runner", "note", "files", "project",
+    "sheet", "story", "pixel", "mod", "problems", "docs",
+)
+
+#: The tiles, in the order the round trip walks them (the window boots on mod).
+CARD_VIEWS = ("mod", "classic")
+
+#: The commands that open one card of every kind.  The sandbox workspace is
+#: written by ``_cards_workspace`` so each relative path here is real.
+CARD_COMMANDS = (
+    "open README.md",
+    "run echo smoke",
+    "note smoke note",
+    "files",
+    "project",
+    "sheet smoke sheet",
+    "story main.yarn",
+    "pixel icon.png",
+    "mod NewMod",
+    "problems",
+    "docs",
+)
+
+#: The close facts the card page prints after the reachability walk: the three
+#: strip gestures (x, middle click, Ctrl+W), the neighbour rule when the last tab
+#: closes, and the unsaved-text question's three answers.  Named after the key
+#: the page prints, and used by the "browser is not installed" summary line.
+CLOSE_CHECK_KEYS = (
+    "x_close",
+    "middle_close",
+    "ctrl_w",
+    "close_last_neighbour",
+    "ask_cancel",
+    "ask_discard",
+    "ask_save",
+    "ask_gestures",
+)
+CLOSE_CHECK_COUNT = len(CLOSE_CHECK_KEYS)
+
+#: One assertion per (view, kind), plus the one that every mounted card is
+#: reachable somewhere, plus the close facts.  Used by the "browser is not
+#: installed" summary line.
+CARD_CHECK_COUNT = len(CARD_KINDS) * len(CARD_VIEWS) + 1 + CLOSE_CHECK_COUNT
+
+#: The wrapper page.  Same rules as ``MOD_PAGE``: plain browser JS, no imports,
+#: and every fact copied into ``#result`` because a dump serializes only the top
+#: document.  ``?app=`` is the address to frame.
+CARD_PAGE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>browser smoke: every card kind in both views</title>
+<style>
+body{margin:0;font:12px monospace}
+iframe{width:1500px;height:900px;border:0}
+pre{white-space:pre-wrap}
+</style>
+</head>
+<body>
+<iframe id="app" src="/"></iframe>
+<pre id="result">pending</pre>
+<script>
+(() => {
+  const KINDS = __KINDS__;
+  const VIEWS = __VIEWS__;
+  const COMMANDS = __COMMANDS__;
+  const lines = [];
+  const out = document.getElementById("result");
+  const say = (name, value) => lines.push(name + "=" + String(value).replace(/\s+/g, " ").trim());
+  const finish = () => { out.textContent = lines.join("\n") + "\ndone=1"; };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const frame = document.getElementById("app");
+  const appUrl = new URLSearchParams(location.search).get("app") || "/";
+  const doc = () => frame.contentDocument;
+  const win = () => frame.contentWindow;
+  const viewClass = () => (doc().body === null ? "" : doc().body.className);
+  const inView = (view) => new RegExp("(^|\\s)is-" + view + "(\\s|$)").test(viewClass());
+  const waitFor = async (probe, tries) => {
+    const limit = tries || 240;
+    for (let index = 0; index < limit; index += 1) {
+      try {
+        const value = probe();
+        if (value) { return value; }
+      } catch (err) { /* the frame is not ready yet */ }
+      await sleep(50);
+    }
+    return null;
+  };
+  const runLine = (text) => {
+    const box = doc().getElementById("command");
+    box.value = text;
+    box.dispatchEvent(new (win().KeyboardEvent)("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+  };
+  /* The last root of a kind: the commands run after the boot-time hint note, so
+   * the card this probe opened is the last one the board mounted. */
+  const rootOf = (kind) => {
+    const roots = Array.from(doc().querySelectorAll('#cards .card[data-kind="' + kind + '"]'));
+    return roots.length === 0 ? null : roots[roots.length - 1];
+  };
+  /* A tab is a container with a close button in it, so the id lives on the
+   * container and the strip is addressed by id, not by "the button". */
+  const tabOf = (id) => (id === null ? null : doc().querySelector('#tabs [data-card-id="' + id + '"]'));
+  const focusedIn = (root) => {
+    const active = doc().activeElement;
+    return active !== null && (active === root || root.contains(active));
+  };
+  const describeActive = (root) => {
+    const active = doc().activeElement;
+    const tag = active === null ? "none" : active.tagName + "." + String(active.className || "");
+    return "active=" + tag + " in=" + (root !== null && focusedIn(root) ? 1 : 0);
+  };
+  (async () => {
+    try {
+      frame.src = appUrl;
+      await waitFor(() => doc() && doc().readyState === "complete");
+      await waitFor(() => {
+        const status = doc().getElementById("kernel-status");
+        return status !== null && /ready/.test(status.textContent || "");
+      });
+      await sleep(200);
+      for (const command of COMMANDS) {
+        runLine(command);
+        await sleep(180);
+      }
+      /* The kind that loads files over RPC (open, story, pixel, mod) is slower
+       * than the rest; give the last one room before measuring. */
+      await sleep(600);
+      for (const view of VIEWS) {
+        runLine("mode " + view);
+        await waitFor(() => inView(view));
+        await sleep(300);
+        for (const kind of KINDS) {
+          const root = rootOf(kind);
+          const id = root === null ? null : root.getAttribute("data-card-id");
+          const tab = tabOf(id);
+          let focused = false;
+          if (root !== null) {
+            if (tab !== null) {
+              tab.click();
+              await sleep(160);
+            } else {
+              root.focus();
+              await sleep(30);
+            }
+            focused = focusedIn(root);
+          }
+          say(
+            "card_" + view + "_" + kind,
+            "root=" + (root !== null ? 1 : 0)
+              + " tab=" + (tab !== null ? 1 : 0)
+              + " visible=" + (root !== null && !root.classList.contains("is-hidden") ? 1 : 0)
+              + " focused=" + (focused ? 1 : 0)
+              + " " + describeActive(root),
+          );
+        }
+        /* The invariant G29 is about: a card is drawn by one of the tile's parts
+         * or it is one of the strip's buttons -- never neither. */
+        const cards = Array.from(doc().querySelectorAll("#cards [data-card-id]"));
+        let reachable = 0;
+        for (const card of cards) {
+          const id = card.getAttribute("data-card-id");
+          const tab = tabOf(id);
+          if (!card.classList.contains("is-hidden") || tab !== null) { reachable += 1; }
+        }
+        say("reach_" + view, "total=" + cards.length + " reachable=" + reachable);
+      }
+
+      /* ---------------- close gestures and the unsaved-text question ---------------- */
+      const tabIds = () => Array.from(doc().querySelectorAll("#tabs [data-card-id]"))
+        .map((node) => node.getAttribute("data-card-id"));
+      const cardRootOf = (id) => doc().querySelector('#cards [data-card-id="' + id + '"]');
+      const areaHas = (id) => {
+        const root = cardRootOf(id);
+        return root !== null && !root.classList.contains("is-hidden");
+      };
+      const focusInCard = (id) => {
+        const root = cardRootOf(id);
+        return root !== null && focusedIn(root);
+      };
+      const rightOf = (ids, id) => {
+        const at = ids.indexOf(id);
+        return at < 0 || at + 1 >= ids.length ? null : ids[at + 1];
+      };
+      const leftOf = (ids, id) => {
+        const at = ids.indexOf(id);
+        return at <= 0 ? null : ids[at - 1];
+      };
+      const openTab = async (id) => {
+        const tab = tabOf(id);
+        if (tab === null) { return false; }
+        tab.querySelector(".tab-open").click();
+        await sleep(260);
+        return true;
+      };
+      const closeWithX = (id) => {
+        const tab = tabOf(id);
+        if (tab !== null) { tab.querySelector(".tab-close").click(); }
+      };
+      const closeWithMiddle = (id) => {
+        const tab = tabOf(id);
+        if (tab === null) { return; }
+        tab.querySelector(".tab-open").dispatchEvent(
+          new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }),
+        );
+      };
+      const closeWithCtrlW = () => {
+        doc().dispatchEvent(
+          new KeyboardEvent("keydown", { key: "w", ctrlKey: true, bubbles: true, cancelable: true }),
+        );
+      };
+      const gestureFacts = (closed, next) => "gone=" + (tabOf(closed) === null && cardRootOf(closed) === null ? 1 : 0)
+        + " next=" + (next === null ? "-" : next)
+        + " shown=" + (next !== null && areaHas(next) ? 1 : 0)
+        + " focused=" + (next !== null && focusInCard(next) ? 1 : 0)
+        + " tabs=" + tabIds().length;
+      const editorUnder = () => {
+        const roots = Array.from(doc().querySelectorAll('#cards .card[data-kind="editor"]'));
+        return roots.length === 0 ? null : roots[roots.length - 1];
+      };
+      const markDirty = async (marker) => {
+        runLine("open README.md");
+        await sleep(800);
+        let root = editorUnder();
+        if (root === null) { return null; }
+        const id = root.getAttribute("data-card-id");
+        const tab = tabOf(id);
+        if (tab !== null) {
+          tab.querySelector(".tab-open").click();
+          await sleep(320);
+          root = editorUnder();
+        }
+        if (root === null) { return null; }
+        const area = root.querySelector("textarea");
+        if (area === null) { return null; }
+        area.value = area.value + "\n" + marker + "\n";
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+        await sleep(240);
+        /* The dot is painted by the next render, and the page only renders on a
+         * board change: pressing the tab is a render that touches nothing else. */
+        const fresh = editorUnder();
+        const freshTab = fresh === null ? null : tabOf(fresh.getAttribute("data-card-id"));
+        if (freshTab !== null) {
+          freshTab.querySelector(".tab-open").click();
+          await sleep(320);
+        }
+        const dot = tabOf(id) === null ? null : tabOf(id).querySelector(".tab-dirty");
+        return { id: id, dirty: dot !== null ? 1 : 0 };
+      };
+      const askNow = () => {
+        const strip = doc().querySelector(".ask");
+        if (strip === null) { return null; }
+        return {
+          strip: strip,
+          labels: Array.from(strip.querySelectorAll(".ask-button")).map((button) => button.textContent),
+        };
+      };
+      const answer = async (label) => {
+        const asked = askNow();
+        if (asked === null) { return false; }
+        const button = Array.from(asked.strip.querySelectorAll(".ask-button"))
+          .find((item) => item.textContent === label);
+        if (button === undefined) { return false; }
+        button.click();
+        await sleep(900);
+        return true;
+      };
+      const cancelCheck = async () => {
+        const marked = await markDirty("CANCEL-SMOKE-MARKER");
+        if (marked === null) {
+          say("ask_cancel", "dirty=0 asked=0 answered=0 kept=0 strip=0 focused=0");
+          return;
+        }
+        closeWithX(marked.id);
+        await sleep(450);
+        const asked = askNow();
+        if (asked === null) {
+          say("ask_cancel", "dirty=" + marked.dirty + " asked=0 answered=0 kept="
+            + (cardRootOf(marked.id) !== null ? 1 : 0) + " strip=0 focused=0");
+          return;
+        }
+        const answered = await answer("取消");
+        const kept = cardRootOf(marked.id) !== null ? 1 : 0;
+        say("ask_cancel", "dirty=" + marked.dirty + " asked=1 answered=" + (answered ? 1 : 0)
+          + " labels=" + asked.labels.join("|") + " kept=" + kept
+          + " strip=" + (askNow() === null ? 0 : 1)
+          + " focused=" + (kept === 1 && focusInCard(marked.id) ? 1 : 0));
+      };
+      const discardCheck = async () => {
+        const marker = "DISCARD-SMOKE-MARKER";
+        const marked = await markDirty(marker);
+        if (marked === null) {
+          say("ask_discard", "dirty=0 asked=0 answered=0 gone=0 leaked=0");
+          return;
+        }
+        closeWithX(marked.id);
+        await sleep(450);
+        const asked = askNow();
+        if (asked === null) {
+          say("ask_discard", "dirty=" + marked.dirty + " asked=0 answered=0 gone=0 leaked=1");
+          return;
+        }
+        const answered = await answer("不保存，关闭");
+        const gone = cardRootOf(marked.id) === null && tabOf(marked.id) === null ? 1 : 0;
+        // Only the disk can say the text was not written: reopen the file.
+        runLine("open README.md");
+        await sleep(900);
+        const root = editorUnder();
+        const area = root === null ? null : root.querySelector("textarea");
+        const leaked = area !== null && area.value.indexOf(marker) !== -1 ? 1 : 0;
+        say("ask_discard", "dirty=" + marked.dirty + " asked=1 answered=" + (answered ? 1 : 0)
+          + " labels=" + asked.labels.join("|") + " gone=" + gone + " leaked=" + leaked);
+      };
+      const saveCheck = async () => {
+        const marker = "SAVE-SMOKE-MARKER";
+        const marked = await markDirty(marker);
+        if (marked === null) {
+          say("ask_save", "dirty=0 asked=0 answered=0 gone=0 saved=0");
+          return;
+        }
+        closeWithX(marked.id);
+        await sleep(450);
+        const asked = askNow();
+        if (asked === null) {
+          say("ask_save", "dirty=" + marked.dirty + " asked=0 answered=0 gone=0 saved=0");
+          return;
+        }
+        const answered = await answer("保存并关闭");
+        await sleep(1200);
+        const gone = cardRootOf(marked.id) === null && tabOf(marked.id) === null ? 1 : 0;
+        runLine("open README.md");
+        await sleep(900);
+        const root = editorUnder();
+        const area = root === null ? null : root.querySelector("textarea");
+        const saved = area !== null && area.value.indexOf(marker) !== -1 ? 1 : 0;
+        say("ask_save", "dirty=" + marked.dirty + " asked=1 answered=" + (answered ? 1 : 0)
+          + " labels=" + asked.labels.join("|") + " gone=" + gone + " saved=" + saved);
+      };
+      /* The other two ways into a close -- the Ctrl+W key and the middle click --
+       * must reach the same question the x does, or a user who never presses the
+       * x would lose unsaved text without being asked. */
+      const gestureAskCheck = async () => {
+        const wMarked = await markDirty("CTRL-W-SMOKE-MARKER");
+        let askedW = 0;
+        let answeredW = 0;
+        let keptW = 0;
+        if (wMarked !== null) {
+          await openTab(wMarked.id);
+          closeWithCtrlW();
+          await sleep(500);
+          askedW = askNow() === null ? 0 : 1;
+          if (askedW === 1) {
+            answeredW = (await answer("取消")) ? 1 : 0;
+            keptW = cardRootOf(wMarked.id) !== null ? 1 : 0;
+          }
+        }
+        const mMarked = await markDirty("MIDDLE-SMOKE-MARKER");
+        let askedM = 0;
+        let answeredM = 0;
+        let keptM = 0;
+        if (mMarked !== null) {
+          closeWithMiddle(mMarked.id);
+          await sleep(500);
+          askedM = askNow() === null ? 0 : 1;
+          if (askedM === 1) {
+            answeredM = (await answer("取消")) ? 1 : 0;
+            keptM = cardRootOf(mMarked.id) !== null ? 1 : 0;
+          }
+        }
+        say("ask_gestures", "asked_w=" + askedW + " answered_w=" + answeredW + " kept_w=" + keptW
+          + " asked_m=" + askedM + " answered_m=" + answeredM + " kept_m=" + keptM);
+      };
+      runLine("mode classic");
+      await waitFor(() => inView("classic"));
+      await sleep(350);
+
+      /* x on the *active* tab: the neighbour that slides into its place takes the
+       * selection and the keyboard.  Activating it first is what makes the
+       * neighbour rule the thing under test. */
+      let closeIds = tabIds();
+      const xTarget = closeIds[Math.max(0, Math.floor(closeIds.length / 2) - 1)];
+      await openTab(xTarget);
+      closeIds = tabIds();
+      const xNext = rightOf(closeIds, xTarget);
+      closeWithX(xTarget);
+      await sleep(420);
+      say("x_close", gestureFacts(xTarget, xNext));
+
+      /* A middle click closes the tab under the pointer even when it is not the
+       * active one, and the card the user is working in must not move. */
+      closeIds = tabIds();
+      const mTarget = closeIds[0] === undefined ? null : closeIds[0];
+      const mKeep = closeIds[closeIds.length - 1];
+      if (mKeep !== undefined) { await openTab(mKeep); }
+      if (mTarget !== null) { closeWithMiddle(mTarget); }
+      await sleep(420);
+      say("middle_close", gestureFacts(mTarget, mKeep));
+
+      closeIds = tabIds();
+      const wTarget = closeIds[Math.max(0, closeIds.length - 2)];
+      await openTab(wTarget);
+      closeIds = tabIds();
+      const wNext = rightOf(closeIds, wTarget);
+      closeWithCtrlW();
+      await sleep(420);
+      say("ctrl_w", gestureFacts(wTarget, wNext));
+
+      closeIds = tabIds();
+      const lTarget = closeIds[closeIds.length - 1];
+      await openTab(lTarget);
+      closeIds = tabIds();
+      const lNext = leftOf(closeIds, lTarget);
+      closeWithX(lTarget);
+      await sleep(420);
+      say("close_last_neighbour", "gone=" + (tabOf(lTarget) === null && cardRootOf(lTarget) === null ? 1 : 0)
+        + " next=" + (lNext === null ? "-" : lNext)
+        + " shown=" + (lNext !== null && areaHas(lNext) ? 1 : 0)
+        + " focused=" + (lNext !== null && focusInCard(lNext) ? 1 : 0));
+
+      await cancelCheck();
+      await discardCheck();
+      await saveCheck();
+      await gestureAskCheck();
+    } catch (err) {
+      say("error", (err && err.message) || String(err));
+    }
+    finish();
+  })();
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _cards_workspace(sandbox: Path) -> None:
+    """The workspace the card round trip runs in: a real file for each kind.
+
+    No board is written.  A cold boot is part of what the round trip walks (the
+    window has to open on the mod tile), and the page adds the empty-board hint
+    note itself -- which is why the note probe takes the *last* note card.
+    """
+    (sandbox / "README.md").write_text(
+        "# smoke workspace\n\nOne text file, for the editor card.\n", encoding="utf-8"
+    )
+    (sandbox / "main.yarn").write_text("title: Smoke\n---\nHello, world!\n===\n", encoding="utf-8")
+    # A 1x1 transparent PNG: the pixel card fetches the bytes over /rpc, and a
+    # placeholder is enough for its root to mount.
+    (sandbox / "icon.png").write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+    )
+    package = sandbox / "NewMod"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "mod.json").write_text(
+        json.dumps(
+            {
+                "name": "NewMod",
+                "version": "1.0.0",
+                "author": "browser smoke",
+                "description": "the package the card round trip opens",
+                "gameVersion": "1.0",
+                "loadOrder": 1,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _card_page() -> str:
+    """``CARD_PAGE`` with the kind/view/command lists spliced in as JS arrays."""
+    return (
+        CARD_PAGE
+        .replace("__KINDS__", json.dumps(list(CARD_KINDS)))
+        .replace("__VIEWS__", json.dumps(list(CARD_VIEWS)))
+        .replace("__COMMANDS__", json.dumps(list(CARD_COMMANDS)))
+    )
+
+
+def card_round_trip(edge, args) -> dict:
+    """Drive both tiles in a throwaway workspace; return the wrapper's facts.
+
+    Raises :class:`DriverError` when the sandbox host cannot be brought up; a
+    page that merely reports the wrong facts is for ``define_card_checks`` to
+    judge.
+    """
+    sandbox = Path(tempfile.mkdtemp(prefix="infantgod-smoke-cardws-"))
+    profile = Path(tempfile.mkdtemp(prefix="infantgod-smoke-card-"))
+    host = None
+    written = False
+    try:
+        _cards_workspace(sandbox)
+        CARD_WRAPPER.write_text(_card_page(), encoding="utf-8")
+        written = True
+        port = free_port()
+        host = Host(
+            port,
+            [
+                "node", str(SHELL_MAIN),
+                "serve",
+                "--workspace", str(sandbox),
+                "--mods-root", str(sandbox),
+                "--port", str(port),
+                "--no-open",
+            ],
+        )
+        host.start()
+        show("cards host", f"{host.url} (workspace {sandbox})")
+        host.wait_ready(args.timeout)
+        status = host.probe(timeout=min(10.0, args.timeout))
+        if status != 200:
+            raise DriverError(f"GET / on the card host answered {status}, expected 200")
+        return _drive_wrapper(
+            edge, args, profile,
+            f"{host.url}{CARD_WRAPPER_NAME}?app=%2F",
+            "card reachability",
+        )
+    finally:
+        if host is not None:
+            host.close()
+        if written:
+            CARD_WRAPPER.unlink(missing_ok=True)
+        shutil.rmtree(profile, ignore_errors=True)
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _split_fact_line(line: str) -> dict:
+    """``"root=1 tab=0 visible=1"`` -> ``{"root": "1", ...}``."""
+    parsed = {}
+    for part in line.split():
+        name, separator, value = part.partition("=")
+        if separator and name:
+            parsed[name] = value
+    return parsed
+
+
+def define_card_checks(facts: dict) -> list:
+    """The G29 assertions, as ``(name, callable)`` pairs.
+
+    One per (view, kind): the card was opened from the UI, its root is drawn
+    (not ``is-hidden``) and it took the keyboard.  Plus one that says every card
+    the board mounted is drawn somewhere or offered as a tab.
+    """
+    require(
+        facts,
+        "the card wrapper page reported nothing: the browser dump carried no #result block, "
+        "so the page never ran its probe",
+    )
+    require(not facts.get("error"), f"the card wrapper page failed: {facts.get('error')}")
+
+    def card_check(view: str, kind: str):
+        def check():
+            line = facts.get(f"card_{view}_{kind}", "")
+            require(line, f"{view}: the wrapper page reported no line for the {kind} card")
+            parsed = _split_fact_line(line)
+            require(
+                parsed.get("root") == "1",
+                f"{view}: no {kind} card root was mounted at all (facts {line!r})",
+            )
+            require(
+                parsed.get("visible") == "1",
+                f"{view}: the {kind} card root is is-hidden -- the tile has a place for no part of "
+                "it and the strip offers no way in, which is the G29 defect",
+            )
+            require(
+                parsed.get("focused") == "1",
+                f"{view}: the {kind} card root could not take the keyboard after its own part of "
+                "the tile (or its tab) was used",
+            )
+            via = "its tab" if parsed.get("tab") == "1" else "its own part of the tile"
+            return f"{view}: {kind} reached through {via}, drawn and focusable"
+        return check
+
+    checks = []
+    for view in CARD_VIEWS:
+        for kind in CARD_KINDS:
+            checks.append((f"G29: the {view} tile shows the {kind} card from the UI", card_check(view, kind)))
+
+    def every_card_reachable():
+        parts = []
+        for view in CARD_VIEWS:
+            line = facts.get(f"reach_{view}", "")
+            require(line, f"{view}: the wrapper page reported no reachability line")
+            parsed = _split_fact_line(line)
+            total = parsed.get("total", "")
+            reachable = parsed.get("reachable", "")
+            require(
+                total.isdigit() and int(total) >= len(CARD_KINDS),
+                f"{view}: only {total!r} card(s) are mounted; the round trip opened one of every "
+                f"kind ({len(CARD_KINDS)})",
+            )
+            require(
+                reachable == total,
+                f"{view}: {total} card(s) are mounted but only {reachable} are reachable -- a "
+                "card that is hidden and has no tab has disappeared with the canvas",
+            )
+            parts.append(f"{view}: {reachable}/{total} cards reachable")
+        return "; ".join(parts)
+
+    checks.append(("G29: every open card is reachable in both views", every_card_reachable))
+
+    ask_labels = ("保存并关闭", "不保存，关闭", "取消")
+
+    def close_gesture(key: str) -> object:
+        def check():
+            line = facts.get(key, "")
+            require(line, f"the wrapper page reported no {key!r} line for the close gesture")
+            parsed = _split_fact_line(line)
+            require(
+                parsed.get("gone") == "1",
+                f"the closed tab and its card are still there (facts {line!r})",
+            )
+            next_id = parsed.get("next", "")
+            require(
+                next_id not in ("", "-"),
+                f"the closed tab had no neighbour to take over, so nothing proves the rule "
+                f"(facts {line!r})",
+            )
+            require(
+                parsed.get("shown") == "1",
+                f"the neighbour {next_id} is not drawn in the area (facts {line!r})",
+            )
+            require(
+                parsed.get("focused") == "1",
+                f"the neighbour {next_id} did not take the keyboard (facts {line!r})",
+            )
+            return f"the tab and its card are gone; {next_id} is in the area and focused"
+        return check
+
+    def ask_line(key: str) -> dict:
+        line = facts.get(key, "")
+        require(line, f"the wrapper page reported no {key!r} line for the unsaved-text question")
+        parsed = _split_fact_line(line)
+        require(
+            parsed.get("dirty") == "1",
+            f"the editor never became dirty before the close (facts {line!r})",
+        )
+        require(
+            parsed.get("asked") == "1",
+            f"closing unsaved text asked nothing, so the text would be gone without a "
+            f"decision (facts {line!r})",
+        )
+        require(parsed.get("answered") == "1", f"the answer button was not found (facts {line!r})")
+        labels = parsed.get("labels", "").split("|")
+        require(
+            labels == list(ask_labels),
+            f"the question offered {labels!r}, expected {list(ask_labels)!r}",
+        )
+        return parsed
+
+    def cancel_keeps():
+        parsed = ask_line("ask_cancel")
+        require(parsed.get("kept") == "1", "cancel removed the card")
+        require(parsed.get("strip") == "0", "the question strip is still on screen")
+        require(parsed.get("focused") == "1", "cancel did not put the keyboard back on the card")
+        return "the card, its text and the keyboard all stayed"
+
+    def discard_keeps_file():
+        parsed = ask_line("ask_discard")
+        require(parsed.get("gone") == "1", "discard left the card on the board")
+        require(parsed.get("leaked") == "0", "the discarded text reached the file on disk")
+        return "the card is gone and the file on disk is unchanged"
+
+    def save_before_close():
+        parsed = ask_line("ask_save")
+        require(parsed.get("gone") == "1", "save closed nothing: the card is still on the board")
+        require(parsed.get("saved") == "1", "the saved text did not reach the reopened file")
+        return "the text was written before the card went"
+
+    def ask_gesture_checks():
+        line = facts.get("ask_gestures", "")
+        require(line, "the wrapper page reported no 'ask_gestures' line for Ctrl+W and the middle click")
+        parsed = _split_fact_line(line)
+        require(
+            parsed.get("asked_w") == "1",
+            f"Ctrl+W closed unsaved text without asking anything (facts {line!r})",
+        )
+        require(
+            parsed.get("answered_w") == "1" and parsed.get("kept_w") == "1",
+            f"Ctrl+W's question could not be answered with cancel, so the card was lost "
+            f"(facts {line!r})",
+        )
+        require(
+            parsed.get("asked_m") == "1",
+            f"a middle click closed unsaved text without asking anything (facts {line!r})",
+        )
+        require(
+            parsed.get("answered_m") == "1" and parsed.get("kept_m") == "1",
+            f"the middle click's question could not be answered with cancel, so the card "
+            f"was lost (facts {line!r})",
+        )
+        return "Ctrl+W and the middle click both reach the same question, and cancel keeps the card"
+
+    checks.append(("G29: x closes the tab and the neighbour takes over", close_gesture("x_close")))
+    checks.append(("G29: a middle click closes the tab like a browser tab", close_gesture("middle_close")))
+    checks.append(("G29: Ctrl+W closes the active tab, not the window", close_gesture("ctrl_w")))
+    checks.append(("G29: closing the last tab falls back to the left neighbour", close_gesture("close_last_neighbour")))
+    checks.append(("G29: closing unsaved text asks first, and cancel keeps the card", cancel_keeps))
+    checks.append(("G29: closing unsaved text answered discard removes it and writes nothing", discard_keeps_file))
+    checks.append(("G29: closing unsaved text answered save writes before the card goes", save_before_close))
+    checks.append(("G29: Ctrl+W and a middle click ask the same close question", ask_gesture_checks))
+    return checks
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="browser_smoke.py",
@@ -1380,6 +2108,18 @@ def _run(host: Host, backup: BoardBackup, edge, args, style: Style) -> int:
         except DriverError as exc:
             raise DriverError(f"the new-mod round trip could not run: {exc}") from exc
         for name, check in define_newmod_checks(mod_facts):
+            harness.run(name, check)
+
+        # G29: the second page opens one card of every kind and walks both
+        # tiles; its checks are the only proof that a hidden kind is one press
+        # away rather than gone with the canvas.
+        print(style.dim("-" * 68))
+        show("e2e", "every card kind in both views, in a throwaway workspace")
+        try:
+            card_facts = card_round_trip(edge, args)
+        except DriverError as exc:
+            raise DriverError(f"the card round trip could not run: {exc}") from exc
+        for name, check in define_card_checks(card_facts):
             harness.run(name, check)
         passed = sum(1 for item in harness.results if item["ok"])
         failed = sum(1 for item in harness.results if not item["ok"])
@@ -1465,7 +2205,10 @@ def main(argv=None) -> int:
     except DriverError as exc:
         show("SKIP", f"no browser available: {exc}")
         show("how to fix", "pass --edge PATH, or install Microsoft Edge")
-        print(f"summary: 0 passed, 0 failed, {5 + NEWMOD_CHECK_COUNT} skipped (no browser)")
+        print(
+            f"summary: 0 passed, 0 failed, "
+            f"{5 + NEWMOD_CHECK_COUNT + CARD_CHECK_COUNT} skipped (no browser)"
+        )
         return 0
 
     show("OsanaKami IDE Studio browser smoke", str(REPO_ROOT))
