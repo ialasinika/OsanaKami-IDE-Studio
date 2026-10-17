@@ -60,7 +60,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck probe smoke test run clean modules version-check icon window package
+.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check icon window package
 
 all: $(BIN)
 
@@ -136,6 +136,15 @@ version-check:
 cli-check: $(BIN)
 	$(PYTHON) tools/seide_cli.py selfcheck
 
+# No tracked file may name a directory that exists only on one machine: a home
+# directory or a network share fails the run, and every other absolute path is
+# listed so the list can be burned down (`--strict` fails on those too).  The
+# rules are checked against synthetic strings first: a guard that silently
+# stops matching is worse than none.
+path-check:
+	$(PYTHON) tools/path_guard.py --self-test
+	$(PYTHON) tools/path_guard.py
+
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM.  Then the same window with a
 # pointer, a keyboard and a wheel: --dump-dom drives none of them, so
@@ -147,18 +156,19 @@ smoke: $(BIN)
 	$(PYTHON) tools/input_smoke.py --timeout 90
 
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, the mod layer, the fixed bugs,
-# the version copies, the second client, and both protocol modes.
+# codec, the language layer, the browser modules, the mod layer, the AI layer,
+# the fixed bugs, the version copies, the second client, and both protocol modes.
 #
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe cli-check version-check $(JSONTEST) $(BLOBTEST)
+test: check fullcheck probe cli-check version-check path-check $(JSONTEST) $(BLOBTEST)
 	$(JSONTEST)
 	$(BLOBTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs
 	$(NODE) shell/mods/selftest.mjs
+	$(NODE) shell/ai/selftest.mjs
 
 modules: $(BIN)
 	$(BIN) modules

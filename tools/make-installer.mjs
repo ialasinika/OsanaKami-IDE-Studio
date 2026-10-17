@@ -344,8 +344,21 @@ function auditPayload() {
     [characterRx, "game character name"],
     [boundary(["InfantGod"]), "game name"],
     [/幼神/g, "game name"],
-    [/C:\\{1,2}Users\\{1,2}/g, "absolute developer path"],
+    // A path that only exists on one machine, in either shape a document may
+    // spell it.  The user segment is captured and judged in code, not excluded
+    // by a lookahead: a lookahead hides the separator, and then backtracking
+    // lets "C:\Users\you" match as "C:\Users\" plus a leftover backslash --
+    // which is exactly the false positive this rule produced the first time.
+    [/[A-Za-z]:[\\/]+Users[\\/]+([A-Za-z0-9._$@-]+)/gi, "absolute developer path", 1],
+    [/(?:^|[^A-Za-z0-9_.-])\/(?:home|Users)\/([A-Za-z0-9._-]+)/g, "absolute developer path", 1],
+    // A UNC share has a host, and a JSON-escaped Windows path has no dotted
+    // segment of that shape; requiring the dot keeps the rule from reading
+    // document text as a network path.
+    [/\\\\{1,2}(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\\[A-Za-z0-9._$-]+/g, "network share path"],
   ];
+  //: Stand-in user names: a document may show a path's shape without naming a
+  //: machine, and `tools/path_guard.py` allows the same set.
+  const PLACEHOLDER_USERS = new Set(["you", "your-user", "your_user", "<user>", "<you>", "user", "%username%", "…"]);
 
   const allowed = [];
   const violations = [];
@@ -359,8 +372,11 @@ function auditPayload() {
     const masked = AUDIT_IDENTITY.reduce((t, s) => t.split(s).join(" ".repeat(s.length)), text);
     const lineOf = (index) => text.slice(0, index).split("\n").length;
     const found = [];
-    for (const [rx, kind] of rules) {
-      for (const match of masked.matchAll(rx)) found.push({ kind, marker: match[0], line: lineOf(match.index) });
+    for (const [rx, kind, userGroup] of rules) {
+      for (const match of masked.matchAll(rx)) {
+        if (userGroup !== undefined && PLACEHOLDER_USERS.has((match[userGroup] || "").toLowerCase())) continue;
+        found.push({ kind, marker: match[0], line: lineOf(match.index) });
+      }
     }
     if (found.length) (allow.has(rel) ? allowed : violations).push({ rel, found });
   };

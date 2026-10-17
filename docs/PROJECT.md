@@ -21,7 +21,7 @@ project state.
 ## What it shows
 
 ```
-workspace — C:\codes\OsanaKami IDE Studio
+workspace — ~/project
 [ **/*                       ] [ refresh ]
 
 OPEN · 2

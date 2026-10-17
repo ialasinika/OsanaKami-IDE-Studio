@@ -40,7 +40,8 @@
         "filter": [
           "**/*",
           "!mods/selftest.mjs",
-          "!web/selftest.mjs"
+          "!web/selftest.mjs",
+          "!ai/selftest.mjs"
         ]
       },
       {

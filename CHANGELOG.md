@@ -778,6 +778,73 @@ stands in this tree.
   cover the tag sources and `--diff`.  Nine breaks and four breaks respectively each
   turned their own check red, and every file came back byte-identical.
 
+### A language service we can build on
+
+- `shell/mods/positions.js` is the offset layer everything else in the language
+  service stands on: `offsetToPosition` / `positionToOffset` / `rangeBetween` /
+  `rangeOfLineCols` / `wordAt` / `lineText`, and `diagnosticRange()`, which turns
+  the diagnostics the mod layer already emits — `{line, col}` with a one-based
+  column and a `length` or `endCol` — into a range a UI can underline.  The
+  contract is written down and tested: an offset counts UTF-16 code units from 0,
+  a line counts from 1, a column counts from 0, `\n`, `\r\n` and `\r` each end one
+  line, a trailing newline opens an empty last line, a range never crosses a line,
+  and an offset past the end clamps to the end.  Sixty checks, including a
+  surrogate pair, a round trip at every offset, and CJK.
+- `shell/mods/complete.js` answers the two questions an editor asks a language:
+  what goes here, and what does this mean.  `classify()` names the context at the
+  caret (command, argument, tag, tag value, variable, speaker) and the exact
+  `replace` span; `complete()` returns ranked items whose `insertText` already
+  carries the trailing space a command wants, the colon a tag wants and the `$` a
+  variable needs; `hover()` resolves in the order the reference spec lays down —
+  tag, then command or function, then variable, then node, then character — and
+  answers `null` rather than guess.  Candidates come from `search.suggest()`, so
+  there is still one fuzzy matcher and one knowledge base.  Built-in commands
+  (`jump`, `detour`, `visited`, …) are answered from the parser's own list because
+  they are not in the knowledge base.  Fifty-three checks over the real index:
+  136 commands, 63 functions, 678 variables, 1221 nodes, 53 characters.
+- `docs/LANGUAGE.md` writes down what was taken from the reference specification
+  and what was deliberately left: the L1 rules, the L2 verbs and the position
+  contract are in; the VS Code host contract (a `package.json` `engines` field, 30
+  commands, five tree views, a status bar, TextMate grammars) is out, because this
+  is not an extension.  It also states the degradation rule the mod layer already
+  follows — when the index is not ready, say only what can be verified and do not
+  guess — and the shape of the RPC verbs that will expose this (`mod.complete`,
+  `mod.hover`, both `{text, caret, path}` in, items with an exact `replace` out).
+
+### An AI loop that speaks one protocol
+
+- `shell/ai/` is the groundwork for the assistant, and none of it is wired to a
+  window yet: `provider.mjs` (one OpenAI-compatible adapter — `chat`, `stream`,
+  `complete`), `config.mjs` (the provider settings under the user's data
+  directory), `tools.mjs` (a tool registry plus two read-only tools, `kb.search`
+  and `mod.validate`), `selftest.mjs` and `README.md`.  Four files, 2,400-odd lines,
+  no new dependency: `node:fs`, `node:path`, `node:os` and the `fetch` Node has
+  had since 18.
+- The contract is the one the endpoints actually speak: `POST
+  {baseUrl}/chat/completions`, `authorization: Bearer` only when a key is set,
+  `text/event-stream` when streaming.  SSE frames are cut on a blank line, a frame
+  split across TCP reads is put back together, `delta.tool_calls` accumulates
+  across frames **by index** (so a name arriving in two pieces and three calls
+  arriving at once both survive), `[DONE]` or a finish reason ends the stream, and
+  a model that ignores `stream: true` is accepted as a non-streamed answer.
+  Failures are classified `auth`, `rate`, `network`, `protocol`, `cancelled`; only
+  a network failure is retried, once, and only if nothing reached the caller.
+- The key never reaches a log or an error: `describe()`, the write receipt and
+  every `ProviderError` show `***`, a corrupted config file falls back to defaults
+  without echoing its contents, and `store.read().config.apiKey` is the one place
+  the real value comes out.  The config is written atomically into the user's data
+  directory.  The tools are read-only by construction — the registry refuses any
+  tool marked as a writer unless a caller passes `allowWrite: true` — and their
+  paths go through a lexical plus `realpath` containment check under the mods root.
+- Seventy-two checks, and they run offline: the suite starts its own fake
+  OpenAI-compatible server on `127.0.0.1:0` and writes only into a temporary
+  directory it deletes.  Three deliberate breaks (tool-call accumulation, key
+  redaction, path containment) each turned their own checks red — two, four and
+  three of them — with the shared tree byte-identical before and after, because
+  the breaks ran on a copy.
+- It is not in `make test` by accident any more: the AI suite is part of `test`,
+  and `!ai/selftest.mjs` keeps its 57 KB out of the installed package.
+
 ### Docs
 
 - New `docs/VIEWS.md`: what the kernel defines (that a view exists — a place, a

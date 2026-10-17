@@ -217,14 +217,14 @@ it was verified against:
 ```text
 Python 3.12.9
 Node   v24.16.0
-GNU Make 4.4.1        (C:\mingw64\mingw64\bin\mingw32-make.exe)
+GNU Make 4.4.1        (<toolchain>\mingw64\bin\mingw32-make.exe)
 gcc.exe 14.2.0        (MinGW-W64 x86_64-msvcrt-posix-seh, built by Brecht Sanders, r3)
 ```
 
 Build the kernel (produces `build/infantgod.exe`):
 
 ```sh
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile
+mingw32-make -f Makefile
 ```
 
 `tools/build.py` is a thin driver over the same Makefile, and it is what proves
@@ -235,15 +235,19 @@ python tools/build.py --check     # print resolved make + gcc and exit
 python tools/build.py             # build (pass --release / --clean / targets)
 ```
 
+It finds the toolchain on `PATH` first; if MinGW-w64 lives somewhere else, set
+`MINGW_BIN` to that `bin` directory and it looks there instead. No directory
+outside the repository is hard-coded — `python tools/path_guard.py` checks that.
+
 Run the checks:
 
 ```sh
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile check       # kernel alone: 13 passed, 0 failed, 3 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 skipped
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile probe       # every bug in docs/BUGS.md: all ok
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile version-check  # every copy agrees, and the changelog has a home for it
-C:/mingw64/mingw64/bin/mingw32-make.exe -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
+mingw32-make -f Makefile check       # kernel alone: 13 passed, 0 failed, 3 skipped
+mingw32-make -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 skipped
+mingw32-make -f Makefile probe       # every bug in docs/BUGS.md: all ok
+mingw32-make -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
+mingw32-make -f Makefile version-check  # every copy agrees, and the changelog has a home for it
+mingw32-make -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
 ```
 
 On a machine with no Chromium-family browser, `make smoke` prints a skip, not a

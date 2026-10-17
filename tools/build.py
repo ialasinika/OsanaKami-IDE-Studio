@@ -33,8 +33,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "Makefile"
 
-#: Where the MinGW-w64 toolchain lives on the reference Windows setup.
-MINGW_BIN = Path(r"C:\mingw64\mingw64\bin")
+#: Where MinGW-w64 usually lives when it is not on ``PATH``.  ``MINGW_BIN``
+#: replaces it: a directory baked into a tool is wrong on every other machine,
+#: and ``python tools/path_guard.py`` is the test that keeps it that way.
+MINGW_BIN = Path(os.environ.get("MINGW_BIN", r"C:\mingw64\mingw64\bin"))
 MAKE_NAMES = ("mingw32-make.exe", "mingw32-make", "make.exe", "make")
 GCC_NAMES = ("gcc.exe", "gcc")
 
