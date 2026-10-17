@@ -259,6 +259,16 @@ Regression evidence for this wave lives in
   `writeTextInChunks()` writes the mark back when asked (`bom: true`), and the
   story card carries it from the read to the save (`shell/web/cards.mjs`, four
   checks in `shell/web/selftest.mjs`).
+- **N13 — the completion menu outlived the caret it was asked about, so Enter
+  inserted text somewhere else.** With the menu open, an arrow key, a click,
+  Home or End, a find jump or an undo moved the caret while the menu stayed up;
+  pressing Enter or Tab then applied the row against the caret the menu was built
+  from, so text appeared where the author was not looking.  Three changes in
+  `shell/web/cards.mjs`: the caret-moving keys close the menu, clicking in the
+  textarea closes it, and `acceptIndex()` compares the live text and caret with
+  the ones the menu was asked about -- a stale menu is re-asked, never cashed.
+  Two checks in `tools/browser_smoke.py` drive the shipped page for both cases
+  (`lang_stale_arrow`, `lang_stale_silent`).
 - **N6 — a board large enough to exceed the shell's 30 s call timeout could not
   be saved, and was reported as a failure while the kernel kept writing.**  Two
   independent halves.  The kernel's board validation was O(n²) (20000 cards took

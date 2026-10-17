@@ -2501,6 +2501,16 @@ function renderEditor(card, ctx) {
     if (current === null) {
       return;
     }
+    /* The menu is a promise about the document and the caret it was asked
+       about.  If either moved -- an arrow key, a click, a find jump, an undo --
+       accepting here would put the text somewhere the author is not looking.
+       Cash the promise only when it still holds; otherwise ask again about the
+       caret that exists now. */
+    if (area.value !== current.text || area.selectionStart !== current.caret) {
+      hideComplete();
+      scheduleComplete();
+      return;
+    }
     const item = current.items[index];
     if (item === undefined) {
       return;
@@ -2964,10 +2974,18 @@ function renderEditor(card, ctx) {
   });
 
   // The caret moves with the pointer too -- a click, a drag, a scroll.  Hover
-  // follows the caret, not the pointer, so all three mean "ask again".
+  // follows the caret, not the pointer, so all three mean "ask again".  The
+  // menu was asked about a caret the pointer just moved away from, so it closes
+  // rather than offering rows for a place that is no longer under the caret.
   area.addEventListener("keyup", scheduleHover);
-  area.addEventListener("click", scheduleHover);
-  area.addEventListener("mouseup", scheduleHover);
+  area.addEventListener("click", () => {
+    hideComplete();
+    scheduleHover();
+  });
+  area.addEventListener("mouseup", () => {
+    hideComplete();
+    scheduleHover();
+  });
   // Losing focus closes the menu: a candidate clicked elsewhere is not accepted.
   area.addEventListener("blur", hideComplete);
 
@@ -2995,6 +3013,14 @@ function renderEditor(card, ctx) {
         event.preventDefault();
         hideComplete();
         return;
+      }
+      /* Keys that move the caret without changing the text: the menu was
+         asked about the old caret, so it has to go before the caret does.
+         The key itself is not prevented -- the browser still moves. */
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight"
+        || event.key === "Home" || event.key === "End"
+        || event.key === "PageUp" || event.key === "PageDown") {
+        hideComplete();
       }
     }
     // Ctrl+Space asks for the menu even when the debounce has not fired: it is

@@ -1364,8 +1364,10 @@ CLOSE_CHECK_KEYS = (
 CLOSE_CHECK_COUNT = len(CLOSE_CHECK_KEYS)
 
 #: The Yarn language strips: the menu for `<<`, accepting a row, Escape, the
-#: Ctrl+Space shortcut, a non-Yarn file staying quiet, and hover following the
-#: caret.  Same rules as CLOSE_CHECK_KEYS.
+#: Ctrl+Space shortcut, a non-Yarn file staying quiet, hover following the
+#: caret, and the menu refusing to accept a row for a caret that has moved
+#: (by an arrow key, and with no key at all -- a find jump or an undo).  Same
+#: rules as CLOSE_CHECK_KEYS.
 LANG_CHECK_KEYS = (
     "lang_menu",
     "lang_accept",
@@ -1373,6 +1375,8 @@ LANG_CHECK_KEYS = (
     "lang_ctrl_space",
     "lang_non_yarn",
     "lang_hover",
+    "lang_stale_arrow",
+    "lang_stale_silent",
 )
 LANG_CHECK_COUNT = len(LANG_CHECK_KEYS)
 
@@ -1925,6 +1929,35 @@ pre{white-space:pre-wrap}
       keyOn(yarn, " ", { ctrlKey: true });
       await sleep(300);
       say("lang_ctrl_space", "shown=" + menuShown(yarn) + " rows=" + rowsOf(yarn).length);
+      // The menu is a promise about the document *and* the caret it was asked
+      // about.  An arrow key moves the caret away from it, so the menu must go
+      // and the next Enter must be the editor's Enter -- not an accept that
+      // inserts a row at a place the author is no longer looking at.
+      await openMenu(yarn, "<<jump", 6);
+      const arrowRows = rowsOf(yarn).length;
+      const arrowArea = areaOf(yarn);
+      arrowArea.setSelectionRange(2, 2);
+      keyOn(yarn, "ArrowLeft");
+      await sleep(260);
+      const arrowShown = menuShown(yarn);
+      const arrowBefore = editorText(yarn);
+      keyOn(yarn, "Enter");
+      await sleep(320);
+      say("lang_stale_arrow", "rows=" + arrowRows + " shown=" + arrowShown
+        + " kept=" + (editorText(yarn) === arrowBefore ? 1 : 0)
+        + " text=" + encodeURIComponent(editorText(yarn)));
+      // The same promise cashed without any key at all: a find jump or an undo
+      // can move the caret silently.  Enter then must not insert a row for the
+      // caret the menu remembers.
+      await openMenu(yarn, "<<jump", 6);
+      const silentRows = rowsOf(yarn).length;
+      areaOf(yarn).setSelectionRange(2, 2);
+      await sleep(60);
+      keyOn(yarn, "Enter");
+      await sleep(320);
+      say("lang_stale_silent", "rows=" + silentRows
+        + " kept=" + (editorText(yarn) === "<<jump" ? 1 : 0)
+        + " caret=" + (areaOf(yarn) === null ? -1 : areaOf(yarn).selectionStart));
       // A non-Yarn file never asks, whatever is typed into it.
       runLine("open README.md");
       await sleep(900);
@@ -2367,12 +2400,47 @@ def define_card_checks(facts: dict) -> list:
         )
         return "hover prints one line on a token and clears when the caret leaves it"
 
+    def lang_stale_arrow():
+        parsed = lang_fact("lang_stale_arrow")
+        require(
+            int(parsed.get("rows", "0") or "0") >= 1,
+            f"the menu opened with no rows, so there was nothing to leave stale (facts {parsed!r})",
+        )
+        require(
+            parsed.get("shown") == "0",
+            "an arrow key moved the caret but left the completion menu up for the old one",
+        )
+        require(
+            parsed.get("kept") == "1",
+            "Enter after the caret moved accepted a row: the text changed although the "
+            "caret was no longer where the menu was asked",
+        )
+        return "an arrow key closes the menu, and Enter then leaves the text alone"
+
+    def lang_stale_silent():
+        parsed = lang_fact("lang_stale_silent")
+        require(
+            int(parsed.get("rows", "0") or "0") >= 1,
+            f"the menu opened with no rows, so there was nothing to leave stale (facts {parsed!r})",
+        )
+        require(
+            parsed.get("kept") == "1",
+            "Enter accepted a row for a caret the menu was never asked about (the text changed)",
+        )
+        require(
+            parsed.get("caret") == "2",
+            f"Enter moved the caret to {parsed.get('caret')!r} instead of leaving it at 2",
+        )
+        return "a silent caret move makes Enter refuse the stale row"
+
     checks.append(("Yarn strips: typing `<<jum` opens the menu and names `jump`", lang_menu))
     checks.append(("Yarn strips: Enter accepts the row and relocates the caret", lang_accept))
     checks.append(("Yarn strips: Escape closes the menu without touching the text", lang_escape))
     checks.append(("Yarn strips: Ctrl+Space asks without waiting for the debounce", lang_ctrl_space))
     checks.append(("Yarn strips: a non-Yarn card never opens the menu", lang_non_yarn))
     checks.append(("Yarn strips: hover follows the caret on and off a token", lang_hover))
+    checks.append(("Yarn strips: an arrow key closes the menu, and Enter keeps the text", lang_stale_arrow))
+    checks.append(("Yarn strips: Enter refuses a row for a caret that moved silently", lang_stale_silent))
     return checks
 
 

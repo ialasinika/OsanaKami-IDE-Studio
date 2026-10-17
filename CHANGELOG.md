@@ -16,6 +16,23 @@ stands in this tree.
 
 ## Unreleased
 
+### The completion menu cannot outlive the caret
+
+- The menu is a promise about a document and a caret: the language service
+  answered a question about the text and the offset the editor asked for.  An
+  arrow key, a click, Home or End, a find jump or an undo could move the caret
+  while the menu stayed up, and Enter or Tab then inserted the row **against the
+  old caret** -- text landed somewhere the author was not looking.  Three changes
+  in `shell/web/cards.mjs`: the caret-moving keys close the menu, a click or
+  mouseup in the textarea closes it, and `acceptIndex()` compares the live text
+  and caret with the ones the menu was built from and asks again instead of
+  cashing a stale promise.
+- `tools/browser_smoke.py` drives the shipped page for both cases -- an arrow key
+  (`lang_stale_arrow`) and a caret that moved with no key at all
+  (`lang_stale_silent`) -- so the regression is caught by the suite, not by a
+  reader.  51 → 53 checks; both went red against the old code and the file came
+  back byte-identical.
+
 ### The name
 
 - The product is **OsanaKami IDE Studio**.  The previous name was InfantGod Studio
