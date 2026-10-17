@@ -1135,6 +1135,10 @@ def newmod_round_trip(edge, args) -> dict:
                 "serve",
                 "--workspace", str(sandbox),
                 "--mods-root", str(sandbox),
+                # A throwaway user directory: the settings card's preferences live
+                # there, so a developer machine that once picked the classic view
+                # cannot change which view this run's cold boot lands on.
+                "--user-dir", str(profile / "user"),
                 "--port", str(port),
                 "--no-open",
             ],
@@ -2318,6 +2322,10 @@ def card_round_trip(edge, args) -> dict:
                 "serve",
                 "--workspace", str(sandbox),
                 "--mods-root", str(sandbox),
+                # A throwaway user directory: the settings card's preferences live
+                # there, so a developer machine that once picked the classic view
+                # cannot change which view this run's cold boot lands on.
+                "--user-dir", str(profile / "user"),
                 "--port", str(port),
                 "--no-open",
             ],

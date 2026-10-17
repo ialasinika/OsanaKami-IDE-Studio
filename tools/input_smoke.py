@@ -1915,7 +1915,12 @@ def main(argv=None) -> int:
     host_argv = None
     if MODS_ROOT.is_dir():
         host_argv = ["node", str(SHELL_MAIN), "serve", "--workspace", str(REPO_ROOT),
-                     "--mods-root", str(MODS_ROOT), "--port", str(port), "--no-open"]
+                     "--mods-root", str(MODS_ROOT),
+                     # A throwaway user directory, so the preferences a settings
+                     # card writes on a developer machine cannot decide which
+                     # view this run's cold boot lands on.
+                     "--user-dir", str(profile),
+                     "--port", str(port), "--no-open"]
     host = Host(port, host_argv)
     results = Results()
     attempts = 0
