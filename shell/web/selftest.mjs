@@ -230,6 +230,18 @@ import {
 } from "./storycsv.mjs";
 
 import {
+  applyMatrix,
+  bezierValue,
+  easeFraction,
+  frameWindow,
+  regionCorners,
+  sceneAt,
+  slotAttachmentName,
+  slotColorAt,
+  worldTransforms,
+} from "./spinepose.mjs";
+
+import {
   PNG_SIGNATURE,
   blankImage,
   decodePng,
@@ -5234,6 +5246,149 @@ test("pixel card: the readout shows a pixel's colour, and grey where there is no
   assert.equal(pixelInkOf([255, 0, 128, 0]), "#ff0080", "a transparent pixel still has a colour to show");
   assert.equal(pixelInkOf(null), pixelInkOf(undefined), "nothing under the pointer is one answer, not two");
   assert.match(pixelInkOf(null), /^#[0-9a-f]{6}$/);
+});
+
+/* ------------------------------------------------------------------ */
+/*
+ * Spine's arithmetic, before there is a card to show it in.
+ *
+ * These are whole-corner comparisons on purpose: a bone order mistake or a
+ * transposed matrix still produces plausible numbers, and a test that only
+ * looked at one coordinate would not notice.
+ */
+function spineBone(name, parentIndex, extra = {}) {
+  return {
+    name,
+    parentIndex,
+    rotation: 0,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    shearX: 0,
+    shearY: 0,
+    length: 0,
+    transformMode: 0,
+    ...extra,
+  };
+}
+
+function spineRig(bones, extra = {}) {
+  return { version: "4.2.43", bones, slots: [], skins: [], animations: [], ...extra };
+}
+
+const near = (got, want) => Math.abs(got - want) <= 1e-9;
+
+test("spine pose: a child bone follows its parent's quarter turn", () => {
+  const rig = spineRig([spineBone("root", -1, { rotation: 90 }), spineBone("child", 0, { x: 10 })]);
+  const world = worldTransforms(rig, null, 0);
+  assert.ok(near(world[1].e, 0), `child x was ${world[1].e}`);
+  assert.ok(near(world[1].f, 10), `child y was ${world[1].f}`);
+});
+
+test("spine pose: a parent's scale lengthens the child's reach", () => {
+  const rig = spineRig([spineBone("root", -1, { scaleX: 2, scaleY: 2 }), spineBone("child", 0, { x: 10 })]);
+  assert.ok(near(worldTransforms(rig, null, 0)[1].e, 20));
+});
+
+test("spine pose: a region sits centred on its bone", () => {
+  const matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  const corners = regionCorners({ width: 10, height: 4, x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }, matrix);
+  assert.deepEqual(corners.map((point) => [point.x, point.y]), [[-5, -2], [5, -2], [5, 2], [-5, 2]]);
+  const moved = applyMatrix(matrix, 3, 4);
+  assert.deepEqual([moved.x, moved.y], [3, 4], "a matrix with no rotation is the identity");
+});
+
+test("spine pose: a region turns with its bone, corners and all", () => {
+  const rig = spineRig([spineBone("root", -1, { rotation: 90 })]);
+  const corners = regionCorners(
+    { width: 10, height: 4, x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    worldTransforms(rig, null, 0)[0],
+  );
+  // A quarter turn maps (x, y) to (-y, x); the rectangle stands on end.
+  assert.deepEqual(corners.map((point) => Math.round(point.x)), [2, 2, -2, -2]);
+  assert.deepEqual(corners.map((point) => Math.round(point.y)), [-5, 5, 5, -5]);
+});
+
+test("spine pose: a rotate timeline is read halfway between its frames", () => {
+  const rig = spineRig([spineBone("root", -1), spineBone("child", 0, { x: 10 })]);
+  const animation = { name: "a", duration: 1, timelines: [
+    { type: "rotate", boneIndex: 0, frames: [{ time: 0, angle: 0, curve: null }, { time: 1, angle: 90 }] },
+  ] };
+  const world = worldTransforms(rig, animation, 0.5);
+  assert.ok(near(world[1].e, Math.cos(Math.PI / 4) * 10));
+  assert.ok(near(world[1].f, Math.sin(Math.PI / 4) * 10));
+});
+
+test("spine pose: a stepped frame holds its value, a linear one moves", () => {
+  assert.equal(easeFraction({ stepped: true }, 0.9), 0);
+  assert.equal(easeFraction(null, 0.25), 0.25);
+  assert.ok(bezierValue({ cx1: 0.42, cy1: 0, cx2: 1, cy2: 1 }, 0.5) < 0.5, "an ease-in starts slowly");
+  assert.equal(bezierValue({ cx1: 0, cy1: 0, cx2: 1, cy2: 1 }, 1), 1);
+});
+
+test("spine pose: a time outside the animation is clamped, not extrapolated", () => {
+  const frames = [{ time: 0, angle: 0 }, { time: 1, angle: 90 }];
+  assert.equal(frameWindow(frames, -5).before, true);
+  assert.equal(frameWindow(frames, 5).after, true);
+  assert.equal(frameWindow(frames, 0.25).fraction, 0.25);
+  assert.equal(frameWindow([], 0), null, "no frames is no window");
+});
+
+test("spine pose: a bone that names itself as its parent still has a place", () => {
+  const rig = spineRig([spineBone("weird", 0)]);
+  const world = worldTransforms(rig, null, 0);
+  assert.deepEqual([world[0].e, world[0].f], [0, 0], "a corrupt parent index must not recurse forever");
+});
+
+test("spine pose: a region is drawn with its rectangle, a mesh admits it is not", () => {
+  const rig = spineRig(
+    [spineBone("root", -1)],
+    {
+      slots: [
+        { name: "skin", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: "body" },
+        { name: "net", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: "web" },
+      ],
+      skins: [{ name: "default", attachments: [
+        { slotIndex: 0, name: "body", type: "region", width: 2, height: 2, x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        { slotIndex: 1, name: "web", type: "mesh" },
+      ] }],
+    },
+  );
+  const scene = sceneAt(rig, null, 0);
+  assert.equal(scene.items.length, 2);
+  assert.equal(scene.items[0].kind, "region");
+  assert.equal(scene.items[0].corners.length, 4);
+  assert.equal(scene.items[1].kind, "mesh");
+  assert.equal(scene.items[1].corners.length, 0, "a mesh is reported, not silently dropped");
+});
+
+test("spine pose: a colour timeline multiplies the slot's colour", () => {
+  const rig = spineRig(
+    [spineBone("root", -1)],
+    { slots: [{ name: "a", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: null }] },
+  );
+  const animation = { name: "fade", duration: 1, timelines: [
+    { type: "color", slotIndex: 0, frames: [
+      { time: 0, color: [1, 1, 1, 1], curve: null },
+      { time: 1, color: [1, 1, 1, 0] },
+    ] },
+  ] };
+  assert.equal(slotColorAt(rig, null, 0, 0, [1, 1, 1, 1])[3], 1, "no animation keeps the setup colour");
+  assert.equal(slotColorAt(rig, animation, 0, 0.5, [1, 1, 1, 1])[3], 0.5);
+});
+
+test("spine pose: an attachment timeline switches what the slot shows", () => {
+  const rig = spineRig(
+    [spineBone("root", -1)],
+    { slots: [{ name: "a", boneIndex: 0, color: [1, 1, 1, 1], attachmentName: "idle" }] },
+  );
+  const animation = { name: "a", duration: 1, timelines: [
+    { type: "attachment", slotIndex: 0, frames: [{ time: 0, name: "idle" }, { time: 0.5, name: "attack" }] },
+  ] };
+  assert.equal(slotAttachmentName(rig, null, 0, 0), "idle");
+  assert.equal(slotAttachmentName(rig, animation, 0, 0.2), "idle");
+  assert.equal(slotAttachmentName(rig, animation, 0, 0.7), "attack");
 });
 
 /* ------------------------------------------------------------------ */
