@@ -773,9 +773,9 @@ export const COMMAND_HELP = [
   "run <cmd>                start a command in a runner card",
   "files [glob]             open the file list card",
   "project [glob]           open the project panel (the workspace as one project)",
-  "mod <dir>                幼神 Mod 包卡片（打开目录、列出定义与 Yarn）",
-  "problems <dir>           幼神 Mod 校验结果（错误/警告/提示，可跳转）",
-  "docs [query]             幼神知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
+  "mod <dir>                游戏 Mod 包卡片（打开目录、列出定义与 Yarn）",
+  "problems <dir>           游戏 Mod 校验结果（错误/警告/提示，可跳转）",
+  "docs [query]             游戏知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "focus <id>               select and centre a card",
@@ -1250,7 +1250,7 @@ export function storyAcceptSuggestion(line, caret, name) {
 /**
  * The words a translation table would hold for this line.
  *
- * A game table's `text` column is the whole spoken line -- `Aistalt: Hi.`, the
+ * A game table's `text` column is the whole spoken line -- `Speaker: Hi.`, the
  * speaker, the colon and the words -- while the parser splits those apart, so
  * anything comparing the two has to put them back together the same way the
  * game writes them.  A line with no speaker is its own words.
@@ -1386,7 +1386,7 @@ export function storyAddLine(story, nodeIndex, at, text = "") {
   const id = nextLineId(storyLineIds(story));
   const head = storyLineHead(anchor);
   const speaker = anchor === null || anchor.speaker === null
-    ? "Narrator"
+    ? "Speaker"
     : anchor.speaker;
   const body = String(text) === "" ? "" : ` ${String(text)}`;
   const raw = `${head}${speaker}:${body} #line:${id}`;
@@ -2105,7 +2105,7 @@ export function completionState(text, caret, answer) {
  *
  * The candidate's own span is replaced with its `insertText` and the caret ends
  * up after the inserted text -- the service already decided what the insertion
- * looks like (`jump ` for a command, `Aistalt: ` for a speaker), so nothing here
+ * looks like (`jump ` for a command, `Speaker: ` for a speaker), so nothing here
  * adds separators of its own.
  *
  * @returns {{text: string, caret: number}}
@@ -5923,11 +5923,11 @@ function renderPixel(card, ctx) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 《幼神》 mod surfaces                                                  */
+/* the game's mod surfaces                                              */
 /* ------------------------------------------------------------------ */
 
 /*
- * Three card kinds that make this board a mod IDE for 《幼神》 instead of a
+ * Three card kinds that make this board a mod IDE for the game instead of a
  * generic canvas.  All three are read-mostly: they call the shell's `mod.*`
  * verbs (which own the game knowledge) and hand paths to the `editor` card
  * that already exists.  None of them reaches the kernel directly, and none of
@@ -6471,7 +6471,7 @@ function renderDocs(card, ctx) {
   const { client } = ctx;
 
   const queryInput = h("input", "docs-query", {
-    attrs: { type: "text", spellcheck: "false", placeholder: "Love, jump, Aistalt, Goods_Folk…" },
+    attrs: { type: "text", spellcheck: "false", placeholder: "Love, jump, Speaker, Goods_Folk…" },
   });
   queryInput.value = typeof card.query === "string" ? card.query : "";
 
@@ -6606,7 +6606,7 @@ function renderDocs(card, ctx) {
 /* ------------------------------------------------------------------ */
 
 /*
- * The kinds this fork ships: the prototype's six, plus the three 幼神 surfaces
+ * The kinds this fork ships: the prototype's six, plus the three game surfaces
  * at the bottom.  Each registration is self-contained: a fork that wants a
  * different note card replaces this object, not a case in a switch three
  * hundred lines away.  Adding one is one more call, and the board, the command
@@ -6624,7 +6624,7 @@ registerCardKind({
 
 registerCardKind({
   kind: "runner",
-  title: "Runner",
+  title: "Command",
   describe: (card) => `runner ${card.cmd || "(no command)"}`,
   create: () => ({ cmd: "", cwd: "" }),
   render: renderRunner,
@@ -6682,7 +6682,7 @@ registerCardKind({
   render: renderPixel,
 });
 
-/* -- the three 幼神 surfaces ------------------------------------------ */
+/* -- the three game surfaces ------------------------------------------ */
 
 registerCardKind({
   kind: "mod",

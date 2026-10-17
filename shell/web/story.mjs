@@ -78,8 +78,8 @@ export const STORY_HEADER_KEYS = Object.freeze([
  *
  * `[ \t]*` happily matches no space at all, so shape alone cannot decide: the real
  * corpus holds 7,397 body lines shaped exactly like a header, every one of them a
- * speaker line, and `Aistalt: 嗨。#state:Idle #line:07c13ab ` would be read as a key
- * called `Aistalt`.  What separates them is not the spacing -- `title: Morning` has
+ * speaker line, and `Speaker: 嗨。#state:Idle #line:07c13ab ` would be read as a key
+ * called `Speaker`.  What separates them is not the spacing -- `title: Morning` has
  * a space -- but the `#line:` marker and the key itself: a marked line is dialogue,
  * and a key outside `STORY_HEADER_KEYS` is a speaker who happens to be one word
  * long.  A header that is neither would be read as body text, which keeps the lines
@@ -199,7 +199,7 @@ function splitTagRun(text) {
  * The parts of a dialogue line, or null when the line is not one.
  *
  * The speaker is whatever sits between the line's start and a colon with no
- * whitespace in it: `Aistalt`, `MaoGirl` and the corpus's `其他` are all speakers,
+ * whitespace in it: `Speaker`, `Wren` and the corpus's `其他` are all speakers,
  * while `他说：` is not, because the colon there is full-width and a `:` inside
  * running text has a space in front of it by then.  `separator` is the index just
  * past the colon and the whitespace after it, so replacing the text of the line
@@ -212,7 +212,7 @@ function splitDialogue(line) {
   if (rest.startsWith("=>")) {
     arrow = "=>";
     rest = rest.slice(2);
-    // Space between the arrow and the name: `=> Aistalt: 那么预言……` is how 28 of
+    // Space between the arrow and the name: `=> Speaker: 那么预言……` is how 28 of
     // the corpus's lines are written, and skipping it here keeps the indent, the
     // arrow and the name in three separate pieces, so an edit cannot drop either.
     const gap = rest.slice(0, rest.length - rest.trimStart().length);
@@ -501,7 +501,7 @@ function parseNode(rawLines, startLine, first) {
   let normalized = rawLines;
   if (split === -1) {
     // No `---`, so the header is the run of `key: value` lines at the very top.
-    // A line that is not one ends the run for good: `Aistalt: 你好。` is dialogue
+    // A line that is not one ends the run for good: `Speaker: 你好。` is dialogue
     // that happens to have a colon, and a list that showed it as a header would be
     // showing the wrong thing.  Body text can still carry a `key: value` line of
     // its own further down, and that is a body line too.
@@ -782,8 +782,8 @@ export function setLineText(node, index, text) {
  *
  * Only the characters before the colon are rewritten, so the `=>`, the indent and
  * every tag survive; a long line's id does not move because its speaker changed.
- * The whitespace after the colon is carried over from the line, because `Cop: 嗯`
- * and `Cop:嗯` are different lines and only the name was asked to change.
+ * The whitespace after the colon is carried over from the line, because `Speaker: 嗯`
+ * and `Speaker:嗯` are different lines and only the name was asked to change.
  */
 export function setLineSpeaker(node, index, speaker) {
   const entry = lineAt(node, index);

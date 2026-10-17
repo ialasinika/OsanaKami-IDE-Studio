@@ -1,9 +1,9 @@
 {
-  "title": "幼神 · 直播节点",
+  "title": "直播节点示例",
   "version": 1,
   "enabled": true,
   "fallback": null,
-  "cast": ["Aistalt", "Echo", "Nagi"],
+  "cast": ["Speaker", "Echo", "Nagi"],
   "node": {
     "id": "Live_Node",
     "when": "always",

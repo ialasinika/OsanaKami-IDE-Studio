@@ -437,7 +437,17 @@ async function loadMods(options, log = () => {}) {
       log("mod layer: index.js exports no createMods(); mod verbs are unavailable");
       return null;
     }
-    return factory({ modsRoot: options.modsRoot ?? options.workspace });
+    const mods = factory({ modsRoot: options.modsRoot ?? options.workspace, userDir: options.userDir });
+    // Say which knowledge base is in use: the bundled one, a previously derived
+    // one in the user data dir, or one derived just now from the game's files.
+    // A missing base is a degraded state, not a crash -- validatePackage names it.
+    const kb = typeof mods.knowledgeState === "function" ? mods.knowledgeState() : null;
+    if (kb && kb.state === "present") {
+      log(`mod layer: knowledge base found ${kb.path} (${kb.source})`);
+    } else if (kb) {
+      log(`mod layer: no knowledge base yet (${kb.loadError ?? kb.path})`);
+    }
+    return mods;
   } catch (err) {
     log(`mod layer: did not load (${err && err.message}); mod verbs are unavailable`);
     return null;
@@ -999,13 +1009,13 @@ const USAGE = `OsanaKami IDE Studio shell ${SHELL_VERSION}
 usage: node shell/main.mjs <command> [options]
 
   rpc     [--workspace DIR] [--mods-root DIR] [--kernel PATH]
-          [--timeout-ms N] [--verbose]
+          [--timeout-ms N] [--user-dir DIR] [--verbose]
           Speak newline-delimited JSON-RPC on stdin/stdout.  Forwards to the
           kernel; answers lang.list and lang.tokenize from langs/, mod.* from
           shell/mods/; adds the \`langs\` and \`mods\` members to workspace.info.
 
   serve   [--workspace DIR] [--mods-root DIR] [--kernel PATH] [--port N]
-          [--no-open] [--timeout-ms N] [--verbose]
+          [--user-dir DIR] [--no-open] [--timeout-ms N] [--verbose]
           Serve shell/web/ over HTTP with POST /rpc and GET /events, then
           launch the system browser in --app= mode.  --port 0 (default) picks
           a free port; --no-open skips the browser.
@@ -1017,6 +1027,13 @@ what the board's file tree, editor and runner cards see.
 
 --mods-root DIR bounds every \`mod.*\` call: a path that resolves outside it is
 refused.  Defaults to --workspace.
+
+--user-dir DIR is the directory the mod layer may write derived state into.  The
+only thing it derives today is the knowledge base: when neither a shipped nor an
+explicit knowledge.json exists, the command list is derived from the game's own
+Mods folder and cached here as knowledge.json.  Defaults to
+%APPDATA%/OsanaKami IDE Studio on Windows, ~/Library/Application Support/
+OsanaKami IDE Studio on macOS, and $XDG_DATA_HOME/OsanaKami IDE Studio elsewhere.
 
 --timeout-ms N is how long this side waits for one kernel call before giving
 up (default ${DEFAULT_TIMEOUT_MS}).  Giving up does not cancel the call.
@@ -1031,6 +1048,7 @@ function parseArgs(argv) {
     command: null,
     workspace: process.cwd(),
     modsRoot: null,
+    userDir: null,
     kernel: null,
     port: 0,
     noOpen: false,
@@ -1039,7 +1057,7 @@ function parseArgs(argv) {
     help: false,
   };
 
-  const takesValue = new Set(["--workspace", "--mods-root", "--kernel", "--port", "--timeout-ms"]);
+  const takesValue = new Set(["--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms"]);
   const rest = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -1077,6 +1095,7 @@ function parseArgs(argv) {
   options.exe = path.resolve(options.kernel ?? DEFAULT_KERNEL);
   options.workspace = path.resolve(options.workspace);
   if (options.modsRoot !== null) options.modsRoot = path.resolve(options.modsRoot);
+  if (options.userDir !== null) options.userDir = path.resolve(options.userDir);
   return options;
 }
 
@@ -1087,6 +1106,7 @@ function applyOption(options, name, value) {
   if (value === "") throw new Error(`${name} needs a value`);
   if (name === "--workspace") options.workspace = value;
   else if (name === "--mods-root") options.modsRoot = value;
+  else if (name === "--user-dir") options.userDir = value;
   else if (name === "--kernel") options.kernel = value;
   else if (name === "--port") {
     const port = Number(value);

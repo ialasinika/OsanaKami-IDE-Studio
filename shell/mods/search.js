@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * search.js — 《幼神》(Infant God) Mod IDE 知识库检索 / 补全 / 悬停文档模块
+ * search.js — 游戏 Mod IDE 知识库检索 / 补全 / 悬停文档模块
  * ---------------------------------------------------------------------------
  * 设计约束：
  *   1. 同时运行于 Node（主进程 / 测试）与 Electron 渲染进程（<script> 或打包）。
@@ -51,7 +51,7 @@ const YARN_BUILTINS = [
 const TAG_KEYS = ['line', 'state', 'vo'];
 
 /**
- * 表情 / 情绪标签的**中性兜底**：这几个词是我们自己挑的，不是《幼神》自己的状态名。
+ * 表情 / 情绪标签的**中性兜底**：这几个词是我们自己挑的，不是游戏本体的状态名。
  * 游戏的状态名优先从知识库 `baseline.CharacterState`（或调用方通过
  * `buildIndex(kb, { emotionTags })` 传进来的列表）取；只有那两路都没有时才用这一套，
  * 并且 index.meta.emotionSource 会如实写明用的是哪一路，调用方与界面据此可分辨。
@@ -555,7 +555,7 @@ function cleanDocumentation(raw) {
 function firstCharacterName(index) {
   const chars = index && index.characters ? index.characters : [];
   for (const c of chars) if (c && c.name) return String(c.name);
-  return 'Company';
+  return 'Speaker';
 }
 
 function firstNodeTitle(index) {

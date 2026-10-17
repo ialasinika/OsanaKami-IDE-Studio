@@ -327,7 +327,7 @@ const HINT_TEXT = [
   "Ctrl+Z takes back a board edit, Ctrl+Shift+Z puts it back.  In a text field",
   "those keys undo the typing, as they do anywhere else.",
   "",
-  "幼神 Mod 面板 / Mod surfaces:",
+  "游戏 Mod 面板 / Mod surfaces:",
   "  story <path.yarn> [translation.csv] [commands.json]  edit a story, its",
   "                  translations and the commands its own schema allows",
   "  mod <dir>       open a mod package (defines, Yarn, sprites)",

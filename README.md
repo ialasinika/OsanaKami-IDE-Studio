@@ -27,7 +27,10 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`problems`** — validation output for a package, worst first, each row
   jumping to the file and JSON pointer it came from.
 - **`docs`** — the game's own knowledge base: 136 commands, 63 functions, 678
-  variables, 1221 nodes, 51 definition schemas, 1305 baseline defines.
+  variables, 1221 nodes, 51 definition schemas, 1305 baseline defines. A fresh
+  install derives a smaller, facts-only base from the installed game on first run
+  (see `docs/MODS.md`); this repository's `shell/mods/knowledge.json` is the rich
+  baseline a development tree keeps.
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, search and completion. Pure Node, zero npm.
@@ -269,7 +272,7 @@ python tools/demo.py                                 # install the starter board
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 249/249 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 314/314 checks passed
+node shell/mods/selftest.mjs                   # 332/332 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -465,13 +468,17 @@ shell/                  the front end and the endpoints
   mods/                 the 幼神 layer -- game knowledge, no DOM
     index.js            the facade: openMod, validatePackage, diagnoseYarn,
                         scaffold, search, docFor, suggest, localization
-    knowledge.json      136 commands, 63 functions, 678 variables, 1221 nodes,
-                        51 schemas, 1305 baseline defines, 11 locales
+    knowledge.json      the development tree's rich baseline: 136 commands,
+                        63 functions, 678 variables, 1221 nodes, 51 schemas,
+                        1305 baseline defines, 11 locales.  Not shipped: an
+                        install derives its own facts-only base
+    knowledge-build.js  that derivation, as a pure function: buildKnowledge(
+                        gameModsDir); tools/gen_knowledge.mjs is its CLI
     yarn.js             Yarn lexing, tag extraction, arity and jump checks
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 314 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 332 checks, no kernel
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs,
                         views.mjs, history.mjs, rpc.mjs, watch.mjs, classic.mjs,
                         modview.mjs, main.mjs, story.mjs, storycsv.mjs, ysls.mjs,
@@ -636,6 +643,16 @@ judging an early build: it is AI-authored throughout, corrected by hand through
 DSH sessions. The program stays free to use, fork, rename and redistribute, and
 the code stays free to sell on MIT's terms; the licence page is about the build
 you are installing, not about the repository.
+
+The payload the installer carries is the IDE, not the game: `npm run pack` packs
+`electron/`, `shell/`, `langs/` and `examples/`, `package.json` keeps
+`shell/mods/knowledge.json` out of it, and a release build runs a text audit over
+the packed files before compiling — it fails on the game's names, its cast, or a
+developer's absolute path, and it fails while the audit's allow-list is non-empty.
+`node tools/make-installer.mjs --audit-only` runs just that check;
+`build/make-installer.json` records whether the build that ran was a `--dev` build
+and whether it was `releaseReady`. The knowledge baseline is not shipped because
+the app derives it from the player's own game; `docs/MODS.md` says how.
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the

@@ -4,23 +4,23 @@ tags: #hub #reach
 subtitle: 开场直播节点
 tracking: always
 ---
-/* 幼神 · 直播间节点：Live_Node */
+/* 游戏本体 · 直播间节点：Live_Node */
 <<declare $Fan_Join = false>>
 <<StartDanmaku>>
-Aistalt: 嗨，大家好。欢迎来到幼神的直播间。 #line:0630975 #state:Idle
+Speaker: 嗨，大家好。欢迎来到本游戏的直播间。 #line:0630975 #state:Idle
 Echo: 「今晚的灯，好像比昨天亮。」 #line:0630976 #state:Smile
 <<wait 2>> // 给弹幕一点时间滚过屏幕
 <<if $Fan_Join>>
-  Aistalt: 你回来了。 #line:0630977 #state:Idle
+  Speaker: 你回来了。 #line:0630977 #state:Idle
   <<jump Live_Hub>>
 <<elseif $Trust > 3>>
-  Aistalt: 先别急着走。 #line:0630978 #state:Serious
+  Speaker: 先别急着走。 #line:0630978 #state:Serious
   <<set $Fan_Join = true>>
 <<else>>
   <<EmitDanmakuTypeBurst "Welcome" 20>>
 <<endif>>
 -> 继续观看
-   Aistalt: 那就再坐一会儿吧。 #line:0630979 #state:Idle
+   Speaker: 那就再坐一会儿吧。 #line:0630979 #state:Idle
 -> 转身离开
-   Aistalt: 晚安。 #line:0630980 #state:Idle
+   Speaker: 晚安。 #line:0630980 #state:Idle
 ===

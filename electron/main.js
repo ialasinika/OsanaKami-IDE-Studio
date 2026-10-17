@@ -174,6 +174,8 @@ function startShell({ workspace, modsRoot }) {
       "--workspace", workspace,
       "--kernel", KERNEL,
       "--port", "0",
+      // 知识库的派生结果写进 Electron 的用户数据目录，而不是 %APPDATA% 下另建一个。
+      "--user-dir", app.getPath("userData"),
       // Without this the shell launches the system browser as well, and you get
       // a second window on top of this one.
       "--no-open",

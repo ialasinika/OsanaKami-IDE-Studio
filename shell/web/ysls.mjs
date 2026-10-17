@@ -10,7 +10,7 @@
  * adds a command, and wrong today in ways nobody would notice until a line
  * silently failed to run.
  *
- * The shape this was measured against (the mod's `InfantGod-generated.ysls.json`,
+ * The shape this was measured against (a mod's generated `.ysls.json`,
  * version 2: 136 commands, 63 functions, 166 parameters, no duplicate names):
  *
  *     { version: 2,

@@ -1,6 +1,6 @@
 'use strict';
 /**
- * validate.js — 《幼神》(Infant God) Mod IDE 定义校验器
+ * validate.js — 游戏 Mod IDE 定义校验器
  *
  * 纯函数模块：用游戏导出的 51 份 JSON Schema（draft 2020-12 子集）校验单个定义文件，
  * 并校验整个 Mod 包（mod.json / Defines / Yarn / 本地化 CSV）。
@@ -629,9 +629,19 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
 
   /* ---- D005 / D006 语义字段 ---- */
   const desc = typeof n.description === 'string' ? n.description : '';
+  /*
+   * G41/G30: a facts-only knowledge base (the one derived on a machine without a
+   * shipped knowledge.json) has no description sentences -- it carries
+   * `x-techReference` / `x-sprite` instead.  Both spellings must mean the same
+   * thing here, otherwise deriving the KB would silently switch D005/D006 off and
+   * `ok: true` would start meaning "nothing was looked at".
+   */
   const refMatch = RE_TECH_REF.exec(desc);
-  if (refMatch) checkReference(refMatch[1], value, ip, ctx, out, isRequired);
-  else if (RE_SPRITE_DESC.test(desc)) checkSprite(value, ip, ctx, out);
+  const refTarget = refMatch
+    ? refMatch[1]
+    : (typeof n[X_REF_KEY] === 'string' && n[X_REF_KEY] ? n[X_REF_KEY] : null);
+  if (refTarget) checkReference(refTarget, value, ip, ctx, out, isRequired);
+  else if (RE_SPRITE_DESC.test(desc) || n[X_SPRITE_KEY] === true) checkSprite(value, ip, ctx, out);
 
   /* ---- 对象 ---- */
   if (isPlainObject(value)) {

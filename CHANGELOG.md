@@ -113,6 +113,66 @@ stands in this tree.
   suite (314/314) pins the facts-only side, including the failure mode where both
   the key and the sentence are missing and the map is empty.
 
+### The payload carries no game data
+
+- The installer ships the IDE, not the game. Every place where our own text named
+  the game or its cast -- the `package.json` description, the examples, the `.lang`
+  descriptor, the mod checker's and the search index's comments, eleven strings in
+  the Yarn card and its help, the story card's sample lines -- now says the neutral
+  thing ("the game", `Speaker` where a cast name was used as an example). The
+  one behaviour that had to change is `firstCharacterName`'s fallback in
+  `shell/mods/search.js`, which returned a character's name when a generated example
+  needed a speaker; it returns `Speaker`. `setLineSpeaker` keeps its job: a line
+  that changes speaker keeps its `#state:`, its `#line:` and its spacing.
+- The payload audit is no longer allowed to have an allow-list. It reports 66 text
+  files and four packed `app.asar` entries scanned, zero hits, and `--audit-only`
+  exits 0. Two escapes were closed: `--no-audit` now requires `--dev` (a release
+  build runs the audit), and a build without `--dev` fails while the allow-list is
+  non-empty. `build/make-installer.json` records `dev`, the audit result and
+  `releaseReady`, so a build says for itself whether it was checked.
+- The game's knowledge baseline is no longer a `shell/mods/` resource: the
+  `extraResources` filter excludes `mods/knowledge.json` (see the next entry for
+  what reads the game now). Re-adding it is visible: the audit fails with 1307 hits
+  in two files -- the baseline's 1306, plus one ordinary word that the game's own
+  cast list also contains (`Runner`, a card title). That second hit is why the
+  runner card is titled `Command`.
+
+### The knowledge base is derived from the player's game
+
+- A fresh install has no `knowledge.json`, and the IDE is useful anyway: it finds
+  the game the way the settings page already did (an explicit path, an environment
+  variable, Steam's own library list, the platform's usual install directories),
+  derives the baseline once, and writes it under the user data directory
+  (`%APPDATA%\OsanaKami IDE Studio` on Windows, `Application Support` on macOS,
+  `$XDG_DATA_HOME` or `~/.local/share` elsewhere). The derivation is 331,438 bytes
+  and took 1.6 s on this machine's installed game; the second boot reads the file.
+  A machine with no game is a named state (`missing`), not a guess: the mod card
+  still validates structure and references and says the baseline is absent.
+- The resolution order is `options.knowledgePath`, then `INFANTGOD_KNOWLEDGE`, then
+  a `knowledge.json` next to the module (a development tree), then
+  `<userDir>/knowledge.json`, then build-from-game, then `missing`. An explicit
+  `knowledgePath` that does not exist is an error (`E000`), not a reason to fall
+  through and derive over it. A file that exists but does not parse is reported as
+  `loadError` rather than silently treated as an empty baseline. The write is
+  atomic (temporary file, then rename) and a failure to write leaves the session in
+  the named missing state instead of crashing. The shell learned `--user-dir` and
+  Electron passes `app.getPath("userData")`; startup prints
+  `mod layer: knowledge base found <path> (<source>)` with the source among
+  `option`, `env`, `bundled`, `user`, `derived` and `none`.
+- The derivation core moved to `shell/mods/knowledge-build.js`
+  (CommonJS, `buildKnowledge`/`canonicalKnowledge`/`diffKnowledge`), and
+  `tools/gen_knowledge.mjs` became a thin CLI that re-exports it. The generator's
+  output is unchanged: the old module and the extracted one produce the same
+  223,901 bytes for the real corpus (211 `.yarn` files, 1,073 nodes), and
+  `--check`/`--diff` keep their behaviour.
+- A derived baseline carries facts, not the game's description sentences, and
+  without the previous entry's `x-techReference`/`x-sprite` fix the definition
+  checker would have quietly stopped checking sprite and reference fields on every
+  machine without a shipped baseline. `validate.js` reads both spellings, and the
+  mod suite pins the equivalence. `docs/MODS.md` has a section on the five sources,
+  where the file is written and what turns off when there is no baseline; the mod
+  suite is 332 checks.
+
 ### One document, two views -- the canvas is gone
 
 - There were three ways to look at a board document; there are **two**.  `classic`

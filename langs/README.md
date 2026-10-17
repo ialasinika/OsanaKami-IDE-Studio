@@ -161,7 +161,7 @@ These are properties of the eight-key descriptor format, not bugs in
 - **Keywords colour inside prose.** A declared word kind is matched wherever the
   identifier appears, including inside a string of dialogue. For `yarn.lang`
   that means an English `if` in a line of narrative becomes a keyword. It is
-  acceptable because 《幼神》's prose is Chinese and English keywords are rare in
+  acceptable because the game's prose is Chinese and English keywords are rare in
   it; a European-language script would need a different trade-off.
 - **`$variable` is two spans.** The grammar can match a literal or a word, never
   "a `$` followed by an identifier is one token". `$Fan_Join` therefore reports

@@ -3,7 +3,7 @@
   "productName": "OsanaKami IDE Studio",
   "version": "0.1.0",
   "private": true,
-  "description": "OsanaKami IDE Studio — a board-shaped mod IDE for 《幼神》",
+  "description": "OsanaKami IDE Studio — a mod IDE for story-driven games",
   "license": "MIT",
   "author": "OsanaKami IDE Studio",
   "main": "electron/main.js",
@@ -39,6 +39,7 @@
         "to": "shell",
         "filter": [
           "**/*",
+          "!mods/knowledge.json",
           "!mods/selftest.mjs",
           "!web/selftest.mjs",
           "!ai/selftest.mjs"

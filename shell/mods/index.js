@@ -29,9 +29,58 @@ const scaffoldCore = require('./scaffold.js');
 const searchCore = require('./search.js');
 const completeCore = require('./complete.js');
 const gamepath = require('./gamepath.js');
+const knowledgeBuild = require('./knowledge-build.js');
 
-/** knowledge.json 的位置（本模块同目录）。 */
+/** knowledge.json 的位置（本模块同目录；发布物里可能不带，见下面的解析顺序）。 */
 const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
+
+/** 用户数据目录名（与 electron/main.js 传给 shell 的 --user-dir 同名）。 */
+const APP_DIR_NAME = 'OsanaKami IDE Studio';
+
+/** 环境变量：显式指定用户数据目录 / 知识库文件（方便测试与「游戏装在怪位置」的用户）。 */
+const USER_DIR_ENV = 'INFANTGOD_USER_DIR';
+const KNOWLEDGE_ENV = 'INFANTGOD_KNOWLEDGE';
+
+/**
+ * 默认的用户数据目录（纯函数，env / platform 可注入，测试不碰本机真实目录）：
+ *   win32   %APPDATA%/OsanaKami IDE Studio
+ *   darwin  ~/Library/Application Support/OsanaKami IDE Studio
+ *   其它     $XDG_DATA_HOME/OsanaKami IDE Studio（缺省 ~/.local/share/...）
+ * 派生的知识库就写在这里的 knowledge.json。
+ */
+function defaultUserDir(env, platform) {
+  const e = env && typeof env === 'object' ? env : process.env;
+  const plat = platform || process.platform;
+  const home = e.HOME || e.USERPROFILE || '';
+  if (plat === 'win32') {
+    const base = e.APPDATA || e.LOCALAPPDATA || path.join(home, 'AppData', 'Roaming');
+    return path.join(base, APP_DIR_NAME);
+  }
+  if (plat === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', APP_DIR_NAME);
+  }
+  const base = e.XDG_DATA_HOME || path.join(home, '.local', 'share');
+  return path.join(base, APP_DIR_NAME);
+}
+
+/** 原子写文本：先写同目录临时文件再 rename，避免半截知识库。 */
+function writeTextAtomic(file, text) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, '.' + path.basename(file) + '.' + process.pid + '.' + Date.now().toString(36) + '.tmp');
+  fs.writeFileSync(tmp, text, 'utf8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* 已经是尽力清理 */ }
+    throw e;
+  }
+}
+
+/** ENOENT 在不同平台上的措辞不同；这里只用来区分「不存在」与「存在但读不了」。 */
+function isMissingError(text) {
+  return /ENOENT|no such file|cannot find the file|could not find/i.test(String(text == null ? '' : text));
+}
 
 /**
  * 游戏 Mods 目录不再写死。解析顺序见 gamepath.js：
@@ -232,25 +281,49 @@ function firstLineOf(abs) {
 
 /**
  * @param {object} [options]
- * @param {string} [options.knowledgePath] 默认本目录的 knowledge.json
+ * @param {string} [options.knowledgePath] 显式知识库文件；给了它就是权威的（缺了也不回退）
+ * @param {string} [options.bundledKnowledgePath] 打包在本模块旁的知识库（测试/打包用）
+ * @param {string} [options.userDir]      用户数据目录（派生知识库写这里；缺省见 defaultUserDir）
+ * @param {object} [options.env]          环境变量表（测试注入用；缺省 process.env）
  * @param {string} [options.modsRoot]      可选白名单根：所有 dir/root 参数必须落在里面
  * @param {string} [options.gameModsDir]   游戏 Mods 目录（基线 schema/定义来源）
  */
 function createMods(options) {
   const opts = options && typeof options === 'object' ? options : {};
 
-  const knowledgePath = path.resolve(opts.knowledgePath || KNOWLEDGE_PATH);
+  const env = opts.env && typeof opts.env === 'object' ? opts.env : process.env;
+  /**
+   * 知识库解析顺序（G30）：
+   *   1. options.knowledgePath —— 显式给了就只认它（缺文件 = 没有知识库，这是既有契约）
+   *   2. env INFANTGOD_KNOWLEDGE
+   *   3. 本模块旁的 knowledge.json（仓库/开发时就是这份）
+   *   4. <userDir>/knowledge.json（上次派生的结果；mtime/size 变了会重读）
+   *   5. 都没有：用 gamepath 找到的游戏目录自己派生一份，原子写进 userDir 后再用
+   */
+  const knowledgePath = opts.knowledgePath ? path.resolve(String(opts.knowledgePath)) : null;
+  const bundledKnowledgePath = path.resolve(opts.bundledKnowledgePath ? String(opts.bundledKnowledgePath) : KNOWLEDGE_PATH);
+  const userDir = path.resolve(String(
+    opts.userDir != null && opts.userDir !== '' ? opts.userDir : (env[USER_DIR_ENV] || defaultUserDir(env))
+  ));
   const modsRoot = opts.modsRoot ? path.resolve(String(opts.modsRoot)) : null;
   const gameMods = gamepath.discoverGameModsDir({
     gameModsDir: opts.gameModsDir != null ? opts.gameModsDir : opts.gameDir,
-    env: process.env
+    env: env
   });
+  /** 最终实际用的是哪份知识库（路径 + 来源），knowledgeState() 会报出去。 */
+  const knowledgeSource = {
+    source: knowledgePath ? 'option' : 'bundled',
+    path: knowledgePath || bundledKnowledgePath,
+    userDir: userDir,
+    deriveError: null
+  };
   /** 游戏 Mods 目录；null = 本机没找到（「没找到」本身也是要报出来的状态）。 */
   const gameModsDir = gameMods.dir;
 
   /** 所有按 root 缓存的派生状态；openMod 换根时整块清掉。 */
   const cache = {
     kb: null,
+    kbMeta: null,
     kbView: null,
     index: null,
     root: null,
@@ -294,46 +367,120 @@ function createMods(options) {
 
   /* ---------------- 知识库 ---------------- */
 
-  /** knowledge.json 的原样对象（必要时给一个结构完整的空壳）。 */
-  function knowledge() {
-    if (cache.kb) return cache.kb;
-    const r = readText(knowledgePath);
-    if (!r.ok) {
-      cache.kb = {
-        version: 0,
-        stats: {},
-        commands: [],
-        functions: [],
-        variables: [],
-        nodes: [],
-        schemas: {},
-        baseline: {},
-        localization: { locales: [], characters: [] },
-        undocumentedCommands: [],
-        undeclaredVariables: [],
-        loadError: r.error
-      };
-      return cache.kb;
-    }
+  /** 结构完整的空壳知识库；loadError 说明为什么没有事实可用。 */
+  function emptyKb(loadError) {
+    return {
+      version: 0,
+      stats: {},
+      commands: [],
+      functions: [],
+      variables: [],
+      nodes: [],
+      schemas: {},
+      baseline: {},
+      localization: { locales: [], characters: [] },
+      undocumentedCommands: [],
+      undeclaredVariables: [],
+      loadError: loadError
+    };
+  }
+
+  /** 记住一份从磁盘读到的知识库（含 mtime/size，用于之后判断要不要重读）。 */
+  function rememberKb(kb, source, file) {
+    knowledgeSource.source = source;
+    knowledgeSource.path = file;
+    cache.kb = kb;
     try {
-      cache.kb = JSON.parse(r.text);
-    } catch (e) {
-      cache.kb = {
-        version: 0,
-        stats: {},
-        commands: [],
-        functions: [],
-        variables: [],
-        nodes: [],
-        schemas: {},
-        baseline: {},
-        localization: { locales: [], characters: [] },
-        undocumentedCommands: [],
-        undeclaredVariables: [],
-        loadError: 'knowledge.json 不是合法 JSON：' + errText(e)
-      };
+      const st = fs.statSync(file);
+      cache.kbMeta = { path: file, mtimeMs: st.mtimeMs, size: st.size };
+    } catch {
+      cache.kbMeta = null;
     }
     return cache.kb;
+  }
+
+  /** 解析并（必要时）派生知识库；结果进 cache。 */
+  function resolveKnowledge() {
+    const candidates = [];
+    if (knowledgePath) {
+      candidates.push({ path: knowledgePath, source: 'option' });
+    } else {
+      const envPath = env[KNOWLEDGE_ENV] ? path.resolve(String(env[KNOWLEDGE_ENV])) : null;
+      if (envPath) candidates.push({ path: envPath, source: 'env' });
+      candidates.push({ path: bundledKnowledgePath, source: 'bundled' });
+      candidates.push({ path: path.join(userDir, 'knowledge.json'), source: 'user' });
+    }
+
+    let chosen = null;
+    for (const candidate of candidates) {
+      const r = readText(candidate.path);
+      if (r.ok) {
+        chosen = { path: candidate.path, source: candidate.source, text: r.text };
+        break;
+      }
+      if (!isMissingError(r.error)) {
+        // 文件在那儿但读不了：明确 loadError，绝不静默当空 KB，也不去派生盖掉它。
+        knowledgeSource.source = candidate.source;
+        knowledgeSource.path = candidate.path;
+        cache.kb = emptyKb('knowledge.json 读不出来：' + r.error);
+        return cache.kb;
+      }
+    }
+
+    if (!chosen) {
+      // 四个位置都没有：自己从游戏目录派生一份（G31）。
+      const target = path.join(userDir, 'knowledge.json');
+      if (gameModsDir) {
+        try {
+          const derived = knowledgeBuild.buildKnowledge(gameModsDir);
+          writeTextAtomic(target, JSON.stringify(derived, null, 2) + '\n');
+          return rememberKb(derived, 'derived', target);
+        } catch (e) {
+          knowledgeSource.deriveError = errText(e);
+        }
+      }
+      knowledgeSource.source = 'missing';
+      knowledgeSource.path = knowledgePath || target;
+      cache.kb = emptyKb(
+        knowledgeSource.deriveError
+          ? 'knowledge.json 不存在，从游戏目录派生也失败了：' + knowledgeSource.deriveError
+          : 'knowledge.json 不存在，而且本机没找到游戏的 Mods 目录，无法派生'
+      );
+      return cache.kb;
+    }
+
+    try {
+      return rememberKb(JSON.parse(chosen.text), chosen.source, chosen.path);
+    } catch (e) {
+      knowledgeSource.source = chosen.source;
+      knowledgeSource.path = chosen.path;
+      cache.kb = emptyKb('knowledge.json 不是合法 JSON：' + errText(e));
+      return cache.kb;
+    }
+  }
+
+  /** knowledge.json 的原样对象（必要时给一个结构完整的空壳）。 */
+  function knowledge() {
+    if (cache.kb) {
+      // 自上次读取后文件被换过（mtime/size 变了）就重读；派生出来的那份同样适用。
+      if (cache.kbMeta && cache.kbMeta.path) {
+        let changed = false;
+        try {
+          const st = fs.statSync(cache.kbMeta.path);
+          changed = st.mtimeMs !== cache.kbMeta.mtimeMs || st.size !== cache.kbMeta.size;
+        } catch {
+          changed = true;
+        }
+        if (changed) {
+          cache.kb = null;
+          cache.kbMeta = null;
+          cache.kbView = null;
+          cache.index = null;
+        }
+      }
+      if (cache.kb) return cache.kb;
+    }
+    return resolveKnowledge();
   }
 
   /**
@@ -1121,7 +1268,9 @@ function createMods(options) {
     if (dir == null || String(dir).trim() === '') throw new Error('scaffold: dir is required');
 
     const destRoot = resolveArg(dir, 'dir');
-    const sopts = { knowledgePath: knowledgePath };
+    // 脚手架只读知识库里的模板/角色事实；用「实际生效的那份」（可能是派生出来的）。
+    knowledge();
+    const sopts = { knowledgePath: knowledgeSource.path || bundledKnowledgePath };
     if (p.modName != null) sopts.modName = p.modName;
     if (p.template != null) sopts.template = p.template;
     if (gameModsDir) sopts.gameModsDir = gameModsDir;
@@ -1247,15 +1396,20 @@ function createMods(options) {
   /**
    * 知识库状态：present = 有 schema 可用；missing = 没有知识库，
    * 校验只给文件结构结论（validate.js 会带一条具名 E000 说出来）。
+   *
+   * `source` 说明用的是哪一份：option / env / bundled / user / derived / missing。
    */
   function knowledgeState() {
     const kb = knowledge();
     const schemas = kb && kb.schemas && typeof kb.schemas === 'object' ? Object.keys(kb.schemas).length : 0;
     return {
       state: schemas > 0 ? 'present' : 'missing',
-      path: knowledgePath,
+      path: knowledgeSource.path,
+      source: knowledgeSource.source,
+      userDir: userDir,
       schemas: schemas,
-      loadError: kb && kb.loadError ? String(kb.loadError) : null
+      loadError: kb && kb.loadError ? String(kb.loadError) : null,
+      deriveError: knowledgeSource.deriveError ? String(knowledgeSource.deriveError) : null
     };
   }
 
@@ -1283,4 +1437,4 @@ function createMods(options) {
   };
 }
 
-module.exports = { createMods, KNOWLEDGE_PATH };
+module.exports = { createMods, KNOWLEDGE_PATH, defaultUserDir };

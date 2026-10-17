@@ -106,7 +106,7 @@
             "id": "r3",
             "cells": {
               "kind": "speaker",
-              "example": "Aistalt: …",
+              "example": "Speaker: …",
               "lines": 11,
               "command": false
             }

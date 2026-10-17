@@ -182,7 +182,7 @@ check(
 check("exactly two comment spans", commentSpans.length === 2, JSON.stringify(commentSpans));
 check(
   "a block comment spans the marker to the closer, excluding the newline",
-  JSON.stringify(commentSpans[0]) === '[86,112,"comment"]',
+  JSON.stringify(commentSpans[0]) === '[86,114,"comment"]',
   JSON.stringify(commentSpans[0]),
 );
 check(

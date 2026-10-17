@@ -1,6 +1,6 @@
 'use strict';
 /**
- * scaffold.js — 《幼神》(Infant God) Mod 脚手架生成模块
+ * scaffold.js — 游戏 Mod 脚手架生成模块
  *
  * 按模板一键生成结构完整、可直接放进游戏 `StreamingAssets/Mods/` 加载的 Mod 包。
  *

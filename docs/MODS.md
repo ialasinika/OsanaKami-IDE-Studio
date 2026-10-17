@@ -18,7 +18,10 @@ The kernel knows nothing about 幼神, and that is the point: it is a
 language-agnostic, game-agnostic file/board/exec server. The game's 136
 commands, 51 definition schemas and 1305 baseline defines are *data*, they
 change when the game updates, and they must be editable without recompiling C.
-So they sit in `shell/mods/knowledge.json` (296 KB) behind a small facade.
+So they sit in `shell/mods/knowledge.json` (296 KB) behind a small facade. The
+file is not required at runtime: on a machine that has the game but not the file,
+the mod layer derives an equivalent, facts-only base and writes it to the user's
+own directory (see "Where the knowledge base comes from").
 
 The same reasoning applies to `langs/`: `.yarn` highlighting is a descriptor
 file, not a keyword list compiled into the binary.
@@ -138,9 +141,10 @@ and it says which it got.
   63 functions and 678 variables where `tools/gen_knowledge.mjs` can regenerate 87,
   38 and 810. Regenerating it is a checkable operation rather than a silent one —
   `node tools/gen_knowledge.mjs --check shell/mods/knowledge.json` exits 1 and
-  `--diff` lists, per section, the names only one side knows. Loading the knowledge
-  base from the user's own install at runtime, so the package need not carry one,
-  is the next step; see `docs/EDITOR_GAPS.md` G26.
+  `--diff` lists, per section, the names only one side knows. A release therefore
+  does not need to carry the file: with no knowledge file at all, the first launch
+  derives one from the discovered game install (see "Where the knowledge base comes
+  from" below), which is the G26 payload plan.
 - A regenerated knowledge base keeps the two facts the game's schema *text* carries.
   A schema marks a TechName reference with the sentence `TechName reference to
   XDefinition` and a sprite path with `Relative path to sprite image file`; the
@@ -148,9 +152,44 @@ and it says which it got.
   alone, regenerating would empty the reference and sprite checks and `ok: true`
   would start meaning "nothing was looked at". So the generator lifts exactly those
   two facts into `x-techReference` and `x-sprite` before dropping the text, and
-  `flattenSchema` reads the keys first and the sentences only as the fallback: a
-  rich knowledge base and a facts-only one describe the same fields, which
-  `shell/mods/selftest.mjs` pins from both ends.
+  `flattenSchema` reads the keys first and the sentences only as the fallback; the
+  D005/D006 dispatch in `validate.js` accepts the same two spellings, because a
+  derived base must not switch the checks off either. A rich knowledge base and a
+  facts-only one describe the same fields, which `shell/mods/selftest.mjs` pins from
+  both ends (including a `validatePackage` run on a facts-only base).
+
+### Where the knowledge base comes from
+
+The base is optional, and the layer now procures it in a fixed order:
+
+1. an explicit path — `--knowledge`/`options.knowledgePath` (authoritative: a path
+   the caller named is never silently replaced by a different file);
+2. `INFANTGOD_KNOWLEDGE`;
+3. the shipped `shell/mods/knowledge.json` next to the mod layer;
+4. `<user dir>/knowledge.json`, where the user dir is `--user-dir`, else
+   `INFANTGOD_USER_DIR`, else the platform default — `%APPDATA%\OsanaKami IDE
+   Studio` on Windows, `~/Library/Application Support/OsanaKami IDE Studio` on
+   macOS, `${XDG_DATA_HOME:-~/.local/share}/OsanaKami IDE Studio` on Linux; the
+   Electron wrapper passes `app.getPath("userData")`;
+5. nothing found: derive the base from the discovered game install by running the
+   same `buildKnowledge` code `tools/gen_knowledge.mjs` uses, write it atomically
+   into the user dir and report it as `source: "derived"`.
+
+Why this order: while the repository *is* the installed shell the module directory
+wins, so tests never write the user's profile; while a release can ship without the
+296 KB file, the first launch with a game install derives it (`shell/mods/
+knowledge-build.js` holds the derivation; the CLI is a thin wrapper over it, and
+`--check` fixes its bytes). A file that exists but cannot be read is a named
+`loadError`, never a silent empty base; a derivation that cannot write is a named
+`deriveError`, and the layer falls back to the missing-knowledge state (one `E000`,
+`ok: false`). `knowledgeState()` answers `{state, path, source, userDir, schemas,
+loadError, deriveError}`, and `serve`/`rpc` log `mod layer: knowledge base found
+<path> (<source>)` once, so an operator can tell shipped from derived.
+
+Two smaller decisions: freshness is judged by mtime and size, not by the base's own
+`generatedAt` (a copied file must be noticed), and derivation is bounded to facts —
+it never invents descriptions, which is why the derived base is smaller than the
+shipped one and why the two `x-` keys exist at all.
 
 ## Containment
 
@@ -310,7 +349,7 @@ families are "certain" and which are "suspicious" follows that derivation, so CR
 ships with the state-ish pairs (start/stop, show/hide, play/stop, start/end) and
 CR-201/203 with the resource-ish ones.
 
-The 177-check count includes a block for the L1 diagnostic rules taken from
+The 332-check count includes a block for the L1 diagnostic rules taken from
 `03-诊断规则目录.md`: each rule gets a bad fixture that must produce exactly that
 code, a clean fixture that must produce none, and the shared behaviours (§11.1
 empty-index silence and its three switches, §11.2 slot yielding, §11.3 the 500
@@ -419,7 +458,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 177 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 332 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
@@ -434,10 +473,12 @@ next to the repository: it drives `examples/Mods/Lantern`, generates its own
 read, so the story card can only open it through a `file.blob*` session), and
 proves the D006 click-through on the example mod's missing sprite.
 
-Three of its 43 checks pin the example's own claims rather than the UI's: the
-8-bit RGB sprite is read as colour type 2 and written back as colour type 6
-(G20); the whole tag surface reaches the story card while the tools judge
+Three of `input_smoke.py`'s 43 checks pin the example's own claims rather than the
+UI's: the 8-bit RGB sprite is read as colour type 2 and written back as colour
+type 6 (G20); the whole tag surface reaches the story card while the tools judge
 exactly the three tag names they know; and the package's only findings are its
 two deliberate ones, with the three audio references earning nothing at all
-(G21). Each was falsified once — a sabotaged package fails exactly the check it
-should and nothing else — before being trusted.
+(G21). Each was falsified once -- a sabotaged package fails exactly the check it
+should and nothing else -- before being trusted.  `tools/browser_smoke.py` is 51
+checks over the same example (the views' tabs and tiles, a tab that closes after
+asking, the completion menu and the hover line).

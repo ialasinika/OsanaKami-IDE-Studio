@@ -46,7 +46,7 @@ function note(message) {
 // Arguments
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { sign: true, timestamp: true, lzma: false, audit: true, defines: [] };
+  const out = { sign: true, timestamp: true, lzma: false, audit: true, dev: false, defines: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => {
@@ -61,6 +61,11 @@ function parseArgs(argv) {
       case "--out": out.out = value(); break;
       case "--template": out.template = value(); break;
       case "--define": out.defines.push(value()); break;
+      // `--dev` is the only way to build something that is not a release: it
+      // allows a skipped audit and a non-empty allow-list.  Everything else
+      // (CI, the packaging script, a human making a release candidate) must run
+      // the audit and carry a zero allow-list, or it is not a release (G30).
+      case "--dev": out.dev = true; break;
       case "--no-sign": out.sign = false; break;
       case "--no-timestamp": out.timestamp = false; break;
       case "--no-verify-sign": out.verifySign = false; break;
@@ -68,7 +73,7 @@ function parseArgs(argv) {
       // see tools/installer.nsi); this switch is kept so old command lines run.
       case "--fast-compress": break;
       case "--lzma": out.lzma = true; break;
-      case "--no-audit": out.audit = false; break;
+      case "--no-audit": out.audit = false; out.noAudit = true; break;
       case "--audit-only": out.auditOnly = true; break;
       case "--help":
       case "-h": out.help = true; break;
@@ -89,12 +94,19 @@ if (args.help) {
   --define <K=V>      extra define for makensis (repeatable)
   --lzma              compile with LZMA (known to break installs at this size)
   --fast-compress     accepted for compatibility; zlib is the default
-  --no-audit          skip the payload audit (diagnosing the audit only)
+  --dev               a development build: allows --no-audit and a non-empty
+                      allow-list, and marks the output as not release-ready
+  --no-audit          skip the payload audit (requires --dev)
   --audit-only        run the payload audit and stop before compiling
   --no-sign           skip Authenticode signing
   --no-timestamp      sign without an RFC 3161 timestamp
   --no-verify-sign    do not ask Windows to validate the signature afterwards`);
   process.exit(0);
+}
+
+if (args.noAudit && !args.dev) {
+  fail("--no-audit is a development escape hatch: pass --dev as well.\n"
+    + "  A release runs the payload audit; that is the only thing that keeps the game's data out of the installer (G30).");
 }
 
 const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
@@ -247,16 +259,11 @@ note(`makensis   ${makensis}`);
 // ---------------------------------------------------------------------------
 // Payload audit -- the game's own data must not ship
 // ---------------------------------------------------------------------------
-// The only files allowed to name the game are the knowledge baseline and the
-// two game-tooling modules: they *are* the game's data, and stripping them is
-// another task's job (docs/EDITOR_GAPS.md 14.1).
-//
-// TODO: must be empty before public distribution.
-const AUDIT_ALLOW = [
-  ["resources/shell/mods/knowledge.json", "the game knowledge baseline: the characters/commands/nodes ARE the game"],
-  ["resources/shell/mods/scaffold.js", "mod scaffolding names the game's Mods directory"],
-  ["resources/shell/mods/search.js", "corpus search indexes the game's story files"],
-];
+// Empty on purpose.  The baseline the audit used to allow-list is no longer
+// shipped: the IDE derives it from the player's own game at runtime
+// (shell/mods/knowledge-build.js), and the rest of the game's data has been
+// neutralised.  A release build fails while this list is non-empty.
+const AUDIT_ALLOW = [];
 // Product identity that is legitimate in the payload.  Blanked before matching,
 // so the product's own name is not read as the game's name.
 const AUDIT_IDENTITY = [
@@ -319,7 +326,18 @@ function decodeText(buffer) {
   return utf8.includes("\uFFFD") ? buffer.toString("latin1") : utf8;
 }
 
+// What the audit found, for the build summary.  A release is only release-ready
+// when this says the audit ran, found nothing, and there was no allow-list.
+let auditResult = null;
+
 function auditPayload() {
+  if (args.audit === false) {
+    // Only reachable with --dev: the caller asked not to look.  Say so in the
+    // summary, because a build whose audit did not run is not a release (G30).
+    auditResult = { ran: false, clean: false, reason: "--no-audit (dev build)" };
+    console.warn("make-installer: WARNING: payload audit skipped (--dev --no-audit): this build is not release-ready");
+    return;
+  }
   const allow = new Map(AUDIT_ALLOW);
   // Character names come from the payload itself, so the audit tracks the data.
   const knowledgePath = join(PAYLOAD, "resources", "shell", "mods", "knowledge.json");
@@ -411,8 +429,12 @@ function auditPayload() {
   }
 
   note(`audit      ${scanned} text file(s) / ${asarScanned} packed app entry(ies), ${scannedBytes} bytes scanned; ${skippedBinary} non-text file(s) and ${skippedThirdParty} third-party notice/runtime file(s) not scanned`);
-  note(`audit      allow-list (${AUDIT_ALLOW.length} entries, TODO: must be empty before public distribution):`);
-  for (const [rel, why] of AUDIT_ALLOW) note(`audit        ${rel} -- ${why}`);
+  if (AUDIT_ALLOW.length === 0) {
+    note("audit      allow-list is empty: every name in the payload is either ours or neutral");
+  } else {
+    note(`audit      allow-list (${AUDIT_ALLOW.length} entries):`);
+    for (const [rel, why] of AUDIT_ALLOW) note(`audit        ${rel} -- ${why}`);
+  }
   if (allowed.length) {
     const hits = allowed.reduce((sum, entry) => sum + entry.found.length, 0);
     note(`audit      allow-listed hits: ${hits} in ${allowed.length} file(s)`);
@@ -421,19 +443,36 @@ function auditPayload() {
     }
   }
   const total = violations.reduce((sum, entry) => sum + entry.found.length, 0);
+  const allowedHits = allowed.reduce((sum, entry) => sum + entry.found.length, 0);
+  auditResult = {
+    ran: true,
+    clean: total === 0,
+    hits: total,
+    files: violations.length,
+    allowList: AUDIT_ALLOW.length,
+    allowListHits: allowedHits,
+    scanned,
+  };
   if (total) {
     const lines = violations.map((entry) =>
       `${entry.rel}: ${entry.found.length} hit(s) -- ${entry.found.slice(0, 12).map((f) => `${f.marker}@${f.line}`).join(", ")}${entry.found.length > 12 ? ", ..." : ""}`);
     if (args.audit) {
       fail(`payload audit found ${total} hit(s) in ${violations.length} file(s) outside the allow-list:\n  ${lines.join("\n  ")}\n  allow-list: ${AUDIT_ALLOW.map((entry) => entry[0]).join(", ")}`);
     }
-    console.warn(`make-installer: WARNING: payload audit found ${total} hit(s) in ${violations.length} file(s) outside the allow-list, compiling anyway (--no-audit):\n  ${lines.join("\n  ")}`);
+    console.warn(`make-installer: WARNING: payload audit found ${total} hit(s) in ${violations.length} file(s) outside the allow-list, compiling anyway (--dev --no-audit):\n  ${lines.join("\n  ")}`);
   } else {
     note("audit      clean: no game data or developer path outside the allow-list");
   }
   if (args.auditOnly) {
     note("audit      --audit-only: stopping before the compile");
-    process.exit(0);
+    process.exit(total === 0 ? 0 : 1);
+  }
+  // A release has no allow-list at all: the entries are the game's own data,
+  // and `--dev` is the only way to ship a build that still names them (G30).
+  if (!args.dev && AUDIT_ALLOW.length > 0) {
+    fail(`the payload audit's allow-list still has ${AUDIT_ALLOW.length} entry(ies):\n`
+      + `  ${AUDIT_ALLOW.map((entry) => entry[0]).join("\n  ")}\n`
+      + "  A release build must carry none of the game's data (G30); pass --dev for a development build.");
   }
 }
 
@@ -577,6 +616,14 @@ const summary = {
   defines: DEFINES,
   compression: args.lzma ? "lzma" : "zlib",
   signed: args.sign,
+  // The build's own account of whether it may be handed to a stranger: a release
+  // ran the audit, found nothing, and had no allow-list left (G30).
+  dev: args.dev === true,
+  audit: auditResult,
+  releaseReady: auditResult !== null
+    && auditResult.ran === true
+    && auditResult.clean === true
+    && AUDIT_ALLOW.length === 0,
 };
 writeFileSync(join(BUILD, "make-installer.json"), `${JSON.stringify(summary, null, 2)}\n`);
 note(`done       ${OUT}`);

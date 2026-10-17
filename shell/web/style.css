@@ -1427,7 +1427,7 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
 .story-tool:hover { color: var(--fg); border-color: var(--accent-dim); }
 
 /* ------------------------------------------------------------------ */
-/* the 幼神 surfaces: mod, problems, docs                                */
+/* the game surfaces: mod, problems, docs                                */
 /* ------------------------------------------------------------------ */
 
 /*

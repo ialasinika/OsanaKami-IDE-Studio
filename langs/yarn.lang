@@ -1,5 +1,5 @@
 # OsanaKami IDE Studio language descriptor
-# Yarn Spinner dialogue -- the format 《幼神》 is written in.
+# Yarn Spinner dialogue -- the format this game is written in.
 #
 # Colouring targets, in the order the tokenizer scans them:
 #   block comment /* */  ->  line comment //  ->  string "..."  ->
@@ -9,8 +9,8 @@
 #
 # 1. `line_comment //` is safe for this dialect: Yarn writes a command as `<<...>>`
 #    and a node separator as `->`, so there is no legitimate `//` in the parts of a
-#    .yarn file we colour.  URLs in prose would be a false positive; 《幼神》's prose
-#    is Chinese and carries none.
+#    .yarn file we colour.  URLs in prose would be a false positive; the game's
+#    prose is Chinese and carries none.
 # 2. `block_comment_open /*` / `block_comment_close */` cannot be written at all in
 #    Yarn.  They are declared anyway because the brief asks for them and because an
 #    author pasting a commented-out snippet gets a sane colour instead of a wall of
@@ -38,7 +38,7 @@
 #
 # Known, accepted limitations (properties of the frozen grammar, not fixable here):
 #   * A declared keyword also colours inside prose, so an English word like `if` in a
-#     line of dialogue becomes a keyword.  《幼神》's prose is Chinese, so this is rare.
+#     line of dialogue becomes a keyword.  The game's prose is Chinese, so this is rare.
 #   * `$variable` is a literal `$` followed by an `ident`; the grammar cannot say
 #     "dollar followed by an identifier is one token".  The two spans sit adjacent, so
 #     the colour is still correct at the boundary.
