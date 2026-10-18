@@ -957,6 +957,176 @@ section("the portrait a Character names through spineAssetPath (G22)");
   }
 }
 
+section("schema constraints, line ids and addressable addresses (G6, G7, G9)");
+
+{
+  const kb = specMods.knowledge();
+
+  /* ---------------- G6：schema 关键字真的被读取 ---------------- */
+  const g6Kb = {
+    schemas: {
+      Probe: {
+        title: "Probe",
+        type: "object",
+        required: ["techName"],
+        properties: {
+          techName: { type: "string" },
+          code: { type: "string", pattern: "^[A-Z]{3}$" },
+          count: { type: "number", minimum: 1, multipleOf: 2 },
+          score: { type: "number", maximum: 10, exclusiveMaximum: 10 },
+          tags: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" } },
+          kind: { type: "string", enum: ["a", "b"] },
+          one: { oneOf: [{ type: "string" }, { type: "number" }] },
+          any: { anyOf: [{ type: "string", minLength: 2 }, { type: "number" }] },
+          either: { type: ["string", "number"] },
+          strict: { type: "object", additionalProperties: false, properties: { x: { type: "string" } } },
+          refA: { $ref: "#/NoSuchTitle" },
+          refB: { $ref: "#/NoSuchTitle" },
+        },
+      },
+    },
+    baseline: {},
+  };
+  const g6 = (obj) => validateCore.validateDefine("Probe", obj, { kb: g6Kb });
+
+  const clean = g6({ techName: "P", code: "ABC", count: 4, score: 9, tags: ["a"], kind: "a", one: 1, any: "ok", either: 3, strict: { x: "y" } });
+  check("a definition that satisfies every keyword is silent",
+    clean.length === 0, JSON.stringify(clean.map((d) => d.code + ": " + d.message)));
+
+  const pattern = g6({ techName: "P", code: "abc" });
+  check("a value that misses pattern is a D012 error",
+    pattern.some((d) => d.code === "D012" && d.severity === "error" && d.message.indexOf("pattern") >= 0),
+    JSON.stringify(pattern.map((d) => d.code + ": " + d.message)));
+
+  const numeric = g6({ techName: "P", count: 3, score: 11 });
+  check("minimum/multipleOf/maximum are enforced by D012",
+    numeric.filter((d) => d.code === "D012").length === 3,
+    JSON.stringify(numeric.map((d) => d.code + ": " + d.message)));
+
+  const arrays = g6({ techName: "P", tags: ["a", "a"] });
+  check("minItems and uniqueItems are enforced by D012",
+    arrays.filter((d) => d.code === "D012").length === 1 &&
+      arrays.some((d) => d.code === "D012" && d.message.indexOf("uniqueItems") >= 0),
+    JSON.stringify(arrays.map((d) => d.code + ": " + d.message)));
+
+  const one = g6({ techName: "P", one: true });
+  check("oneOf with no matching branch is a D012 error",
+    one.some((d) => d.code === "D012" && d.message.indexOf("oneOf") >= 0),
+    JSON.stringify(one.map((d) => d.code + ": " + d.message)));
+
+  const any = g6({ techName: "P", any: "x" });
+  check("anyOf with no matching branch is a D012 error",
+    any.some((d) => d.code === "D012" && d.message.indexOf("anyOf") >= 0),
+    JSON.stringify(any.map((d) => d.code + ": " + d.message)));
+
+  const eitherOk = g6({ techName: "P", either: "x" });
+  const eitherBad = g6({ techName: "P", either: true });
+  check("a type array accepts both listed types and rejects the rest",
+    !eitherOk.some((d) => d.code === "D003" || d.code === "D007") &&
+      eitherBad.some((d) => d.code === "D003" || d.code === "D007"),
+    JSON.stringify({ ok: eitherOk.map((d) => d.code), bad: eitherBad.map((d) => d.code) }));
+
+  const strict = g6({ techName: "P", strict: { x: "y", extra: 1 } });
+  check("additionalProperties:false makes an undeclared field a D012 error, not a D002 warning",
+    strict.some((d) => d.code === "D012" && d.severity === "error" && d.message.indexOf("extra") >= 0) &&
+      !strict.some((d) => d.code === "D002"),
+    JSON.stringify(strict.map((d) => d.code + ": " + d.message)));
+
+  const unresolved = g6({ techName: "P", refA: "x", refB: "y" });
+  const d013 = unresolved.filter((d) => d.code === "D013");
+  check("an unresolvable $ref is one D013 warning per definition, not per field",
+    d013.length === 1 && d013[0].severity === "warning" &&
+      d013[0].message.indexOf("NoSuchTitle") >= 0,
+    JSON.stringify(d013.map((d) => d.code + " " + d.severity + ": " + d.message)));
+
+  /* ---------------- G9：Addressables 地址的形状 ---------------- */
+  const addressPath = validateCore.validateDefine("CharacterState", {
+    techName: "ProbeState",
+    backgroundPrefab: "Assets/Art/Background/Office.prefab",
+  }, { kb: kb });
+  check("a Unity asset path written as an Addressables address is a D018 warning",
+    addressPath.some((d) => d.code === "D018" && d.severity === "warning"),
+    JSON.stringify(addressPath.map((d) => d.code + ": " + d.message)));
+
+  const addressOk = validateCore.validateDefine("CharacterState", {
+    techName: "ProbeState",
+    backgroundPrefab: "Backgrounds/Office",
+  }, { kb: kb });
+  check("a plain Addressables address is silent",
+    !addressOk.some((d) => d.code === "D018"),
+    JSON.stringify(addressOk.map((d) => d.code + ": " + d.message)));
+
+  /* ---------------- G7：#line: 与本地化表双向核对 ---------------- */
+  const root = join(specTemp("infantgod-g7-"), "LineMod");
+  specWrite(join(root, "mod.json"), JSON.stringify({
+    name: "LineMod",
+    version: "1.0.0",
+    gameVersion: "1.0",
+    author: "selftest",
+    description: "selftest fixture: line ids",
+  }, null, 2) + "\n");
+  specWrite(join(root, "Yarn", "A.yarn"), [
+    "title: A",
+    "---",
+    "Speaker: Hello #line:aaaaaaa",
+    "Speaker: Missing row #line:bbbbbbb",
+    "Speaker: Demo id #line:e4f5g6h",
+    "",
+  ].join("\n"));
+  specWrite(join(root, "Yarn", "NewProject.csv"), [
+    "language,id,text,file,node,lineNumber,lock,comment",
+    "zh-CN,line:aaaaaaa,A: \u4f60\u597d,A.yarn,A,3,00000000,",
+    "zh-CN,line:ccccccc,A: \u65e7\u884c,A.yarn,A,9,00000000,",
+    "",
+  ].join("\n"));
+
+  const g7 = (dir) => validateCore.validateModPackage(dir, {
+    kb: kb,
+    gameMods: { dir: null, readable: false },
+  }).diagnostics;
+  const g7Diags = g7(root);
+  const byCode = (code) => g7Diags.filter((d) => d.code === code);
+
+  check("a Yarn line whose #line id is missing from the table is one D014 warning",
+    byCode("D014").length === 1 && byCode("D014")[0].message.indexOf("bbbbbbb") >= 0,
+    JSON.stringify(byCode("D014").map((d) => d.message)));
+  check("a table row whose id is no longer in any Yarn file is one D015 warning",
+    byCode("D015").length === 1 && byCode("D015")[0].message.indexOf("ccccccc") >= 0,
+    JSON.stringify(byCode("D015").map((d) => d.message)));
+  check("a #line id outside the line:<7 hex> contract is one D017 info, not a missing translation",
+    byCode("D017").length === 1 && byCode("D017")[0].severity === "info" &&
+      byCode("D017")[0].message.indexOf("e4f5g6h") >= 0 &&
+      byCode("D014")[0].message.indexOf("e4f5g6h") < 0,
+    JSON.stringify({ d17: byCode("D017").map((d) => d.message), d14: byCode("D014").map((d) => d.message) }));
+
+  /* 同一个 id 出现在两个文件：翻译目标有歧义。 */
+  specWrite(join(root, "Yarn", "B.yarn"), [
+    "title: B",
+    "---",
+    "Speaker: Again #line:aaaaaaa",
+    "",
+  ].join("\n"));
+  const dup = g7(root).filter((d) => d.code === "D016");
+  check("the same #line id in two Yarn files is one D016 warning",
+    dup.length === 1 && dup[0].message.indexOf("aaaaaaa") >= 0,
+    JSON.stringify(dup.map((d) => d.message)));
+
+  /* 真实语料：MyMod 有一行译文在 Yarn 里确实不存在（line:094007b），其余核对零误报。 */
+  if (!HAVE_CORPUS) {
+    skip("the shipped MyMod package has exactly one orphan translation row (no Mods folder)");
+  } else {
+    const corpus = validateCore.validateModPackage(join(MODS_DIR, "MyMod"), {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics;
+    const corpusOrphans = corpus.filter((d) => d.code === "D015");
+    check("the shipped MyMod package has exactly one D015 (line:094007b) and no D014",
+      corpusOrphans.length === 1 && corpusOrphans[0].message.indexOf("094007b") >= 0 &&
+        corpus.filter((d) => d.code === "D014").length === 0,
+      JSON.stringify({ d15: corpusOrphans.map((d) => d.message), d14: corpus.filter((d) => d.code === "D014").length }));
+  }
+}
+
 section("no state leaks between runs");
 
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });

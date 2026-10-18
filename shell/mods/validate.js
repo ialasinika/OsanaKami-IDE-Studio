@@ -78,6 +78,16 @@
  *                    （矩阵来自 shell/mods/support.json）
  *      D011（G22）error  Character.spineAssetPath 指向的骨架/图集在 Mod 根目录下不存在；
  *                    写成游戏自带的相对地址（Spine/*.skel.bytes）时也查包内是否存在
+ *      D012（G6）error  schema 关键字约束（const/pattern/minLength/maxLength/minimum/
+ *                    maximum/exclusiveMinimum/exclusiveMaximum/multipleOf/minItems/maxItems/
+ *                    uniqueItems/oneOf/anyOf/allOf/not/additionalProperties:false）：知识库
+ *                    目前没用到这些关键字，但导出的 schema 一旦带上它们，校验器必须真的读
+ *      D013（G6）warning  schema 的 $ref 解析不到 title：这一段没有被校验（每次定义只报一次）
+ *      D014（G7）warning  Yarn 里带 #line: 的对话行在本地化表里没有对应 id → 该行永远显示原文
+ *      D015（G7）warning  本地化表里的行在 Yarn 里找不到对应 #line: → 译文永远不会出现
+ *      D016（G7）warning  同一个 #line: id 出现在多个 Yarn 文件里 → 翻译目标有歧义
+ *      D017（G7）info      #line: id 不是 line:<7 位 hex> 的约定形式（演示脚本常见），无法与表核对
+ *      D018（G9）warning  Addressables 地址看起来是 Unity 资源路径/文件路径（游戏按 address 查）
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -91,6 +101,7 @@
 const fs = require('fs');
 const path = require('path');
 const supportCore = require('./support.js');
+const yarnCore = require('./yarn.js');
 
 /* ================================================================== *
  * 1. 常量与轻量工具
@@ -125,6 +136,23 @@ const AUDIO_FOLDER_FIELD = 'voiceOverFolder';
  * 包内 `Spine/` 下），26 个留空字符串表示使用默认/无立绘，空值不算错。
  */
 const SPINE_ASSET_FIELD = 'spineAssetPath';
+
+/*
+ * G9：Addressables 地址。schema 里这些字段只有一句 "Addressable asset address"，
+ * 既不是 TechName 引用也不是 sprite 路径，所以校验器过去对它们一个字都不看。
+ * 游戏按 Addressables 窗口里登记的 address 查找；作者若把 Unity 资源路径
+ * （Assets/.../Foo.prefab）当成 address 写进来，定义能注册、运行时却找不到。
+ * 没有游戏资源清单可查，这里只做「像不像资源路径」的形状判断。
+ */
+const ADDRESSABLE_DESC = /^Addressable asset address$/i;
+
+/*
+ * G7：`#line:` id 与本地化表双向核对。表里 id 列的契约是 `line:<7 位 hex>`
+ * （shell/web/storycsv.mjs 的 LINE_ID），Yarn 里的标记写成 `#line:<id>`。
+ * 语料里另有 56 个非 hex 的演示 id（`#line:e4f5g6h`），它们本来就不会出现在
+ * 表里，用 info 汇总一句，不当作缺翻译逐行报。
+ */
+const LINE_ID_CONTRACT = /^[0-9a-f]{7}$/;
 
 /** 泛型引用：类型未知，只能做非空检查。 */
 const GENERIC_REF = 'ScriptableObject';
@@ -1003,6 +1031,227 @@ function checkCsvTable(abs, relPath, diagnostics) {
 }
 
 /**
+ * G9：字段值是不是 Unity 的资源路径 / 文件路径（Addressables address 常见误写）。
+ */
+function looksLikeAssetPath(v) {
+  return /^Assets[\\/]/i.test(v) || /^Packages[\\/]/i.test(v) ||
+    /^[A-Za-z]:[\\/]/.test(v) || /\\/.test(v) || /\.(prefab|asset|unity)$/i.test(v);
+}
+
+/** G9：D018 —— Addressables 地址的形状检查（无法核对游戏资源，只能拦明显误写）。 */
+function checkAddressable(value, jsonPath, ctx, out) {
+  if (typeof value !== 'string') return;
+  const v = value.trim();
+  if (v === '') return;
+  if (!looksLikeAssetPath(v)) return;
+  out.push(diag('warning', 'D018', jsonPath, ctx.type,
+    'Addressables 地址写法可疑：' + describe(v) +
+    ' 看起来是 Unity 资源路径/文件路径。游戏按 Addressables 窗口里登记的 address 查找，不按资源路径；' +
+    '请填窗口里那串地址（通常与 prefab 文件名不同）。',
+    'Suspicious Addressables address: ' + describe(v) +
+    ' looks like a Unity asset or file path. The game looks up the address registered in the ' +
+    'Addressables window, not the asset path; write the address string from that window ' +
+    '(it is often different from the prefab file name).',
+    { expected: 'Addressables address（窗口中登记的字符串）', actual: v }));
+}
+
+/**
+ * G6：一个值是否满足某个子 schema（只看 error，warning/info 不算不匹配）。
+ * 用于 oneOf / anyOf / allOf / not 的分支判定；递归深度设上限防止自引用爆炸。
+ */
+function schemaMatches(node, value, schemaRoot, ctx, jsonPath, depth) {
+  if (depth > 8) return true;
+  const sub = Object.assign({}, ctx, {
+    depth: depth + 1,
+    refSeen: new Set(ctx.refSeen || [])
+  });
+  const tmp = [];
+  validateNode(node, schemaRoot, value, jsonPath, sub, tmp, false, false);
+  return !tmp.some(function (d) { return d.severity === 'error'; });
+}
+
+/**
+ * G6：D012 —— schema 关键字面。知识库目前只用 type/properties/items/required/enum，
+ * 但导出的 schema 一旦带上 pattern / minLength / oneOf 等，校验器不能假装没看见：
+ * 那样「全绿」会从「值都对」退化成「这些关键字根本没读」。JSON Schema 的关键字
+ * 是必须满足的约束，故一律 error（与 D003/D004 同级）。
+ */
+function checkConstraints(n, value, jsonPath, ctx, out, schemaRoot) {
+  const add = function (zh, en, expected, actual) {
+    out.push(diag('error', 'D012', jsonPath, ctx.type, zh, en,
+      { expected: expected, actual: actual }));
+  };
+
+  if (hasOwn(n, 'const') &&
+      JSON.stringify(value) !== JSON.stringify(n.const)) {
+    add('值必须是常量 ' + describe(n.const) + '。',
+      'The value must be the constant ' + describe(n.const) + '.',
+      describe(n.const), describe(value));
+  }
+
+  if (typeof value === 'string') {
+    if (typeof n.minLength === 'number' && value.length < n.minLength) {
+      add('字符串长度 ' + value.length + ' 小于 minLength ' + n.minLength + '。',
+        'The string is ' + value.length + ' characters, below minLength ' + n.minLength + '.',
+        'minLength ' + n.minLength, String(value.length));
+    }
+    if (typeof n.maxLength === 'number' && value.length > n.maxLength) {
+      add('字符串长度 ' + value.length + ' 大于 maxLength ' + n.maxLength + '。',
+        'The string is ' + value.length + ' characters, above maxLength ' + n.maxLength + '.',
+        'maxLength ' + n.maxLength, String(value.length));
+    }
+    if (typeof n.pattern === 'string') {
+      let re = null;
+      try { re = new RegExp(n.pattern, 'u'); } catch (err) { re = null; }
+      if (re && !re.test(value)) {
+        add('值 ' + describe(value) + ' 不匹配 pattern /' + n.pattern + '/。',
+          'The value ' + describe(value) + ' does not match the pattern /' + n.pattern + '/.',
+          'pattern /' + n.pattern + '/', value);
+      }
+    }
+  }
+
+  if (typeof value === 'number') {
+    if (typeof n.minimum === 'number' && value < n.minimum) {
+      add('数值 ' + value + ' 小于 minimum ' + n.minimum + '。',
+        'The number ' + value + ' is below minimum ' + n.minimum + '.',
+        'minimum ' + n.minimum, String(value));
+    }
+    if (typeof n.maximum === 'number' && value > n.maximum) {
+      add('数值 ' + value + ' 大于 maximum ' + n.maximum + '。',
+        'The number ' + value + ' is above maximum ' + n.maximum + '.',
+        'maximum ' + n.maximum, String(value));
+    }
+    if (typeof n.exclusiveMinimum === 'number' && value <= n.exclusiveMinimum) {
+      add('数值 ' + value + ' 必须大于 exclusiveMinimum ' + n.exclusiveMinimum + '。',
+        'The number ' + value + ' must be above exclusiveMinimum ' + n.exclusiveMinimum + '.',
+        '> ' + n.exclusiveMinimum, String(value));
+    }
+    if (typeof n.exclusiveMaximum === 'number' && value >= n.exclusiveMaximum) {
+      add('数值 ' + value + ' 必须小于 exclusiveMaximum ' + n.exclusiveMaximum + '。',
+        'The number ' + value + ' must be below exclusiveMaximum ' + n.exclusiveMaximum + '.',
+        '< ' + n.exclusiveMaximum, String(value));
+    }
+    if (typeof n.multipleOf === 'number' && n.multipleOf > 0) {
+      const ratio = value / n.multipleOf;
+      if (Math.abs(ratio - Math.round(ratio)) > 1e-9) {
+        add('数值 ' + value + ' 不是 multipleOf ' + n.multipleOf + ' 的整数倍。',
+          'The number ' + value + ' is not a multiple of ' + n.multipleOf + '.',
+          'multipleOf ' + n.multipleOf, String(value));
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (typeof n.minItems === 'number' && value.length < n.minItems) {
+      add('数组有 ' + value.length + ' 项，少于 minItems ' + n.minItems + '。',
+        'The array has ' + value.length + ' items, below minItems ' + n.minItems + '.',
+        'minItems ' + n.minItems, String(value.length));
+    }
+    if (typeof n.maxItems === 'number' && value.length > n.maxItems) {
+      add('数组有 ' + value.length + ' 项，多于 maxItems ' + n.maxItems + '。',
+        'The array has ' + value.length + ' items, above maxItems ' + n.maxItems + '.',
+        'maxItems ' + n.maxItems, String(value.length));
+    }
+    if (n.uniqueItems === true) {
+      const seen = new Set();
+      const dup = [];
+      for (const item of value) {
+        const key = JSON.stringify(item);
+        if (seen.has(key)) dup.push(describe(item));
+        else seen.add(key);
+      }
+      if (dup.length) {
+        add('数组要求 uniqueItems，但存在重复项：' + dup.slice(0, 5).join(', ') + '。',
+          'The array requires uniqueItems, but contains duplicates: ' +
+          dup.slice(0, 5).join(', ') + '.',
+          'uniqueItems', dup.slice(0, 5).join(', '));
+      }
+    }
+  }
+
+  const branches = function (list) {
+    return list.filter(function (sub) {
+      return schemaMatches(sub, value, schemaRoot, ctx, jsonPath,
+        (ctx.depth || 0) + 1);
+    });
+  };
+
+  if (Array.isArray(n.oneOf) && n.oneOf.length) {
+    const hits = branches(n.oneOf);
+    if (hits.length !== 1) {
+      add('oneOf 要求恰好匹配 1 个分支，实际匹配 ' + hits.length + ' 个。',
+        'oneOf requires exactly one matching branch, but ' + hits.length + ' match.',
+        'oneOf 恰好 1 个', String(hits.length));
+    }
+  }
+  if (Array.isArray(n.anyOf) && n.anyOf.length) {
+    const hits = branches(n.anyOf);
+    if (hits.length === 0) {
+      add('anyOf 要求至少匹配 1 个分支，实际一个都不匹配。',
+        'anyOf requires at least one matching branch, but none match.',
+        'anyOf 至少 1 个', '0');
+    }
+  }
+  if (Array.isArray(n.allOf) && n.allOf.length) {
+    const hits = branches(n.allOf);
+    if (hits.length !== n.allOf.length) {
+      add('allOf 要求所有分支都匹配，' + n.allOf.length + ' 个分支里只有 ' + hits.length + ' 个匹配。',
+        'allOf requires every branch to match; only ' + hits.length + ' of ' +
+        n.allOf.length + ' do.',
+        'allOf 全部匹配', hits.length + '/' + n.allOf.length);
+    }
+  }
+  if (isPlainObject(n.not) && !hasOwn(n, 'const') && !Array.isArray(n.oneOf) &&
+      !Array.isArray(n.anyOf) && !Array.isArray(n.allOf)) {
+    if (schemaMatches(n.not, value, schemaRoot, ctx, jsonPath, (ctx.depth || 0) + 1)) {
+      add('值不能匹配 not 分支。',
+        'The value must not match the not branch.',
+        'not', describe(value));
+    }
+  }
+}
+
+/**
+ * G7：解析本地化 CSV。表很小（语料 11 张 × 18k 行），所以一次读完再按 RFC 4180
+ * 处理引号：字段里可以有逗号、换行与转义双引号。返回行数组的数组。
+ */
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 1; }
+        else quoted = false;
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"') { quoted = true; continue; }
+    if (ch === ',') { row.push(field); field = ''; continue; }
+    if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      continue;
+    }
+    if (ch === '\r') continue;
+    field += ch;
+  }
+  if (field !== '' || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
  * 递归校验一个实例节点。
  * @param {object} rawNode      schema 节点（可能是 $ref）
  * @param {object} schema       该类型的根 schema（用于解析 $ref）
@@ -1016,15 +1265,32 @@ function checkCsvTable(abs, relPath, diagnostics) {
 function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequired) {
   const n = deref(rawNode, schema);
   if (!isPlainObject(n)) return;
+
+  /* ---- D013 $ref 解析不到（G6） ---- */
+  if (isPlainObject(rawNode) && typeof rawNode.$ref === 'string' && n === rawNode) {
+    const ref = rawNode.$ref;
+    const seen = ctx.refSeen || (ctx.refSeen = new Set());
+    if (!seen.has(ref)) {
+      seen.add(ref);
+      out.push(diag('warning', 'D013', ip, ctx.type,
+        'schema 引用 "' + ref + '" 解析不到（知识库里没有这个 title）；这一段没有被校验。',
+        'The schema reference "' + ref + '" does not resolve (no such title in the knowledge ' +
+        'base); this part was not checked.'));
+    }
+  }
   // null 视为「未设置 / 可空」，全部检查跳过
   if (value === null || value === undefined) return;
 
   /* ---- D003 / D007 类型 ---- */
-  const want = typeof n.type === 'string'
-    ? n.type
-    : (isPlainObject(n.properties) ? 'object' : null);
-  if (want && !typeMatches(want, value)) {
-    const code = (want === 'array' || fromItems) ? 'D007' : 'D003';
+  const declaredTypes = Array.isArray(n.type)
+    ? n.type.filter(function (t) { return typeof t === 'string'; })
+    : (typeof n.type === 'string' ? [n.type] : null);
+  const wantTypes = (declaredTypes && declaredTypes.length)
+    ? declaredTypes
+    : (isPlainObject(n.properties) ? ['object'] : null);
+  if (wantTypes && !wantTypes.some(function (t) { return typeMatches(t, value); })) {
+    const want = wantTypes.join('|');
+    const code = (wantTypes.indexOf('array') >= 0 || fromItems) ? 'D007' : 'D003';
     out.push(diag('error', code, ip, ctx.type,
       '类型不符：期望 ' + want + '，实际 ' + jsonTypeOf(value) + '（' + describe(value) + '）',
       'Type mismatch: expected ' + want + ', got ' + jsonTypeOf(value) + ' (' + describe(value) + ')',
@@ -1039,6 +1305,9 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
       'Invalid enum value: ' + describe(value) + '; allowed: ' + n.enum.join(' | '),
       { expected: n.enum.join('|'), actual: typeof value === 'string' ? value : jsonTypeOf(value) }));
   }
+
+  /* ---- D012 schema 关键字约束（G6） ---- */
+  checkConstraints(n, value, ip, ctx, out, schema);
 
   /* ---- D005 / D006 语义字段 ---- */
   const desc = typeof n.description === 'string' ? n.description : '';
@@ -1055,6 +1324,15 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
     : (typeof n[X_REF_KEY] === 'string' && n[X_REF_KEY] ? n[X_REF_KEY] : null);
   if (refTarget) checkReference(refTarget, value, ip, ctx, out, isRequired);
   else if (RE_SPRITE_DESC.test(desc) || n[X_SPRITE_KEY] === true) checkSprite(value, ip, ctx, out);
+
+  /* ---- G9：Addressables 地址（schema 只有一句 "Addressable asset address"） ---- */
+  if (ADDRESSABLE_DESC.test(desc)) {
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i += 1) checkAddressable(value[i], ip + '[' + i + ']', ctx, out);
+    } else {
+      checkAddressable(value, ip, ctx, out);
+    }
+  }
 
   /* ---- 对象 ---- */
   if (isPlainObject(value)) {
@@ -1082,13 +1360,21 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
           { expected: key, actual: hasOwn(value, key) ? describe(value[key]) : 'undefined' }));
       }
     }
-    // D002：未声明的字段
+    // D002：未声明的字段（schema 明确 additionalProperties:false 时升级为 error）
     for (const key of Object.keys(value)) {
       if (!hasOwn(props, key)) {
-        out.push(diag('warning', 'D002', ip ? ip + '.' + key : key, ctx.type,
-          'schema 中未声明的字段 "' + key + '"（可能是拼写错误，游戏不会读取它）。',
-          'Undeclared field "' + key + '" (possible typo; the game will ignore it).',
-          { expected: Object.keys(props).join('|'), actual: key }));
+        if (n.additionalProperties === false) {
+          out.push(diag('error', 'D012', ip ? ip + '.' + key : key, ctx.type,
+            'schema 不允许字段 "' + key + '"（additionalProperties: false），游戏不会读取它。',
+            'The schema does not allow field "' + key + '" (additionalProperties: false); ' +
+            'the game will not read it.',
+            { expected: Object.keys(props).join('|'), actual: key }));
+        } else {
+          out.push(diag('warning', 'D002', ip ? ip + '.' + key : key, ctx.type,
+            'schema 中未声明的字段 "' + key + '"（可能是拼写错误，游戏不会读取它）。',
+            'Undeclared field "' + key + '" (possible typo; the game will ignore it).',
+            { expected: Object.keys(props).join('|'), actual: key }));
+        }
       }
     }
 
@@ -1178,7 +1464,10 @@ function validateDefine(type, obj, opts) {
     localTechNameCache: new Map(),
     // G46：包级校验时由 validateModPackage 传进来，一张图/一个 WAV 只体检一次
     headCache: o.headCache instanceof Map ? o.headCache : new Map(),
-    formatSeen: o.formatSeen instanceof Set ? o.formatSeen : new Set()
+    formatSeen: o.formatSeen instanceof Set ? o.formatSeen : new Set(),
+    // G6：同一个解析不到的 $ref 在一次定义校验里只报一次
+    refSeen: new Set(),
+    depth: 0
   };
 
   validateNode(schema, schema, obj, '', ctx, out, false, false);
@@ -1548,6 +1837,8 @@ function validateModPackage(modRoot, opts) {
     // 节点身份 = (title, subtitle)。本作 Yarn 方言用 subtitle 区分同一 title 的多个片段。
     const nodeIndex = new Map();  // key -> [{ rel, line, title, subtitle }]
     const titleIndex = o.strictYarnTitles ? new Map() : null;
+    // G7：`#line:` id -> [{ rel, line }]（对话行与选项行）
+    const yarnLineIds = new Map();
 
     for (const abs of yarnFiles) {
       const rel = relPosix(root, abs);
@@ -1566,6 +1857,26 @@ function validateModPackage(modRoot, opts) {
           'Yarn file is not valid UTF-8 text (contains U+FFFD replacement character).'));
       }
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+
+      /*
+       * G7：把这一文件里所有带 `#line:` 的行（对话行与选项行）收进反向索引。
+       * Y103 只报「缺少 id」，这里关心的是「id 在本地化表里有没有对应行」。
+       */
+      let parsedYarn = null;
+      try { parsedYarn = yarnCore.parseYarn(text); } catch (err) { parsedYarn = null; }
+      if (parsedYarn) {
+        const recordId = function (item) {
+          if (!item || !item.id) return;
+          const norm = String(item.id).replace(/^line:/i, '').toLowerCase();
+          let bucket = yarnLineIds.get(norm);
+          if (!bucket) { bucket = []; yarnLineIds.set(norm, bucket); }
+          bucket.push({ rel: rel, line: item.line });
+        };
+        for (const node of parsedYarn.nodes) {
+          for (const ln of node.lines || []) recordId(ln);
+          for (const opt of node.options || []) recordId(opt);
+        }
+      }
 
       const lines = text.split(/\r?\n/);
       let cur = null;
@@ -1655,6 +1966,8 @@ function validateModPackage(modRoot, opts) {
     csvFileCount = csvFiles.length;
 
     const csvRows = [];
+    // G7：本地化表里的 `line:<7 hex>` id -> 出现过的表文件（用于与 Yarn 双向核对）
+    const tableLineIds = new Map();
     for (const abs of csvFiles) {
       const rel = relPosix(root, abs);
       let text = null;
@@ -1676,6 +1989,27 @@ function validateModPackage(modRoot, opts) {
       const obs = checkCsvTable(abs, rel, diagnostics);
       if (obs) csvObservations.push(obs);
       csvRows.push({ rel: rel, lines: lines.length });
+
+      /*
+       * G7：解析整张表的 id 列。语料里的表是 11 张 × 18k 行，一次读完再按 RFC 4180
+       * 处理引号；只有首行以 language, 开头的表才当作本地化表（与上面的过滤一致）。
+       */
+      const tableRows = parseCsvText(text);
+      let idCol = -1;
+      if (tableRows.length) {
+        const head = tableRows[0].map(function (c) { return c.trim(); });
+        idCol = head.indexOf('id');
+      }
+      if (idCol >= 0) {
+        for (let ri = 1; ri < tableRows.length; ri += 1) {
+          const m = /^line:([0-9a-fA-F]+)$/.exec((tableRows[ri][idCol] || '').trim());
+          if (!m) continue;
+          const norm = m[1].toLowerCase();
+          let bucket = tableLineIds.get(norm);
+          if (!bucket) { bucket = []; tableLineIds.set(norm, bucket); }
+          bucket.push(rel);
+        }
+      }
     }
     if (csvRows.length > 1) {
       const counts = [];
@@ -1685,6 +2019,81 @@ function validateModPackage(modRoot, opts) {
           '本地化 CSV 行数不一致：' + csvRows.map((r) => r.rel + '=' + r.lines).join(', '),
           'Localisation CSV row counts differ: ' +
           csvRows.map((r) => r.rel + '=' + r.lines).join(', ')));
+      }
+    }
+
+    /* ---------------- G7：`#line:` 与本地化表双向核对 ---------------- */
+    // 行数与表头只能说明「表像不像游戏导出的表」；这里核对的是「这一行到底有没有译文」：
+    // Yarn 里带 id 的行在表里找不到 → 该行永远显示原文；表里有 id 而 Yarn 里没有 → 译文
+    // 永远不出现（删行/改 id 之后最常见）。id 的契约是 line:<7 位 hex>，语料里的演示 id
+    // （#line:e4f5g6h 之类）不参与核对，只用一条 info 说明。
+    if (yarnLineIds.size || tableLineIds.size) {
+      const hexIds = [];
+      for (const [id, where] of yarnLineIds) {
+        if (LINE_ID_CONTRACT.test(id)) hexIds.push({ id: id, where: where });
+      }
+
+      if (tableLineIds.size) {
+        const missing = hexIds.filter(function (entry) { return !tableLineIds.has(entry.id); });
+        if (missing.length) {
+          const sample = missing.slice(0, 6).map(function (entry) {
+            return 'line:' + entry.id + '（' + entry.where[0].rel + ':' + entry.where[0].line + '）';
+          }).join('、');
+          diagnostics.push(diag('warning', 'D014', missing[0].where[0].rel, '',
+            missing.length + ' 个对话行带 #line:，但本地化表里没有对应 id：' + sample +
+            (missing.length > 6 ? ' 等' : '') + '。这些行没有译文，游戏里只会显示原文。',
+            missing.length + ' dialogue line(s) carry a #line: id with no row in the localisation ' +
+            'tables: ' + sample + (missing.length > 6 ? ', …' : '') +
+            '. Those lines have no translation and will show the original text.'));
+        }
+      }
+
+      const orphans = [];
+      for (const [id, rels] of tableLineIds) {
+        if (!yarnLineIds.has(id)) orphans.push({ id: id, rel: rels[0] });
+      }
+      if (orphans.length) {
+        diagnostics.push(diag('warning', 'D015', orphans[0].rel, '',
+          orphans.length + ' 个本地化行在 Yarn 里找不到对应的 #line:（行被删掉或 id 改过）：' +
+          orphans.slice(0, 6).map(function (o) { return 'line:' + o.id; }).join('、') +
+          (orphans.length > 6 ? ' 等' : '') + '。这些译文永远不会出现在游戏里。',
+          orphans.length + ' localisation row(s) have no matching #line: in any Yarn file ' +
+          '(the line was deleted or its id changed): ' +
+          orphans.slice(0, 6).map(function (o) { return 'line:' + o.id; }).join(', ') +
+          (orphans.length > 6 ? ', …' : '') + '. Those translations will never appear in the game.'));
+      }
+
+      const repeated = [];
+      for (const [id, where] of yarnLineIds) {
+        if (where.length < 2) continue;
+        const rels = [];
+        for (const w of where) if (rels.indexOf(w.rel) < 0) rels.push(w.rel);
+        if (rels.length > 1) repeated.push({ id: id, rels: rels });
+      }
+      if (repeated.length) {
+        diagnostics.push(diag('warning', 'D016', repeated[0].rels[0], '',
+          repeated.length + ' 个 #line: id 同时出现在多个 Yarn 文件里：' +
+          repeated.slice(0, 5).map(function (r) {
+            return 'line:' + r.id + '（' + r.rels.join(' | ') + '）';
+          }).join('、') + '。同一个 id 只能对应一行，否则翻译会串行。',
+          repeated.length + ' #line: id(s) appear in more than one Yarn file: ' +
+          repeated.slice(0, 5).map(function (r) {
+            return 'line:' + r.id + ' (' + r.rels.join(' | ') + ')';
+          }).join(', ') + '. One id belongs to one line, otherwise translations are ambiguous.'));
+      }
+
+      const nonContract = [];
+      for (const [id] of yarnLineIds) {
+        if (!LINE_ID_CONTRACT.test(id)) nonContract.push(id);
+      }
+      if (nonContract.length && tableLineIds.size) {
+        diagnostics.push(diag('info', 'D017', 'Yarn', '',
+          nonContract.length + ' 个 #line: id 不是 line:<7 位 hex> 的约定形式（例：' +
+          nonContract.slice(0, 5).map(function (id) { return '#line:' + id; }).join('、') +
+          '）；这些行不会出现在本地化表里，也无法核对译文。',
+          nonContract.length + ' #line: id(s) do not follow the line:<7 hex> contract (e.g. ' +
+          nonContract.slice(0, 5).map(function (id) { return '#line:' + id; }).join(', ') +
+          '); they never appear in the localisation tables and cannot be cross-checked.'));
       }
     }
   }
