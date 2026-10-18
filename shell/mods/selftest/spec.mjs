@@ -603,6 +603,172 @@ section("audio references and the #vo tag (G21)");
     JSON.stringify(deprecatedCodes.map((d) => d.code + ":" + d.severity)));
 }
 
+section("asset formats the game would silently mishandle (G46)");
+
+{
+  const kb = specMods.knowledge();
+
+  function assetPackage(prefix) {
+    const root = join(specTemp(prefix), "AssetMod");
+    specWrite(join(root, "mod.json"), JSON.stringify({
+      name: "AssetMod",
+      version: "1.0.0",
+      gameVersion: "1.0",
+      author: "selftest",
+      description: "selftest fixture: asset formats",
+    }, null, 2) + "\n");
+    return root;
+  }
+
+  function diagsOf(root) {
+    return validateCore.validateModPackage(root, {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics;
+  }
+
+  /* PNG：8-bit RGBA 静默；RGB 给 info；16-bit/隔行给警告；非 PNG 给 error。 */
+  function pngBytes(bitDepth, colorType, interlace) {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8);
+    b.write("IHDR", 12, "ascii");
+    b.writeUInt32BE(1, 16);
+    b.writeUInt32BE(1, 20);
+    b[24] = bitDepth;
+    b[25] = colorType;
+    b[26] = 0;
+    b[27] = 0;
+    b[28] = interlace;
+    return b;
+  }
+  const pngRoot = assetPackage("infantgod-png-");
+  specWrite(join(pngRoot, "Defines", "Attr", "ZzRgba.json"),
+    JSON.stringify({ techName: "ZzRgba", icon: "Art/rgba.png" }, null, 2) + "\n");
+  specWrite(join(pngRoot, "Defines", "Attr", "ZzRgb.json"),
+    JSON.stringify({ techName: "ZzRgb", icon: "Art/rgb.png" }, null, 2) + "\n");
+  specWrite(join(pngRoot, "Defines", "Attr", "ZzDeep.json"),
+    JSON.stringify({ techName: "ZzDeep", icon: "Art/deep.png" }, null, 2) + "\n");
+  specWrite(join(pngRoot, "Defines", "Attr", "ZzFake.json"),
+    JSON.stringify({ techName: "ZzFake", icon: "Art/fake.png" }, null, 2) + "\n");
+  mkdirSync(join(pngRoot, "Art"), { recursive: true });
+  writeFileSync(join(pngRoot, "Art", "rgba.png"), pngBytes(8, 6, 0));
+  writeFileSync(join(pngRoot, "Art", "rgb.png"), pngBytes(8, 2, 0));
+  writeFileSync(join(pngRoot, "Art", "deep.png"), pngBytes(16, 6, 0));
+  writeFileSync(join(pngRoot, "Art", "fake.png"), Buffer.from("not a png at all"));
+  const pngDiags = diagsOf(pngRoot).filter((d) => d.code === "D007");
+  check("an 8-bit RGBA PNG passes without a D007",
+    !pngDiags.some((d) => d.message.indexOf("rgba.png") >= 0),
+    JSON.stringify(pngDiags.map((d) => d.message)));
+  check("an 8-bit RGB PNG is an info that saving will rewrite it as RGBA",
+    pngDiags.some((d) => d.severity === "info" && d.message.indexOf("RGB") >= 0 &&
+      d.message.indexOf("RGBA") >= 0), JSON.stringify(pngDiags.map((d) => d.severity + ":" + d.message)));
+  check("a 16-bit PNG is a warning the pixel card cannot open it",
+    pngDiags.some((d) => d.severity === "warning" && d.message.indexOf("16") >= 0),
+    JSON.stringify(pngDiags.map((d) => d.severity + ":" + d.message)));
+  check("a .png that is not a PNG is an error about the signature",
+    pngDiags.some((d) => d.severity === "error" && d.message.indexOf("签名") >= 0),
+    JSON.stringify(pngDiags.map((d) => d.severity + ":" + d.message)));
+
+  /* WAV：PCM 44.1k 静默；非 PCM 警告；不是 RIFF/WAVE error；44.1k 以外的采样率 info。 */
+  function wavBytes(format, channels, rate) {
+    const b = Buffer.alloc(44);
+    b.write("RIFF", 0, "ascii");
+    b.writeUInt32LE(36, 4);
+    b.write("WAVE", 8, "ascii");
+    b.write("fmt ", 12, "ascii");
+    b.writeUInt32LE(16, 16);
+    b.writeUInt16LE(format, 20);
+    b.writeUInt16LE(channels, 22);
+    b.writeUInt32LE(rate, 24);
+    b.writeUInt32LE(rate * channels * 2, 28);
+    b.writeUInt16LE(channels * 2, 32);
+    b.writeUInt16LE(16, 34);
+    b.write("data", 36, "ascii");
+    b.writeUInt32LE(0, 40);
+    return b;
+  }
+  const wavRoot = assetPackage("infantgod-wav-");
+  specWrite(join(wavRoot, "Defines", "Song", "ZzPcm.json"),
+    JSON.stringify({ techName: "ZzPcm", externalAudioFile: "Audio/pcm.wav" }, null, 2) + "\n");
+  specWrite(join(wavRoot, "Defines", "Song", "ZzFloat.json"),
+    JSON.stringify({ techName: "ZzFloat", externalAudioFile: "Audio/float.wav" }, null, 2) + "\n");
+  specWrite(join(wavRoot, "Defines", "Song", "ZzSlow.json"),
+    JSON.stringify({ techName: "ZzSlow", externalAudioFile: "Audio/slow.wav" }, null, 2) + "\n");
+  specWrite(join(wavRoot, "Defines", "Song", "ZzBroken.json"),
+    JSON.stringify({ techName: "ZzBroken", externalAudioFile: "Audio/broken.wav" }, null, 2) + "\n");
+  mkdirSync(join(wavRoot, "Audio"), { recursive: true });
+  writeFileSync(join(wavRoot, "Audio", "pcm.wav"), wavBytes(1, 1, 44100));
+  writeFileSync(join(wavRoot, "Audio", "float.wav"), wavBytes(3, 2, 44100));
+  writeFileSync(join(wavRoot, "Audio", "slow.wav"), wavBytes(1, 1, 22050));
+  writeFileSync(join(wavRoot, "Audio", "broken.wav"), Buffer.from("NOPE-not-a-wav-file-at-all"));
+  const wavDiags = diagsOf(wavRoot).filter((d) => d.code === "D008");
+  check("a PCM 44.1 kHz WAV passes without a D008",
+    !wavDiags.some((d) => d.message.indexOf("pcm.wav") >= 0),
+    JSON.stringify(wavDiags.map((d) => d.message)));
+  check("a non-PCM WAV is a warning",
+    wavDiags.some((d) => d.severity === "warning" && d.message.indexOf("format 3") >= 0),
+    JSON.stringify(wavDiags.map((d) => d.severity + ":" + d.message)));
+  check("a 22.05 kHz WAV is an info about the corpus being 44.1 kHz",
+    wavDiags.some((d) => d.severity === "info" && d.message.indexOf("22050") >= 0),
+    JSON.stringify(wavDiags.map((d) => d.severity + ":" + d.message)));
+  check("a file named .wav that is not RIFF/WAVE is an error",
+    wavDiags.some((d) => d.severity === "error" && d.message.indexOf("RIFF") >= 0),
+    JSON.stringify(wavDiags.map((d) => d.severity + ":" + d.message)));
+
+  /* Spine 三件套：缺图集 / 页图缺失 / 版本不对 / 孤立图集。 */
+  function skelBytes(version) {
+    const b = Buffer.alloc(8 + 2 + version.length);
+    b.fill(0xab, 0, 8);
+    b[8] = 0x0a; // 长度前缀：不重要，扫描只找版本字符串
+    b.write(version, 9, "latin1");
+    return b;
+  }
+  const spineRoot = assetPackage("infantgod-spine-");
+  mkdirSync(join(spineRoot, "Defines", "Spine"), { recursive: true });
+  writeFileSync(join(spineRoot, "Defines", "Spine", "NoAtlas.skel.bytes"), skelBytes("4.2.43"));
+  specWrite(join(spineRoot, "Defines", "Spine", "Gone.atlas.txt"),
+    "Gone\nsize: 8,8\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n");
+  writeFileSync(join(spineRoot, "Defines", "Spine", "NoPage.skel.bytes"), skelBytes("4.2.43"));
+  specWrite(join(spineRoot, "Defines", "Spine", "NoPage.atlas.txt"),
+    "NoPage.png\nsize: 8,8\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n");
+  specWrite(join(spineRoot, "Defines", "Spine", "Old.atlas.txt"),
+    "Old.png\nsize: 8,8\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\n");
+  writeFileSync(join(spineRoot, "Defines", "Spine", "Old.skel.bytes"), skelBytes("4.0.12"));
+  writeFileSync(join(spineRoot, "Defines", "Spine", "Old.png"), pngBytes(8, 6, 0));
+  const spineDiags = diagsOf(spineRoot).filter((d) => d.code === "D009");
+  check("a skeleton without its atlas is an error",
+    spineDiags.some((d) => d.severity === "error" && d.message.indexOf("缺图集") >= 0),
+    JSON.stringify(spineDiags.map((d) => d.severity + ":" + d.message)));
+  check("an atlas whose page image is missing is an error naming the page",
+    spineDiags.some((d) => d.severity === "error" && d.message.indexOf("NoPage.png") >= 0),
+    JSON.stringify(spineDiags.map((d) => d.severity + ":" + d.message)));
+  check("a skeleton from before 4.2.x is an error the runtime cannot read it",
+    spineDiags.some((d) => d.severity === "error" && d.message.indexOf("4.0.12") >= 0),
+    JSON.stringify(spineDiags.map((d) => d.severity + ":" + d.message)));
+  check("an atlas without its skeleton is an error",
+    spineDiags.some((d) => d.severity === "error" && d.message.indexOf("没有对应的骨架") >= 0),
+    JSON.stringify(spineDiags.map((d) => d.severity + ":" + d.message)));
+
+  /* CSV：列数 / lock 列；BOM 不一致只报一句包级 info。 */
+  const csvRoot = assetPackage("infantgod-csv-");
+  specWrite(join(csvRoot, "NewProject.csv"), "language,key,text\r\nen,KEY1,English\r\n");
+  specWrite(join(csvRoot, "Yarn", "NewProject_de.csv"),
+    "\uFEFFlanguage,key,text,line,lock\r\nde,KEY1,Deutsch,line:1,false\r\n");
+  specWrite(join(csvRoot, "Yarn", "NewProject_fr.csv"),
+    "\uFEFFlanguage,key,text\r\nfr,KEY1,Francais\r\n");
+  const csvDiags = diagsOf(csvRoot).filter((d) => d.code === "D010");
+  check("a table with the wrong number of columns is a warning",
+    csvDiags.some((d) => d.severity === "warning" && d.message.indexOf("3 列") >= 0),
+    JSON.stringify(csvDiags.map((d) => d.severity + ":" + d.message)));
+  check("a table without the lock column is a warning",
+    csvDiags.some((d) => d.severity === "warning" && d.message.indexOf("lock") >= 0),
+    JSON.stringify(csvDiags.map((d) => d.severity + ":" + d.message)));
+  const bomDiags = csvDiags.filter((d) => d.severity === "info" && d.message.indexOf("BOM") >= 0);
+  check("mixed BOM across the package is exactly one info, not one per table",
+    bomDiags.length === 1, JSON.stringify(bomDiags.map((d) => d.message)));
+}
+
 section("no state leaks between runs");
 
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });

@@ -16,6 +16,38 @@ stands in this tree.
 
 ## Unreleased
 
+### The validator reads the asset bytes, not just the file names
+
+- `D007` looks at a sprite PNG's `IHDR`.  A `.png` whose header is not the PNG
+  signature is an error; a bit depth, colour type or interlacing the pixel card
+  cannot open is a warning; a plain 8-bit RGB image is an info that saving it from
+  the card rewrites it as RGBA (the pixels survive, the colour type does not).
+- `D008` walks a WAV's `RIFF`/`fmt ` chunks.  Not RIFF/WAVE is an error, a non-PCM
+  format or a channel count other than mono/stereo is a warning, and a sample rate
+  other than 44.1 kHz is an info.  The corpus measures the same everywhere: 6 WAVs,
+  all 44.1 kHz 16-bit PCM.
+- `D009` scans a package for Spine triples without waiting for a definition to point
+  at them: a `.skel.bytes` with no `.atlas.txt`, an atlas page image the atlas names
+  but that is missing, an atlas with no skeleton, and a skeleton from before 4.2.x
+  are errors (the runtime cannot load them); a 4.2.x that is not 4.2.43 is a warning
+  because 4.2.x still reads.  All 79 triples in the corpus are 4.2.43 and quiet.
+- `D010` reads the first 4 KB of each localisation table: a column count other than
+  eight or a missing `lock` column is a warning, and a package whose tables disagree
+  on the UTF-8 BOM or on CRLF line endings gets one info naming both groups.  That
+  is a true finding on the shipped corpus — its base `NewProject.csv` has no BOM
+  while the other ten do — and the message says to keep each table's original bytes
+  instead of normalising them.
+- Headers are read once per package, so a sprite several definitions point at is
+  reported once; `validatePackage(SODefines)` still reports exactly its two `D006`
+  errors, plus 18 `D007` infos (the RGB sprites the definitions actually reference)
+  and one `D010` info (the mixed BOM); `MyMod` reports one `D010` info and no errors.
+- Evidence: `shell/mods/selftest.mjs` is 464 checks (was 449).  The fifteen new ones
+  cover RGBA/RGB/16-bit/not-a-PNG, PCM/non-PCM/22.05 kHz/not-RIFF, a skeleton
+  without its atlas, an atlas page that is missing, an old 4.0.x skeleton, an atlas
+  without its skeleton, a wrong column count, a missing `lock` column, and the mixed
+  BOM being one info rather than one per table.  `build/_sabotage_g46.py` disables
+  the four branches and the suite reads `457/464`, `mods: FAIL (7)`.
+
 ### The editor can hear the audio a definition points at
 
 - `D006` used to mean only "a sprite path is missing".  It now also covers the

@@ -349,7 +349,7 @@ exists without a spec counterpart.
 
 ### Defines (`shell/mods/validate.js`)
 
-`D001`–`D007` and `M001`–`M008` predate this spec and check the JSON package
+`D001`–`D006` and `M001`–`M008` predate this spec and check the JSON package
 against `knowledge.json`'s schemas; they are not part of the Yarn rule set and are
 unchanged. `D005` (a `TechName reference to …` points at nothing) and `D006` (a
 `Relative path to …` file is missing) have the same conditions as spec CR-301 and
@@ -377,6 +377,28 @@ The `mod.validatePackage` verb passes the game's Mods folder in as
 `gameMods: { dir, readable }`; `shell/mods/index.js` fills it from the folder
 discovery it already does. Without that information the checker still runs, but it
 only compares this package with itself.
+
+`G46` adds header-only format checks for the files a definition points at, and for
+the package's own asset files. `D007` looks at a PNG's IHDR: a header that is not a
+PNG is an error, while a bit depth, colour type or interlacing the pixel card cannot
+open is a warning, and a plain 8-bit RGB image is an info that saving from the card
+rewrites it as RGBA (the pixels survive, the colour type does not). `D008` walks a
+WAV's `RIFF`/`fmt ` chunks: not RIFF/WAVE is an error, a non-PCM format or a channel
+count other than mono/stereo is a warning, and a sample rate other than 44.1 kHz is
+an info. `D009` scans the package for Spine triples without looking at any
+definition: a `.skel.bytes` with no `.atlas.txt`, an atlas page image the atlas names
+but that is missing, an atlas with no skeleton, and a skeleton that is not 4.2.x are
+errors; a 4.2.x that is not 4.2.43 is a warning. `D010` reads the first 4 KB of each
+localisation table: wrong column count or a missing `lock` column is a warning, and a
+package whose tables disagree on the UTF-8 BOM or on CRLF line endings gets one info
+naming both groups (the shipped corpus is exactly that — its base `NewProject.csv`
+carries no BOM while the other ten do — and the message says to keep each table's
+original bytes rather than normalising them).
+
+These checks are calibrated so that the shipped corpus is quiet: `SODefines` still
+reports exactly the same 2 `D006` errors, plus one `D007` info per referenced RGB PNG
+(18 in the shipped package) and one `D010` info for the mixed BOM. Headers are read
+once per package, so a sprite used by several definitions is reported once.
 
 ### What of §11 is implemented
 
@@ -539,7 +561,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 449 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 464 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

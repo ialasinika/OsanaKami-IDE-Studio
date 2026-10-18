@@ -65,6 +65,13 @@
  *                    游戏对重复的 (类型, TechName) 保留先加载的那一份，后一份被静默丢弃（G3）
  *      D006（音频分支，G21）error  Song.externalAudioFile / VoiceOverDefinition.voiceOverFolder
  *                    或 voiceOverFiles[] 指向的文件/目录在 Mod 根目录下不存在
+ *      D007（G46）warning/info  PNG 的位深/色型/隔行：像素卡打不开的变体是 warning，
+ *                    8-bit RGB 是 info（像素卡保存会写成 RGBA）
+ *      D008（G46）error/warning   WAV 头：不是 RIFF/WAVE/PCM 的报出来；采样率不是 44.1 kHz 是 info
+ *      D009（G46）error/warning   Spine 三件套：缺图集/图集里的页图不存在/图集没有骨架是
+ *                    error，骨架版本不是 4.2.43 是 warning（4.2.x 其余版本仍能读）
+ *      D010（G46）warning/info   本地化 CSV：表头不是 8 列或缺 lock 列是 warning，
+ *                    缺 BOM 或只有 LF 行尾是 info（游戏自己导出的表是 BOM + CRLF）
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -589,7 +596,7 @@ function fileExistsCached(p, ctx) {
   return ok;
 }
 
-/** D006：图片文件存在性（只有给了 modRoot 才检查）。 */
+/** D006：图片文件存在性（只有给了 modRoot 才检查）；G46 顺带体检 PNG 头。 */
 function checkSprite(value, jsonPath, ctx, out) {
   if (typeof value !== 'string') return;
   const raw = value.trim();
@@ -598,7 +605,9 @@ function checkSprite(value, jsonPath, ctx, out) {
 
   const cands = spriteCandidates(ctx.modRoot, raw);
   for (const c of cands) {
-    if (fileExistsCached(c, ctx)) return;
+    if (!fileExistsCached(c, ctx)) continue;
+    checkPngFormat(c, jsonPath, ctx, out);
+    return;
   }
   out.push(diag('error', 'D006', jsonPath, ctx.type,
     '图片文件不存在：' + raw + '（在 Mod 根目录下尝试了 ' + cands.length + ' 个候选路径）',
@@ -620,7 +629,7 @@ function audioCandidates(modRoot, raw, folder) {
   return out;
 }
 
-/** D006（G21 音频分支）：音频文件存在性。 */
+/** D006（G21 音频分支）：音频文件存在性；G46 顺带体检 WAV 头。 */
 function checkAudioFile(raw, jsonPath, ctx, out, folder) {
   if (typeof raw !== 'string') return;
   const value = raw.trim();
@@ -628,7 +637,9 @@ function checkAudioFile(raw, jsonPath, ctx, out, folder) {
   if (!ctx.modRoot) return;
   const cands = audioCandidates(ctx.modRoot, value, folder);
   for (const c of cands) {
-    if (fileExistsCached(c, ctx)) return;
+    if (!fileExistsCached(c, ctx)) continue;
+    checkWavFormat(c, jsonPath, ctx, out);
+    return;
   }
   out.push(diag('error', 'D006', jsonPath, ctx.type,
     '音频文件不存在：' + value + '（在 Mod 根目录下尝试了 ' + cands.length + ' 个候选路径）',
@@ -654,6 +665,272 @@ function checkAudioFolder(raw, jsonPath, ctx, out) {
     '音频目录不存在：' + value + '（voiceOverFolder 必须是 Mod 根目录下的目录）',
     'Audio folder not found: ' + value + ' (voiceOverFolder must be a folder under the mod root)',
     { expected: 'modRoot 下存在的目录', actual: value }));
+}
+
+/* ------------------------------------------------------------------ *
+ * G46：文件格式体检
+ *
+ * 这层只读文件头，不解析整个文件：PNG 的 IHDR、WAV 的 RIFF/fmt 块、Spine 骨架
+ * 开头的版本字符串、本地化 CSV 的表头与字节序。阈值来自语料实测（docs/EDITOR_GAPS.md
+ * §18.3）：1461 张 PNG 全是 8-bit 非隔行（1436 RGBA + 25 RGB），6 个 WAV 全是
+ * 44.1 kHz 16-bit PCM，79 组 Spine 全是 4.2.43；11 张本地化表里基础表
+ * NewProject.csv 不带 BOM，其余 10 张是 BOM + CRLF + 8 列且带 lock。所以语料上只有
+ * 两种真话：被引用的 18 张 RGB PNG 各一条 info，以及包级「BOM 不一致」一句；
+ * Spine 与 WAV 全干净。检查只在真的偏离时说话。
+ * ------------------------------------------------------------------ */
+
+/** 读文件开头的 n 个字节，按 `abs|n` 缓存在 ctx 上；读不到返回 null。 */
+function readHeadCached(abs, n, ctx) {
+  if (!ctx.headCache) ctx.headCache = new Map();
+  const key = abs + '|' + n;
+  if (ctx.headCache.has(key)) return ctx.headCache.get(key);
+  let out = null;
+  try {
+    const fd = fs.openSync(abs, 'r');
+    try {
+      const buf = Buffer.alloc(n);
+      const got = fs.readSync(fd, buf, 0, n, 0);
+      out = buf.subarray(0, got);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    out = null;
+  }
+  ctx.headCache.set(key, out);
+  return out;
+}
+
+/** 同一个文件同一种码只报一次（一张图会被很多定义引用）。 */
+function formatDiagOnce(ctx, out, abs, code, severity, jsonPath, type, zh, en, extra) {
+  if (!ctx.formatSeen) ctx.formatSeen = new Set();
+  const key = abs + '|' + code;
+  if (ctx.formatSeen.has(key)) return;
+  ctx.formatSeen.add(key);
+  out.push(diag(severity, code, jsonPath, type, zh, en, extra));
+}
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** D007：PNG 的位深 / 色型 / 隔行。图片存在时由 checkSprite 调用。 */
+function checkPngFormat(abs, jsonPath, ctx, out) {
+  const b = readHeadCached(abs, 33, ctx);
+  if (!b || b.length < 8) return; // 读不到：存在性检查已经管了
+  let sig = true;
+  for (let i = 0; i < PNG_SIGNATURE.length; i++) if (b[i] !== PNG_SIGNATURE[i]) sig = false;
+  if (!sig) {
+    formatDiagOnce(ctx, out, abs, 'D007', 'error', jsonPath, ctx.type,
+      '文件扩展名是 .png，但文件头不是 PNG 签名（可能是别的图片格式改了后缀）。',
+      'The file is named .png but its header is not the PNG signature (it may be another image format renamed).');
+    return;
+  }
+  if (b.length < 33) {
+    formatDiagOnce(ctx, out, abs, 'D007', 'warning', jsonPath, ctx.type,
+      'PNG 的 IHDR 块不完整（文件可能被截断）。',
+      'The PNG IHDR chunk is incomplete (the file may be truncated).');
+    return;
+  }
+  const bitDepth = b[24];
+  const colorType = b[25];
+  const interlace = b[28];
+  const unsupported = bitDepth !== 8 || (colorType !== 2 && colorType !== 6) || interlace !== 0;
+  if (unsupported) {
+    formatDiagOnce(ctx, out, abs, 'D007', 'warning', jsonPath, ctx.type,
+      '像素卡打不开这种 PNG（位深 ' + bitDepth + '，色型 ' + colorType + '，隔行 ' + interlace +
+        '）；它只读 8-bit RGB/RGBA、非隔行，保存会另存成 8-bit RGBA。',
+      'The pixel card cannot open this PNG (bit depth ' + bitDepth + ', colour type ' + colorType +
+        ', interlace ' + interlace + '); it reads 8-bit RGB/RGBA, non-interlaced only, and saving rewrites 8-bit RGBA.',
+      { expected: '8-bit RGB/RGBA, non-interlaced', actual: 'bit ' + bitDepth + '/type ' + colorType + '/interlace ' + interlace });
+  } else if (colorType === 2) {
+    formatDiagOnce(ctx, out, abs, 'D007', 'info', jsonPath, ctx.type,
+      '这张 PNG 是 RGB（没有 alpha）；像素卡保存时会写成 RGBA，色型改变、像素不变。',
+      'This PNG is RGB (no alpha); saving it from the pixel card rewrites it as RGBA — the colour type changes, the pixels do not.',
+      { expected: 'RGBA', actual: 'RGB' });
+  }
+}
+
+/** D008：WAV 头。音频文件存在时由 checkAudioFile 调用。 */
+function checkWavFormat(abs, jsonPath, ctx, out) {
+  const b = readHeadCached(abs, 4096, ctx);
+  if (!b || b.length < 12) return; // 读不到/太短：存在性检查已经管了
+  if (b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE') {
+    formatDiagOnce(ctx, out, abs, 'D008', 'error', jsonPath, ctx.type,
+      '不是 RIFF/WAVE 文件（Fmod 读不了这个音频）。',
+      'Not a RIFF/WAVE file (Fmod cannot read this audio).',
+      { expected: 'RIFF/WAVE', actual: b.toString('ascii', 0, 12) });
+    return;
+  }
+  let fmt = null;
+  let off = 12;
+  while (off + 8 <= b.length) {
+    const id = b.toString('ascii', off, off + 4);
+    const size = b.readUInt32LE(off + 4);
+    if (id === 'fmt ' && off + 8 + 16 <= b.length) {
+      fmt = {
+        format: b.readUInt16LE(off + 8),
+        channels: b.readUInt16LE(off + 10),
+        rate: b.readUInt32LE(off + 12),
+        bits: b.readUInt16LE(off + 22)
+      };
+      break;
+    }
+    if (size <= 0 || size > 4096) break; // 异常块长度：别再往下走
+    off += 8 + size + (size % 2);
+  }
+  if (!fmt) {
+    formatDiagOnce(ctx, out, abs, 'D008', 'error', jsonPath, ctx.type,
+      'WAV 里没有 fmt 块（文件头损坏）。',
+      'The WAV has no fmt chunk (its header is damaged).');
+    return;
+  }
+  if (fmt.format !== 1) {
+    formatDiagOnce(ctx, out, abs, 'D008', 'warning', jsonPath, ctx.type,
+      'WAV 不是 PCM（format ' + fmt.format + '）；Mods/Audio 按 Fmod Programmer Instrument 使用，' +
+        '其他编码可能播不出。',
+      'The WAV is not PCM (format ' + fmt.format + '); Mods/Audio is used as an Fmod Programmer Instrument, ' +
+        'so other encodings may not play.',
+      { expected: 'PCM (format 1)', actual: 'format ' + fmt.format });
+  }
+  if (fmt.rate !== 44100) {
+    formatDiagOnce(ctx, out, abs, 'D008', 'info', jsonPath, ctx.type,
+      '采样率 ' + fmt.rate + ' Hz，不是 44.1 kHz（语料里所有音频都是 44.1 kHz）。',
+      'Sample rate is ' + fmt.rate + ' Hz, not 44.1 kHz (every audio file in the corpus is 44.1 kHz).',
+      { expected: '44100 Hz', actual: String(fmt.rate) });
+  }
+  if (fmt.channels !== 1 && fmt.channels !== 2) {
+    formatDiagOnce(ctx, out, abs, 'D008', 'warning', jsonPath, ctx.type,
+      'WAV 是 ' + fmt.channels + ' 声道（语料只有单声道与立体声）。',
+      'The WAV has ' + fmt.channels + ' channel(s) (the corpus only has mono and stereo).',
+      { expected: '1 or 2 channels', actual: String(fmt.channels) });
+  }
+}
+
+/** Spine 骨架开头的版本字符串（8 字节 hash 之后是长度前缀的 "4.2.43"）。 */
+function spineVersionOf(abs, ctx) {
+  const b = readHeadCached(abs, 32, ctx);
+  if (!b || b.length < 10) return null;
+  const m = /4\.\d+\.\d+/.exec(b.toString('latin1'));
+  return m ? m[0] : null;
+}
+
+/**
+ * D009：Spine 三件套（`<Name>.skel.bytes` + `<Name>.atlas.txt` + 图集里的页图）。
+ * 包级扫描，不需要定义引用它——真机上少一张页图，立绘就是一整块空白。
+ */
+function auditSpineTriples(root, diagnostics) {
+  const files = listFilesRecursive(root, [], 0);
+  const rel = function (abs) { return relPosix(root, abs); };
+  const seen = new Set();
+  const add = function (severity, abs, zh, en, extra) {
+    const key = abs + '|D009';
+    if (seen.has(key)) return;
+    seen.add(key);
+    diagnostics.push(diag(severity, 'D009', rel(abs), '', zh, en, extra));
+  };
+
+  const lower = new Map();
+  for (const f of files) lower.set(f.toLowerCase(), f);
+  const skels = files.filter(function (f) { return /\.skel\.bytes$/i.test(f); });
+  const atlases = files.filter(function (f) { return /\.atlas\.txt$/i.test(f); });
+  const ctx = { headCache: null };
+
+  for (const skel of skels) {
+    const base = skel.replace(/\.skel\.bytes$/i, '');
+    const atlasPath = lower.get((base + '.atlas.txt').toLowerCase());
+    if (!atlasPath) {
+      add('error', skel,
+        'Spine 三件套缺图集：同目录应有 "' + path.basename(base) + '.atlas.txt"，否则游戏加载不出这套骨骼。',
+        'The Spine triple is missing its atlas: "' + path.basename(base) + '.atlas.txt" should sit beside it, ' +
+          'or the game cannot load this skeleton.',
+        { expected: path.basename(base) + '.atlas.txt', actual: '(missing)' });
+      continue;
+    }
+
+    const version = spineVersionOf(skel, ctx);
+    if (!version) {
+      add('warning', skel,
+        '读不出 Spine 骨架的版本字符串（文件头可能损坏，或不是 4.x 的 .skel.bytes）。',
+        'Could not read the Spine skeleton version string (the header may be damaged, or this is not a 4.x .skel.bytes).');
+    } else if (version !== '4.2.43') {
+      if (/^4\.2\./.test(version)) {
+        add('warning', skel,
+          'Spine 版本 ' + version + '；游戏自带的是 4.2.43。4.2.x 能读，但和游戏资源混用前建议用 4.2.43 重导出。',
+          'Spine version is ' + version + '; the game ships 4.2.43. 4.2.x still reads, but re-export with 4.2.43 ' +
+            'before mixing it with the game assets.',
+          { expected: '4.2.43', actual: version });
+      } else {
+        add('error', skel,
+          'Spine 版本 ' + version + ' 不是 4.2.x：游戏运行时读不了这套骨骼。',
+          'Spine version ' + version + ' is not 4.2.x: the game runtime cannot read this skeleton.',
+          { expected: '4.2.43', actual: version });
+      }
+    }
+
+    let text = null;
+    try {
+      text = fs.readFileSync(atlasPath, 'utf8');
+    } catch {
+      add('warning', atlasPath,
+        '图集无法以 UTF-8 读取。',
+        'The atlas cannot be read as UTF-8.');
+      continue;
+    }
+    const lines = text.split(/\r?\n/);
+    const dir = path.dirname(atlasPath);
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^size:\s*\d/.test(lines[i])) continue;
+      let j = i - 1;
+      while (j >= 0 && !lines[j].trim()) j--;
+      const page = (lines[j] || '').trim();
+      if (!page || /^(size|format|filter|repeat|pma):/i.test(page)) continue;
+      const pageAbs = lower.get(path.join(dir, page).toLowerCase());
+      if (!pageAbs) {
+        add('error', atlasPath,
+          '图集里写的页图 "' + page + '" 不存在（图集与 PNG 必须同名放在一起）。',
+          'The atlas names page image "' + page + '", which does not exist (atlas and PNG must share a folder and name).',
+          { expected: page, actual: '(missing)' });
+      }
+    }
+  }
+
+  for (const atlas of atlases) {
+    const base = atlas.replace(/\.atlas\.txt$/i, '');
+    if (lower.get((base + '.skel.bytes').toLowerCase())) continue;
+    add('error', atlas,
+      '图集没有对应的骨架：同目录应有 "' + path.basename(base) + '.skel.bytes"。',
+      'The atlas has no skeleton: "' + path.basename(base) + '.skel.bytes" should sit beside it.',
+      { expected: path.basename(base) + '.skel.bytes', actual: '(missing)' });
+  }
+}
+
+/**
+ * D010：本地化 CSV 的表头与字节序（只读开头 4 KB）。
+ * BOM / 行尾单独返回给调用方：同一包里各表不一致时才值得说一句（语料就是
+ * 基础表 NewProject.csv 不带 BOM、其余 10 张带），逐表报会变成 11 条噪音。
+ */
+function checkCsvTable(abs, relPath, diagnostics) {
+  const ctx = { headCache: null };
+  const b = readHeadCached(abs, 4096, ctx);
+  if (!b || b.length < 4) return null;
+  const bom = b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf;
+  const text = b.toString('utf8');
+  const crlf = text.indexOf('\r\n') >= 0;
+  const firstLine = text.replace(/^\uFEFF/, '').split(/\r?\n/)[0];
+  const header = firstLine.split(',').map(function (s) { return s.trim().replace(/^"|"$/g, ''); });
+  const push = function (severity, zh, en) {
+    diagnostics.push(diag(severity, 'D010', relPath, '', zh, en));
+  };
+  if (header.length !== 8) {
+    push('warning',
+      '表头是 ' + header.length + ' 列，游戏导出的本地化表是 8 列。',
+      'The header has ' + header.length + ' columns; the localisation tables the game exports have 8.');
+  }
+  if (header.indexOf('lock') < 0) {
+    push('warning',
+      '表头缺少 lock 列：游戏导出的表用 lock 记录该行是否被锁定。',
+      'The header has no lock column: the game exports a lock column recording whether the row is locked.');
+  }
+  return { rel: relPath, bom: bom, crlf: crlf };
 }
 
 /**
@@ -824,7 +1101,10 @@ function validateDefine(type, obj, opts) {
     modRoot: o.modRoot ? path.resolve(String(o.modRoot)) : null,
     techNames: isPlainObject(o.techNames) ? o.techNames : null,
     existsCache: new Map(),
-    localTechNameCache: new Map()
+    localTechNameCache: new Map(),
+    // G46：包级校验时由 validateModPackage 传进来，一张图/一个 WAV 只体检一次
+    headCache: o.headCache instanceof Map ? o.headCache : new Map(),
+    formatSeen: o.formatSeen instanceof Set ? o.formatSeen : new Set()
   };
 
   validateNode(schema, schema, obj, '', ctx, out, false, false);
@@ -979,6 +1259,8 @@ function validateModPackage(modRoot, opts) {
   let definesFileCount = 0;
   let yarnFileCount = 0;
   let csvFileCount = 0;
+  // G46：各本地化表的 BOM / 行尾观测，最后在包级聚合（不一致才报一句）。
+  const csvObservations = [];
 
   /* ---------------- mod.json ---------------- */
   const manifestPath = path.join(root, 'mod.json');
@@ -1147,6 +1429,9 @@ function validateModPackage(modRoot, opts) {
       }
     }
 
+    // G46：整个包共用一份文件头缓存与「已体检过」集合，同一张图只报一次。
+    const headCache = new Map();
+    const formatSeen = new Set();
     for (const p of pending) {
       const sub = validateDefine(p.type, p.obj, {
         kb: kb,
@@ -1154,7 +1439,9 @@ function validateModPackage(modRoot, opts) {
         filePath: p.abs,
         fileName: path.basename(p.abs),
         techNames: techNames,
-        otherTechNames: siblingNames
+        otherTechNames: siblingNames,
+        headCache: headCache,
+        formatSeen: formatSeen
       });
       for (const d of sub) {
         // 前缀：相对 modRoot 的 POSIX 路径
@@ -1300,6 +1587,8 @@ function validateModPackage(modRoot, opts) {
           'CSV 首行不是 "language," 开头，可能不是本地化表。',
           'CSV first line does not start with "language,"; it may not be a localisation table.'));
       }
+      const obs = checkCsvTable(abs, rel, diagnostics);
+      if (obs) csvObservations.push(obs);
       csvRows.push({ rel: rel, lines: lines.length });
     }
     if (csvRows.length > 1) {
@@ -1311,6 +1600,43 @@ function validateModPackage(modRoot, opts) {
           'Localisation CSV row counts differ: ' +
           csvRows.map((r) => r.rel + '=' + r.lines).join(', ')));
       }
+    }
+  }
+
+  /* ---------------- G46：文件格式体检（包级） ---------------- */
+  // Spine 三件套按包扫，不需要任何定义引用它；根目录的 NewProject*.csv 不在
+  // Yarn/ 的本地化扫描里，单独体检一次表头与字节序。
+  auditSpineTriples(root, diagnostics);
+  for (const e of safeReaddir(root, true)) {
+    if (!e.isFile() || !/^NewProject.*\.csv$/i.test(e.name)) continue;
+    if (/metadata/i.test(e.name)) continue;
+    const obs = checkCsvTable(path.join(root, e.name), e.name, diagnostics);
+    if (obs) csvObservations.push(obs);
+  }
+
+  // BOM / 行尾：逐表报会变成一张表一条（语料里基础表 NewProject.csv 不带 BOM、
+  // 其余 10 张都带），只在同一包内不一致时说一句，并强调按原字节写回。
+  if (csvObservations.length > 1) {
+    const names = function (list) { return list.map((o) => o.rel).join('、'); };
+    const bomYes = csvObservations.filter((o) => o.bom);
+    const bomNo = csvObservations.filter((o) => !o.bom);
+    if (bomYes.length && bomNo.length) {
+      diagnostics.push(diag('info', 'D010', bomNo[0].rel, '',
+        '包内本地化表的 BOM 不一致：' + bomNo.length + ' 张不带 BOM（' + names(bomNo) + '），' +
+        bomYes.length + ' 张带 BOM（' + names(bomYes) + '）。改表时按每张表原来的字节写回，不要统一。',
+        'The localisation tables in this package disagree on the UTF-8 BOM: ' + bomNo.length + ' without (' +
+        names(bomNo) + '), ' + bomYes.length + ' with (' + names(bomYes) +
+        '). Keep each table\'s original bytes when editing; do not normalise them.'));
+    }
+    const crlfYes = csvObservations.filter((o) => o.crlf);
+    const crlfNo = csvObservations.filter((o) => !o.crlf);
+    if (crlfYes.length && crlfNo.length) {
+      diagnostics.push(diag('info', 'D010', crlfNo[0].rel, '',
+        '包内本地化表的行尾不一致：' + crlfNo.length + ' 张不是 CRLF（' + names(crlfNo) + '），' +
+        crlfYes.length + ' 张是（' + names(crlfYes) + '）。改表时按每张表原来的行尾写回，不要统一。',
+        'The localisation tables in this package disagree on line endings: ' + crlfNo.length + ' not CRLF (' +
+        names(crlfNo) + '), ' + crlfYes.length + ' CRLF (' + names(crlfYes) +
+        '). Keep each table\'s original line endings when editing; do not normalise them.'));
     }
   }
 
