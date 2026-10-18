@@ -349,6 +349,8 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `version-check` | `python tools/version.py check` | the four copies of the version number still agree with `VERSION` |
 | `path-check` | `python tools/path_guard.py --self-test` then `tools/path_guard.py` | no tracked file names a directory that exists only on one machine: a home directory or a UNC share fails, every other absolute path is listed as a burn-down note, and the rules themselves are checked against synthetic strings first |
 | `installer-check` | `python tools/installer_smoke.py` | the installer's ownership manifest against the real Windows binaries: a new folder installs and an upgrade over it works; the uninstaller removes the payload, the licence, the manifest and itself and leaves a stranger's files and their folders; a folder holding a stranger's file is refused with exit 2 and nothing written; an uninstaller copied away from its manifest deletes nothing. Skips with exit 0 when makensis is not installed |
+| `sign-check` | `python tools/sign_smoke.py` | the installer-signing wiring without a certificate: a compiled stand-in for signtool records the argv it was given (the password is absent, quoting intact), and the script checks `--sign-dry-run`, exit 2 for a missing or ambiguous certificate, exit 1 for a failing signtool, and the `signing` record in `build/make-installer.json`. Skips with exit 0 when gcc or makensis is not installed |
+| `ci` | `make ci` | what the GitHub `test` job runs, locally: the whole `test` target, then `tools/ci_installer.py` builds and installs a two-file fixture installer, then `tools/ci_audit.py` audits `.github/workflows/ci.yml` offline (four jobs, every action pinned, read-only permissions). The workflow itself has never run on a runner |
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
 | `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, against its own scratch directory under `build/` (130 checks) |
@@ -366,9 +368,18 @@ define through its own picker and imports a PNG that reads back byte for byte
 schema for all 51 definition types (each validating clean), importing a file
 byte for byte with its validations and refusals, exporting a package as a
 deterministic zip (round-tripped by the suite's own reader: central directory,
-CRCs, UTF-8 flags, the precheck gate), the demo packages' listing and
+CRCs, UTF-8 flags, the precheck gate), installing that package into a game tree
+(staged swap, refusal without `--overwrite`, the blocked-package precheck), reading
+and following a `Player.log` (newest at depth one or two, the tail from a line
+boundary, appended bytes only, `gone` not thrown), the schema constraints a
+knowledge base can state (`pattern`, `minimum`/`maximum`, `minItems`, `uniqueItems`,
+`oneOf`/`anyOf`/`allOf`/`not`), unresolved `$ref`s, the Yarn `#line:` ids checked
+both ways against the translation tables (missing from the table, orphaned in it,
+duplicated across files, the non-hex ids reported rather than matched), the
+Addressables addresses that look like asset paths rather than names, the demo
+packages' listing and
 byte-identical copy (openable only where it was copied), and `config.get`/`config.set`
-keeping a real API key off the wire (527 checks) |
+keeping a real API key off the wire (588 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

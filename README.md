@@ -37,8 +37,10 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, creating one file from a schema (`mod.newFile`), importing
   an existing file into a package (`mod.importFile`), exporting the package as a
-  deterministic zip (`mod.export`, `zip.js`), search and completion. Pure
-  Node, zero npm.
+  deterministic zip (`mod.export`, `zip.js`), installing it into the game's own
+  `Mods` folder (`mod.installGame`, `gamepath.js`), reading and following the
+  game's `Player.log` (`mod.gameLog`, `mod.followGameLog`), search and
+  completion. Pure Node, zero npm.
 - **`settings` card** — one place for the machine rather than the project: the AI
   provider, the view a window opens in and how often the cards poll, stored under
   the user data directory (`config.get`/`config.set`). The workspace and the mods
@@ -268,7 +270,9 @@ mingw32-make -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 sk
 mingw32-make -f Makefile probe       # every bug in docs/BUGS.md: all ok
 mingw32-make -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
 mingw32-make -f Makefile version-check  # every copy agrees, and the changelog has a home for it
-mingw32-make -f Makefile test        # check, fullcheck, probe, version-check, the JSON test, all three JS self-tests
+mingw32-make -f Makefile sign-check   # the installer-signing wiring, against a stand-in for signtool
+mingw32-make -f Makefile ci           # what the GitHub test job runs: test, a fixture installer, a workflow audit
+mingw32-make -f Makefile test        # check, fullcheck, probe, cli-check, version-check, installer-check, sign-check, the JSON test, all four JS self-tests
 ```
 
 On a machine with no Chromium-family browser, `make smoke` prints a skip, not a
@@ -289,7 +293,7 @@ python tools/demo.py                                 # install the starter board
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 294/294 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 527/527 checks passed
+node shell/mods/selftest.mjs                   # 588/588 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -297,9 +301,9 @@ skips them (rather than failing) when it is not there; point it at your own copy
 with `node shell/mods/selftest.mjs --mods <dir>`.
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
-`version-check`, then `installer-check`, then the JSON test and the three
-JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
-run before the self-tests are
+`version-check`, then `installer-check`, then `sign-check`, then the JSON test and
+the four JavaScript self-tests **in that order**, so a `fullcheck` failure would
+stop the run before the self-tests are
 reached. `check`
 drives the bare kernel (`tools/e2e.py --kernel build/infantgod.exe`) and
 `fullcheck` the same suite through the shell
@@ -453,14 +457,15 @@ build/infantgod.exe rpc --root . --verbose
 
 ```
 Makefile                the whole build: CC, CFLAGS, SRC, all, check, fullcheck,
-                        probe, smoke, test, modules, run, clean, and the JSON
-                        test target
+                        probe, smoke, test, modules, run, clean, the JSON test
+                        target, installer-check, sign-check, and ci
 README.md               this file
 LICENSE                 MIT -- the code.  Except the docs: see below
 LICENSE-DOCS            CC BY-NC-SA 4.0 -- every Markdown file in the repository
 EULA.txt                the early-version notice the installer shows
 CHANGELOG.md            what is in this version, and what is not
-.github/workflows/      CI: the same make targets, on a Windows runner
+.github/workflows/      CI: four jobs -- the test targets on a Windows runner,
+                        a headless smoke, a signing gate, and signing itself
 .gitignore              build artefacts and workspace-local state
 .gitattributes          the checkout is the repository's bytes: LF everywhere
 
@@ -485,7 +490,9 @@ shell/                  the front end and the endpoints
                         browser); also the `mod.*` verb table
   mods/                 the 幼神 layer -- game knowledge, no DOM
     index.js            the facade: openMod, validatePackage, diagnoseYarn,
-                        scaffold, search, docFor, suggest, localization
+                        scaffold, search, docFor, suggest, localization,
+                        installGame, gameLog, followGameLog
+    gamepath.js         where the game is: the Mods folder and Player.log
     knowledge.json      the development tree's rich baseline: 136 commands,
                         63 functions, 678 variables, 1221 nodes, 51 schemas,
                         1305 baseline defines, 11 locales.  Not shipped: an
@@ -496,9 +503,9 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 527 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 588 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
-                        validation, dispatch, language, files, demos)
+                        validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
                         (the barrel), cards/ (thirteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
@@ -521,6 +528,12 @@ tools/                  Python 3.12, standard library only
   newlang.py            writes a conforming .lang descriptor
   make_icon.py          draws electron/icon.ico from the palette, not by hand
   sign.mjs              electron-builder with the local signing identity attached
+  sign_smoke.py         proves the installer-signing wiring against a compiled
+                        stand-in for signtool; no certificate needed
+  installer_smoke.py    builds a real installer and installs/uninstalls it
+  ci_installer.py       the two-file fixture installer the CI test job builds
+  ci_audit.py           offline audit of .github/workflows/ci.yml
+  path_guard.py         no machine path may be hard-coded
   README.md             what each tool is for
 
 examples/               hello.yarn, sample.json (the shipped fixtures), and
@@ -561,8 +574,11 @@ Stated plainly, because a fork needs to know what it is inheriting.
   still read and validate a package in Node rather than through the kernel, which
   is why `problems` works on a package the editor has never opened.
 - **The kernel has no delete or rename.** Copying a mod package into
-  `StreamingAssets/Mods/<Name>/` is therefore a manual step; `mod.scaffold`
-  creates directories through `file.write`'s parent-directory creation.
+  `StreamingAssets/Mods/<Name>/` is `mod.installGame` (or `node shell/main.mjs
+  install`), which does its own staged copy and rename in Node and never asks the
+  kernel to; `mod.scaffold` creates directories through `file.write`'s
+  parent-directory creation. Nothing the kernel is asked to do can delete or
+  rename.
 - **The kernel refuses any file containing a NUL byte**, so `.png` and `.bytes`
   assets can be listed and diagnosed but not read or written through the document.
 - **Language colouring offsets are JS string indices, not bytes.** For Yarn this
@@ -693,8 +709,35 @@ compiles a two-file installer and checks all four promises against the real
 Windows installer and uninstaller; `make test` runs it (`installer-check`) and
 skips cleanly on a machine without NSIS.
 
-CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
-the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the
-board headless. Neither job has run on a GitHub runner — the file was authored on
-a machine with none — so treat them as unproven until the first green run; the
-commands inside them are exactly the ones in **Quick start** above.
+The installer can be signed, and signing is a step of the same script rather than a
+second toolchain: `node tools/make-installer.mjs --sign` signs the finished
+`setup.exe` with Authenticode, from either a store certificate
+(`--sign-thumbprint`, 40 hex digits) or a PFX file (`--sign-pfx`), or from
+`INFANTGOD_SIGN_PFX`; the password is read only from
+`INFANTGOD_SIGN_PASSWORD` — never from argv, never written to a log, never left in
+`build/`. `--sign-dry-run` prints the redacted command without needing a
+certificate, `--sign-timestamp URL`/`--no-timestamp` choose or drop the timestamp,
+and a build that asked for a signature it cannot produce exits 2 before
+compiling instead of shipping unsigned; a signtool that fails exits 1 and leaves
+`build/make-installer.json` with a `signing` record saying what was attempted and
+the exit code. Without `--sign` no external signing tool is looked for at all, so
+a local build behaves exactly as it did before. `python tools/sign_smoke.py`
+compiles a stand-in for signtool and checks the wiring — argument quoting, the
+password's absence from argv, the exit codes and the JSON record — so `make test`
+runs it (`sign-check`) and skips cleanly when gcc or NSIS is missing. The
+signature that a release actually carries, on a machine that has the certificate,
+is the one step nothing here has performed: this repository's build is unsigned by
+default and no green signed build exists.
+
+CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml), and the file is the
+make targets: the `test` job runs `make CC=gcc ci`, which is the whole `test`
+target, then a two-file fixture installer, then `tools/ci_audit.py`'s offline
+audit of the workflow itself, and uploads both artifacts; `smoke` renders the
+board headless and is allowed to fail; `sign_gate` only reports whether the
+`SIGN_PFX`/`SIGN_PASSWORD` secrets exist, and `sign` runs the installer with
+`--sign` only when they do — with no secrets the signing is skipped, not failed.
+The workflow actions are pinned by tag and the job permissions are read-only. No
+job has run on a GitHub runner — this repository has no remote — so the
+runner-specific steps (action downloads, the NSIS cache, the secrets gate) are
+unproven until the first green run; the commands inside are exactly the ones in
+**Quick start** above, which is what `make ci` reproduces locally.

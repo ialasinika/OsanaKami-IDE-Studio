@@ -67,6 +67,10 @@ import <from> <dir> [to]
 example [name]      copy the demo package into the mods folder, then open it
 problems <dir>      open a validation card and run it
 docs [query]        open the knowledge-base card
+install <dir> [--game-dir <dir>] [--overwrite]
+                    copy a package into the game's own Mods folder
+log [--path <file>] [--mod <name>] [--duration-ms <n>]
+                    read (or follow) the game's Player.log
 ```
 
 `mod` behaves like `project`: there is one mod panel, so a second `mod`
@@ -79,7 +83,8 @@ other.
 Every verb is answered by `dispatch()` in `shell/main.mjs` from the
 `MOD_METHODS` table, before the kernel is ever consulted. All of them are
 synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile`,
-`mod.example` and `mod.export`, which write files.
+`mod.example`, `mod.export`, `mod.installGame` and `mod.followGameLog`, which
+write files or wait on one.
 
 | verb | params | returns |
 | --- | --- | --- |
@@ -95,6 +100,9 @@ synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile`,
 | `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics, support?}` — **async**, writes one file (`support` is the type's matrix entry, G4) |
 | `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
 | `mod.export` | `dir`, `out?`, `overwrite?` | `{name, out, file, bytes, files, uncompressedBytes, skipped[], warnings, infos, knowledge}` — **async**, writes one zip (G45) |
+| `mod.installGame` | `dir`, `overwrite?`, `gameModsDir?`, `gameDir?` | `{name, target, files, bytes, replaced, warnings, infos, knowledge, gameMods: {dir, source, found}}` — **async**, copies the package into the game's Mods folder (G11) |
+| `mod.gameLog` | `path?`, `modName?`, `bytes?` | `{path, found, tried, offset, size, mtime, bytes, totals, lines}` — the tail of `Player.log` and what in it matters; `error` (no throw) if the file vanished (G12) |
+| `mod.followGameLog` | `path?`, `modName?`, `durationMs?`, `intervalMs?`, `bytes?` | `{path, found, tried, samples, offset, size, stoppedBecause, bytes, totals, lines}` — **async**, polls and returns only appended bytes; `stoppedBecause` is `duration` or `gone` (G12) |
 | `mod.examples` | — | `{root, source, present, packages[{name, dir, hasManifest}], default}` — what ships beside the editor |
 | `mod.example` | `name?` | `{installed, name, dir, modRoot, file, files, source, message}` — **async**, copies a demo package into the mods folder |
 | `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
@@ -413,6 +421,60 @@ either. Skeleton version, atlas pages and orphan atlases stay `D009`'s job, so t
 branch only reports each file once. The shipped `SODefines` package has 30 characters
 with a path and produces no `D011`.
 
+### What the value checks read (`G6`, `G7`, `G9`)
+
+A schema is a contract the game enforces whether or not the checker does:
+`D003`/`D004` already read `type` and `enum`, `D005`/`D006` read two specific
+description sentences, and `D011` reads one field the schema describes with
+nothing but `{ "type": "string" }`. The three checks below close the places
+where "validated clean" could still mean "the editor did not look", and each is
+written so that it goes quiet rather than guesses when it has no evidence.
+
+`G6` — the constraints a schema states. The 51 schemas in `knowledge.json` use
+only `type`, `description`, `title`, `properties`, `items`, `required`, `enum`,
+`$schema` and `$ref`; they carry no `pattern`, no numeric bounds, no `oneOf`.
+That is a property of today's export, not of JSON Schema, so `D012` (error)
+enforces the standard value keywords when they appear: `const`, `pattern`,
+`minLength`/`maxLength`, `minimum`/`maximum`/`exclusiveMinimum`/
+`exclusiveMaximum`/`multipleOf`, `minItems`/`maxItems`/`uniqueItems`,
+`oneOf`/`anyOf`/`allOf`/`not`, and `additionalProperties: false` (which turns the
+`D002` warning about an undeclared field into an error). A property whose `type`
+is an array is accepted if it matches one of the listed types. When a `$ref`
+resolves to no title the subtree cannot be checked at all; `D013` (warning, once
+per definition) names the unresolved reference instead of letting the gap pass
+as clean. The corpus is quiet under both codes — no schema uses the keywords,
+and all seven `$ref`s resolve — so the tests use a synthetic schema; a keyword
+branch that never ran is exactly the failure `G6` exists to prevent.
+
+`G7` — the line id on both sides. A translated dialogue line exists twice: as
+`#line:<id>` on the Yarn line, and as a row with that id in a
+`NewProject*.csv` table. The contract is `line:` plus seven hex digits
+(`shell/web/storycsv.mjs` generates and edits those rows, and rewrites the row's
+`lock` from the source text). `D014` (warning) counts ids that Yarn has and the
+tables do not: those lines have no translation and show the source text.
+`D015` (warning) counts ids the tables have and no Yarn file uses: those
+translations never appear. `D016` (warning) counts an id used by more than one
+Yarn file — a case `Y107` cannot see, because it only compares within one file.
+Demo scripts use ids outside the contract (`#line:e4f5g6h`); they cannot be
+cross-checked, so one `D017` info aggregates them instead of reporting every one
+as untranslated. Tables are read with an RFC 4180 parser, and only files whose
+first line starts with `language,` are treated as tables. Calibration on the
+shipped corpus (211 Yarn files, 11 tables): `D014` = 0, `D016` = 0, `D015` = 1
+(`line:094007b`, a real orphan), `D017` = one info covering 57 demo ids.
+
+`G9` — the address, not the path. Nine schema fields are described with nothing
+but `Addressable asset address`: `CGDefinition.targetSpinePrefab`,
+`Character.targetSpinePrefab`, `CharacterState.backgroundPrefab`,
+`CutScene.Prefab`, `Decoration.backgroundPrefab`,
+`HardwareDefinition.modelPrefab`, `HardwareDefinition.cameraPrefab`,
+`HardwarePartDefinition.prefab` and `PetProfileAsset.Portrait`. The game looks
+them up in the Addressables catalogue, so a Unity asset path registers a
+definition that loads nothing. The repository holds no catalogue to compare
+against, so `D018` (warning) reports only the shape of a mistake — an `Assets/`
+or `Packages/` prefix, a drive letter, a backslash, or a
+`.prefab`/`.asset`/`.unity` suffix. The empty string means "no asset" and any
+string that does not look like a path stays silent; `SODefines` is quiet.
+
 ### Type support (`shell/mods/support.json`)
 
 `knowledge.json` says what a type looks like; it cannot say whether the game
@@ -610,6 +672,81 @@ Three properties are deliberate, all in `shell/mods/zip.js`:
 The game's own managers never see this file, so nothing in the archive has to be
 rewritten after export — it is the package directory, byte for byte.
 
+### The last mile: into the game
+
+Unpacking by hand was still the one step the editor could not do, and it is the
+step that decides whether the package works at all. `mod.installGame` copies the
+package into the folder `ModLoader` scans:
+
+```sh
+node shell/main.mjs install examples/Mods/ShipIt
+node shell/main.mjs install examples/Mods/ShipIt --game-dir "D:\Games\InfantGod" --overwrite
+```
+
+The folder comes from `discoverGameModsDir` in `shell/mods/gamepath.js`, already
+used to **show** where the game is: an explicit `gameModsDir`/`gameDir`, then
+`INFANTGOD_MODS_DIR` / `INFANTGOD_GAME_DIR`, then the Steam library list, then a
+short list of guesses — and the answer records which of those answered
+(`gameMods.source`), so "it says the game is not here" arrives with the paths it
+tried (`tried`), not as a shrug.
+
+Three rules make it safe to run while the game is open or closed:
+
+- **The same precheck as `export`.** `validatePackage` runs first and blocks on
+  errors — but not on `E000`, because "there is no knowledge base here, only the
+  file structure could be checked" must not be reported as "the package is
+  broken". Exit 1 for a blocked package, exit 2 for usage, so a script can tell
+  "fix your manifest" from "you typed the flag wrong".
+- **Refused until asked.** An existing `Mods/<Name>` is left alone unless
+  `--overwrite` / `overwrite: true` is given; a second install without it is an
+  error, not a silent merge.
+- **Swapped, not written in place.** Files are copied into a staged sibling
+  `.<Name>.installing-<stamp>`, re-read and compared by count and size, the old
+  folder is renamed to `.<Name>.previous-<stamp>`, the stage is renamed to the
+  target, and the backup is removed last. A throw restores the backup, and no
+  folder the verb did not rename is ever deleted recursively — a cancelled or
+  failing install leaves the previous copy exactly as it was.
+
+The mod card gets an **install into game** row; `--json` returns the same answer
+the verb returns. 18 checks cover the copy, the refusal, the replacement (the old
+files are gone and the new ones are byte-identical), the blocked package with its
+code, and the discovery error naming the paths it tried.
+
+### What the game said: the log
+
+Whether the game loaded a package is not in the package; it is in `Player.log`.
+That file is where the author is least likely to look, so the editor reads it:
+
+```sh
+node shell/main.mjs log --mod ShipIt
+node shell/main.mjs log --path "C:\Users\<user>\AppData\LocalLow\Company\InfantGod\Player.log" --mod ShipIt
+```
+
+Discovery (`discoverPlayerLog`) looks under the same platform roots the game
+folder lookup knows — `LocalLow/<Company>/<Product>` on Windows,
+`~/Library/Logs/<Company>/<Product>` on macOS, `.config/unity3d/<Company>/<Product>`
+elsewhere — and takes the **newest** `Player.log` at depth one or two, because
+Unity's own log directory moves between versions. `--path` skips discovery
+entirely, and "not found" exits 2 and lists the paths it searched.
+
+What comes back is the tail from a line boundary, with the offset it started at
+(`readLogTail`): a follow can resume from that number instead of guessing. The
+lines are classified conservatively by `scanLogText` — `error`/`exception`/
+`failed`/`denied`/`not found` are errors, lines mentioning the mod loader or the
+package name are mod lines, and everything else is left out — and the totals keep
+the three counts separate, because a line that mentions the mod *and* says
+"error" is one line, not two.
+
+`mod.followGameLog` (CLI `--duration-ms`, default five seconds) polls the file and
+returns only the bytes appended since it started, so the question is "what
+happened after I installed it" rather than "read the whole log again". A log that
+disappears mid-watch is reported as `stoppedBecause: "gone"`, not thrown; a
+rotation restarts from byte zero. The mod card's **what the game said** row shows
+the fifteen most useful lines. 19 checks cover discovery (newest of two, depth
+two, missing explicit path), the tail reader (never mid-line), the classifier's
+totals, and the follower with an injected clock and sleep — the five-second wait
+never happens in the suite.
+
 ## The worked example we ship
 
 `examples/Mods/Lantern` is the repository's own mod: 22 files, every byte
@@ -690,7 +827,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 527 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 588 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
@@ -704,7 +841,16 @@ order — the groups share one `mods` facade and one of them spawns a real
 The suite covers the knowledge-base counts, the game's own `MyMod` and
 `SODefines` packages, a freshly scaffolded mod validating clean, the locale
 mapping, the protocol seam with a kernel that throws if it is ever consulted,
-and the containment refusal. `tools/input_smoke.py` no longer touches `Mods`
+and the containment refusal. The validation group also drives the codes that
+only fire on data the shipped corpus does not have — the schema constraints
+(`D012`) and unresolved references (`D013`) on a synthetic schema — and the line
+id cross-check on a three-line fixture (`D014`/`D015`/`D016`, one `D017`), with
+the corpus itself pinned as "one real orphan, no missing rows". The game group
+owns the copy into a game tree (staged swap, refused overwrite, blocked package:
+18 checks) and the log reader and follower (newest file, tail from a line
+boundary, appended bytes only, `gone` instead of a throw: 19 checks, with an
+injected clock so no check waits five seconds). `tools/input_smoke.py` no longer
+touches `Mods`
 next to the repository: it drives `examples/Mods/Lantern`, generates its own
 4.5 MB translation table under `build/` (past the kernel's 4 MiB whole-file
 read, so the story card can only open it through a `file.blob*` session), and

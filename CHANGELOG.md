@@ -16,6 +16,149 @@ stands in this tree.
 
 ## Unreleased
 
+### A package goes into the game, not only into a zip
+
+`export` stopped at a zip, and the game does not read zips: `ModLoader` scans
+`StreamingAssets/Mods/<Name>/`, so the last mile was unpacking by hand into a
+folder the editor could find but never write. `gamepath.js` already resolved
+that folder — through an explicit setting, `INFANTGOD_MODS_DIR` /
+`INFANTGOD_GAME_DIR`, the Steam library, then the usual guesses — and only
+displayed it.
+
+`mod.installGame` (CLI `install DIR [--game-dir DIR] [--overwrite]`, one row on
+the mod card) now runs the same validation `export` does — errors stop the copy,
+`E000` (no knowledge base) does not, because "only the file structure could be
+checked" must not read as "the package is wrong" — refuses a folder that is
+already there until `--overwrite` is asked for, and copies through a staged
+sibling: the files land in `.<Name>.installing-<stamp>`, are re-read by count and
+size, the old copy is renamed to `.<Name>.previous-<stamp>`, the stage is renamed
+into place, and only then is the backup removed. A throw restores the backup, and
+nothing is deleted recursively that the verb did not rename itself. The validator
+blocking an install is exit 1, not a usage error, and a second install without
+`--overwrite` is exit 2: the two refusals mean different things.
+
+The point is the loop, not the copy: a package can now go from scaffold to
+`problems` to the game's own folder without leaving the editor. 18 checks cover
+the first install, the refusal, the replacement (stale files gone, contents
+identical), the blocked package and the discovery error; the red proof disables
+the precheck gate and the appended-bytes branch and turns eight of them red.
+
+### The game's own log is one command away
+
+The validator knows what the package's files claim; whether the game loaded it
+is written in `Player.log`, and that file is the one an author is least likely to
+find — two company/product directories under `LocalLow` on Windows, under
+`~/Library/Logs` on macOS, under `.config/unity3d` elsewhere.
+
+`mod.gameLog` (CLI `log [--path FILE] [--mod NAME] [--duration-ms N]`) discovers
+the newest `Player.log` at depth one or two under the same injectable roots the
+game-folder lookup uses — or takes the file it is given — and answers with what
+the author needs: the path it read, the offset the text starts at, the size, and
+the lines that are errors or exceptions, mod-loader lines, and mentions of the
+package name. Classification is deliberately conservative: a line that reads as
+an error is not also counted as a mod line, and a line that says nothing is left
+out rather than shown. `mod.followGameLog` polls the file and hands over only
+appended bytes, so the question is "what happened after I did that", not "read
+the whole log again"; a log that disappears mid-watch is a report ("gone"), not a
+throw, and a rotation restarts from zero.
+
+The shell's `log` verb prints the same answer and exits 2 with the places it
+looked when there is no log, and the mod card's "what the game said" row shows
+the fifteen most useful lines. `readLogTail` and `followPlayerLog` take an
+injectable clock and sleep, so 19 checks cover the tail reader (from a line
+boundary, never mid-line), the scanner's totals, the follower's appended-only
+text and its "gone" path without waiting five seconds.
+
+### The validator reads the constraints a schema states
+
+`knowledge.json` is regenerated from the game's assemblies, and the 51 schemas it
+records today use only `type`, `properties`, `items`, `required` and `enum`. A
+validator that read only those keywords would silently ignore a `pattern`, a
+`minimum` or a `oneOf` the moment the export started carrying one: `ok: true`
+would then mean "none of these keywords was looked at", not "the value is valid".
+
+`D012` (error) now enforces `const`, `pattern`, `minLength`/`maxLength`,
+`minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf`,
+`minItems`/`maxItems`/`uniqueItems`, `oneOf`/`anyOf`/`allOf`/`not`, and reports an
+undeclared field as an error where the schema says `additionalProperties: false`
+instead of only as the `D002` warning. A property whose `type` is an array is
+read as one of those types. A schema whose `$ref` resolves to no title leaves
+that subtree unchecked, so `D013` (warning, once per definition) says so rather
+than leaving the hole silent. None of the shipped schemas uses the keywords and
+all seven `$ref`s resolve, so both codes are quiet on the corpus; the selftests
+drive them with a synthetic schema, because a check that never ran is not
+evidence.
+
+### A line id has to exist on both sides
+
+A translated Yarn line reaches the game only when the line's `#line:` tag and a
+row in a `NewProject*.csv` table carry the same id. Delete the line, change the
+id on either side, or duplicate it across files, and the pair breaks: the line
+keeps showing its source text, or a translation is never looked up, and nothing
+in the editor said so.
+
+The validator now reads the id column of every localisation table (RFC 4180
+quoting included) and every `#line:` on dialogue lines and options, then compares
+the two. `D014` (warning) counts ids present in Yarn but absent from the tables —
+those lines stay untranslated. `D015` (warning) counts rows whose id no Yarn file
+uses — those translations never appear. `D016` (warning) counts ids that appear
+in more than one Yarn file, which `Y107` cannot see because it only looks inside
+one file. Ids outside the `line:<7 hex>` contract are the demo scripts' own
+convention; one `D017` info names them and says they cannot be cross-checked
+rather than reporting every one as a missing translation. On the shipped corpus
+(211 Yarn files, 11 tables) `D014` and `D016` are empty, `D015` names exactly one
+real orphan (`line:094007b`), and `D017` covers the 57 demo ids once.
+
+### An Addressables address is looked up, not a path
+
+Nine schema fields are described with nothing but `Addressable asset address`:
+`CGDefinition.targetSpinePrefab`, `Character.targetSpinePrefab`,
+`CharacterState.backgroundPrefab`, `CutScene.Prefab`,
+`Decoration.backgroundPrefab`, `HardwareDefinition.modelPrefab`,
+`HardwareDefinition.cameraPrefab`, `HardwarePartDefinition.prefab` and
+`PetProfileAsset.Portrait`. The game resolves these through the Addressables
+catalogue, not through the asset path, so writing
+`Assets/Art/Background/Office.prefab` registers a definition that loads nothing.
+
+There is no address catalogue in the repository to check a value against, so
+`D018` (warning) only says when a value has the shape of a Unity asset or file
+path — an `Assets/` or `Packages/` prefix, a drive letter, a backslash, or a
+`.prefab`/`.asset`/`.unity` suffix. An empty string is the "no asset" default and
+stays silent, as does any string that does not look like a path. The shipped
+`SODefines` package is quiet, so the check costs nothing on real content while
+still catching the mistake a catalogue would be needed to catch in general.
+
+### The installer can be signed, and the test job is a file
+
+The installer was built unsigned and the CI workflow was a paragraph in a doc.
+Signing is now a step of `tools/make-installer.mjs`, opt-in: without `--sign` no
+external tool is looked for or run, so a local build behaves exactly as before.
+With it, the certificate comes from `--sign-thumbprint` (a store thumbprint, 40
+hex digits, spaces and colons allowed) or `--sign-pfx`, or `INFANTGOD_SIGN_PFX`;
+the password comes only from `INFANTGOD_SIGN_PASSWORD` — not from argv, not into
+a log, not into `build/` — and `--sign-dry-run` prints the redacted command line
+without a certificate. Signing happens after the NSIS compile, on the finished
+`setup.exe` and nothing else. A signature that was asked for but cannot be
+produced exits 2 before compiling instead of shipping unsigned; a signtool that
+fails exits 1 after `build/make-installer.json` records
+`signing: {requested, signed, tool, scheme, timestampUrl, exitCode}`. The
+timestamp server defaults to `http://timestamp.digicert.com` and
+`--sign-timestamp`/`--no-timestamp` change or drop it.
+
+`.github/workflows/ci.yml` is the make targets as a file: a `test` job runs
+`make ci` (the whole `test` target, then a two-file fixture installer, then an
+offline audit of the workflow itself) and uploads the installer and its JSON; a
+`smoke` job renders the board headless and is allowed to fail; `sign_gate` says
+whether the `SIGN_PFX`/`SIGN_PASSWORD` secrets exist, and `sign` runs the same
+installer with `--sign --sign-pfx` only when they do — with no secrets it is
+skipped, not failed. Every action is pinned to a tag, the workflow has
+`permissions: contents: read`, and `tools/sign_smoke.py` proves the signing
+wiring against a compiled stand-in for signtool, so `make test` runs
+`sign-check` without a certificate and skips with exit 0 when gcc or NSIS is not
+installed. No job has run on a GitHub runner — this repository has no remote —
+so the runner-specific steps (action downloads, the NSIS cache, the secrets
+gate) are unproven until the first green run.
+
 ### The uninstaller removes the app, not the folder it sits in
 
 The uninstaller ended with `RMDir /r "$INSTDIR"`, which deletes whatever happens
