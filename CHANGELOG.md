@@ -16,6 +16,28 @@ stands in this tree.
 
 ## Unreleased
 
+### The editor can say which types the game will actually read
+
+- The wiki's support matrix is now part of the knowledge the editor ships:
+  `shell/mods/support.json` marks every one of the 51 schema types `supported`,
+  `partial`, `unsupported` or `unknown`, and names the manager that consumes it.
+  Five types are supported, eight partial, twenty-two unsupported and sixteen
+  unknown; the wiki names 35, and the rest stay `unknown` rather than guessed.
+  `M013` (warning) says a definition's type registers but nothing reads it, and
+  `M014` (info) names the caveat and the manager for a partial type — once per
+  type per package, not once per file.  `supported` and `unknown` stay silent.
+  The matrix is human knowledge from
+  [e.Mod结构与限制](https://wiki.infantgod.xyz/e.Mod结构与限制), so it sits beside
+  the knowledge base instead of inside the regenerated `knowledge.json`.
+- `mod.types()` and `mod.newFile` return the same matrix entry, so the type picker
+  and the new-file dialog can mark a type before anything is written.
+- The `define-pack` and `full` templates stop generating `Attr`: the wiki lists it
+  as unsupported, and a template that ships a definition the game ignores is a
+  trap.  The generated `Topic` now leaves `attrType` empty rather than pointing at
+  the missing `Attr`.
+- The mods suite went from 464 to 479 checks; disabling the `M013` branch turns
+  two of them red.
+
 ### The validator reads the asset bytes, not just the file names
 
 - `D007` looks at a sprite PNG's `IHDR`.  A `.png` whose header is not the PNG

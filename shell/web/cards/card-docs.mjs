@@ -96,8 +96,11 @@ export function renderDocs(card, ctx) {
       ...keys.map((key) => ({ label: key, meta: String(stats[key]) })),
       ...(Array.isArray(types) ? types : []).map((type) => ({
         label: type.type,
-        meta: `${type.count ?? 0} baseline`,
-        title: `required: ${(type.required ?? []).join(", ")}`,
+        meta: `${type.count ?? 0} baseline` +
+          (type.support && type.support.level ? ` · ${type.support.level}` : ""),
+        title: `required: ${(type.required ?? []).join(", ")}` +
+          (type.support && type.support.manager ? `\nmanager: ${type.support.manager}` : "") +
+          (type.support && type.support.note ? `\n${type.support.note}` : ""),
         onClick: () => show("type", type.type),
       })),
     ]);

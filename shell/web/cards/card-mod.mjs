@@ -248,10 +248,21 @@ export function renderMod(card, ctx) {
     }
     const raw = Array.isArray(types) ? types : [];
     const kinds = [
-      ...raw.map((type) => ({
-        value: type.type,
-        label: `${type.type}${type.required && type.required.length > 0 ? ` (${type.required.join(", ")})` : ""}`,
-      })),
+      ...raw.map((type) => {
+        // G4: the wiki's support matrix rides on every entry.  An unsupported type
+        // is still creatable — it is a valid file — but the menu says the game will
+        // not read it, which is the one thing the schema alone cannot tell you.
+        const support = type.support && typeof type.support === "object" ? type.support : null;
+        const mark = support && support.level === "unsupported"
+          ? " — the game ignores this type"
+          : support && support.level === "partial"
+            ? " — partly read by the game"
+            : "";
+        return {
+          value: type.type,
+          label: `${type.type}${type.required && type.required.length > 0 ? ` (${type.required.join(", ")})` : ""}${mark}`,
+        };
+      }),
       { value: "yarn", label: "Story (.yarn)" },
       { value: "translation", label: "Translation (.csv)" },
       { value: "sprite", label: "Sprite (.png)" },

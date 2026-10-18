@@ -172,13 +172,12 @@ const TEMPLATES = [
   {
     id: 'define-pack',    nameZh: '定义包',
     nameEn: 'Define Pack',
-    descriptionZh: '在最小包基础上加入 Defines/<Type>/<TechName>.json（Goods / Attr / Topic 三种，字段与 schema 完全一致，techName 等于文件名）。',
-    descriptionEn: 'Minimal plus ScriptableObject defines (Goods / Attr / Topic) whose fields exactly match the schemas and whose techName equals the file name.',
+    descriptionZh: '在最小包基础上加入 Defines/<Type>/<TechName>.json（Goods / Topic 两种，字段与 schema 完全一致，techName 等于文件名）。',
+    descriptionEn: 'Minimal plus ScriptableObject defines (Goods / Topic) whose fields exactly match the schemas and whose techName equals the file name.',
     creates: [
       'mod.json',
       'README.md',
       'Defines/Goods/<ModName>_Poster.json',
-      'Defines/Attr/<ModName>Attr.json',
       'Defines/Topic/<ModName>_Topic.json',
     ],
   },
@@ -196,7 +195,6 @@ const TEMPLATES = [
       'Yarn/<ModName>.csv',
       'Yarn/<ModName>_enUS.csv',
       'Defines/Goods/<ModName>_Poster.json',
-      'Defines/Attr/<ModName>Attr.json',
       'Defines/Topic/<ModName>_Topic.json',
       'Defines/CutScene/<ModName>_Intro.json',
       'Sprites/README.md',
@@ -916,27 +914,12 @@ function defineSpecs(modName) {
       },
     },
     {
-      typeName: 'Attr',
-      techName: `${safe}Attr`,
-      overrides: {
-        id: `${safe.toLowerCase()}_attr`,
-        menuName: `${safe} Attr`,
-        themeColor: { r: 1, g: 1, b: 1, a: 1 },
-        sortOrder: 0,
-        rewards: [
-          { Level: 1, AddedDiceCount: 1, AddedSpecialEffect: null },
-          { Level: 3, AddedDiceCount: 1, AddedSpecialEffect: null },
-        ],
-        nameKey: `${safe}Attr_name`,
-        descriptionKey: `${safe}Attr_desc`,
-        icon: lead,
-      },
-    },
-    {
+      // Topic 的 attrType 指向 Attr；但 Attr 在 wiki 的支持矩阵里是“不支持独立
+      // 扩展”（没有 manager 消费），所以模板不生成 Attr，也不留下悬空引用。
       typeName: 'Topic',
       techName: `${safe}_Topic`,
       overrides: {
-        attrType: `${safe}Attr`,
+        attrType: null,
         inFilter: true,
         levelConfigs: [
           { level: 1, variableName: '', descKey: `${safe}_Topic_1_desc`, quality: 0, addedSpecialEffect: null },
@@ -1034,7 +1017,7 @@ function renderSpritesReadme(meta) {
     'Sprites/',
     '  Resources/',
     '    Art/',
-    '      UI/Icon/          <- Goods / Attr / Topic 的图标（对应 define 的 icon 字段）',
+    '      UI/Icon/          <- Goods / Topic 的图标（对应 define 的 icon 字段）',
     '      CG/               <- CG 立绘',
     '    FairyGUI/           <- 需要打进 FairyGUI 包时放这里',
     '```',

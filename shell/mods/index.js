@@ -33,6 +33,7 @@ const knowledgeBuild = require('./knowledge-build.js');
 const newfileCore = require('./newfile.js');
 const importfileCore = require('./importfile.js');
 const examplesCore = require('./examples.js');
+const supportCore = require('./support.js');
 
 /** knowledge.json 的位置（本模块同目录；发布物里可能不带，见下面的解析顺序）。 */
 const KNOWLEDGE_PATH = path.join(__dirname, 'knowledge.json');
@@ -590,7 +591,9 @@ function createMods(options) {
         count: list.length,
         required: schema && Array.isArray(schema.required) ? schema.required.slice() : [],
         properties: props,
-        hasSchema: Object.prototype.hasOwnProperty.call(schemas, type)
+        hasSchema: Object.prototype.hasOwnProperty.call(schemas, type),
+        // G4：wiki 的支持矩阵。类型选择器/新建文件用它标灰，校验用它报 M013/M014。
+        support: supportCore.forType(type)
       };
     });
   }
@@ -1240,6 +1243,16 @@ function createMods(options) {
       fileName: relPath ? path.basename(relPath) : undefined
     }) || [];
 
+    /*
+     * G4：单份定义也要带上类型级的支持事实。包级校验按类型只报一次，这里只有
+     * 一个文件，所以直接放在最前面——作者看到的第一句就是“这个类型游戏不认”。
+     */
+    const support = supportCore.diagnosticFor(type);
+    if (support) {
+      diagnostics.unshift(diag(support.severity, support.code, '(root)',
+        support.message, support.messageEn, type));
+    }
+
     const counts = countSeverities(diagnostics);
     return {
       errors: counts.errors,
@@ -1326,6 +1339,22 @@ function createMods(options) {
 
     const r = await scaffoldCore.scaffoldMod(destRoot, sopts);
     resolveArg(r.modRoot, 'modRoot'); // 生成结果也必须落在 modsRoot 里
+    /*
+     * G4：模板可以换，wiki 的支持矩阵不会换。生成的包里只要有“注册了也没有
+     * manager 消费”的类型，就在 warnings 里点名——新 Mod 的第一屏就该知道
+     * 哪些文件只是样例。
+     */
+    const generatedTypes = new Set();
+    for (const rel of r.created) {
+      const m = /^Defines\/([^/]+)\//.exec(String(rel).replace(/\\/g, '/'));
+      if (m) generatedTypes.add(m[1]);
+    }
+    for (const type of Array.from(generatedTypes).sort()) {
+      const support = supportCore.forType(type);
+      if (!support || support.level !== 'unsupported') continue;
+      r.warnings.push('类型 "' + type + '" 在 wiki 的支持矩阵里是“不支持独立扩展”：' +
+        '这个文件只作样例，游戏不会消费它。');
+    }
     invalidateForRoot(); // 目录树变了，按 root 的缓存一律作废
     return { modRoot: r.modRoot, created: r.created, warnings: r.warnings };
   }
@@ -1404,6 +1433,9 @@ function createMods(options) {
       overwrite: p.overwrite
     });
     invalidateForRoot(); // 目录树变了，按 root 的缓存一律作废（同 scaffold）
+    // G4：把类型在 wiki 矩阵里的位置一起交回去，新建的调用方（类型选择器）
+    // 不必再查一遍知识库；字段与 validatePackage 的 M013/M014 同源。
+    written.support = supportCore.forType(type);
     return written;
   }
 

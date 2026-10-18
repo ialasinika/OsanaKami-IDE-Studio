@@ -357,7 +357,7 @@ define through its own picker and imports a PNG that reads back byte for byte
 schema for all 51 definition types (each validating clean), importing a file
 byte for byte with its validations and refusals, the demo packages' listing and
 byte-identical copy (openable only where it was copied), and `config.get`/`config.set`
-keeping a real API key off the wire (464 checks) |
+keeping a real API key off the wire (479 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

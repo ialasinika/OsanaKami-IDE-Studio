@@ -84,7 +84,7 @@ synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile` and
 | verb | params | returns |
 | --- | --- | --- |
 | `mod.stats` | — | `{yarnFiles, nodes, commands, functions, variables, schemas, baselineDefines, locales, lineIds, …}` |
-| `mod.types` | — | `[{type, count, required[], properties[], hasSchema}]` |
+| `mod.types` | — | `[{type, count, required[], properties[], hasSchema, support?}]` (`support` is the wiki matrix entry, G4) |
 | `mod.templates` | — | `[{id, title, titleEn, description, descriptionEn, files[]}]` |
 | `mod.characters` | — | `[{techName, nameKey, colour, …}]` |
 | `mod.open` | `dir` | `{root, manifest, defines[], yarnFiles[], csvFiles[], sprites[], summary, diagnostics}` |
@@ -92,7 +92,7 @@ synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile` and
 | `mod.validateDefine` | `type`, `text`, `relPath?` | `{diagnostics[]}` |
 | `mod.diagnose` | `text`, `fileName?`, `root?` | `{available, diagnostics[], nodes[]}` |
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
-| `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, writes one file |
+| `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics, support?}` — **async**, writes one file (`support` is the type's matrix entry, G4) |
 | `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
 | `mod.examples` | — | `{root, source, present, packages[{name, dir, hasManifest}], default}` — what ships beside the editor |
 | `mod.example` | `name?` | `{installed, name, dir, modRoot, file, files, source, message}` — **async**, copies a demo package into the mods folder |
@@ -400,6 +400,42 @@ reports exactly the same 2 `D006` errors, plus one `D007` info per referenced RG
 (18 in the shipped package) and one `D010` info for the mixed BOM. Headers are read
 once per package, so a sprite used by several definitions is reported once.
 
+### Type support (`shell/mods/support.json`)
+
+`knowledge.json` says what a type looks like; it cannot say whether the game
+actually consumes mods of that type. That half is human knowledge, taken from the
+wiki's [e.Mod结构与限制](https://wiki.infantgod.xyz/e.Mod结构与限制) page and kept as
+a separate table next to the knowledge base, because it cannot be regenerated from
+the game's assemblies (the G5 pipeline does not touch it). It covers exactly the 51
+schema types, each with one of four levels:
+
+| level | meaning | count |
+| --- | --- | --- |
+| `supported` | the wiki lists it as suitable for expansion, and a manager merges it from `ModRegistry` | 5 |
+| `partial` | only part of it is consumed, or only under conditions | 8 |
+| `unsupported` | registers in `ModRegistry`, but no manager reads it — the file does nothing in the game | 22 |
+| `unknown` | the wiki takes no position; neither claimed nor denied | 16 |
+
+The wiki's two lists name 35 of the 51 types (5 suitable, 8 partial, 22 unsuitable);
+the remaining 16 are `unknown` on purpose. Entries also name the consuming manager
+(the wiki's eleven `ModRegistry` consumers), so "registered but not read" is a fact
+the editor can state rather than a guess. `shell/mods/support.js` is the accessor;
+`mod.types()` and `mod.newFile` hand the entry to the type picker and the new-file
+dialog, and `mod.validatePackage` / `mod.validateDefineText` turn it into
+diagnostics:
+
+- `M013` (warning, once per type per package) — the type is `unsupported`; the
+  message says the file will have no effect in the game and why.
+- `M014` (info, once per type per package) — the type is `partial`; the message
+  names the manager and the caveat from the matrix.
+
+`supported` and `unknown` stay silent: the first has a manager, the second is not
+ours to judge. The package-level checks report a type once rather than once per
+file, so a pack with twenty `News` files gets one warning, not twenty. Because
+`Attr` is `unsupported`, the `define-pack` and `full` templates no longer generate
+one, and the generated `Topic` leaves `attrType` empty instead of pointing at a
+definition the game would ignore.
+
 ### What of §11 is implemented
 
 - **§11.1** switches and empty-index silence: `checkDefines`/`checkVariables`/
@@ -561,7 +597,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 464 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 479 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

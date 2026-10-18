@@ -1,0 +1,199 @@
+{
+  "source": "wiki e.Mod结构与限制 (https://wiki.infantgod.xyz/e.Mod结构与限制), fetched 2026-10-18",
+  "wiki": "https://wiki.infantgod.xyz/e.Mod结构与限制",
+  "levels": {
+    "supported": "wiki 列在“最适合扩展”，且有 manager 合并 ModRegistry。",
+    "partial": "wiki 只列了部分内容或带前提；字段/资源转换不一定全部生效。",
+    "unsupported": "wiki 列在“当前不适合独立扩展”：能注册，但游戏里没有 manager 消费它。",
+    "unknown": "wiki 没有表态，编辑器也没有找到消费它的 manager：既不断言可用，也不断言不可用。"
+  },
+  "managers": [
+    "CharacterDefinitionRegistry",
+    "CharacterAnimationManager",
+    "VoiceOverDefinitionRegistry",
+    "CGDefinitionRegistry",
+    "CutSceneManager",
+    "EmailManager",
+    "GoodsManager",
+    "HexModuleResolver",
+    "HexProtocolResolver",
+    "MemoryManager",
+    "QuestManager"
+  ],
+  "types": {
+    "AchievementDefinition": {
+      "level": "unsupported"
+    },
+    "Attachment": {
+      "level": "unknown"
+    },
+    "Attr": {
+      "level": "unsupported"
+    },
+    "AudioEvent": {
+      "level": "unknown"
+    },
+    "CGDefinition": {
+      "level": "supported",
+      "manager": "CGDefinitionRegistry"
+    },
+    "Character": {
+      "level": "supported",
+      "manager": "CharacterDefinitionRegistry"
+    },
+    "CharacterPrompt": {
+      "level": "unknown"
+    },
+    "CharacterState": {
+      "level": "supported",
+      "manager": "CharacterAnimationManager"
+    },
+    "CombatDefinition": {
+      "level": "unsupported"
+    },
+    "CutScene": {
+      "level": "partial",
+      "manager": "CutSceneManager",
+      "note": "字段是公开的 PascalCase `TechName`；wiki 把公开字段法列在 TechName 提取风险名单里，进游戏前要在实机确认。"
+    },
+    "Decoration": {
+      "level": "unknown"
+    },
+    "Email": {
+      "level": "supported",
+      "manager": "EmailManager"
+    },
+    "Fragment": {
+      "level": "unknown"
+    },
+    "Goods": {
+      "level": "partial",
+      "manager": "GoodsManager",
+      "note": "Goods 本身能注册，但 `GoodsList` / `GoodsType` 在 wiki 的“不支持”名单里，所以商品体系只有一半可用。"
+    },
+    "GoodsList": {
+      "level": "unsupported"
+    },
+    "GoodsType": {
+      "level": "unsupported"
+    },
+    "HardwareDefinition": {
+      "level": "unsupported"
+    },
+    "HardwarePartDefinition": {
+      "level": "unsupported"
+    },
+    "HardwarePartTypeDefinition": {
+      "level": "unsupported"
+    },
+    "HardwareResourceDefinition": {
+      "level": "unsupported"
+    },
+    "Hex": {
+      "level": "unknown"
+    },
+    "HexModule": {
+      "level": "partial",
+      "manager": "HexModuleResolver",
+      "note": "wiki 只把它列为部分支持：不是每个字段都能从 JSON 落地。"
+    },
+    "InteractItem": {
+      "level": "unsupported"
+    },
+    "Memory": {
+      "level": "partial",
+      "manager": "MemoryManager",
+      "note": "`Memory` 的辅助类型全部不支持；`TechName` 是公开字段，提取有失败先例。"
+    },
+    "MemoryConceptDefinition": {
+      "level": "unsupported"
+    },
+    "MemoryTag": {
+      "level": "unsupported"
+    },
+    "MemoryTypeDefinition": {
+      "level": "unsupported"
+    },
+    "NameTable": {
+      "level": "unsupported"
+    },
+    "News": {
+      "level": "unsupported"
+    },
+    "ObserverPrompt": {
+      "level": "unknown"
+    },
+    "PetEventAsset": {
+      "level": "unsupported"
+    },
+    "PetIntentAsset": {
+      "level": "unsupported"
+    },
+    "PetProfileAsset": {
+      "level": "unsupported"
+    },
+    "PetStepAsset": {
+      "level": "unsupported"
+    },
+    "PixelAnimation": {
+      "level": "supported",
+      "manager": "CharacterAnimationManager"
+    },
+    "Protocol": {
+      "level": "partial",
+      "manager": "HexProtocolResolver",
+      "note": "目录别名是 `Defines/Protocol/`（类型短名 `HexProtocol`）；只部分可用。"
+    },
+    "QuestDefinition": {
+      "level": "partial",
+      "manager": "QuestManager",
+      "note": "`TechName` 是公开字段，wiki 把它列在提取风险名单里。"
+    },
+    "QuestStepDefinition": {
+      "level": "partial",
+      "manager": "QuestManager",
+      "note": ""
+    },
+    "Result": {
+      "level": "unknown"
+    },
+    "ReviewSO": {
+      "level": "unsupported"
+    },
+    "ShortCut": {
+      "level": "unknown"
+    },
+    "SituationDefinition": {
+      "level": "unsupported"
+    },
+    "Song": {
+      "level": "unsupported"
+    },
+    "SpecialEffect": {
+      "level": "unknown"
+    },
+    "TipsTypeDefinition": {
+      "level": "unknown"
+    },
+    "Topic": {
+      "level": "unknown"
+    },
+    "UIAnimation": {
+      "level": "unknown"
+    },
+    "VoiceOverDefinition": {
+      "level": "partial",
+      "manager": "VoiceOverDefinitionRegistry",
+      "note": "只能扩展语音集合本身；FMOD 事件不能由 JSON 可靠构造，复用现有 `AudioEvent`。"
+    },
+    "WorldAreaTypeDefinition": {
+      "level": "unknown"
+    },
+    "WorldLocationDefinition": {
+      "level": "unknown"
+    },
+    "WorldMapDefinition": {
+      "level": "unknown"
+    }
+  }
+}

@@ -8,6 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as validateCore from "../validate.js";
 
+const require = createRequire(import.meta.url);
+
 section("the open package as a reference target");
 
 if (!HAVE_CORPUS) {
@@ -767,6 +769,102 @@ section("asset formats the game would silently mishandle (G46)");
   const bomDiags = csvDiags.filter((d) => d.severity === "info" && d.message.indexOf("BOM") >= 0);
   check("mixed BOM across the package is exactly one info, not one per table",
     bomDiags.length === 1, JSON.stringify(bomDiags.map((d) => d.message)));
+}
+
+section("the wiki's support matrix says which definitions the game consumes (G4)");
+
+{
+  const support = require("../support.js");
+  const kb = mods.knowledge();
+  const matrix = support.table();
+  const matrixTypes = Object.keys(matrix).sort();
+  const schemaTypes = Object.keys(kb.schemas).sort();
+  const LEVELS = ["supported", "partial", "unsupported", "unknown"];
+
+  check("the matrix covers exactly the 51 schema types, no more and no less",
+    JSON.stringify(matrixTypes) === JSON.stringify(schemaTypes),
+    JSON.stringify(matrixTypes));
+
+  const badLevels = matrixTypes.filter((t) => LEVELS.indexOf(matrix[t].level) < 0);
+  check("every entry sits in one of the four documented levels",
+    badLevels.length === 0, JSON.stringify(badLevels.map((t) => t + ":" + matrix[t].level)));
+
+  const byLevel = LEVELS.map((l) => matrixTypes.filter((t) => matrix[t].level === l).length);
+  check("all four levels are actually used by the matrix",
+    byLevel.every((n) => n > 0), JSON.stringify(LEVELS.map((l, i) => l + "=" + byLevel[i])));
+
+  check("Character is supported, with the manager that consumes it",
+    matrix.Character && matrix.Character.level === "supported" &&
+      matrix.Character.manager === "CharacterDefinitionRegistry", JSON.stringify(matrix.Character));
+  check("Song is unsupported even though the schema exists",
+    matrix.Song && matrix.Song.level === "unsupported", JSON.stringify(matrix.Song));
+  check("VoiceOverDefinition is partial, and names its manager",
+    matrix.VoiceOverDefinition && matrix.VoiceOverDefinition.level === "partial" &&
+      matrix.VoiceOverDefinition.manager === "VoiceOverDefinitionRegistry",
+    JSON.stringify(matrix.VoiceOverDefinition));
+  check("the 11 managers from the wiki's ModRegistry table are listed",
+    support.managers().length === 11 && support.managers().includes("CutSceneManager"),
+    JSON.stringify(support.managers()));
+
+  /* the matrix reaches the API the editors use ---------------------- */
+
+  const typed = mods.types();
+  check("types() carries the support entry for every schema type",
+    typed.length === 51 && typed.every((t) => t.support && LEVELS.indexOf(t.support.level) >= 0),
+    JSON.stringify(typed.filter((t) => !t.support).map((t) => t.type)));
+
+  /* a package that ships types the game will not consume ------------ */
+
+  const root = join(specTemp("infantgod-support-"), "SupportProbe");
+  specWrite(join(root, "mod.json"), JSON.stringify({
+    name: "SupportProbe", version: "1.0.0", gameVersion: "1.0", loadOrder: 50,
+  }, null, 2) + "\n");
+  specWrite(join(root, "Defines", "News", "One.json"), "{ \"techName\": \"ZzNewsOne\" }\n");
+  specWrite(join(root, "Defines", "News", "Two.json"), "{ \"techName\": \"ZzNewsTwo\" }\n");
+  specWrite(join(root, "Defines", "Goods", "Poster.json"), "{ \"techName\": \"ZzGoods\" }\n");
+  specWrite(join(root, "Defines", "Character", "Hero.json"), "{ \"techName\": \"ZzHero\" }\n");
+  specMods.openMod({ dir: root });
+  const diags = specMods.validatePackage({ root }).diagnostics;
+
+  const m013 = diags.filter((d) => d.code === "M013");
+  check("two files of one unsupported type produce exactly one M013, not two",
+    m013.length === 1 && m013[0].severity === "warning" && m013[0].message.indexOf("News") >= 0,
+    JSON.stringify(m013.map((d) => d.message)));
+  const m014 = diags.filter((d) => d.code === "M014");
+  check("a partially supported type is an info naming its manager",
+    m014.length === 1 && m014[0].severity === "info" && m014[0].message.indexOf("GoodsManager") >= 0,
+    JSON.stringify(m014.map((d) => d.message)));
+  check("a fully supported type produces neither M013 nor M014",
+    !m013.some((d) => d.message.indexOf("Character") >= 0) &&
+      !m014.some((d) => d.message.indexOf("Character") >= 0),
+    JSON.stringify(diags.filter((d) => d.code === "M013" || d.code === "M014").map((d) => d.message)));
+
+  const textVerdict = specMods.validateDefineText({
+    type: "Song", text: "{ \"techName\": \"ZzSong\" }\n", relPath: "Defines/Song/ZzSong.json",
+  });
+  check("validateDefineText reports M013 before the schema's own complaints",
+    textVerdict.diagnostics[0] && textVerdict.diagnostics[0].code === "M013",
+    JSON.stringify(textVerdict.diagnostics.map((d) => d.code)));
+
+  /* new files and the scaffold respect the same truth ----------------- */
+
+  const sandbox = specTemp("infantgod-support-new-");
+  const fresh = createMods({ modsRoot: sandbox });
+  const created = await fresh.scaffold({ dir: join(sandbox, "SupportNew"), modName: "SupportNew", template: "full" });
+  const news = fresh.newFile({ dir: created.modRoot, type: "News", name: "ZzNews" });
+  check("newFile hands back the support entry for the type it wrote",
+    news.support && news.support.level === "unsupported", JSON.stringify(news.support));
+  check("the full template no longer generates Attr, which the game does not consume",
+    !created.created.some((p) => String(p).indexOf("Defines/Attr/") === 0),
+    JSON.stringify(created.created));
+
+  const templates = fresh.templates();
+  const definePack = templates.find((t) => t.id === "define-pack");
+  check("the define-pack template advertises only the two types it still creates",
+    definePack && !definePack.files.some((p) => p.indexOf("Attr") >= 0) &&
+      definePack.files.some((p) => p.indexOf("Defines/Goods/") === 0) &&
+      definePack.files.some((p) => p.indexOf("Defines/Topic/") === 0),
+    JSON.stringify(definePack && definePack.files));
 }
 
 section("no state leaks between runs");

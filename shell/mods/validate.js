@@ -72,6 +72,10 @@
  *                    error，骨架版本不是 4.2.43 是 warning（4.2.x 其余版本仍能读）
  *      D010（G46）warning/info   本地化 CSV：表头不是 8 列或缺 lock 列是 warning，
  *                    缺 BOM 或只有 LF 行尾是 info（游戏自己导出的表是 BOM + CRLF）
+ *      M013（G4）warning  定义类型在 wiki 的支持矩阵里是“不支持独立扩展”：
+ *                    能注册进 ModRegistry，但没有 manager 消费它（每个类型每包只报一次）
+ *      M014（G4）info     定义类型只被部分支持：报出消费者 manager 与前提
+ *                    （矩阵来自 shell/mods/support.json）
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -84,6 +88,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const supportCore = require('./support.js');
 
 /* ================================================================== *
  * 1. 常量与轻量工具
@@ -1427,6 +1432,18 @@ function validateModPackage(modRoot, opts) {
         }
         pending.push({ type: type, rel: rel, abs: abs, obj: obj });
       }
+    }
+
+    /*
+     * G4：wiki 的支持矩阵。一个包可能带几十个“注册了也没人消费”的类型，
+     * 所以按类型各报一次，而不是按文件刷屏。supported / unknown 不报：
+     * 前者有 manager，后者 wiki 没表态。
+     */
+    for (const type of Array.from(typeSet).sort()) {
+      const support = supportCore.diagnosticFor(type);
+      if (!support) continue;
+      diagnostics.push(diag(support.severity, support.code, 'Defines/' + type, type,
+        support.message, support.messageEn));
     }
 
     // G46：整个包共用一份文件头缓存与「已体检过」集合，同一张图只报一次。
