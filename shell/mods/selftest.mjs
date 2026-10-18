@@ -39,6 +39,7 @@ await import("./selftest/knowledge-facts.mjs");
 await import("./selftest/language.mjs");
 await import("./selftest/newfile.mjs");
 await import("./selftest/importfile.mjs");
+await import("./selftest/cli.mjs");
 await import("./selftest/demos.mjs");
 
 /* ------------------------------------------------------------------ */

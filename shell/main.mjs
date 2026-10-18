@@ -17,6 +17,11 @@
  *                  system's Edge/Chromium in --app= mode.  No Electron, no
  *                  bundled Chromium, nothing to download.
  *
+ *   infantgod validate DIR  the mod layer alone: validate one package (or every
+ *                  package under a mods root) and print the diagnostics, with
+ *                  --json for a machine.  No kernel, no window.  A review pass
+ *                  and CI can run it against a mod someone sent them.
+ *
  * Both modes share one `dispatch()` so the wire behaviour cannot drift between
  * them.
  *
@@ -27,7 +32,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, statSync, mkdtempSync } from "node:fs";
+import { existsSync, statSync, mkdtempSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1179,6 +1184,162 @@ async function runServe(options) {
 }
 
 /* ------------------------------------------------------------------ */
+/* headless validation                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `validate DIR` is the mod layer with no window and no kernel around it.
+ * Everything it needs is `shell/mods/`: the schemas, the baseline facts, the
+ * asset readers.  That is deliberate -- a reviewer can run it on a machine
+ * that has neither the game installed nor a compiled `build/infantgod.exe`,
+ * which is exactly the situation the mods suite supports.
+ *
+ * DIR is one package (it has mod.json) or a mods root whose direct children
+ * are packages.  The package's parent is the mods root for a single package,
+ * so the cross-mod checks (techName collisions, M012's game-Mods note) behave
+ * the way they do when the package sits among its siblings -- a package sent
+ * over chat has no siblings, and must not silently change meaning.
+ */
+
+/** One diagnostic as a line someone can paste into a review comment. */
+function describeDiagnostic(diag) {
+  const where = diag && diag.path ? String(diag.path) : "(root)";
+  const code = diag && diag.code ? String(diag.code) : "?";
+  const severity = diag && diag.severity ? String(diag.severity) : "info";
+  const text = diag && diag.message ? String(diag.message)
+    : diag && diag.messageEn ? String(diag.messageEn)
+      : "";
+  return `${severity} ${code} ${where}: ${text}`;
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+async function runValidate(options) {
+  const json = options.json === true;
+  const say = (line) => process.stderr.write(line + "\n");
+  const fail = (message) => {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return 2;
+  };
+
+  if (options.target === null) {
+    return fail("validate needs a directory: node shell/main.mjs validate <dir> [--json]");
+  }
+  const target = path.resolve(options.target);
+  if (!existsSync(target) || !statSync(target).isDirectory()) {
+    return fail(`not a directory: ${target}`);
+  }
+
+  const targetIsPackage = existsSync(path.join(target, "mod.json"));
+  const modsRoot = options.modsRoot !== null
+    ? options.modsRoot
+    : (targetIsPackage ? path.dirname(target) : target);
+
+  let packages;
+  if (targetIsPackage) {
+    packages = [target];
+  } else {
+    try {
+      packages = readdirSync(target)
+        .map((name) => path.join(target, name))
+        .filter((entry) => {
+          try {
+            return statSync(entry).isDirectory() && existsSync(path.join(entry, "mod.json"));
+          } catch {
+            return false;
+          }
+        })
+        .sort();
+    } catch (err) {
+      return fail(`cannot read ${target}: ${err && err.message ? err.message : err}`);
+    }
+    if (packages.length === 0) {
+      return fail(`no mod packages found in ${target} (looked for mod.json in its direct children)`);
+    }
+  }
+
+  const mods = await loadMods({ ...options, modsRoot }, (line) => say(line));
+  if (!mods) return fail("the mod layer did not load");
+
+  const results = [];
+  for (const root of packages) {
+    let result;
+    try {
+      result = mods.validatePackage({ root });
+    } catch (err) {
+      return fail(`cannot validate ${root}: ${err && err.message ? err.message : err}`);
+    }
+    /*
+     * The package name is the folder name: mod.json's own `name` can be absent
+     * or wrong, and the report should still say where to look.
+     */
+    results.push({
+      root,
+      name: path.basename(root),
+      ok: !!result.ok,
+      knowledge: result.knowledge,
+      summary: result.summary,
+      diagnostics: result.diagnostics,
+    });
+  }
+
+  const totals = {
+    packages: results.length,
+    failed: results.filter((r) => !r.ok).length,
+    errors: results.reduce((n, r) => n + (r.summary.errors || 0), 0),
+    warnings: results.reduce((n, r) => n + (r.summary.warnings || 0), 0),
+    infos: results.reduce((n, r) => n + (r.summary.infos || 0), 0),
+  };
+  const gameMods = typeof mods.gameMods === "function" ? mods.gameMods() : null;
+  const knowledge = results.every((r) => r.knowledge === "present") ? "present" : "missing";
+
+  if (json) {
+    const document = {
+      tool: "infantgod-validate",
+      version: SHELL_VERSION,
+      ok: totals.errors === 0,
+      modsRoot,
+      knowledge,
+      gameMods: gameMods ? { dir: gameMods.dir, source: gameMods.source, found: gameMods.found } : null,
+      packages: results,
+      totals,
+    };
+    process.stdout.write(JSON.stringify(document, null, 2) + "\n");
+  } else {
+    for (const result of results) {
+      const s = result.summary;
+      process.stdout.write(
+        `${result.name}  ${result.ok ? "ok" : "has errors"}  ` +
+        `(${plural(s.files, "file")}, ${s.errors} errors, ${s.warnings} warnings, ${s.infos} infos)\n`,
+      );
+      for (const diagnostic of result.diagnostics) {
+        process.stdout.write(`  ${describeDiagnostic(diagnostic)}\n`);
+      }
+    }
+    process.stdout.write(
+      `${plural(totals.packages, "package")}: ${totals.packages - totals.failed} ok, ` +
+      `${totals.failed} with errors -- ${plural(totals.errors, "error")}, ` +
+      `${plural(totals.warnings, "warning")}, ${plural(totals.infos, "info")}\n`,
+    );
+    if (knowledge !== "present") {
+      process.stdout.write("knowledge base: missing -- schema checks were limited, see the E000 diagnostic\n");
+    }
+    if (gameMods && gameMods.found !== true) {
+      process.stdout.write(
+        "game Mods folder: not found -- cross-mod checks were skipped (the M012 diagnostic says so per package)\n",
+      );
+    }
+  }
+
+  return totals.errors > 0 ? 1 : 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1197,6 +1358,17 @@ usage: node shell/main.mjs <command> [options]
           Serve shell/web/ over HTTP with POST /rpc and GET /events, then
           launch the system browser in --app= mode.  --port 0 (default) picks
           a free port; --no-open skips the browser.
+
+  validate DIR [--mods-root DIR] [--user-dir DIR] [--json]
+          Validate a mod package without opening the window: the same
+          shell/mods/ validator the cards call, with no kernel involved, so it
+          runs on a build machine that has neither the game nor a compiled
+          binary.  DIR is one package (a directory with mod.json) or a mods
+          root whose direct children are packages; every package is reported.
+          --json prints one JSON object on stdout and nothing else, for CI and
+          \`jq\`; logs and progress still go to stderr.
+          Exit codes: 0 no errors, 1 the validator found errors, 2 the command
+          line or the mod layer failed.  Warnings and infos never change it.
 
   help    This text.
 
@@ -1224,12 +1396,14 @@ file, not the kernel.
 function parseArgs(argv) {
   const options = {
     command: null,
+    target: null,
     workspace: process.cwd(),
     modsRoot: null,
     userDir: null,
     kernel: null,
     port: 0,
     noOpen: false,
+    json: false,
     verbose: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
@@ -1246,6 +1420,8 @@ function parseArgs(argv) {
       options.verbose = true;
     } else if (arg === "--no-open") {
       options.noOpen = true;
+    } else if (arg === "--json") {
+      options.json = true;
     } else if (arg.startsWith("--") && arg.includes("=")) {
       const [name, value] = [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)];
       if (!takesValue.has(name)) throw new Error(`unknown option: ${name}`);
@@ -1267,8 +1443,17 @@ function parseArgs(argv) {
   }
 
   options.command = rest[0] ?? (options.help ? "help" : null);
-  if (rest.length > 1) {
-    throw new Error(`unexpected argument: ${rest[1]}`);
+  /*
+   * Only `validate` takes a positional argument.  Keeping the check here means
+   * `rpc extra` still fails the same way it always did, instead of the extra
+   * word being silently dropped.
+   */
+  options.target = rest[1] ?? null;
+  if (options.target !== null && options.command !== "validate") {
+    throw new Error(`unexpected argument: ${options.target}`);
+  }
+  if (rest.length > 2) {
+    throw new Error(`unexpected argument: ${rest[2]}`);
   }
   options.exe = path.resolve(options.kernel ?? DEFAULT_KERNEL);
   options.workspace = path.resolve(options.workspace);
@@ -1318,6 +1503,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     if (options.command === "rpc") return await runRpc(options);
     if (options.command === "serve") return await runServe(options);
+    if (options.command === "validate") return await runValidate(options);
   } catch (err) {
     process.stderr.write(`OsanaKami IDE Studio: ${err && err.message ? err.message : err}\n`);
     return 1;

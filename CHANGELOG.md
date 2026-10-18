@@ -16,6 +16,32 @@ stands in this tree.
 
 ## Unreleased
 
+### Validate a package from a terminal, with no window and no kernel
+
+- The mod layer has been reachable only through the board: the validation port
+  solved that for scripts that can speak the protocol, but not for a reviewer
+  with a zip file or a CI job with nothing but this checkout. `node shell/main.mjs
+  validate DIR [--json] [--mods-root DIR] [--user-dir DIR]` is the fourth
+  command, and it uses `shell/mods/` alone — no kernel is spawned and the game's
+  install is not required. `DIR` is one package or a mods root whose direct
+  children are packages; for a single package the parent is the mods root, so
+  cross-package checks (`M013`, `D103`, `M012`) see the same siblings they see
+  in the board. `--mods-root` overrides that, and a package outside it is
+  refused instead of silently re-rooted.
+- Exit codes are the contract for scripts: `0` no errors, `1` the validator
+  found errors, `2` the command line or the mod layer failed. Warnings and infos
+  never change the exit code, so `M013`/`M014` cannot fail a build. `--json`
+  prints exactly one object (tool, version, modsRoot, knowledge, knowledgeError,
+  gameMods, packages[] with their own diagnostics, totals); logs go to stderr so
+  `validate … --json | jq .totals` works. The same `E000`/`knowledge: "missing"`
+  degradation applies as in the cards, and `gameMods.found: false` says the
+  cross-mod checks were skipped.
+- Mods suite: 501 checks, was 487 (one new section spawns the real command line
+  against fixture packages: exit codes, the JSON document, a package versus a
+  root, the usage errors, and the old commands still refusing stray arguments).
+  Red proof: making the command always exit 0 gave `498/501` and `mods: FAIL
+  (3)`; restored, 501/501.
+
 ### The portrait a character names is checked, not just stored
 
 - `Character.spineAssetPath` is the one field that decides whether a custom

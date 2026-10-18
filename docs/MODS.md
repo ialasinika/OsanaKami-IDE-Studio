@@ -529,6 +529,49 @@ problems Lantern
 docs Love
 ```
 
+### Validating without the window
+
+A reviewer who is sent a package, or a CI job that should keep a mod from
+regressing, cannot open the board first. `validate` is the mod layer as a
+command:
+
+```sh
+node shell/main.mjs validate examples/Mods/Lantern
+node shell/main.mjs validate examples/Mods --json > report.json
+node shell/main.mjs validate "…/StreamingAssets/Mods/MyMod" --json --user-dir /tmp/ig-user
+```
+
+`DIR` is one package (it has `mod.json`) or a mods root whose direct children
+are packages; every package is reported, sorted by folder name. For a single
+package the parent folder is the mods root, so the cross-mod checks (G3's
+`techName` collisions, `M012`'s game-Mods note) see the same siblings they
+would see if the package were opened in the board. `--mods-root DIR` overrides
+that; a package outside it is refused instead of being silently re-rooted.
+
+Exit codes are the contract: `0` no errors, `1` the validator found errors, `2`
+the command line or the mod layer failed. Warnings and infos never change the
+exit code — `M013` (the game ignores this type) is not a reason to fail a build.
+With `--json` stdout is exactly one JSON object:
+
+```json
+{
+  "tool": "infantgod-validate", "version": "0.1.0", "ok": false,
+  "modsRoot": "…/examples/Mods", "knowledge": "present",
+  "gameMods": { "dir": "…", "source": "discover", "found": true },
+  "packages": [{ "root": "…/Lantern", "name": "Lantern", "ok": false,
+                 "knowledge": "present", "summary": { "errors": 2, … },
+                 "diagnostics": [{ "severity": "error", "code": "D006", … }] }],
+  "totals": { "packages": 1, "failed": 1, "errors": 2, "warnings": 2, "infos": 3 }
+}
+```
+
+Logs (which knowledge base was picked, whether the layer loaded) go to stderr,
+so `validate … --json | jq .totals` works. Nothing here spawns the kernel or
+reads the game's install: the command is `shell/mods/` and the schemas, which is
+why it runs on a machine that only has this checkout — the same
+`knowledge: "missing"` / `E000` degradation applies, and `gameMods.found:
+false` explains why the cross-mod checks were skipped.
+
 ## The worked example we ship
 
 `examples/Mods/Lantern` is the repository's own mod: 22 files, every byte
@@ -609,7 +652,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 487 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 501 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
