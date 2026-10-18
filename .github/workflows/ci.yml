@@ -1,13 +1,21 @@
 # What a clone is checked with.  Every step below is a command that runs on the
-# maintainer's machine too (see "Run the checks" in README.md); nothing here is
-# CI-only magic.
+# maintainer's machine too: the `test` job is `make ci`, and the signing job is
+# `python tools/ci_installer.py ... -- --sign ...`.  Nothing here is CI-only
+# magic.
 #
 # Honest status: this file was authored on a Windows machine with no GitHub
-# runner, so it has never actually executed on GitHub.  The toolchain steps are
-# the ones that make `make CC=gcc` work here: a C89 compiler (`gcc`, because the
-# Makefile's default CC path assumes the maintainer's MinGW install), Node 24 and
-# Python 3.12.  `SHELL=cmd.exe` is what the maintainer's own invocation passes:
-# the recipes are written for the Windows command interpreter.
+# remote, so it has never executed on a GitHub runner.  It is locally
+# reproducible (`make ci` runs the test job's sequence), but the runner-specific
+# parts -- action downloads, the NSIS cache, the secrets gate -- are unproven
+# until the repository has a remote.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   SIGN_PFX       base64 of a .pfx file:  [Convert]::ToBase64String([IO.File]::ReadAllBytes("codesign.pfx"))
+#   SIGN_PASSWORD  the .pfx password
+# With neither secret the sign_gate job reports enabled=false and the `sign`
+# job is skipped, not failed.  Signing is opt-in for the same reason it is
+# opt-in in tools/make-installer.mjs: a build that did not ask for a signature
+# must not depend on a certificate.
 name: ci
 
 on:
@@ -15,6 +23,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+
+# The workflow reads the repository and uploads artefacts; it never writes.
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -36,6 +48,25 @@ jobs:
         with:
           install: mingw-w64-x86_64-gcc make
           path-type: inherit
+          cache: true
+
+      # NSIS is what turns installer-check and sign-check from skips into real
+      # checks, and what builds the uploaded installer.  The runner image may
+      # already have it; cache the install directory so a warm run does neither
+      # a download nor an install.
+      - uses: actions/cache@v4
+        id: nsis-cache
+        with:
+          path: 'C:\Program Files (x86)\NSIS'
+          key: nsis-3-${{ runner.os }}
+
+      - name: install NSIS
+        if: steps.nsis-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            choco install nsis --no-progress -y
+          }
 
       - name: toolchain
         shell: msys2 {0}
@@ -45,11 +76,19 @@ jobs:
           node --version
           python --version
 
-      - name: build, protocol, fixed bugs, self-tests
+      # Exactly the local sequence: the suite (including installer-check and
+      # sign-check), the fixture installer CI uploads, and the workflow audit.
+      - name: make ci
         shell: msys2 {0}
-        run: |
-          make -f Makefile SHELL=cmd.exe CC=gcc
-          make -f Makefile SHELL=cmd.exe CC=gcc test
+        run: make -f Makefile SHELL=cmd.exe CC=gcc ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            build/ci-setup.exe
+            build/make-installer.json
+          if-no-files-found: error
 
   # The window itself.  Separated because a browser can be missing or unhappy on
   # a runner, and a red build for that reason says nothing about the code.
@@ -71,6 +110,7 @@ jobs:
         with:
           install: mingw-w64-x86_64-gcc make
           path-type: inherit
+          cache: true
 
       - name: build and render the board headless
         shell: msys2 {0}
@@ -78,3 +118,100 @@ jobs:
           make -f Makefile SHELL=cmd.exe CC=gcc
           python tools/demo.py
           make -f Makefile SHELL=cmd.exe CC=gcc smoke
+
+  # GitHub does not expose `secrets` to a job-level `if`; a step may read them.
+  # This one-step job turns "both secrets are present" into an output the sign
+  # job can branch on, so the sign job is genuinely skipped when they are not.
+  sign_gate:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          SIGN_PFX: ${{ secrets.SIGN_PFX }}
+          SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
+        run: |
+          if [ -n "$SIGN_PFX" ] && [ -n "$SIGN_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SIGN_PFX/SIGN_PASSWORD are not set; skipping the signing job"
+          fi
+
+  sign:
+    needs: [test, sign_gate]
+    if: needs.sign_gate.outputs.enabled == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-gcc make
+          path-type: inherit
+          cache: true
+
+      - uses: actions/cache@v4
+        id: nsis-cache
+        with:
+          path: 'C:\Program Files (x86)\NSIS'
+          key: nsis-3-${{ runner.os }}
+
+      - name: install NSIS
+        if: steps.nsis-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            choco install nsis --no-progress -y
+          }
+
+      # The runner image ships a Windows SDK but does not put signtool on PATH.
+      - name: locate signtool
+        shell: pwsh
+        run: |
+          $roots = @("${env:ProgramFiles(x86)}\Windows Kits\10\bin", "$env:ProgramFiles\Windows Kits\10\bin")
+          $signtool = Get-ChildItem -Path $roots -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found in the Windows SDK" }
+          "INFANTGOD_SIGNTOOL=$($signtool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "signtool: $($signtool.FullName)"
+
+      - name: decode the signing certificate
+        shell: pwsh
+        env:
+          SIGN_PFX_B64: ${{ secrets.SIGN_PFX }}
+        run: |
+          New-Item -ItemType Directory -Force build\sign | Out-Null
+          [IO.File]::WriteAllBytes("$env:GITHUB_WORKSPACE\build\sign\codesign.pfx", [Convert]::FromBase64String($env:SIGN_PFX_B64))
+
+      - name: build and sign
+        shell: msys2 {0}
+        env:
+          INFANTGOD_SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
+        run: |
+          make -f Makefile SHELL=cmd.exe CC=gcc
+          python tools/ci_installer.py --out build/signed-setup.exe -- --sign --sign-pfx build/sign/codesign.pfx
+
+      - name: verify the signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath build\signed-setup.exe
+          Write-Host "status: $($signature.Status); signer: $($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne 'Valid') { throw "signature status is $($signature.Status), expected Valid" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-installer
+          path: build/signed-setup.exe
+          if-no-files-found: error

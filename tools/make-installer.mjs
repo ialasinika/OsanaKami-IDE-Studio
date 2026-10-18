@@ -13,11 +13,14 @@
  *
  * tools/installer.nsi embeds the uninstaller with WriteUninstaller at build
  * time, so one makensis pass is enough and nothing is executed while building.
- * This script drives that pass, then signs the result with the project identity.
+ * This script drives that pass, and signs the result only when signing was
+ * explicitly requested: a build without `--sign` never starts an external
+ * signing tool.
  *
- *   node tools/make-installer.mjs                       # signed dist/OsanaKami IDE Studio Setup 0.1.0.exe
- *   node tools/make-installer.mjs --no-sign --out build/control.exe
- *   node tools/make-installer.mjs --payload build/tiny-payload --out build/tiny.exe --no-sign
+ *   node tools/make-installer.mjs --out build/control.exe
+ *   node tools/make-installer.mjs --sign --sign-pfx cert.pfx      # release
+ *   node tools/make-installer.mjs --sign --sign-pfx cert.pfx --sign-dry-run
+ *   node tools/make-installer.mjs --payload build/tiny-payload --out build/tiny.exe
  *
  * No new dependencies: node builtins plus the makensis/signtool binaries that
  * electron-builder already cached under %LOCALAPPDATA%.
@@ -25,7 +28,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,7 +48,7 @@ function note(message) {
 // Arguments
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { sign: true, timestamp: true, lzma: false, audit: true, dev: false, defines: [] };
+  const out = { sign: false, timestamp: true, lzma: false, audit: true, dev: false, defines: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => {
@@ -66,6 +68,17 @@ function parseArgs(argv) {
       // (CI, the packaging script, a human making a release candidate) must run
       // the audit and carry a zero allow-list, or it is not a release (G30).
       case "--dev": out.dev = true; break;
+      // Signing is opt-in.  Without --sign this script never looks for, or
+      // starts, signtool: a build that did not ask for a signature must not
+      // depend on a certificate being installed.
+      case "--sign": out.sign = true; break;
+      case "--sign-pfx": out.signPfx = value(); break;
+      case "--sign-thumbprint": out.signThumbprint = value(); break;
+      case "--sign-signtool": out.signSigntool = value(); break;
+      case "--sign-timestamp": out.signTimestamp = value(); break;
+      case "--sign-dry-run": out.sign = true; out.signDryRun = true; break;
+      // Kept so old command lines and package.json scripts still run.  The
+      // default is already unsigned now; these no longer select an identity.
       case "--no-sign": out.sign = false; break;
       case "--no-timestamp": out.timestamp = false; break;
       case "--no-verify-sign": out.verifySign = false; break;
@@ -98,9 +111,21 @@ if (args.help) {
                       allow-list, and marks the output as not release-ready
   --no-audit          skip the payload audit (requires --dev)
   --audit-only        run the payload audit and stop before compiling
-  --no-sign           skip Authenticode signing
-  --no-timestamp      sign without an RFC 3161 timestamp
-  --no-verify-sign    do not ask Windows to validate the signature afterwards`);
+  --sign              sign the installer (opt-in; nothing external runs without it)
+  --sign-pfx <file>   .pfx to sign with (default INFANTGOD_SIGN_PFX)
+  --sign-thumbprint   pick a certificate from the Windows store by SHA-1
+    <hex>             thumbprint instead of a .pfx
+  --sign-signtool     signtool.exe to use (default INFANTGOD_SIGNTOOL, then
+    <path>            PATH, then electron-builder's winCodeSign cache)
+  --sign-timestamp    RFC 3161 timestamp server (default
+    <url>             http://timestamp.digicert.com)
+  --sign-dry-run      resolve and print the signtool command line, with the
+                      password redacted, then exit 0 without compiling or signing
+
+  The .pfx password is read from INFANTGOD_SIGN_PASSWORD only.  It is never
+  accepted on the command line, and it is never written to build/.
+  --no-sign, --no-timestamp and --no-verify-sign are accepted for compatibility;
+  signing is already off unless --sign is given.`);
   process.exit(0);
 }
 
@@ -172,11 +197,20 @@ function findMakensis() {
   return firstExisting(candidates);
 }
 
+function findOnPath(name) {
+  for (const dir of (process.env.PATH || "").split(";")) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function findSigntool() {
   const cache = process.env.LOCALAPPDATA
     ? join(process.env.LOCALAPPDATA, "electron-builder", "Cache", "winCodeSign")
     : null;
-  const candidates = [process.env.SIGNTOOL];
+  const candidates = [];
   if (cache && existsSync(cache)) {
     const versions = readdirSync(cache).filter((n) => /^winCodeSign-/.test(n)).sort().reverse();
     for (const v of versions) {
@@ -188,6 +222,119 @@ function findSigntool() {
     if (dir) candidates.push(join(dir, "signtool.exe"));
   }
   return firstExisting(candidates);
+}
+
+// ---------------------------------------------------------------------------
+// Signing configuration
+// ---------------------------------------------------------------------------
+// Resolved before the compile so `--sign-dry-run` is an audit of the wiring
+// that needs neither a certificate nor NSIS, and so a requested signature fails
+// before the expensive step instead of after it.  Without --sign nothing here
+// runs and no external signing tool is ever looked for.
+const SIGN_DEFAULT_TIMESTAMP = "http://timestamp.digicert.com";
+
+function signFail(message) {
+  console.error(`make-installer: error: ${message}`);
+  process.exit(2);
+}
+
+// An explicitly named signtool must be used or reported; silently falling back
+// to a different binary would sign with a tool the caller did not choose.
+function resolveSigntool() {
+  const explicit = args.signSigntool || process.env.INFANTGOD_SIGNTOOL || process.env.SIGNTOOL || "";
+  if (explicit) {
+    const looksLikePath = explicit.includes("/") || explicit.includes("\\");
+    if (!looksLikePath) {
+      const onPath = findOnPath(explicit);
+      if (onPath) return onPath;
+    }
+    const resolved = looksLikePath ? abs(explicit) : explicit;
+    return existsSync(resolved) ? resolved : null;
+  }
+  return findSigntool();
+}
+
+function quoteForLog(value) {
+  return /[\s"]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
+function formatSignArgv(config) {
+  return config.argv.map((value, index) => quoteForLog(index === config.passwordIndex ? "***" : value));
+}
+
+function resolveSignConfig() {
+  if (!args.sign) return null;
+  if (args.signPfx && args.signThumbprint) {
+    signFail("--sign-pfx and --sign-thumbprint are alternatives; pass one of them, not both");
+  }
+  // A thumbprint given on the command line wins over an inherited pfx: the
+  // command line is the more specific request.
+  const thumbValue = args.signThumbprint || "";
+  const pfxValue = args.signPfx || (thumbValue ? "" : process.env.INFANTGOD_SIGN_PFX || "");
+  const scheme = thumbValue ? "thumbprint" : pfxValue ? "pfx" : null;
+  if (!scheme) {
+    signFail("--sign needs a certificate: pass --sign-pfx <file> (or set INFANTGOD_SIGN_PFX)"
+      + " or --sign-thumbprint <hex>");
+  }
+
+  let pfx = null;
+  let thumbprint = null;
+  let password = null;
+  if (scheme === "pfx") {
+    pfx = abs(pfxValue);
+    if (!args.signDryRun && !existsSync(pfx)) signFail(`--sign-pfx not found: ${pfx}`);
+    // The dry run exists so the wiring can be audited without a certificate or
+    // its password; it prints the secret position as *** and never uses it.
+    if (!args.signDryRun && !Object.prototype.hasOwnProperty.call(process.env, "INFANTGOD_SIGN_PASSWORD")) {
+      signFail("--sign with a .pfx needs INFANTGOD_SIGN_PASSWORD in the environment"
+        + " (the password is never accepted on the command line)");
+    }
+    password = process.env.INFANTGOD_SIGN_PASSWORD || "";
+  } else {
+    const compact = thumbValue.replace(/[\s:]/g, "").toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(compact)) {
+      signFail(`--sign-thumbprint must be a 40-digit SHA-1 hex thumbprint, got "${thumbValue}"`);
+    }
+    thumbprint = compact;
+  }
+
+  const tool = resolveSigntool();
+  if (!tool) {
+    signFail("signtool.exe not found: pass --sign-signtool <path> or set INFANTGOD_SIGNTOOL"
+      + " (PATH and electron-builder's cache are searched too)");
+  }
+  const timestampUrl = args.timestamp === false ? null : args.signTimestamp || SIGN_DEFAULT_TIMESTAMP;
+  const argv = ["/sign", "/fd", "SHA256"];
+  if (timestampUrl) argv.push("/td", "SHA256", "/tr", timestampUrl);
+  let passwordIndex = -1;
+  if (scheme === "pfx") {
+    argv.push("/f", pfx, "/p");
+    passwordIndex = argv.length;
+    argv.push(password);
+  } else {
+    argv.push("/sha1", thumbprint);
+  }
+  argv.push(OUT);
+  return {
+    requested: true,
+    signed: false,
+    tool,
+    scheme,
+    timestampUrl,
+    exitCode: null,
+    argv,
+    password,
+    passwordIndex,
+    pfx,
+    thumbprint,
+  };
+}
+
+const signConfig = resolveSignConfig();
+if (signConfig && args.signDryRun) {
+  note(`sign-dry-run ${signConfig.tool} ${formatSignArgv(signConfig).join(" ")}`);
+  note("sign-dry-run no certificate was read, nothing was compiled, nothing was signed");
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -599,93 +746,73 @@ note(`sha256     ${digest}`);
 // ---------------------------------------------------------------------------
 // Sign
 // ---------------------------------------------------------------------------
-const IDENTITY = join(process.env.USERPROFILE || homedir(), ".infantgod");
-let signature = "NotSigned";
-let signerThumbprint = null;
+// Only the installer is signed.  The payload and the makensis cache are inputs,
+// never artefacts: signing them would change bytes the audit read and the
+// install manifest promises.
+const signing = {
+  requested: signConfig !== null,
+  signed: false,
+  tool: signConfig ? signConfig.tool : null,
+  scheme: signConfig ? signConfig.scheme : null,
+  timestampUrl: signConfig ? signConfig.timestampUrl : null,
+  exitCode: null,
+};
 
-async function run(exe, argv, { quiet = false, env = null } = {}) {
+async function run(exe, argv) {
   return new Promise((done) => {
-    const child = spawn(exe, argv, {
-      cwd: REPO,
-      stdio: quiet ? ["ignore", "pipe", "pipe"] : "inherit",
-      env: env ? { ...process.env, ...env } : process.env,
-    });
-    let out = "";
-    if (quiet) {
-      child.stdout?.on("data", (d) => { out += d; });
-      child.stderr?.on("data", (d) => { out += d; });
-    }
-    child.on("error", (err) => done({ code: -1, out: `${out}\n${err.message}` }));
-    child.on("exit", (exitCode) => done({ code: exitCode, out }));
+    const child = spawn(exe, argv, { cwd: REPO, stdio: "inherit" });
+    child.on("error", (err) => done({ code: -1, message: err.message }));
+    child.on("exit", (exitCode) => done({ code: exitCode }));
   });
 }
 
-function powershell() {
-  for (const exe of ["pwsh.exe", "pwsh", "powershell.exe"]) {
-    const onPath = (process.env.PATH || "").split(";").some((d) => d && existsSync(join(d, exe)));
-    if (onPath) return exe;
-  }
-  return "powershell.exe";
+function buildSummary() {
+  return {
+    installer: OUT,
+    bytes: outBytes,
+    sha256: digest,
+    payload: { dir: PAYLOAD, files: payload.files.length, bytes: payload.bytes },
+    manifest: { files: manifestFiles.length, directories: manifestDirs.length },
+    stats: statLines.map((l) => l.trim()),
+    makensis,
+    template: TEMPLATE,
+    defines: DEFINES,
+    compression: args.lzma ? "lzma" : "zlib",
+    // The signing record carries no secret and no certificate: the build's
+    // account of what was asked for, what ran, and how it ended.
+    signing,
+    // The build's own account of whether it may be handed to a stranger: a release
+    // ran the audit, found nothing, and had no allow-list left (G30).
+    dev: args.dev === true,
+    audit: auditResult,
+    releaseReady: auditResult !== null
+      && auditResult.ran === true
+      && auditResult.clean === true
+      && AUDIT_ALLOW.length === 0,
+  };
 }
 
-if (args.sign) {
-  const signtool = findSigntool();
-  if (!signtool) fail("signtool.exe not found; set SIGNTOOL or pass --no-sign");
-  const pfx = process.env.CSC_LINK || join(IDENTITY, "codesign.pfx");
-  const pwFile = join(IDENTITY, "codesign.pw");
-  const password = process.env.CSC_KEY_PASSWORD
-    || (existsSync(pwFile) ? readFileSync(pwFile, "utf8").trim() : "");
-  if (!password || !existsSync(pfx)) {
-    fail(`no signing identity (${pfx}); run \`npm run cert\` or pass --no-sign`);
+function writeSummary() {
+  writeFileSync(join(BUILD, "make-installer.json"), `${JSON.stringify(buildSummary(), null, 2)}\n`);
+}
+
+if (signConfig) {
+  note(`signing    ${formatSignArgv(signConfig).join(" ")}`);
+  const signed = await run(signConfig.tool, signConfig.argv);
+  signing.exitCode = signed.code;
+  if (signed.code !== 0) {
+    // Record the attempt before failing: CI and the next build must be able to
+    // see that a signature was requested and did not happen.
+    writeSummary();
+    fail(`signtool exited ${signed.code}${signed.message ? ` (${signed.message})` : ""}; the installer is NOT signed`);
   }
-  const argv = ["sign", "/f", pfx, "/p", password, "/fd", "sha256", "/td", "sha256"];
-  if (args.timestamp) argv.push("/tr", process.env.TIMESTAMP_URL || "http://timestamp.digicert.com");
-  argv.push(OUT);
-  note(`signing    ${signtool} sign /f ${pfx} /p *** ${args.timestamp ? "/tr <timestamp> " : ""}${OUT}`);
-  const signed = await run(signtool, argv);
-  if (signed.code !== 0) fail(`signtool exited ${signed.code}; the installer is NOT signed`);
+  signing.signed = true;
   digest = sha256(OUT);
   // The signature is appended to the file: the size on disk is no longer the size
   // makensis wrote, so measure it again rather than reporting the pre-signature one.
   outBytes = statSync(OUT).size;
   note(`signed     sha256 ${digest} (${outBytes} bytes)`);
-
-  if (args.verifySign !== false) {
-    const ps = `$s = Get-AuthenticodeSignature -LiteralPath $env:MI_FILE; `
-      + `[pscustomobject]@{ Status = $s.Status.ToString(); Subject = $s.SignerCertificate.Subject; Thumbprint = $s.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress`;
-    const verified = await run(powershell(), ["-NoProfile", "-NonInteractive", "-Command", ps], { quiet: true, env: { MI_FILE: OUT } });
-    const json = (verified.out.match(/\{.*\}/) || [""])[0];
-    if (!json) fail(`could not read the signature back: ${verified.out.trim()}`);
-    const info = JSON.parse(json);
-    signature = `${info.Status} / ${info.Subject}`;
-    signerThumbprint = info.Thumbprint || null;
-    note(`signature  ${signature} (thumbprint ${signerThumbprint})`);
-    if (info.Status !== "Valid") fail(`signature status is ${info.Status}, expected Valid`);
-  }
 }
 
-const summary = {
-  installer: OUT,
-  bytes: outBytes,
-  sha256: digest,
-  signature,
-  signerThumbprint,
-  payload: { dir: PAYLOAD, files: payload.files.length, bytes: payload.bytes },
-  manifest: { files: manifestFiles.length, directories: manifestDirs.length },
-  stats: statLines.map((l) => l.trim()),
-  makensis,
-  template: TEMPLATE,
-  defines: DEFINES,
-  compression: args.lzma ? "lzma" : "zlib",
-  signed: args.sign,
-  // The build's own account of whether it may be handed to a stranger: a release
-  // ran the audit, found nothing, and had no allow-list left (G30).
-  dev: args.dev === true,
-  audit: auditResult,
-  releaseReady: auditResult !== null
-    && auditResult.ran === true
-    && auditResult.clean === true
-    && AUDIT_ALLOW.length === 0,
-};
-writeFileSync(join(BUILD, "make-installer.json"), `${JSON.stringify(summary, null, 2)}\n`);
+writeSummary();
 note(`done       ${OUT}`);

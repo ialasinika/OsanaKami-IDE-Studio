@@ -60,7 +60,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check installer-check icon window package
+.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check installer-check sign-check ci ci-installer icon window package
 
 all: $(BIN)
 
@@ -155,6 +155,20 @@ path-check:
 installer-check:
 	$(PYTHON) tools/installer_smoke.py
 
+# The signing wiring, without a certificate: a compiled stand-in for signtool
+# proves the dry-run argv and its redaction, the two exit-2 paths (no
+# certificate, no signtool), that a real compile hands signtool the installer
+# and not the payload, that neither the log nor build/make-installer.json holds
+# the password, and that a non-zero signtool fails the build.  Needs gcc and
+# makensis; skips with exit 0 when either is absent, like installer-check.
+sign-check:
+	$(PYTHON) tools/sign_smoke.py
+
+# A fixture installer for CI: the same make-installer.mjs a release runs, on a
+# two-file payload instead of dist/win-unpacked.  Skipped without makensis.
+ci-installer:
+	$(PYTHON) tools/ci_installer.py
+
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM.  Then the same window with a
 # pointer, a keyboard and a wheel: --dump-dom drives none of them, so
@@ -172,13 +186,22 @@ smoke: $(BIN)
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe cli-check version-check path-check installer-check $(JSONTEST) $(BLOBTEST)
+test: check fullcheck probe cli-check version-check path-check installer-check sign-check $(JSONTEST) $(BLOBTEST)
 	$(JSONTEST)
 	$(BLOBTEST)
 	$(NODE) langs/selftest.mjs
 	$(NODE) shell/web/selftest.mjs
 	$(NODE) shell/mods/selftest.mjs
 	$(NODE) shell/ai/selftest.mjs
+
+# The GitHub Actions `test` job, with the local toolchain: the whole `test`
+# target, the fixture installer the job uploads, and the workflow audit.  The
+# browser smoke is a separate CI job and is deliberately not part of this.
+# A missing makensis or gcc turns the installer/signing checks into skips, the
+# same way they skip on a runner without NSIS.
+ci: test
+	$(MAKE) ci-installer
+	$(PYTHON) tools/ci_audit.py
 
 modules: $(BIN)
 	$(BIN) modules
