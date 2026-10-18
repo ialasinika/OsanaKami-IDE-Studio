@@ -5,10 +5,12 @@
  * why the card layer is split the way it is.
  */
 import { cardShell, h, makeStatus, paintTokens } from "./dom.mjs";
+import { readTextFile, writeTextFile } from "./blob.mjs";
 import {
   applyCompletion,
   completionState,
   findMatches,
+  formatSize,
   hoverLine,
   indentAfterEnter,
   indentSelection,
@@ -123,6 +125,12 @@ export function renderEditor(card, ctx) {
     baseRevision: null,
     dirty: false,
     saving: false,
+    // How the file arrived, because the way back depends on it: a file read
+    // whole has its BOM inside the text, a file read in frames has it reported
+    // as a flag and removed, and a file too large for `file.write` must be
+    // written through a session.  The editor remembers both facts for the save.
+    chunked: false,
+    bom: false,
     tokens: [],
     timer: null,
     tokenSeq: 0,
@@ -680,6 +688,15 @@ export function renderEditor(card, ctx) {
     }
     const seq = state.tokenSeq + 1;
     state.tokenSeq = seq;
+    if (state.chunked) {
+      /* A file that arrived in frames is over the frame limit by definition,
+         and `lang.tokenize` is one call carrying the whole text: asking would
+         put the file back on the wire the session exists to keep it off, only
+         to be refused.  Colouring is decoration, so it is the thing given up. */
+      state.tokens = [];
+      repaint();
+      return;
+    }
     let tokens = [];
     try {
       const result = await client.call("lang.tokenize", { path, text });
@@ -721,11 +738,24 @@ export function renderEditor(card, ctx) {
     shell.label.title = path;
     renderStatus("loading…");
     try {
-      const result = await client.call("file.read", { path });
-      area.value = typeof result.text === "string" ? result.text : "";
+      /* Small files arrive whole, in one call, with their line endings; a file
+         over the kernel's 4 MiB frame arrives a mebibyte at a time instead,
+         because `file.read` would refuse it and a translation table is a file
+         the editor is expected to open too.  Either way what is left here is
+         the whole text or an error -- never half a file. */
+      const result = await readTextFile(client, path, {
+        onProgress: (bytesRead, total) => {
+          renderStatus(bytesRead === 0 || total === 0
+            ? "reading…"
+            : `reading… ${formatSize(bytesRead)}/${formatSize(total)}`);
+        },
+      });
+      area.value = result.text;
       state.baseRevision = result.revision;
+      state.chunked = result.chunked === true;
+      state.bom = result.bom === true;
       state.dirty = false;
-      const parts = ["loaded", result.eol || "lf"];
+      const parts = ["loaded", state.chunked ? "in frames" : (result.eol || "lf")];
       if (Number.isFinite(result.size)) {
         parts.push(`${result.size} bytes`);
       }
@@ -758,15 +788,20 @@ export function renderEditor(card, ctx) {
     }
     state.saving = true;
     renderStatus();
-    const params = { path: state.path, text: area.value };
-    if (state.baseRevision !== null) {
-      params.base_revision = state.baseRevision;
-    }
     try {
-      const result = await client.call("file.write", params);
+      /* The same two paths as the read.  A file that came in frames goes back
+         in frames -- `file.write` would refuse its size -- and the BOM the
+         frame reader reported as a flag (rather than a character of the text)
+         goes back in front of it.  A small file keeps the one call it always
+         used: same line-ending handling, same revision answer. */
+      const result = await writeTextFile(client, state.path, area.value, {
+        baseRevision: state.baseRevision,
+        bom: state.bom === true,
+      });
       state.baseRevision = result.revision;
+      state.chunked = result.chunked === true;
       state.dirty = false;
-      renderStatus("saved");
+      renderStatus(state.chunked ? "saved in frames" : "saved");
       app.log("info", `saved ${state.path} (rev ${result.revision})`);
       return true;
     } catch (err) {

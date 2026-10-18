@@ -16,6 +16,27 @@ stands in this tree.
 
 ## Unreleased
 
+### The editor stops treating a 4 MiB call limit as a file limit
+
+- A text file over 4 MiB used to open in the editor and the Yarn card as an
+  error, because both read it with one `file.read` and the kernel refuses a
+  body that big. They now read and write through `readTextFile` /
+  `writeTextFile` (`shell/web/cards/blob.mjs`): the whole-file call is still
+  tried first, so a small file keeps its one call and its line endings, and
+  only a refusal that says the file is too large falls back to the
+  `file.blob*` session the translation tables have used since G1. The frame
+  reader reports the BOM as a flag, so a file that arrived in frames is
+  written back with the mark in front of it, and the editor says in its status
+  line which way the file travelled. `lang.tokenize` is one call carrying the
+  whole text, so a file past the limit opens without token colours; the menu
+  and the status line still work.
+- The browser suite's kernel stub now enforces the same 4 MiB limit on
+  `file.write` that the real kernel does, so a write that would be refused can
+  no longer pass a test by accident.
+- Web suite: 291 checks, was 284. Red proof: making `isTooLargeFile` answer
+  `false` turns the two new end-to-end checks red (`ok 287/291`, the editor
+  and the Yarn card), and restoring it turns them green.
+
 ### The editor can say which types the game will actually read
 
 - The wiki's support matrix is now part of the knowledge the editor ships:

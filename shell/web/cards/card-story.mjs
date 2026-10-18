@@ -14,7 +14,7 @@ import {
 } from "../story.mjs";
 import { parseCsv, rowFor, rowState, rowsById, serializeCsv } from "../storycsv.mjs";
 import { parseYsls, yslsAbout, yslsSignature } from "../ysls.mjs";
-import { readTextInChunks, writeTextInChunks } from "./blob.mjs";
+import { readTextFile, readTextInChunks, writeTextFile, writeTextInChunks } from "./blob.mjs";
 import { cardShell, h, makeStatus } from "./dom.mjs";
 import {
   storyAcceptSuggestion,
@@ -592,7 +592,16 @@ export function renderStory(card, ctx) {
     shell.label.textContent = path;
     let result;
     try {
-      result = await client.call("file.read", { path });
+      /* A `.yarn` is usually a few kilobytes, so `file.read` is the call that
+         answers with the line endings in one go.  The 4 MiB refusal is not a
+         failed load: the frame reader takes over and assembles the same text,
+         which is the read that made a 5 MB table openable.  The mark is put
+         back in front of the text because the story carries it as a fact of its
+         own (`story.bom`) and a save writes it back from there. */
+      result = await readTextFile(client, path);
+      if (result.chunked === true && result.bom === true) {
+        result = { ...result, text: "\ufeff" + result.text };
+      }
     } catch (err) {
       renderStatus(`could not read ${path}`);
       app.log("error", `file.read ${path}: ${err.message}`);
@@ -686,16 +695,18 @@ export function renderStory(card, ctx) {
     }
     state.saving = true;
     renderStatus("saving\u2026");
-    const params = { path: state.path, text: serializeStory(state.story) };
-    if (state.baseRevision !== null) {
-      params.base_revision = state.baseRevision;
-    }
     try {
-      const result = await client.call("file.write", params);
+      /* A story that was read in frames goes back in frames: `file.write`
+         refuses the same 4 MiB one call.  The serialized text already carries
+         the BOM as a character (`serializeStory` puts it back from
+         `story.bom`), so there is no separate mark to pass. */
+      const result = await writeTextFile(client, state.path, serializeStory(state.story), {
+        baseRevision: state.baseRevision,
+      });
       state.saving = false;
       state.baseRevision = result.revision;
       state.dirty = false;
-      updateStatus("saved");
+      updateStatus(result.chunked === true ? "saved in frames" : "saved");
       app.log("info", `saved ${state.path} (rev ${result.revision})`);
       await saveTable();
       return true;

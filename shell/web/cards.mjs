@@ -96,7 +96,10 @@ export {
   BLOB_CHUNK_BYTES,
   base64FromBytes,
   bytesFromBase64,
+  isTooLargeFile,
+  readTextFile,
   readTextInChunks,
+  writeTextFile,
   writeTextInChunks,
 } from "./cards/blob.mjs";
 export { renderCard } from "./cards/dom.mjs";

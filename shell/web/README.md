@@ -238,6 +238,19 @@ table save uses a session of its own: the new text is appended in frames and
 published with `file.blobCommit`, whose `total_size` is checked against the
 bytes actually appended.
 
+The 4 MiB limit is a fact about the call, not about the file, and since G39 the
+editor and the Yarn card answer it with the same session. `readTextFile` tries
+`file.read` first — one call, and the line endings come with it — and only a
+refusal that says the file is too large falls back to the frame reader; a
+missing file is still the error it was, not a reason to try again another way.
+`writeTextFile` is the writing half: the whole write is tried first so a small
+file keeps the one call and one revision answer, and only a size refusal opens a
+write session. A file that arrived in frames is written back in frames, and the
+BOM the frame reader reports as a flag (rather than a character of the text) is
+put back in front of it. A file past the limit opens without token colours,
+because `lang.tokenize` is one call carrying the whole text and would ask for
+the frame the session exists to avoid; the menu and the status line still work.
+
 ---
 
 ## Files, and what deleting each one costs

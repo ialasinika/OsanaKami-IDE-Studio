@@ -287,7 +287,7 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 284/284 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 291/291 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 479/479 checks passed
 ```
 
@@ -550,10 +550,14 @@ Stated plainly, because a fork needs to know what it is inheriting.
   localisation CSVs are 4.5-5.75 MB, which is exactly where that stopped.  The
   `file.blob*` session verbs are the companion for the files that are bigger than
   a JSON string should be: a session reads a table in 1 MiB frames and writes one
-  the same way, so the story card opens a real `NewProject_<lang>.csv` instead of
-  reporting a read failure.  The `problems` panel and the mods layer still read
-  and validate a package in Node rather than through the kernel, which is why
-  `problems` works on a package the editor has never opened.
+  the same way.  Since G39 the editor and the Yarn card reach that companion the
+  same way the table always did, through `readTextFile`/`writeTextFile` in
+  `shell/web/cards/blob.mjs`: the whole-file call is tried first, and only the
+  "too large" refusal opens a session.  So the story card opens a real
+  `NewProject_<lang>.csv` instead of reporting a read failure, and a 5 MB
+  `.yarn` or define opens in the editor.  The `problems` panel and the mods layer
+  still read and validate a package in Node rather than through the kernel, which
+  is why `problems` works on a package the editor has never opened.
 - **The kernel has no delete or rename.** Copying a mod package into
   `StreamingAssets/Mods/<Name>/` is therefore a manual step; `mod.scaffold`
   creates directories through `file.write`'s parent-directory creation.

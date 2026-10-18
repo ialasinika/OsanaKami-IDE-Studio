@@ -239,6 +239,100 @@ export async function writeTextInChunks(client, path, text, options = {}) {
   }
 }
 
+/**
+ * Is this error the kernel saying "that file does not fit one call"?
+ *
+ * `file.read` and `file.write` carry the file inside one JSON string and refuse
+ * anything over 4 MiB with `file is too large to open` / `file is too large to
+ * overwrite` (core/src/wksp.c).  That refusal is not a failed read: it is the
+ * kernel telling the caller to use a session.  The sentence is the only part of
+ * the answer the client can rely on, because the kernel reports it through the
+ * same path-error code as a missing file (`fail_path`), so the test is on the
+ * words the kernel writes and nothing else.
+ */
+export function isTooLargeFile(err) {
+  const message = err && typeof err.message === "string" ? err.message : "";
+  return message.indexOf("too large") >= 0;
+}
+
+/**
+ * Read a text file whole, or in frames when the kernel refuses it for size.
+ *
+ * This is the call every card that shows a file starts with.  `file.read` is
+ * the cheap answer: one call, the line endings, the size and the revision, and
+ * the text a small file already is.  Over 4 MiB it answers with a refusal
+ * instead, and that refusal is answered here with `readTextInChunks` -- the
+ * same session the table card has used since the boundary was found, so a 5 MB
+ * `.yarn` opens in the editor and a 5 MB table opens in the story card.
+ *
+ * Only the size refusal falls back.  A missing file or broken encoding is the
+ * error the caller should show, not a reason to try again another way.
+ *
+ * Returns `readTextInChunks`'s `{ text, bom, size, revision, chunks }` with two
+ * more facts: `chunked` says which reader answered (and so whether the text
+ * still has its BOM, which the frame reader reports separately), and `eol` is
+ * the kernel's word for the line endings when `file.read` answered, `null`
+ * when it did not -- the frame reader moves bytes, not lines.
+ */
+export async function readTextFile(client, path, options = {}) {
+  try {
+    const result = await client.call("file.read", { path });
+    return {
+      text: typeof result.text === "string" ? result.text : "",
+      bom: false,
+      size: result.size,
+      revision: result.revision,
+      eol: result.eol,
+      chunks: 1,
+      chunked: false,
+    };
+  } catch (err) {
+    if (!isTooLargeFile(err)) {
+      throw err;
+    }
+  }
+  const read = await readTextInChunks(client, path, options);
+  return { ...read, eol: null, chunked: true };
+}
+
+/**
+ * Write text whole, or in frames when the kernel refuses it for size.
+ *
+ * The writing half of `readTextFile`, for the same reason: `file.write` refuses
+ * a body over 4 MiB and a session does not.  `options.bom` puts a mark back in
+ * front of the text -- the frame reader keeps the mark as a fact instead of a
+ * character, so a caller that read a file with one owes this flag on the way
+ * back out.  `file.read` does not report the mark, so a whole read hands it to
+ * the caller inside the text and passes no flag.
+ *
+ * Returns `{ revision, chunked, ... }`; a stale write is the same error from
+ * either path (`base_revision`), so the caller keeps one catch for it.
+ */
+export async function writeTextFile(client, path, text, options = {}) {
+  const params = { path, text };
+  if (options.bom === true) {
+    params.text = "\ufeff" + text;
+  }
+  if (options.baseRevision !== undefined && options.baseRevision !== null) {
+    params.base_revision = options.baseRevision;
+  }
+  try {
+    const result = await client.call("file.write", params);
+    return {
+      revision: result.revision,
+      eol: result.eol,
+      chunks: 1,
+      chunked: false,
+    };
+  } catch (err) {
+    if (!isTooLargeFile(err)) {
+      throw err;
+    }
+  }
+  const written = await writeTextInChunks(client, path, text, options);
+  return { ...written, eol: null, chunked: true };
+}
+
 /* ------------------------------------------------------------------ */
 /* DOM                                                                    */
 /* ------------------------------------------------------------------ */

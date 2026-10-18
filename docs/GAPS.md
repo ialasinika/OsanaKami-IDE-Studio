@@ -2,7 +2,7 @@
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
-快照：HEAD = `9648c02`（G46 提交后重核；G3/G21/G46 已分别随 `59be772`、`e0b0886`、`9648c02` 关闭，G4 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
+快照：HEAD = `deda198`（G4 提交后重核；G3/G21/G46/G4 已分别随 `59be772`、`e0b0886`、`9648c02`、`deda198` 关闭，G39 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
 
 ## 已关闭（本轮抽查核实）
 
@@ -11,7 +11,8 @@
 | G3 撞名不查 | `59be772`：`validate.js` D103 跨包/同包重名、D102 提级、M012 兄弟目录不可读 |
 | G21 音频引用零校验 | `e0b0886`：D006 音频分支、`#vo` 的 Y122、`#vo:` 补全 |
 | G46 格式体检 | `9648c02`：D007/D008/D009/D010（PNG/WAV/Spine/CSV 头） |
-| G4 类型支持矩阵 | 本提交：`shell/mods/support.json`（51 类型四档 + manager）、M013/M014、模板不再生成 `Attr` |
+| G4 类型支持矩阵 | `deda198`：`shell/mods/support.json`（51 类型四档 + manager）、M013/M014、模板不再生成 `Attr` |
+| G39 编辑器/`.yarn` 仍整文件读 | 本提交：`cards/blob.mjs` 的 `readTextFile`/`writeTextFile` 把 4 MiB 拒读接到会话；编辑器（`card-editor.mjs:731`）与故事（`card-story.mjs:595`）都改走它 |
 | G1 语言表打不开 | story 卡走 blob 分块：`cards/card-story.mjs:17,625`（`readTextInChunks`） |
 | G25/G29 卡片可达性 | 13 种卡分模块落 `cards/`，两个视图都有标签页（`36f32df` 及更早） |
 | G41 再生 KB 关掉 sprite 检查 | `tools/gen_knowledge.mjs:16-22` 注释明确保留两类事实型 description |
@@ -39,7 +40,6 @@
 
 | 条目 | 当日证据 |
 | --- | --- |
-| G39 编辑器仍整文件读 | `cards/card-editor.mjs:724` 仍 `file.read`；blob 只接了 story 卡 |
 | G40 翻译写回半成 | `storycsv.setColumn`（`storycsv.mjs:128`）仍无调用者，只追加不改写 |
 | G15 无 wiki 链接 | `shell/` 全树无 `wiki.infantgod` 命中 |
 
@@ -75,7 +75,7 @@ G2（音频试听卡）、G5（KB 乱码存量）、G8、G10、G14、G16–G20�
 2. ~~**G21** 音频引用体检~~（`e0b0886`）
 3. ~~**G46** 格式体检~~（`9648c02`）
 4. ~~**G4** 支持矩阵进 KB~~（本提交）
-5. **G39** blob 接到编辑器与 `.yarn`——接线活，blob 层现成
+5. ~~**G39** blob 接到编辑器与 `.yarn`~~（本提交）
 6. **G22** `spineAssetPath` 校验——rig 卡已有格式真理，接到 validate
 7. **G13** headless `validate <dir> --json`——薄封装，改变群协作
 8. **G45** 导出 zip——补上分发断点

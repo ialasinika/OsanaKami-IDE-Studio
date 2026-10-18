@@ -8,8 +8,10 @@ import {
   base64FromBytes,
   bytesFromBase64,
   formatSize,
+  readTextFile,
   readTextInChunks,
   renderCard,
+  writeTextFile,
   writeTextInChunks,
 } from "../cards.mjs";
 import {
@@ -72,6 +74,16 @@ export class TableElement {
     this.listeners = new Map();
     this.ownText = "";
     this.parent = null;
+    /* The layout facts an input or a textarea is read for; zero is what the
+       page reports for an element with nothing in it. */
+    this.style = {};
+    this.scrollTop = 0;
+    this.scrollLeft = 0;
+    this.scrollHeight = 0;
+    this.clientHeight = 0;
+    this.offsetHeight = 0;
+    this.selectionStart = 0;
+    this.selectionEnd = 0;
   }
 
   get className() { return [...this.classList.names].join(" "); }
@@ -81,6 +93,19 @@ export class TableElement {
     for (const name of String(value).split(/\s+/)) {
       if (name !== "") this.classList.add(name);
     }
+  }
+
+  /* `dataset.lines` is `data-lines`, the way the page maps it; the editor's
+     gutter writes through it. */
+  get dataset() {
+    const self = this;
+    return new Proxy({}, {
+      get: (_target, key) => self.getAttribute(`data-${String(key)}`),
+      set: (_target, key, value) => {
+        self.setAttribute(`data-${String(key)}`, value);
+        return true;
+      },
+    });
   }
 
   get textContent() {
@@ -100,6 +125,8 @@ export class TableElement {
   set value(next) { this.attributes.set("value", String(next)); }
 
   setAttribute(key, value) { this.attributes.set(String(key), String(value)); }
+
+  removeAttribute(key) { this.attributes.delete(String(key)); }
 
   getAttribute(key) {
     const name = String(key);
@@ -179,6 +206,10 @@ export function stubTableDom() {
   };
   install("document", {
     createElement: (tag) => (String(tag).toLowerCase() === "input" ? new TableInput(tag) : new TableElement(tag)),
+    /* The editor's token layer builds spans in a fragment and moves text in
+       through text nodes, the way `paintTokens` does on the real page. */
+    createDocumentFragment: () => new TableElement("#fragment"),
+    createTextNode: (text) => ({ textContent: String(text) }),
   });
   install("HTMLInputElement", TableInput);
   return {
@@ -312,6 +343,10 @@ export function tableKernel(files, options = {}) {
         return record.result;
       }
       if (method === "file.write") {
+        /* The real kernel refuses a body over the frame limit and says so with
+           the same words as the read refusal; the fallback is driven by that. */
+        const bytes = Buffer.byteLength(params.text, "utf8");
+        if (bytes > cap) throw new Error(`${params.path} is too large to overwrite`);
         files[params.path] = params.text;
         revision += 1;
         record.result = { revision };
@@ -776,6 +811,137 @@ await testAsync("table write: the card saves a new row through a write session, 
     assert.equal(written.rows.length, parseCsv(ADD_TABLE).rows.length + 1, "the row is in the committed file");
     assert.equal(written.rows[written.rows.length - 1].text, "Aistalt: ", "and it is the row the new line owes");
     assert.equal(mounted.handle.tablePath, TABLE_PATH, "the card still holds the table it read");
+  } finally {
+    dom.restore();
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* the frame limit is a fact about the call, not about the file (G39)     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `file.read` and `file.write` carry a file inside one JSON string and refuse
+ * anything over 4 MiB.  The table card answered that refusal years ago with a
+ * session; the editor and the story card were still asking whole-file reads, so
+ * a 5 MB `.yarn` did not open and a 5 MB table could be read in the table card
+ * but not as text.  `readTextFile` and `writeTextFile` answer the size refusal
+ * the same way the table card does.  These checks pin the two paths apart: a
+ * small file still makes exactly one call and keeps its line endings, a large
+ * one moves through a session in both directions, and a refusal for any other
+ * reason is still a failed read (no second try that hides a missing file).
+ */
+export function bigStory() {
+  const head = "title: Big_Node\n---\n";
+  const line = "Aistalt: a line that is only here to make the file larger than one frame. #line:1111111\n";
+  const count = Math.ceil((4 * BLOB_CHUNK_BYTES + 4096) / line.length);
+  return head + line.repeat(count) + "===\n";
+}
+
+await testAsync("whole read: a small file is one call, and its line endings come with it", async () => {
+  const kernel = tableKernel({ [TABLE_PATH]: SMALL_TABLE });
+  const read = await readTextFile(kernel.client, TABLE_PATH);
+
+  assert.equal(read.chunked, false, "the whole read answered");
+  assert.equal(read.text, SMALL_TABLE, "the text is the file");
+  assert.equal(read.eol, "crlf", "and the line endings came with it");
+  assert.equal(read.bom, false, "a whole read keeps any mark inside the text");
+  assert.equal(kernel.calls.filter((call) => call.method === "file.read").length, 1, "one read");
+  assert.equal(kernel.calls.filter((call) => call.method === "file.blobOpen").length, 0,
+    "no session was opened for a small file");
+});
+
+await testAsync("whole read: the size refusal is answered by a session, not reported", async () => {
+  const bytes = withBom(bigTable());
+  const kernel = tableKernel({ [TABLE_PATH]: bytes });
+  const read = await readTextFile(kernel.client, TABLE_PATH);
+
+  assert.equal(read.chunked, true, "the frame reader answered");
+  assert.equal(read.bom, true, "the mark is reported, not lost");
+  assert.equal(read.text, bigTable(), "the text is the file without the mark");
+  assert.equal(read.size, bytes.length, "the size counts the mark");
+  assert.ok(read.size > 4 * BLOB_CHUNK_BYTES, `the fixture is ${read.size} bytes`);
+  assert.equal(read.eol, null, "frames move bytes, not lines");
+  assert.equal(kernel.calls.filter((call) => call.method === "file.read").length, 1,
+    "the whole read was tried first");
+  assert.ok(kernel.calls.some((call) => call.method === "file.blobRead"), "and the file came in frames");
+  assert.equal(kernel.aborted.length, 1, "the session was given back");
+});
+
+await testAsync("whole read: only the size refusal falls back -- a missing file is the error", async () => {
+  const kernel = tableKernel({});
+  await assert.rejects(() => readTextFile(kernel.client, TABLE_PATH), /no stub file/);
+  assert.equal(kernel.calls.filter((call) => call.method === "file.blobOpen").length, 0,
+    "a missing file is not retried another way");
+});
+
+await testAsync("whole write: a small file is one call, and the mark goes back in front", async () => {
+  const kernel = tableKernel({ [TABLE_PATH]: "" });
+  const written = await writeTextFile(kernel.client, TABLE_PATH, SMALL_TABLE, { baseRevision: 5, bom: true });
+
+  assert.equal(written.chunked, false, "the whole write answered");
+  const writes = kernel.calls.filter((call) => call.method === "file.write");
+  assert.equal(writes.length, 1, "one write");
+  assert.equal(writes[0].params.text, "\ufeff" + SMALL_TABLE, "the mark is in front of the text");
+  assert.equal(writes[0].params.base_revision, 5, "and the base revision went with it");
+});
+
+await testAsync("whole write: a file over the frame limit goes back through a session", async () => {
+  const text = bigTable();
+  const kernel = tableKernel({ [TABLE_PATH]: "" });
+  const written = await writeTextFile(kernel.client, TABLE_PATH, text, { baseRevision: 5 });
+
+  assert.equal(written.chunked, true, "the session answered");
+  assert.equal(kernel.calls.filter((call) => call.method === "file.write").length, 1,
+    "one whole write, refused for size");
+  assert.equal(kernel.calls.filter((call) => call.method === "file.blobCommit").length, 1,
+    "and one commit");
+  assert.equal(kernel.files[TABLE_PATH], text, "the file that comes back is the text that was saved");
+});
+
+await testAsync("editor: a file over the frame limit opens and saves through sessions", async () => {
+  const dom = stubTableDom();
+  try {
+    const bytes = withBom(bigTable());
+    const kernel = tableKernel({ [TABLE_PATH]: bytes });
+    const mounted = renderCard({ id: "big-editor", kind: "editor", file: TABLE_PATH }, kernel);
+    await tick(20);
+
+    assert.equal(mounted.handle.path, TABLE_PATH, "the file that would not open whole is open");
+    const readOpens = kernel.calls.filter((call) => call.method === "file.blobOpen" && call.params.mode === "read");
+    assert.equal(readOpens.length, 1, "the read moved through one session");
+    assert.equal(readOpens[0].params.path, TABLE_PATH);
+
+    assert.equal(await mounted.handle.save(), true, "the save goes through");
+    const saved = kernel.files[TABLE_PATH];
+    assert.ok(Buffer.isBuffer(saved), "the stub recorded bytes");
+    assert.ok(saved.equals(bytes), "the file that comes back is the file that was read");
+    assert.equal(kernel.calls.filter((call) => call.method === "file.write").length, 1,
+      "the whole write was tried first and refused");
+  } finally {
+    dom.restore();
+  }
+});
+
+await testAsync("story: a .yarn over the frame limit opens and saves through sessions", async () => {
+  const dom = stubTableDom();
+  try {
+    const story = bigStory();
+    assert.ok(Buffer.byteLength(story) > 4 * BLOB_CHUNK_BYTES,
+      `the fixture is ${Buffer.byteLength(story)} bytes`);
+    const kernel = tableKernel({ [TABLE_STORY_PATH]: story });
+    const mounted = renderCard({ id: "big-story", kind: "story", file: TABLE_STORY_PATH }, kernel);
+    await mounted.handle.load(TABLE_STORY_PATH);
+    await tick(20);
+
+    assert.equal(mounted.handle.path, TABLE_STORY_PATH, "the story is open");
+    assert.equal(await mounted.handle.save(), true, "the save goes through");
+    const opens = kernel.calls.filter((call) => call.method === "file.blobOpen");
+    assert.ok(opens.some((call) => call.params.mode === "read" && call.params.path === TABLE_STORY_PATH),
+      "the story was read in frames");
+    assert.ok(opens.some((call) => call.params.mode === "write" && call.params.path === TABLE_STORY_PATH),
+      "and written in frames");
+    assert.equal(kernel.files[TABLE_STORY_PATH].toString("utf8"), story, "the story round-trips");
   } finally {
     dom.restore();
   }
