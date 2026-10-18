@@ -41,8 +41,11 @@
           "**/*",
           "!mods/knowledge.json",
           "!mods/selftest.mjs",
+          "!mods/selftest/**",
           "!web/selftest.mjs",
-          "!ai/selftest.mjs"
+          "!web/selftest/**",
+          "!ai/selftest.mjs",
+          "!ai/selftest/**"
         ]
       },
       {

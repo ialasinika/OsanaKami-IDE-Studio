@@ -714,7 +714,7 @@ function checkAudioFolder(raw, jsonPath, ctx, out) {
 /* ------------------------------------------------------------------ *
  * G22：立绘骨架引用
  *
- * `Character.spineAssetPath` 指向包内 Spine 资产（语料写法 `Spine/Aistalt.skel.bytes`），
+ * `Character.spineAssetPath` 指向包内 Spine 资产（语料写法 `Spine/<Character>.skel.bytes`），
  * 但它既不是 sprite 字段也不是引用字段，写错时游戏只会在运行时静默不加载立绘。
  * 这里只查「文件在不在」：骨架版本/图集/页图由 G46 的包级体检（D009）负责，
  * 逐文件重复报错没有意义。空字符串表示没有自定义立绘（语料 26/56），静默跳过。
