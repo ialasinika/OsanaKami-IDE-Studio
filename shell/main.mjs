@@ -666,6 +666,29 @@ const MOD_METHODS = {
     out: optionalString(params, "out") ?? undefined,
     overwrite: params.overwrite === true,
   }),
+  // G11: the same package, but straight into the game instead of a zip.  The
+  // target is <gameMods>/<Name>; without `overwrite` an existing folder is
+  // refused, and the copy is staged beside it and swapped in.
+  "mod.installGame": (params, mods) => mods.installGame({
+    dir: needParam(params, "dir"),
+    overwrite: params.overwrite === true,
+    gameModsDir: optionalString(params, "gameModsDir") ?? undefined,
+    gameDir: optionalString(params, "gameDir") ?? undefined,
+  }),
+  // G12: what the game itself said.  `path` skips discovery; otherwise the most
+  // recently modified Player.log under the platform's log root is read.
+  "mod.gameLog": (params, mods) => mods.gameLog({
+    path: optionalString(params, "path") ?? undefined,
+    modName: optionalString(params, "modName") ?? undefined,
+    bytes: typeof params.bytes === "number" ? params.bytes : undefined,
+  }),
+  // G12 follow: poll for `durationMs`, collect only appended bytes.
+  "mod.followGameLog": (params, mods) => mods.followGameLog({
+    path: optionalString(params, "path") ?? undefined,
+    modName: optionalString(params, "modName") ?? undefined,
+    durationMs: typeof params.durationMs === "number" ? params.durationMs : undefined,
+    intervalMs: typeof params.intervalMs === "number" ? params.intervalMs : undefined,
+  }),
   // G35: the demo packages beside the editor cannot be opened where they ship
   // (a card's `dir` never leaves the mods folder), so `mod.examples` lists them
   // and `mod.example` copies one in, which also makes it editable.
@@ -1418,6 +1441,148 @@ async function runExport(options) {
 }
 
 /* ------------------------------------------------------------------ */
+/* install                                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `install DIR` is the last mile after `export`: instead of a zip the author
+ * unpacks by hand, the package goes straight into the game's Mods folder, which
+ * is the one place the game actually reads.  The precheck and the exit codes
+ * match `export` (1 = the validator stopped it, 2 = usage or write failure);
+ * the one addition is that a package already installed under the same name is
+ * refused until `--overwrite`, because replacing a folder is the destructive
+ * step and it should be asked for explicitly.
+ */
+async function runInstall(options) {
+  const json = options.json === true;
+  const fail = (message) => {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return 2;
+  };
+
+  if (options.target === null) {
+    return fail("install needs a package directory: node shell/main.mjs install <dir> [--game-dir DIR] [--overwrite]");
+  }
+  const target = path.resolve(options.target);
+  if (!existsSync(target) || !statSync(target).isDirectory()) {
+    return fail(`not a directory: ${target}`);
+  }
+  const modsRoot = options.modsRoot !== null ? options.modsRoot : path.dirname(target);
+
+  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  if (!mods) return fail("the mod layer did not load");
+
+  let report;
+  try {
+    report = mods.installGame({
+      dir: target,
+      overwrite: options.overwrite === true,
+      gameDir: options.gameDir !== null ? options.gameDir : undefined,
+    });
+  } catch (err) {
+    const message = err && err.message ? String(err.message) : String(err);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    /* The validator stopping an install is the documented code 1, not a usage error. */
+    return /has \d+ error\(s\)/.test(message) ? 1 : 2;
+  }
+
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...report }, null, 2) + "\n");
+  } else {
+    process.stdout.write(
+      `installed ${report.name} -> ${report.target} (${plural(report.files, "file")}, ${report.bytes} bytes)` +
+      (report.replaced ? " -- replaced the previous copy" : "") + "\n",
+    );
+    process.stdout.write(
+      `${plural(report.warnings, "warning")}, ${plural(report.infos, "info")} from the precheck` +
+      (report.knowledge === "missing" ? " (no knowledge base: only file structure was checked)" : "") + "\n",
+    );
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* log                                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `log` is G12: read (or, with `--duration-ms`, follow) the game's Player.log
+ * so the author can see the game's own verdict without alt-tabbing to a folder
+ * they may never have opened.  Unlike `validate`, a log with zero matches is
+ * still a success -- reading it was the job, and "the game said nothing" is a
+ * real answer.  No log found is code 2 and the message lists where it looked.
+ */
+async function runLog(options) {
+  const json = options.json === true;
+  const fail = (message, code) => {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return code;
+  };
+
+  const modsRoot = options.modsRoot !== null ? options.modsRoot : options.workspace;
+  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  if (!mods) return fail("the mod layer did not load", 2);
+
+  let answer;
+  try {
+    const params = {};
+    if (options.logPath !== null) params.path = path.resolve(options.logPath);
+    if (options.logMod !== null) params.modName = options.logMod;
+    if (options.durationMs > 0) {
+      params.durationMs = options.durationMs;
+      answer = await mods.followGameLog(params);
+    } else {
+      answer = mods.gameLog(params);
+    }
+  } catch (err) {
+    return fail(err && err.message ? String(err.message) : String(err), 1);
+  }
+
+  if (answer.found !== true) {
+    const tried = Array.isArray(answer.tried) ? answer.tried : [];
+    const shown = tried.slice(0, 10).map((entry) => `  ${entry && entry.path ? entry.path : String(entry)}`);
+    const more = tried.length > shown.length ? ` (and ${tried.length - shown.length} more)` : "";
+    return fail(
+      `no Player.log found${options.logPath !== null ? ` at ${options.logPath}` : ""} -- ` +
+      `looked in ${plural(tried.length, "place")}${more}` + (shown.length > 0 ? `:\n${shown.join("\n")}` : ""),
+      2,
+    );
+  }
+  if (answer.error) return fail(`${answer.path}: ${answer.error}`, 1);
+
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...answer }, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(`${answer.path}\n`);
+  process.stdout.write(
+    `  read ${answer.bytes} bytes from offset ${answer.offset} of ${answer.size} bytes` +
+    (answer.mtime ? ` (modified ${new Date(answer.mtime).toISOString()})` : "") + "\n",
+  );
+  process.stdout.write(
+    `  ${plural(answer.totals.lines, "line")}, ${plural(answer.totals.errors, "error")}, ` +
+    `${plural(answer.totals.mods, "mod line")}, ${plural(answer.totals.mentions, "mention")}` +
+    (answer.samples ? ` (${plural(answer.samples, "sample")} of new text)` : "") + "\n",
+  );
+  if (answer.lines.length === 0) {
+    process.stdout.write("  nothing worth showing -- the game said nothing about this package\n");
+  }
+  for (const line of answer.lines) {
+    process.stdout.write(`  ${line.line} ${line.kind}: ${line.text}\n`);
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1458,6 +1623,28 @@ usage: node shell/main.mjs <command> [options]
           checked against another copy.  Exit codes: 0 written, 1 the validator
           stopped it, 2 usage or write failure.
 
+  install DIR [--game-dir DIR] [--overwrite] [--json]
+          Copy the package into the game's Mods folder, where the game reads
+          it, instead of writing a zip.  The target is <gameMods>/<Name>; the
+          same validator runs first and errors stop it.  An existing folder of
+          the same name is refused unless --overwrite, and the copy is staged
+          beside the target and swapped in, so a failed install leaves the
+          previous one intact.  --game-dir points at the game (its Mods/,
+          StreamingAssets/Mods and ModsFull/Mods are tried in turn); without it
+          the folder is discovered the way every other verb discovers it.
+          Exit codes: 0 installed, 1 the validator stopped it, 2 usage or
+          write failure.
+
+  log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
+          Read the game's Player.log and print the lines worth showing: errors
+          and exceptions, ModLoader/mod lines, and anything that mentions NAME.
+          Without --path the most recently modified Player.log under the
+          platform's log root is picked; --duration-ms N follows the file for N
+          milliseconds instead and reports only the text appended meanwhile.
+          --json prints one object (path, offsets, totals, lines).  Exit codes:
+          0 the log was read (even with zero matches), 1 the read failed, 2 no
+          log was found -- the message lists where it looked.
+
   help    This text.
 
 --workspace DIR is the directory the kernel may read and write; it is also
@@ -1494,12 +1681,19 @@ function parseArgs(argv) {
     noOpen: false,
     json: false,
     overwrite: false,
+    gameDir: null,
+    logPath: null,
+    logMod: null,
+    durationMs: 0,
     verbose: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
   };
 
-  const takesValue = new Set(["--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms", "--out"]);
+  const takesValue = new Set([
+    "--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms", "--out",
+    "--game-dir", "--path", "--mod", "--duration-ms",
+  ]);
   const rest = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -1541,7 +1735,8 @@ function parseArgs(argv) {
    * the extra word being silently dropped.
    */
   options.target = rest[1] ?? null;
-  if (options.target !== null && options.command !== "validate" && options.command !== "export") {
+  if (options.target !== null && options.command !== "validate" && options.command !== "export" &&
+    options.command !== "install") {
     throw new Error(`unexpected argument: ${options.target}`);
   }
   if (rest.length > 2) {
@@ -1551,6 +1746,7 @@ function parseArgs(argv) {
   options.workspace = path.resolve(options.workspace);
   if (options.modsRoot !== null) options.modsRoot = path.resolve(options.modsRoot);
   if (options.userDir !== null) options.userDir = path.resolve(options.userDir);
+  if (options.gameDir !== null) options.gameDir = path.resolve(options.gameDir);
   return options;
 }
 
@@ -1564,6 +1760,16 @@ function applyOption(options, name, value) {
   else if (name === "--user-dir") options.userDir = value;
   else if (name === "--kernel") options.kernel = value;
   else if (name === "--out") options.out = value;
+  else if (name === "--game-dir") options.gameDir = value;
+  else if (name === "--path") options.logPath = value;
+  else if (name === "--mod") options.logMod = value;
+  else if (name === "--duration-ms") {
+    const durationMs = Number(value);
+    if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > 600000) {
+      throw new Error(`--duration-ms needs a whole number of milliseconds between 0 and 600000, got ${value}`);
+    }
+    options.durationMs = durationMs;
+  }
   else if (name === "--port") {
     const port = Number(value);
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -1598,6 +1804,8 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "serve") return await runServe(options);
     if (options.command === "validate") return await runValidate(options);
     if (options.command === "export") return await runExport(options);
+    if (options.command === "install") return await runInstall(options);
+    if (options.command === "log") return await runLog(options);
   } catch (err) {
     process.stderr.write(`OsanaKami IDE Studio: ${err && err.message ? err.message : err}\n`);
     return 1;

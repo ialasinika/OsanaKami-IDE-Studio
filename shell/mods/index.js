@@ -1586,6 +1586,210 @@ function createMods(options) {
     };
   }
 
+  /* ---------------- 装进游戏（G11） ---------------- */
+
+  /** 目录树里的普通文件（相对路径统一 `/`），安装后复核用。 */
+  function installedFiles(dir) {
+    const out = [];
+    const stack = [dir];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      let names;
+      try {
+        names = fs.readdirSync(current);
+      } catch (e) {
+        continue;
+      }
+      names.sort();
+      for (const name of names) {
+        const abs = path.join(current, name);
+        let st;
+        try {
+          st = fs.statSync(abs);
+        } catch (e) {
+          continue;
+        }
+        if (st.isDirectory()) stack.push(abs);
+        else if (st.isFile()) out.push({ rel: toPosix(path.relative(dir, abs)), size: st.size });
+      }
+    }
+    return out;
+  }
+
+  /** 复核暂存副本：文件数相等、每个文件大小相等，才算拷全了。 */
+  function verifyInstalledCopy(stage, files) {
+    const copied = installedFiles(stage);
+    if (copied.length !== files.length) {
+      throw new Error('expected ' + files.length + ' file(s), found ' + copied.length);
+    }
+    const sizes = new Map(copied.map((f) => [f.rel, f.size]));
+    for (const file of files) {
+      if (!sizes.has(file.rel)) throw new Error(file.rel + ' is missing from the copy');
+      if (sizes.get(file.rel) !== file.size) {
+        throw new Error(file.rel + ' is ' + sizes.get(file.rel) + ' bytes, expected ' + file.size);
+      }
+    }
+  }
+
+  /**
+   * 安装目标：<游戏 Mods 目录>/<包名>。显式 gameModsDir / gameDir 优先，
+   * 否则走 gamepath 的自动探测；四种情况都返回 {dir, source, tried, found}。
+   */
+  function gameModsForInstall(p) {
+    const explicitMods = p.gameModsDir != null && String(p.gameModsDir).trim() !== '' ? String(p.gameModsDir) : null;
+    const explicitGame = p.gameDir != null && String(p.gameDir).trim() !== '' ? String(p.gameDir) : null;
+    if (explicitMods !== null) {
+      return gamepath.discoverGameModsDir({ gameModsDir: explicitMods, env: env });
+    }
+    if (explicitGame !== null) {
+      /* 给了游戏根目录：按解包游戏最常见的几层试一遍，结构标记不变 */
+      const base = path.resolve(explicitGame);
+      const tried = [];
+      const candidates = [
+        path.join(base, 'StreamingAssets', 'Mods'),
+        path.join(base, 'Mods'),
+        path.join(base, 'ModsFull', 'Mods'),
+        base
+      ];
+      for (const candidate of candidates) {
+        tried.push({ path: candidate, source: 'gameDir' });
+        if (gamepath.looksLikeGameModsDir(candidate)) {
+          return { dir: candidate, source: 'gameDir', tried: tried, found: true };
+        }
+      }
+      return { dir: null, source: 'not found', tried: tried, found: false };
+    }
+    return gamepath.discoverGameModsDir({
+      env: env,
+      searchRoots: p.searchRoots,
+      platform: p.platform
+    });
+  }
+
+  function describeTried(tried) {
+    const list = Array.isArray(tried) ? tried : [];
+    const shown = list.slice(0, 8).map((t) => (t && t.path ? t.path : String(t)));
+    const more = list.length > shown.length ? ' (and ' + (list.length - shown.length) + ' more)' : '';
+    return shown.length > 0 ? shown.join(', ') + more : '(nowhere: no candidate root was available)';
+  }
+
+  /**
+   * 把一个 Mod 包装进游戏（G11）：预检 → 规划 → 暂存副本 → 复核 → 换名上线。
+   *
+   * params `{ dir, overwrite?, gameModsDir?, gameDir?, searchRoots?, platform? }`：
+   *   - `dir` 是包内任意位置（和别的动词同一个 packageRootOf）
+   *   - 目标固定是 <游戏 Mods 目录>/<包名>；没有 `overwrite: true` 不碰已有目录
+   *   - 先拷到同目录的临时兄弟目录并复核大小/文件数，再把旧目录 rename 成备份、
+   *     临时目录 rename 成目标、最后删备份；中途失败把备份换回去
+   *   - 只删自己刚 rename 出来的备份，从不递归删用户的目录
+   *
+   * @returns {{name:string, target:string, files:number, bytes:number, replaced:boolean,
+   *            warnings:number, infos:number, knowledge:string,
+   *            gameMods:{dir:string, source:string, found:boolean}}}
+   * @throws {Error} 消息以 `installGame: ` 开头（dispatch 直接转成错误帧）
+   */
+  function installPackage(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    if (p.dir == null || String(p.dir).trim() === '') {
+      throw new Error('installGame: dir is required');
+    }
+    const packageRoot = packageRootOf(String(p.dir), 'installGame: ');
+    const name = path.basename(packageRoot);
+
+    const world = gameModsForInstall(p);
+    if (!world.found || !world.dir) {
+      throw new Error('installGame: no game Mods folder was found; looked in ' + describeTried(world.tried) +
+        ' -- pass gameDir/gameModsDir (--game-dir) or set ' + gamepath.ENV_DIR);
+    }
+
+    // 预检门：与 export 同一条，E000（没有知识库）不拦安装。
+    const report = validatePackage({ root: packageRoot });
+    const errors = (Array.isArray(report.diagnostics) ? report.diagnostics : [])
+      .filter((d) => d && d.severity === 'error' && d.code !== 'E000');
+    if (errors.length > 0) {
+      const shown = errors.slice(0, 3).map((d) => d.code + ' ' + (d.path || '(root)') + ' — ' + (d.message || ''));
+      const more = errors.length > shown.length ? ' (and ' + (errors.length - shown.length) + ' more)' : '';
+      throw new Error('installGame: ' + packageRoot + ' has ' + errors.length + ' error(s): ' +
+        shown.join('; ') + more + ' (fix the errors first; warnings do not block)');
+    }
+
+    let plan;
+    try {
+      plan = zipCore.planExport({ modRoot: packageRoot });
+    } catch (e) {
+      throw new Error('installGame: ' + String(e && e.message ? e.message : e).replace(/^export zip: /, ''));
+    }
+
+    const target = path.join(world.dir, name);
+    if (path.resolve(target) === path.resolve(packageRoot)) {
+      throw new Error('installGame: ' + target + ' is the package itself; point --game-dir at the game folder');
+    }
+    const existing = fs.existsSync(target);
+    if (existing && p.overwrite !== true) {
+      throw new Error('installGame: ' + target + ' already exists -- pass --overwrite (overwrite: true) to replace the installed copy');
+    }
+
+    const stamp = process.pid + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    const stage = path.join(world.dir, '.' + name + '.installing-' + stamp);
+    const backup = path.join(world.dir, '.' + name + '.previous-' + stamp);
+    let backedUp = false;
+    try {
+      fs.mkdirSync(stage, { recursive: true });
+      for (const file of plan.files) {
+        const dest = path.join(stage, ...file.rel.split('/'));
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(file.abs, dest);
+      }
+      verifyInstalledCopy(stage, plan.files);
+
+      if (existing) {
+        fs.renameSync(target, backup);
+        backedUp = true;
+      }
+      try {
+        fs.renameSync(stage, target);
+      } catch (e) {
+        if (backedUp) {
+          try {
+            fs.renameSync(backup, target);
+            backedUp = false;
+          } catch (ignored) {
+            /* 备份还在原处，用户的目录没丢；把位置写进错误里 */
+            throw new Error('could not restore ' + target + ' from ' + backup + ': ' +
+              String(e && e.message ? e.message : e));
+          }
+        }
+        throw e;
+      }
+      if (backedUp) {
+        fs.rmSync(backup, { recursive: true, force: true });
+        backedUp = false;
+      }
+    } catch (e) {
+      try {
+        fs.rmSync(stage, { recursive: true, force: true });
+      } catch (ignored) {
+        /* 清不掉暂存目录也不致命：目标要么没动、要么已经换好 */
+      }
+      throw new Error('installGame: could not copy ' + packageRoot + ' to ' + target + ': ' +
+        String(e && e.message ? e.message : e));
+    }
+
+    invalidateForRoot();
+    const summary = report.summary || {};
+    return {
+      name: name,
+      target: target,
+      files: plan.files.length,
+      bytes: plan.bytes,
+      replaced: existing,
+      warnings: summary.warnings || 0,
+      infos: summary.infos || 0,
+      knowledge: report.knowledge || 'present',
+      gameMods: { dir: world.dir, source: world.source, found: true }
+    };
+  }
+
   /* ---------------- 自带示例包（G35） ---------------- */
 
   /**
@@ -1726,6 +1930,122 @@ function createMods(options) {
     };
   }
 
+  /* ---------------- 游戏日志：Player.log（G12） ---------------- */
+
+  /** 日志尾部字节数的上下界：别把一整份几百 MB 的日志读进内存。 */
+  const LOG_BYTES_MAX = 4 * 1024 * 1024;
+
+  /** 整数参数夹到 [min, max]；不是数字就用缺省值。 */
+  function clampInt(value, min, max, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.floor(n)));
+  }
+
+  function discoverLogFor(p) {
+    if (p.path != null && String(p.path).trim() !== '') {
+      return gamepath.discoverPlayerLog({ path: String(p.path), env: env });
+    }
+    return gamepath.discoverPlayerLog({ env: env, searchRoots: p.searchRoots, platform: p.platform });
+  }
+
+  /**
+   * 读游戏日志的尾部（G12）。
+   *
+   * params `{path?, modName?, bytes?, searchRoots?, platform?}`；path 缺省就按
+   * 平台惯例（LocalLow / Library/Logs / .config/unity3d）找最近修改的 Player.log。
+   * 返回 {path, found, tried, offset, size, mtime, bytes, totals, lines}；
+   * 没找到是 found:false（tried 说明找过哪里），读失败带 error。
+   */
+  function gameLog(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    const bytes = clampInt(p.bytes, 4096, LOG_BYTES_MAX, 64 * 1024);
+    const emptyTotals = { lines: 0, errors: 0, mods: 0, mentions: 0 };
+    const found = discoverLogFor(p);
+    if (!found.found || !found.path) {
+      return {
+        path: null,
+        found: false,
+        tried: found.tried,
+        offset: 0,
+        size: 0,
+        mtime: 0,
+        bytes: 0,
+        totals: emptyTotals,
+        lines: []
+      };
+    }
+    const tail = gamepath.readLogTail(found.path, { bytes: bytes });
+    const scan = gamepath.scanLogText(tail.text, { modName: p.modName });
+    const out = {
+      path: found.path,
+      found: true,
+      tried: found.tried,
+      offset: tail.offset,
+      size: tail.size,
+      mtime: tail.mtime,
+      bytes: Buffer.byteLength(tail.text, 'utf8'),
+      totals: scan.totals,
+      lines: scan.lines
+    };
+    /* mtime 为 0 说明 stat/open 失败了（文件在这两步之间被删、或没权限）。 */
+    if (tail.mtime === 0) out.error = 'cannot read ' + found.path;
+    return out;
+  }
+
+  /**
+   * 跟一段游戏日志（G12），默认 5 秒：只收集新增的字节，扫描后返回。
+   *
+   * params `{path?, modName?, durationMs?, intervalMs?, bytes?}`。
+   * 返回 {path, found, tried, samples, offset, size, stoppedBecause, bytes,
+   *       totals, lines}；文件中途消失不抛，stoppedBecause 是 "gone"。
+   */
+  async function followGameLog(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    const emptyTotals = { lines: 0, errors: 0, mods: 0, mentions: 0 };
+    const found = discoverLogFor(p);
+    if (!found.found || !found.path) {
+      return {
+        path: null,
+        found: false,
+        tried: found.tried,
+        samples: 0,
+        offset: 0,
+        size: 0,
+        stoppedBecause: 'gone',
+        bytes: 0,
+        totals: emptyTotals,
+        lines: []
+      };
+    }
+    const chunks = [];
+    const result = await gamepath.followPlayerLog(
+      {
+        path: found.path,
+        durationMs: clampInt(p.durationMs, 100, 60000, 5000),
+        intervalMs: clampInt(p.intervalMs, 50, 5000, 500),
+        bytes: clampInt(p.bytes, 4096, LOG_BYTES_MAX, 64 * 1024)
+      },
+      (sample) => {
+        if (sample && sample.changed) chunks.push(String(sample.text == null ? '' : sample.text));
+      }
+    );
+    const text = chunks.join('');
+    const scan = gamepath.scanLogText(text, { modName: p.modName });
+    return {
+      path: found.path,
+      found: true,
+      tried: found.tried,
+      samples: result.samples,
+      offset: result.offset,
+      size: result.size,
+      stoppedBecause: result.stoppedBecause,
+      bytes: Buffer.byteLength(text, 'utf8'),
+      totals: scan.totals,
+      lines: scan.lines
+    };
+  }
+
   /**
    * 知识库状态：present = 有 schema 可用；missing = 没有知识库，
    * 校验只给文件结构结论（validate.js 会带一条具名 E000 说出来）。
@@ -1763,6 +2083,9 @@ function createMods(options) {
     newFile: newFile,
     importFile: importFileInto,
     exportPackage: exportPackage,
+    installGame: installPackage,
+    gameLog: gameLog,
+    followGameLog: followGameLog,
     examples: examples,
     example: example,
     templates: templates,

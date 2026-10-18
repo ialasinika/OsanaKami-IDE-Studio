@@ -190,6 +190,49 @@ export function renderMod(card, ctx) {
     children: [exportOut, exportButton],
   });
 
+  /*
+   * Installing (G11) is the last mile after `export`: the same package, but
+   * straight into the folder the game reads, instead of a zip the author has to
+   * unpack by hand.  The field is the game's Mods folder; it is usually
+   * discovered without being typed, and it exists so a machine with two installs
+   * can say which one.
+   */
+  const installDir = h("input", "mod-install-dir", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "(optional) the game's Mods folder",
+      title: "where the game reads mods -- leave it empty to use the discovered folder",
+    },
+  });
+  const installButton = button("install into game", "copy this package into the game's Mods folder", () => {
+    installIntoGame();
+  });
+  const installControls = h("div", "mod-controls mod-install", {
+    children: [installDir, installButton],
+  });
+
+  /*
+   * What the game said (G12): the validator only knows what the files claim.
+   * `Player.log` is the game's own verdict, and it is the file an author is
+   * least likely to find on their own.  The name defaults to the opened package,
+   * so the common case is one click.
+   */
+  const logName = h("input", "mod-log-name", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "(optional) ModName",
+      title: "show the log lines that mention this name; empty uses the opened package",
+    },
+  });
+  const logButton = button("what the game said", "read the game's Player.log and show what it says about this mod", () => {
+    readGameLog();
+  });
+  const logControls = h("div", "mod-controls mod-log", {
+    children: [logName, logButton],
+  });
+
   const headline = h("div", "mod-headline");
   const counts = h("div", "mod-counts");
   const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"));
@@ -201,7 +244,7 @@ export function renderMod(card, ctx) {
   let opened = null;
 
   const body = h("div", "card-body card-body-mod", {
-    children: [controls, newControls, importControls, exportControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
+    children: [controls, newControls, importControls, exportControls, installControls, logControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
   });
   const shell = cardShell(card, body);
   shell.label.textContent = dirInput.value === "" ? "(no dir)" : dirInput.value;
@@ -436,6 +479,87 @@ export function renderMod(card, ctx) {
     }
   }
 
+  /*
+   * G11: `mod.installGame` copies the package into `<gameMods>/<Name>` and
+   * refuses an existing folder unless `overwrite` is passed -- replacing an
+   * install is the destructive step, and the card does not hide it behind a
+   * click.  Errors (validator, existing folder, no game folder found) come back
+   * as messages, so the refusal is shown where the button is.
+   */
+  async function installIntoGame() {
+    const dir = dirInput.value.trim();
+    if (dir === "") {
+      status.textContent = "give a mod directory first";
+      app.log("warn", "mod install: type NewMod (relative to the mods root) or an absolute path first");
+      return;
+    }
+    const gameModsDir = installDir.value.trim();
+    status.textContent = "installing…";
+    let answer;
+    try {
+      answer = await client.call("mod.installGame", {
+        dir,
+        ...(gameModsDir === "" ? {} : { gameModsDir }),
+      });
+    } catch (err) {
+      status.textContent = `not installed: ${err.message}`;
+      app.log("warn", `cannot install ${dir}: ${err.message}`);
+      return;
+    }
+    status.textContent = `installed ${answer.target} (${answer.files} files, ${answer.bytes} bytes)`;
+    app.log("info",
+      `installed ${answer.name} into ${answer.target}: ${answer.files} files, ${answer.bytes} bytes` +
+      (answer.replaced ? " (replaced the previous copy)" : "") +
+      `, ${answer.warnings ?? 0} warnings and ${answer.infos ?? 0} infos from the precheck`);
+    if (answer.knowledge === "missing") {
+      app.log("info", "no knowledge base: the precheck could only look at the file structure");
+    }
+  }
+
+  /**
+   * G12: read the tail of the game's `Player.log` and show the lines worth
+   * showing -- errors, ModLoader/mod lines, and any mention of this package.
+   * The answer is deliberately not a live tail: one read, fifteen lines, and
+   * the totals, which is what an author needs after a test run.
+   */
+  async function readGameLog() {
+    const typed = logName.value.trim();
+    const name = typed !== ""
+      ? typed
+      : (opened !== null && opened.manifest && typeof opened.manifest.name === "string"
+        ? opened.manifest.name
+        : "");
+    status.textContent = "reading the game log…";
+    let answer;
+    try {
+      answer = await client.call("mod.gameLog", {
+        ...(name === "" ? {} : { modName: name }),
+      });
+    } catch (err) {
+      status.textContent = `no game log: ${err.message}`;
+      app.log("warn", `cannot read the game log: ${err.message}`);
+      return;
+    }
+    if (answer.found !== true) {
+      status.textContent = "no Player.log found";
+      app.log("warn", "the game log was not found -- start the game once, or pass --path in the shell");
+      return;
+    }
+    const totals = answer.totals || { lines: 0, errors: 0, mods: 0, mentions: 0 };
+    status.textContent =
+      `${answer.path} · ${totals.errors} errors · ${totals.mods} mod lines · ${totals.mentions} mentions`;
+    app.log("info",
+      `game log ${answer.path}: ${totals.lines} lines, ${totals.errors} errors, ` +
+      `${totals.mods} mod lines, ${totals.mentions} mentions`);
+    const shown = (Array.isArray(answer.lines) ? answer.lines : []).slice(0, 15);
+    for (const line of shown) {
+      app.log(line.kind === "error" ? "warn" : "info", `  ${line.line}: ${line.text}`);
+    }
+    if (shown.length === 0) {
+      app.log("info", "nothing in the log mentions this package -- the game said nothing about it");
+    }
+  }
+
   async function openMod() {
     const dir = dirInput.value.trim();
     if (dir === "") {
@@ -576,6 +700,18 @@ export function renderMod(card, ctx) {
     event.stopPropagation();
     if (event.key === "Enter") {
       exportZip();
+    }
+  });
+  installDir.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      installIntoGame();
+    }
+  });
+  logName.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      readGameLog();
     }
   });
 
