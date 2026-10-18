@@ -16,6 +16,30 @@ stands in this tree.
 
 ## Unreleased
 
+### A translation is edited where it is shown
+
+The story card could show a line's translation beside it and add a row when a
+line was added to the story, but the words themselves were read-only: fixing a
+translation meant opening the CSV in another program. `storycsv.setColumn` — the
+function the table layer grew for exactly this — had no caller.
+
+Clicking the translation cell now turns it into an input; Enter or blur puts the
+words back. The edit goes into the row's `text` column through `setColumn`, which
+keeps the row's `fields` in step, so the writer emits exactly that one changed
+cell. The `lock` column is rewritten to the hash of the source line as it stands:
+the lock names the source text a translation was made from, so translating a
+stale line is what makes it `ok` again instead of leaving it stale forever. A
+line the table has no row for gets the row a new line gets (columns copied from
+the rows already in the table), so the first translation of an old line can be
+typed in the card too.
+
+The story file is not touched by a translation edit, and the table label says
+`unsaved` until the save; the table is written through the same `file.blob*`
+session the card already used.
+
+Web suite: 294 checks, was 291. Red proof: removing the `setColumn` call turns
+the three new checks red (`291/294`); restored, `294/294`.
+
 ### A package leaves as a zip the game can be handed
 
 - The last step of distribution was missing: the game has no Workshop, so a mod

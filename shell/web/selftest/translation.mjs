@@ -18,6 +18,7 @@ import {
   isStaleRevision,
 } from "../rpc.mjs";
 import {
+  lockOf,
   parseCsv,
   rowState,
   serializeCsv,
@@ -811,6 +812,162 @@ await testAsync("table write: the card saves a new row through a write session, 
     assert.equal(written.rows.length, parseCsv(ADD_TABLE).rows.length + 1, "the row is in the committed file");
     assert.equal(written.rows[written.rows.length - 1].text, "Aistalt: ", "and it is the row the new line owes");
     assert.equal(mounted.handle.tablePath, TABLE_PATH, "the card still holds the table it read");
+  } finally {
+    dom.restore();
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* a translation is edited where it is shown (G40)                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The card could show a line's translation and add a row for a line the story
+ * gained, but the words themselves were read-only: fixing a translation meant
+ * editing the CSV in another program.  `storycsv.setColumn` was written for
+ * exactly this and had no caller.  These checks drive the cell: click it, type,
+ * and the row's `text` column -- and the `lock` column, which records the source
+ * text the translation was made from -- are changed in the table the card holds,
+ * so the next save writes them out.
+ */
+
+await testAsync("translation edit: the cell writes the row's text and lock back", async () => {
+  const dom = stubTableDom();
+  try {
+    const translated = TABLE_HEAD
+      + `en,line:1111111,Aistalt: Hej.,${TABLE_FILE_FIELD},Welcome_Node,19,${lockOf("Aistalt: Hi.")},\r\n`
+      + `en,line:2222222,Aistalt: Bye.,${TABLE_FILE_FIELD},Welcome_Node,23,deadbeef,\r\n`;
+    const kernel = tableKernel({ [TABLE_STORY_PATH]: TABLE_STORY, [TABLE_PATH]: translated });
+    const mounted = renderCard(
+      { id: "translate", kind: "story", file: TABLE_STORY_PATH, table: TABLE_PATH },
+      kernel,
+    );
+    await mounted.handle.load(TABLE_STORY_PATH);
+    await tick(20);
+    mounted.el.querySelectorAll('[data-role="story-node"]')[0].dispatch("click");
+
+    const cell = mounted.el.querySelector('[data-line="0"]').querySelector('[data-role="story-translation"]');
+    assert.equal(cell.getAttribute("data-state"), "ok", "the row is a translation of the source line");
+    cell.dispatch("click");
+    const input = mounted.el.querySelector('[data-role="story-translation-input"]');
+    assert.ok(input !== null, "the clicked cell became an input");
+    assert.equal(input.value, "Aistalt: Hej.", "the input holds the table's own words");
+
+    input.value = "Aistalt: Hej igen.";
+    input.dispatch("input");
+    input.dispatch("keydown", { key: "Enter" });
+
+    assert.equal(
+      mounted.el.querySelector('[data-role="story-translation-input"]'),
+      null,
+      "Enter puts the words back in the row",
+    );
+    const label = mounted.el.querySelector('[data-role="story-table"]');
+    assert.ok(label.textContent.includes("unsaved"), label.textContent);
+    assert.equal(mounted.handle.dirty, false, "the story itself was not edited");
+
+    assert.equal(await mounted.handle.save(), true, "the save goes through");
+    const table = parseCsv(kernel.files[TABLE_PATH]);
+    const row = table.rows.find((entry) => entry.id === "line:1111111");
+    assert.equal(row.text, "Aistalt: Hej igen.", "the text column holds the translation");
+    assert.equal(row.fields[2], "Aistalt: Hej igen.", "the field series moved with the column");
+    assert.equal(row.lock, lockOf("Aistalt: Hi."), "the lock is the source line the translation now follows");
+    const untouched = table.rows.find((entry) => entry.id === "line:2222222");
+    assert.deepEqual(
+      untouched.fields,
+      parseCsv(translated).rows[1].fields,
+      "the row nobody edited is the row it was",
+    );
+    assert.equal(kernel.files[TABLE_STORY_PATH], TABLE_STORY, "the story went back unchanged");
+
+    const after = mounted.el.querySelector('[data-role="story-translation"]');
+    assert.equal(after.textContent, "Aistalt: Hej igen.");
+    assert.equal(after.getAttribute("data-state"), "ok", "the translation is no longer the source");
+
+    const writeOpens = kernel.calls
+      .filter((call) => call.method === "file.blobOpen" && call.params.mode === "write");
+    assert.equal(writeOpens.length, 1, "the table still goes through a write session");
+    assert.equal(writeOpens[0].params.path, TABLE_PATH);
+    assert.equal(
+      kernel.calls.filter((call) => call.method === "file.write" && call.params.path === TABLE_PATH).length,
+      0,
+      "and never through one whole-file write",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+await testAsync("translation edit: a stale row is brought up to date by translating it", async () => {
+  const dom = stubTableDom();
+  try {
+    const stale = TABLE_HEAD
+      + `en,line:1111111,Aistalt: Hej.,${TABLE_FILE_FIELD},Welcome_Node,19,00000000,\r\n`;
+    const kernel = tableKernel({ [TABLE_STORY_PATH]: TABLE_STORY, [TABLE_PATH]: stale });
+    const mounted = renderCard(
+      { id: "stale-cell", kind: "story", file: TABLE_STORY_PATH, table: TABLE_PATH },
+      kernel,
+    );
+    await mounted.handle.load(TABLE_STORY_PATH);
+    await tick(20);
+    mounted.el.querySelectorAll('[data-role="story-node"]')[0].dispatch("click");
+
+    const cell = mounted.el.querySelector('[data-line="0"]').querySelector('[data-role="story-translation"]');
+    assert.equal(cell.getAttribute("data-state"), "stale", "the recorded lock no longer matches the source");
+    cell.dispatch("click");
+    const input = mounted.el.querySelector('[data-role="story-translation-input"]');
+    assert.equal(input.value, "Aistalt: Hej.", "the stale words are the ones being edited");
+    input.value = "Aistalt: Hej igen.";
+    input.dispatch("input");
+    input.dispatch("keydown", { key: "Enter" });
+
+    assert.equal(
+      mounted.el.querySelector('[data-role="story-translation"]').getAttribute("data-state"),
+      "ok",
+      "the line reads as translated against the source it was just edited from",
+    );
+    assert.equal(await mounted.handle.save(), true);
+    const row = parseCsv(kernel.files[TABLE_PATH]).rows[0];
+    assert.equal(row.text, "Aistalt: Hej igen.");
+    assert.equal(row.lock, lockOf("Aistalt: Hi."), "the lock is no longer the old source's hash");
+  } finally {
+    dom.restore();
+  }
+});
+
+await testAsync("translation edit: a line with no row gets one, with the table's own columns", async () => {
+  const dom = stubTableDom();
+  try {
+    const partial = TABLE_HEAD
+      + `en,line:2222222,Aistalt: Bye.,${TABLE_FILE_FIELD},Welcome_Node,23,deadbeef,\r\n`;
+    const kernel = tableKernel({ [TABLE_STORY_PATH]: TABLE_STORY, [TABLE_PATH]: partial });
+    const mounted = renderCard(
+      { id: "missing-cell", kind: "story", file: TABLE_STORY_PATH, table: TABLE_PATH },
+      kernel,
+    );
+    await mounted.handle.load(TABLE_STORY_PATH);
+    await tick(20);
+    mounted.el.querySelectorAll('[data-role="story-node"]')[0].dispatch("click");
+
+    const cell = mounted.el.querySelector('[data-line="0"]').querySelector('[data-role="story-translation"]');
+    assert.equal(cell.textContent, "missing", "the table has no row for the line");
+    cell.dispatch("click");
+    const input = mounted.el.querySelector('[data-role="story-translation-input"]');
+    assert.equal(input.value, "", "an empty cell starts empty");
+    input.value = "Aistalt: Hej!";
+    input.dispatch("input");
+    input.dispatch("keydown", { key: "Enter" });
+
+    assert.equal(await mounted.handle.save(), true);
+    const table = parseCsv(kernel.files[TABLE_PATH]);
+    assert.equal(table.rows.length, 2, "one row was added, none replaced");
+    const row = table.rows.find((entry) => entry.id === "line:1111111");
+    assert.ok(row !== undefined, "the row the line owes exists after the save");
+    assert.equal(row.text, "Aistalt: Hej!");
+    assert.equal(row.lock, lockOf("Aistalt: Hi."));
+    assert.equal(row.fields.length, 8, "the added row is an eight-column row");
+    assert.equal(row.node, "Welcome_Node", "node and file are copied from the rows already there");
+    assert.equal(row.file, TABLE_FILE_FIELD);
   } finally {
     dom.restore();
   }

@@ -232,11 +232,24 @@ decoder, so a table whose bytes straddle a frame boundary is still assembled
 character for character. A frame that fails is named on the card and leaves no
 table behind — a shorter table is never passed off as the whole one. The
 session is given back on every path, a failed read included. Saving writes the
-story, and writes the table only if the card put a row in it — which it does
-when you add a line to the story, because that line is a row the table owes. A
+story, and writes the table only if the card changed it — which it does when you
+add a line to the story, because that line is a row the table owes, and when you
+edit a translation cell. A
 table save uses a session of its own: the new text is appended in frames and
 published with `file.blobCommit`, whose `total_size` is checked against the
 bytes actually appended.
+
+A line's translation is edited in the row it is shown in: click the cell, the
+words become an input, Enter or blur puts them back. The change goes into the
+row's `text` column through `storycsv.setColumn`, which keeps the row's `fields`
+— what the writer emits — in step, and the row's `lock` column is rewritten to
+the hash of the source line as it stands. The lock is the source text a
+translation was made from, so translating a line is what brings a `stale` row
+back to `ok` instead of leaving it stale forever. A line the table has no row
+for gets the row a new line gets, its columns copied from the rows already in the
+table, so the first translation of an old line can be typed here too. Editing a
+translation does not touch the story file; the table label says `unsaved` until
+the save, and the table is written through the session above.
 
 The 4 MiB limit is a fact about the call, not about the file, and since G39 the
 editor and the Yarn card answer it with the same session. `readTextFile` tries

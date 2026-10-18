@@ -288,7 +288,7 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 291/291 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 294/294 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 527/527 checks passed
 ```
 

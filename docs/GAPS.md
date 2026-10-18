@@ -2,7 +2,7 @@
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
-快照：HEAD = `e90b16d`（G13 提交后重核；G3/G21/G46/G4/G39/G22/G13 已分别随 `59be772`、`e0b0886`、`9648c02`、`deda198`、`97f96e2`、`4393125`、`e90b16d` 关闭，G45 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
+快照：HEAD = `bd4c01e`（G45 提交后重核；G3/G21/G46/G4/G39/G22/G13/G45 已分别随 `59be772`、`e0b0886`、`9648c02`、`deda198`、`97f96e2`、`4393125`、`e90b16d`、`bd4c01e` 关闭，G40 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
 
 ## 已关闭（本轮抽查核实）
 
@@ -16,6 +16,7 @@
 | G22 立绘路径零校验 | `4393125`：`validate.js` 的 `D011` 解析 `Character.spineAssetPath`（包根 + `Spine/` 前缀容错）、空串放行、`.json` 骨架要求同名图集；SODefines 30 个带路径角色 0 误报 |
 | G13 无 headless 校验 CLI | `e90b16d`：`main.mjs` 加 `validate DIR [--json] [--mods-root] [--user-dir]`，只用 `shell/mods/`、不 spawn 内核，退出码 0/1/2，`--json` 只打一个对象（日志走 stderr）；`selftest/cli.mjs` 14 检查 |
 | G45 无 zip 导出 | 本提交：`shell/mods/zip.js` + `mod.export`（zip 内一层 `<Name>/`、排除表、固定时间戳与排序→逐字节可复现、UTF-8 名、不经 `file.read`）；export 前跑同一个 `validatePackage`，error 拦下、`E000` 不拦；CLI `export` 与 mod 卡 export zip 行 |
+| G40 翻译写回 | 本提交：`card-story.mjs` 里点单元格成 input，Enter/blur 走 `storycsv.setColumn`（`text` 与 `fields` 同步、`lock` 重算为源行哈希）；无行的行按已有列造行；故事文件不动，表走 `file.blob*` 会话；web 套件 291→294 检查 |
 | G1 语言表打不开 | story 卡走 blob 分块：`cards/card-story.mjs:17,625`（`readTextInChunks`） |
 | G25/G29 卡片可达性 | 13 种卡分模块落 `cards/`，两个视图都有标签页（`36f32df` 及更早） |
 | G41 再生 KB 关掉 sprite 检查 | `tools/gen_knowledge.mjs:16-22` 注释明确保留两类事实型 description |
@@ -42,7 +43,6 @@
 
 | 条目 | 当日证据 |
 | --- | --- |
-| G40 翻译写回半成 | `storycsv.setColumn`（`storycsv.mjs:128`）仍无调用者，只追加不改写 |
 | G15 无 wiki 链接 | `shell/` 全树无 `wiki.infantgod` 命中 |
 
 ### C. 全流程断点（装进去 → 验证 → 发出去 → 互审）
@@ -79,7 +79,7 @@ G2（音频试听卡）、G5（KB 乱码存量）、G8、G10、G14、G16–G20�
 6. ~~**G22** `spineAssetPath` 校验~~（本提交）
 7. ~~**G13** headless `validate <dir> --json`~~（本提交）
 8. ~~**G45** 导出 zip——补上分发断点~~（本提交）
-9. **G40** 翻译写回（`setColumn` 接调用者）——故事卡"能编辑"的另一半
+9. ~~**G40** 翻译写回（`setColumn` 接调用者）——故事卡"能编辑"的另一半~~（本提交）
 10. **G36** 卸载安全——唯一能删用户数据的路径，发布前必修
 
 第一替补：**G12** 游戏日志跟随（`file.blobRead` 的 offset 恰好能做 tail）。G49 agent 界面依赖 G44 完全关闭，排在这批之后。上游 0.4.2 的 port 层硬化（junction 逃逸、revision 0 二义、原子写）建议作为并行技术轨同步。

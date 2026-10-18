@@ -12,7 +12,7 @@ import {
   storyLines,
   storyNodes,
 } from "../story.mjs";
-import { parseCsv, rowFor, rowState, rowsById, serializeCsv } from "../storycsv.mjs";
+import { lockOf, parseCsv, rowFor, rowState, rowsById, serializeCsv, setColumn } from "../storycsv.mjs";
 import { parseYsls, yslsAbout, yslsSignature } from "../ysls.mjs";
 import { readTextFile, readTextInChunks, writeTextFile, writeTextInChunks } from "./blob.mjs";
 import { cardShell, h, makeStatus } from "./dom.mjs";
@@ -92,6 +92,10 @@ export function renderStory(card, ctx) {
     tableDirty: false,
     schemaPath: typeof card.schema === "string" ? card.schema : "",
     schema: null,
+    /* The line whose translation cell is open for editing, or null.  Only one
+       cell at a time: the input replaces the words in the same row, and a
+       repaint puts the words back. */
+    translationAt: null,
     suggest: [],
     suggestAt: -1,
     suggestCaret: 0,
@@ -119,7 +123,8 @@ export function renderStory(card, ctx) {
     status.textContent = parts.join(" \u00b7 ");
     tableLabel.textContent = state.tablePath === ""
       ? "no translation table"
-      : `${state.tablePath} \u00b7 ${state.table === null ? 0 : state.table.rows.length} rows`;
+      : `${state.tablePath} \u00b7 ${state.table === null ? 0 : state.table.rows.length} rows`
+        + (state.tableDirty ? " \u00b7 unsaved" : "");
     schemaLabel.textContent = state.schemaPath === ""
       ? "no command schema"
       : `${state.schemaPath} \u00b7 ${state.schema === null ? "not loaded" : yslsAbout(state.schema)}`;
@@ -175,6 +180,7 @@ export function renderStory(card, ctx) {
       row.addEventListener("click", () => {
         state.nodeIndex = info.index;
         state.lineIndex = 0;
+        state.translationAt = null;
         paint();
       });
       nodeList.append(row);
@@ -221,7 +227,53 @@ export function renderStory(card, ctx) {
     return {
       text: row === undefined ? "" : row.text,
       state: rowState({ text: storyLineText(line) }, row),
+      row: row === undefined ? null : row,
     };
+  }
+
+  /**
+   * Change one line's translation, in the table the card holds.
+   *
+   * The words are written to the row's `text` column through `setColumn`, which
+   * keeps `fields` (what `serializeCsv` writes) in step, so only that one column
+   * of that one row changes.  The `lock` column is rewritten to the hash of the
+   * source line as it is now: the lock is the source text a translation was made
+   * from, so a translation typed here claims the line as it stands -- that is
+   * what turns a `stale` row back into `ok` instead of leaving it stale forever.
+   *
+   * A line whose row is missing (the table was exported before the line existed)
+   * gets the row `storyRowForLine` builds for a new line, with the same columns
+   * the game writes; without that there is nothing for `setColumn` to change.
+   *
+   * Nothing is written to disk here: `save` writes the table once, and only when
+   * the card changed it.
+   */
+  function editTranslation(line, index, value) {
+    if (state.table === null || state.tablePath === "") {
+      return null;
+    }
+    const id = line.id === null ? lineIdOf(line.raw) : line.id;
+    if (id === null) {
+      return null;
+    }
+    let row = state.tableById.get(`line:${id}`);
+    if (row === undefined) {
+      state.lineIndex = index;
+      const built = storyRowForLine(state.story, state.nodeIndex, index, state.table);
+      if (built === null) {
+        return null;
+      }
+      row = rowFor(built);
+      state.table.rows.push(row);
+      app.log("info", `${state.tablePath}: a row for ${row.id} is waiting to be saved`);
+    }
+    setColumn(row, "text", value);
+    setColumn(row, "lock", lockOf(storyLineText(line)));
+    state.tableById = rowsById(state.table);
+    state.tableDirty = true;
+    app.boardTouched(true);
+    updateStatus();
+    return row;
   }
 
   /** One body line, drawn as the editor the file is edited in. */
@@ -307,13 +359,60 @@ export function renderStory(card, ctx) {
     }
     const translation = translationOf(line);
     if (translation !== null) {
-      row.append(h("span", `story-translation is-${translation.state}`, {
-        attrs: {
-          "data-role": "story-translation", "data-state": translation.state,
-          title: `translation: ${translation.state}`,
-        },
-        text: translation.text === "" ? translation.state : translation.text,
-      }));
+      if (state.translationAt === index) {
+        /* The cell is open for editing: an input in the same row, holding the
+           table's words, so the words are changed where they are shown. */
+        const cell = h("input", "story-translation-input", {
+          attrs: {
+            type: "text",
+            value: translation.row === null ? "" : translation.row.text,
+            placeholder: storyLineText(line),
+            spellcheck: "false", autocomplete: "off",
+            "data-role": "story-translation-input", "data-state": translation.state,
+            "aria-label": `translation of line ${index + 1}`,
+          },
+        });
+        cell.addEventListener("input", () => {
+          editTranslation(line, index, cell.value);
+        });
+        cell.addEventListener("keydown", (event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+            event.preventDefault();
+            save();
+            return;
+          }
+          event.stopPropagation();
+          if (event.key === "Enter" || event.key === "Escape") {
+            state.translationAt = null;
+            paint();
+          }
+        });
+        cell.addEventListener("blur", () => {
+          if (state.translationAt === index) {
+            state.translationAt = null;
+            paint();
+          }
+        });
+        row.append(cell);
+      } else {
+        const cell = h("span", `story-translation is-${translation.state}`, {
+          attrs: {
+            "data-role": "story-translation", "data-state": translation.state,
+            title: `translation: ${translation.state} \u2014 click to edit`,
+          },
+          text: translation.text === "" ? translation.state : translation.text,
+        });
+        cell.addEventListener("click", (event) => {
+          /* The row's own click would put the caret in the line's text input;
+             the translation cell is the thing that was clicked. */
+          event.stopPropagation();
+          state.lineIndex = index;
+          state.translationAt = index;
+          paint();
+          focusTranslation();
+        });
+        row.append(cell);
+      }
     }
     if (line.comment !== null) {
       row.append(h("span", "story-comment", { text: `// ${line.comment}` }));
@@ -353,6 +452,18 @@ export function renderStory(card, ctx) {
         target.selectionStart = caret;
         target.selectionEnd = caret;
       }
+    }
+  }
+
+  /** Put the caret in the translation cell the row list has just drawn. */
+  function focusTranslation() {
+    const cell = lineList.querySelector('[data-role="story-translation-input"]');
+    if (cell === null) {
+      return;
+    }
+    cell.focus();
+    if (typeof cell.select === "function") {
+      cell.select();
     }
   }
 
@@ -613,6 +724,7 @@ export function renderStory(card, ctx) {
     state.story = parseStory(result.text);
     state.nodeIndex = 0;
     state.lineIndex = 0;
+    state.translationAt = null;
     state.dirty = false;
     paint();
     return true;
@@ -649,6 +761,7 @@ export function renderStory(card, ctx) {
     state.tableRevision = read.revision;
     state.tableBom = read.bom === true;
     state.tableDirty = false;
+    state.translationAt = null;
     paint();
     return true;
   }
@@ -706,9 +819,13 @@ export function renderStory(card, ctx) {
       state.saving = false;
       state.baseRevision = result.revision;
       state.dirty = false;
-      updateStatus(result.chunked === true ? "saved in frames" : "saved");
       app.log("info", `saved ${state.path} (rev ${result.revision})`);
-      await saveTable();
+      /* The table may hold the translation cell's edit, or a row for a line the
+         story gained.  The status line is updated after it so it can say the
+         table's own state ("unsaved") when the table write did not happen. */
+      if (await saveTable()) {
+        updateStatus(result.chunked === true ? "saved in frames" : "saved");
+      }
       return true;
     } catch (err) {
       state.saving = false;
