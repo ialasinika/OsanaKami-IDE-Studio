@@ -615,8 +615,8 @@ function optionalString(params, name) {
 /*
  * Every `mod.*` verb, in one table, so adding one is a row and not a branch.
  * The facade behind these is synchronous; `mod.scaffold`, `mod.newFile`,
- * `mod.importFile` and `mod.example` write files, and are the four with a side
- * effect.
+ * `mod.importFile`, `mod.example` and `mod.export` write files, and are the
+ * five with a side effect.
  */
 const MOD_METHODS = {
   "mod.stats": (_params, mods) => mods.stats(),
@@ -657,6 +657,13 @@ const MOD_METHODS = {
     from: needParam(params, "from"),
     to: optionalString(params, "to") ?? undefined,
     name: optionalString(params, "name") ?? undefined,
+    overwrite: params.overwrite === true,
+  }),
+  // G45: a zip with one `<Name>/` top layer, so unpacking into Mods/ lands as
+  // Mods/<Name>/.  The validator runs first; errors stop it, warnings do not.
+  "mod.export": (params, mods) => mods.exportPackage({
+    dir: needParam(params, "dir"),
+    out: optionalString(params, "out") ?? undefined,
     overwrite: params.overwrite === true,
   }),
   // G35: the demo packages beside the editor cannot be opened where they ship
@@ -1340,6 +1347,77 @@ async function runValidate(options) {
 }
 
 /* ------------------------------------------------------------------ */
+/* export                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `export DIR` writes the distribution container the mod community actually
+ * uses: a zip with one `<Name>/` layer at the top, so unpacking it into the
+ * game's `Mods/` folder lands as `Mods/<Name>/`.  The game does not read zips
+ * -- this is transport, which is why the container is deterministic and can be
+ * diffed ("is this the same version I downloaded?").
+ *
+ * The precheck is the same validator the cards run: errors stop the export,
+ * warnings and infos do not.  `E000` (no knowledge base) does not stop it
+ * either: that error says this run could only check file structure, not that
+ * the package is wrong.
+ */
+async function runExport(options) {
+  const json = options.json === true;
+  const fail = (message) => {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return 2;
+  };
+
+  if (options.target === null) {
+    return fail("export needs a package directory: node shell/main.mjs export <dir> [--out file.zip]");
+  }
+  const target = path.resolve(options.target);
+  if (!existsSync(target) || !statSync(target).isDirectory()) {
+    return fail(`not a directory: ${target}`);
+  }
+  const modsRoot = options.modsRoot !== null ? options.modsRoot : path.dirname(target);
+
+  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  if (!mods) return fail("the mod layer did not load");
+
+  let report;
+  try {
+    report = mods.exportPackage({
+      dir: target,
+      out: options.out,
+      overwrite: options.overwrite === true,
+    });
+  } catch (err) {
+    const message = err && err.message ? String(err.message) : String(err);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    /* The validator stopping an export is the documented code 1, not a usage error. */
+    return /has \d+ error\(s\)/.test(message) ? 1 : 2;
+  }
+
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...report }, null, 2) + "\n");
+  } else {
+    process.stdout.write(
+      `exported ${report.out} (${report.bytes} bytes, ${report.files} files)\n` +
+      `${plural(report.warnings, "warning")}, ${plural(report.infos, "info")} from the precheck` +
+      (report.knowledge === "missing" ? " (no knowledge base: only file structure was checked)" : "") + "\n",
+    );
+    if (report.skipped.length > 0) {
+      process.stdout.write(`left out ${plural(report.skipped.length, "file")}:\n`);
+      for (const rel of report.skipped) process.stdout.write(`  ${rel}\n`);
+    }
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1370,6 +1448,16 @@ usage: node shell/main.mjs <command> [options]
           Exit codes: 0 no errors, 1 the validator found errors, 2 the command
           line or the mod layer failed.  Warnings and infos never change it.
 
+  export DIR [--out FILE.zip] [--overwrite] [--json]
+          Write the package as a zip whose single top layer is the package
+          folder name, so unpacking it into the game's Mods/ folder lands as
+          Mods/<Name>/.  The same validator runs first: errors stop the export,
+          warnings do not.  --out defaults to <modsRoot>/<Name>.zip and, like
+          every write verb, must stay inside the mods root.  The archive is
+          deterministic: same package, same bytes, so a shared zip can be
+          checked against another copy.  Exit codes: 0 written, 1 the validator
+          stopped it, 2 usage or write failure.
+
   help    This text.
 
 --workspace DIR is the directory the kernel may read and write; it is also
@@ -1397,6 +1485,7 @@ function parseArgs(argv) {
   const options = {
     command: null,
     target: null,
+    out: null,
     workspace: process.cwd(),
     modsRoot: null,
     userDir: null,
@@ -1404,12 +1493,13 @@ function parseArgs(argv) {
     port: 0,
     noOpen: false,
     json: false,
+    overwrite: false,
     verbose: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     help: false,
   };
 
-  const takesValue = new Set(["--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms"]);
+  const takesValue = new Set(["--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms", "--out"]);
   const rest = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -1422,6 +1512,8 @@ function parseArgs(argv) {
       options.noOpen = true;
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--overwrite") {
+      options.overwrite = true;
     } else if (arg.startsWith("--") && arg.includes("=")) {
       const [name, value] = [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)];
       if (!takesValue.has(name)) throw new Error(`unknown option: ${name}`);
@@ -1444,12 +1536,12 @@ function parseArgs(argv) {
 
   options.command = rest[0] ?? (options.help ? "help" : null);
   /*
-   * Only `validate` takes a positional argument.  Keeping the check here means
-   * `rpc extra` still fails the same way it always did, instead of the extra
-   * word being silently dropped.
+   * Only `validate` and `export` take a positional argument.  Keeping the check
+   * here means `rpc extra` still fails the same way it always did, instead of
+   * the extra word being silently dropped.
    */
   options.target = rest[1] ?? null;
-  if (options.target !== null && options.command !== "validate") {
+  if (options.target !== null && options.command !== "validate" && options.command !== "export") {
     throw new Error(`unexpected argument: ${options.target}`);
   }
   if (rest.length > 2) {
@@ -1471,6 +1563,7 @@ function applyOption(options, name, value) {
   else if (name === "--mods-root") options.modsRoot = value;
   else if (name === "--user-dir") options.userDir = value;
   else if (name === "--kernel") options.kernel = value;
+  else if (name === "--out") options.out = value;
   else if (name === "--port") {
     const port = Number(value);
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -1504,6 +1597,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "rpc") return await runRpc(options);
     if (options.command === "serve") return await runServe(options);
     if (options.command === "validate") return await runValidate(options);
+    if (options.command === "export") return await runExport(options);
   } catch (err) {
     process.stderr.write(`OsanaKami IDE Studio: ${err && err.message ? err.message : err}\n`);
     return 1;

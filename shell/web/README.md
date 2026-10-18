@@ -629,6 +629,18 @@ the pixel card, everything else as text. The command line has the same two verbs
 (`new <type> <dir> <name>`, `import <from> <dir> [to]`), so the menu and the typed
 command cannot drift apart.
 
+### Exporting the package
+
+The third row is **export zip** — `mod.export {dir, out?, overwrite?}`, the same
+verb as `node shell/main.mjs export DIR`. It writes the distribution container the
+game itself never reads (the game loads `Mods/<Name>/` directories): a zip with one
+`<Name>/` top layer, fixed timestamps and sorted names, so exporting twice gives
+identical bytes. The optional field takes a mods-root-relative or absolute path and
+defaults to `<modsRoot>/<Name>.zip`; an empty row is the default. The precheck is
+the same validation the **validate** button runs: a package with errors does not
+leave (the card says which code stopped it), warnings and infos are reported but do
+not block.
+
 ### The demo package, which has to be copied before it can be opened
 
 The editor ships a worked example (`examples/Mods/Lantern`), but it ships

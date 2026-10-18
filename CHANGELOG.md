@@ -16,6 +16,38 @@ stands in this tree.
 
 ## Unreleased
 
+### A package leaves as a zip the game can be handed
+
+- The last step of distribution was missing: the game has no Workshop, so a mod
+  travels as a zip that someone unpacks into `StreamingAssets/Mods/`. The new
+  `mod.export` verb (the writer is `shell/mods/zip.js`) turns one package into
+  exactly that container: a single `<Name>/` top layer holding `mod.json` and
+  every file the game reads beneath it, so unpacking it lands as
+  `Mods/<Name>/`. Only editor/build debris is left out (`.git`, `dist/`, logs,
+  `.tmp*`, `.code-workspace`), and the answer lists what was skipped instead of
+  dropping it silently.
+- The archive is deterministic: names sorted, one fixed DOS timestamp and Unix
+  mode for every entry, and each file stored or deflated purely by which is
+  smaller. Exporting the same package twice produces the same bytes, so "is
+  this the zip I downloaded?" can be answered with a hash. Entry names are
+  UTF-8 with the zip flag set, and the writer reads files from disk itself
+  rather than through `file.read`, so the kernel's 4 MiB single-call limit does
+  not cap a voice wav.
+- Export runs the same precheck the card runs. Errors stop it (the command line
+  exits `1`), warnings and infos ride along as counts, and `E000` -- no
+  knowledge base, so only file structure could be checked -- does not stop it;
+  `knowledge` in the answer says which kind of run it was. Both `node
+  shell/main.mjs export DIR [--out FILE.zip] [--overwrite] [--json]` (the fifth
+  command) and the mod card's **export zip** row use the same verb; `out` is
+  relative to the mods root like every other write target, defaults to
+  `<modsRoot>/<Name>.zip`, and is refused outside it.
+- Mods suite: 527 checks, was 501. The new section reads the archive back with
+  its own reader (end-of-central-directory record, central directory, local
+  headers, CRC, UTF-8 flag, store-versus-deflate), then checks the exclusion
+  list, determinism, the precheck gate, the overwrite/outside-root refusals and
+  the command line. Red proof: dropping the sort and disabling the error gate
+  turns three checks red (`mods: FAIL (3)`); restored, 527/527.
+
 ### Validate a package from a terminal, with no window and no kernel
 
 - The mod layer has been reachable only through the board: the validation port

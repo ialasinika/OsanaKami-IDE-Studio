@@ -2,7 +2,7 @@
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
-快照：HEAD = `4393125`（G22 提交后重核；G3/G21/G46/G4/G39/G22 已分别随 `59be772`、`e0b0886`、`9648c02`、`deda198`、`97f96e2`、`4393125` 关闭，G13 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
+快照：HEAD = `e90b16d`（G13 提交后重核；G3/G21/G46/G4/G39/G22/G13 已分别随 `59be772`、`e0b0886`、`9648c02`、`deda198`、`97f96e2`、`4393125`、`e90b16d` 关闭，G45 随本提交关闭）。核实方法：对每条缺口在当日树上跑 grep / 读码复核，命令与行号随条目给出。
 
 ## 已关闭（本轮抽查核实）
 
@@ -14,7 +14,8 @@
 | G4 类型支持矩阵 | `deda198`：`shell/mods/support.json`（51 类型四档 + manager）、M013/M014、模板不再生成 `Attr` |
 | G39 编辑器/`.yarn` 仍整文件读 | `97f96e2`：`cards/blob.mjs` 的 `readTextFile`/`writeTextFile` 把 4 MiB 拒读接到会话；编辑器（`card-editor.mjs:731`）与故事（`card-story.mjs:595`）都改走它 |
 | G22 立绘路径零校验 | `4393125`：`validate.js` 的 `D011` 解析 `Character.spineAssetPath`（包根 + `Spine/` 前缀容错）、空串放行、`.json` 骨架要求同名图集；SODefines 30 个带路径角色 0 误报 |
-| G13 无 headless 校验 CLI | 本提交：`main.mjs` 加 `validate DIR [--json] [--mods-root] [--user-dir]`，只用 `shell/mods/`、不 spawn 内核，退出码 0/1/2，`--json` 只打一个对象（日志走 stderr）；`selftest/cli.mjs` 14 检查 |
+| G13 无 headless 校验 CLI | `e90b16d`：`main.mjs` 加 `validate DIR [--json] [--mods-root] [--user-dir]`，只用 `shell/mods/`、不 spawn 内核，退出码 0/1/2，`--json` 只打一个对象（日志走 stderr）；`selftest/cli.mjs` 14 检查 |
+| G45 无 zip 导出 | 本提交：`shell/mods/zip.js` + `mod.export`（zip 内一层 `<Name>/`、排除表、固定时间戳与排序→逐字节可复现、UTF-8 名、不经 `file.read`）；export 前跑同一个 `validatePackage`，error 拦下、`E000` 不拦；CLI `export` 与 mod 卡 export zip 行 |
 | G1 语言表打不开 | story 卡走 blob 分块：`cards/card-story.mjs:17,625`（`readTextInChunks`） |
 | G25/G29 卡片可达性 | 13 种卡分模块落 `cards/`，两个视图都有标签页（`36f32df` 及更早） |
 | G41 再生 KB 关掉 sprite 检查 | `tools/gen_knowledge.mjs:16-22` 注释明确保留两类事实型 description |
@@ -50,7 +51,6 @@
 | --- | --- |
 | G11 无"装进游戏" | 内核无 copy/delete；`StreamingAssets` 只出现在 scaffold 的说明文字里 |
 | G12 无游戏内验证回路 | 全树无 `Player.log` 跟随/游戏启动 |
-| G45 无 zip 导出 | 无任何 archive 动词 |
 
 ### D. 产品与安装
 
@@ -78,7 +78,7 @@ G2（音频试听卡）、G5（KB 乱码存量）、G8、G10、G14、G16–G20�
 5. ~~**G39** blob 接到编辑器与 `.yarn`~~（本提交）
 6. ~~**G22** `spineAssetPath` 校验~~（本提交）
 7. ~~**G13** headless `validate <dir> --json`~~（本提交）
-8. **G45** 导出 zip——补上分发断点
+8. ~~**G45** 导出 zip——补上分发断点~~（本提交）
 9. **G40** 翻译写回（`setColumn` 接调用者）——故事卡"能编辑"的另一半
 10. **G36** 卸载安全——唯一能删用户数据的路径，发布前必修
 

@@ -78,8 +78,8 @@ other.
 
 Every verb is answered by `dispatch()` in `shell/main.mjs` from the
 `MOD_METHODS` table, before the kernel is ever consulted. All of them are
-synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile` and
-`mod.example`, which write files.
+synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile`,
+`mod.example` and `mod.export`, which write files.
 
 | verb | params | returns |
 | --- | --- | --- |
@@ -94,6 +94,7 @@ synchronous except `mod.scaffold`, `mod.newFile`, `mod.importFile` and
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
 | `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics, support?}` — **async**, writes one file (`support` is the type's matrix entry, G4) |
 | `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
+| `mod.export` | `dir`, `out?`, `overwrite?` | `{name, out, file, bytes, files, uncompressedBytes, skipped[], warnings, infos, knowledge}` — **async**, writes one zip (G45) |
 | `mod.examples` | — | `{root, source, present, packages[{name, dir, hasManifest}], default}` — what ships beside the editor |
 | `mod.example` | `name?` | `{installed, name, dir, modRoot, file, files, source, message}` — **async**, copies a demo package into the mods folder |
 | `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
@@ -572,6 +573,43 @@ why it runs on a machine that only has this checkout — the same
 `knowledge: "missing"` / `E000` degradation applies, and `gameMods.found:
 false` explains why the cross-mod checks were skipped.
 
+### Handing a package to someone else
+
+The game does not read zips: `ModLoader` scans `StreamingAssets/Mods/<Name>/`.
+A zip is **transport** — the author exports, someone downloads, and unpacking it
+into `Mods/` lands as `Mods/<Name>/`. So the archive has exactly one top layer,
+the package folder name, and `mod.export` is the verb that writes it:
+
+```sh
+node shell/main.mjs export examples/Mods/ShipIt
+node shell/main.mjs export examples/Mods/ShipIt --out ShipIt-1.0.zip --json
+```
+
+`out` is relative to the mods root (the rule every write verb uses) or absolute;
+empty means `<modsRoot>/<Name>.zip`. Overwriting needs `--overwrite` /
+`overwrite: true`, and an archive outside the mods root is refused, not
+re-rooted. The card's **export zip** row calls the same verb.
+
+Three properties are deliberate, all in `shell/mods/zip.js`:
+
+- **Deterministic.** Names are sorted, every entry gets the same fixed DOS
+  timestamp (1980-01-01) and the same Unix attributes, and each file is stored
+  or deflated purely by which is smaller. The same package exports to the same
+  bytes, so "did I download the same version?" is `sha256sum`, not trust.
+  (`Build/`, logs, `.git`, `.code-workspace` and `.tmp*` are excluded; the
+  answer lists what was left out in `skipped`.)
+- **Checked first.** The export runs the same `validatePackage` the card runs:
+  errors stop it (`1` from the command line), warnings and infos ride along in
+  the report as counts. `E000` — no knowledge base, so only file structure could
+  be checked — does **not** stop it; `knowledge` in the answer says which it was.
+- **No 4 MiB limit.** The writer reads files from disk itself rather than through
+  `file.read`, whose single call is capped; a 9 MiB voice wav goes in whole. Names
+  are UTF-8 with the zip flag set (the corpus already has mojibake directory
+  names), and the reader side of the test unpacks every entry and checks its CRC.
+
+The game's own managers never see this file, so nothing in the archive has to be
+rewritten after export — it is the package directory, byte for byte.
+
 ## The worked example we ship
 
 `examples/Mods/Lantern` is the repository's own mod: 22 files, every byte
@@ -652,7 +690,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 501 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 527 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

@@ -36,7 +36,8 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, creating one file from a schema (`mod.newFile`), importing
-  an existing file into a package (`mod.importFile`), search and completion. Pure
+  an existing file into a package (`mod.importFile`), exporting the package as a
+  deterministic zip (`mod.export`, `zip.js`), search and completion. Pure
   Node, zero npm.
 - **`settings` card** — one place for the machine rather than the project: the AI
   provider, the view a window opens in and how often the cards poll, stored under
@@ -288,7 +289,7 @@ python tools/demo.py                                 # install the starter board
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 291/291 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 501/501 checks passed
+node shell/mods/selftest.mjs                   # 527/527 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -494,7 +495,7 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 501 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 527 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs

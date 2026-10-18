@@ -32,6 +32,7 @@ const gamepath = require('./gamepath.js');
 const knowledgeBuild = require('./knowledge-build.js');
 const newfileCore = require('./newfile.js');
 const importfileCore = require('./importfile.js');
+const zipCore = require('./zip.js');
 const examplesCore = require('./examples.js');
 const supportCore = require('./support.js');
 
@@ -1496,6 +1497,95 @@ function createMods(options) {
     return imported;
   }
 
+  /* ---------------- 导出 zip（G45） ---------------- */
+
+  /**
+   * 把一个 Mod 包写成一个可分发的 zip（mod.export）。
+   *
+   * 游戏不认 zip（ModLoader 扫 `Mods/<Name>/` 目录），zip 只是传输形态：
+   * 作者导出、群友下载、解压进 `Mods/`。因此 zip 内必须有一层 `<Name>/`，
+   * 解压后正好是 `Mods/<Name>/…`；`Name` 用**文件夹名**，与 M002 的
+   * 「文件夹名 ≠ mod.json」警告呼应 —— 游戏按文件夹名加载。
+   *
+   * 导出即过体检（§18.4 的预检门）：error 拦下，warning/info 放行。
+   * `E000`（没有知识库）不算拦下 —— 它在说「这次只查了文件结构」，不是
+   * 说包里有错；结果里的 `knowledge` 字段把这一点交回给调用方。
+   *
+   * params `{ dir, out?, overwrite? }`：
+   *   - `dir` 同 newFile：包根或包内任意目录，向上找 mod.json；
+   *   - `out` 可选，绝对路径或相对 modsRoot；不给时写到
+   *     `<modsRoot>/<Name>.zip`。与别的写动词同一个 resolveArg 护栏：
+   *     设了 modsRoot 时越界即拒绝（内核也写不到 workspace 之外）。
+   *   - `overwrite: true` 才允许替换已有文件。
+   *
+   * @returns {{name:string, out:string, file:string|null, bytes:number,
+   *            files:number, uncompressedBytes:number, skipped:string[],
+   *            warnings:number, infos:number, knowledge:string}}
+   * @throws {Error} 消息以 `export: ` 开头（dispatch 直接转成错误帧）
+   */
+  function exportPackage(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    if (p.dir == null || String(p.dir).trim() === '') {
+      throw new Error('export: dir is required');
+    }
+    const packageRoot = packageRootOf(String(p.dir), 'export: ');
+    const name = path.basename(packageRoot);
+
+    let outAbs;
+    if (p.out == null || String(p.out).trim() === '') {
+      const root = modsRoot ? path.resolve(modsRoot) : path.dirname(packageRoot);
+      outAbs = path.join(root, name + '.zip');
+    } else {
+      try {
+        outAbs = resolveArg(String(p.out), 'out');
+      } catch (e) {
+        if (e && e.code === 'EOUTSIDE') throw new Error('export: ' + e.message);
+        throw e;
+      }
+    }
+    if (fs.existsSync(outAbs) && fs.statSync(outAbs).isDirectory()) {
+      throw new Error('export: ' + outAbs + ' is a directory');
+    }
+    if (fs.existsSync(outAbs) && p.overwrite !== true) {
+      throw new Error('export: ' + outAbs + ' already exists (pass overwrite: true to replace it)');
+    }
+
+    // 预检门：先跑与卡片同一个 validatePackage，error 拦下、warning 放行。
+    const report = validatePackage({ root: packageRoot });
+    const errors = (Array.isArray(report.diagnostics) ? report.diagnostics : [])
+      .filter((d) => d && d.severity === 'error' && d.code !== 'E000');
+    if (errors.length > 0) {
+      const first = errors[0];
+      throw new Error('export: ' + packageRoot + ' has ' + errors.length + ' error(s): ' +
+        first.code + ' ' + (first.path || '(root)') + ' — ' + (first.message || '') +
+        ' (fix the errors first; warnings do not block)');
+    }
+
+    const plan = zipCore.planExport({ modRoot: packageRoot, outFile: outAbs });
+    const entries = plan.files.map((file) => ({
+      name: name + '/' + file.rel,
+      data: fs.readFileSync(file.abs)
+    }));
+    const buffer = zipCore.zipEntries(entries);
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    fs.writeFileSync(outAbs, buffer);
+
+    const relOut = modsRoot ? toPosix(path.relative(path.resolve(modsRoot), outAbs)) : null;
+    const summary = report.summary || {};
+    return {
+      name: name,
+      out: outAbs,
+      file: relOut,
+      bytes: buffer.length,
+      files: plan.files.length,
+      uncompressedBytes: plan.bytes,
+      skipped: plan.skipped,
+      warnings: summary.warnings || 0,
+      infos: summary.infos || 0,
+      knowledge: report.knowledge || 'present'
+    };
+  }
+
   /* ---------------- 自带示例包（G35） ---------------- */
 
   /**
@@ -1672,6 +1762,7 @@ function createMods(options) {
     scaffold: scaffold,
     newFile: newFile,
     importFile: importFileInto,
+    exportPackage: exportPackage,
     examples: examples,
     example: example,
     templates: templates,

@@ -167,6 +167,29 @@ export function renderMod(card, ctx) {
     children: [importFrom, importTo, importButton],
   });
 
+  /*
+   * Exporting (G45) writes the container the community actually passes around:
+   * a zip whose single top layer is the folder name, so unpacking it into the
+   * game's `Mods/` lands as `Mods/<Name>/`.  The game does not read zips -- this
+   * is transport.  The same validator runs first, so a package with errors does
+   * not leave as a zip; warnings and infos ride along in the answer.
+   *
+   * The field takes a name relative to the mods root (the rule every write verb
+   * uses) or an absolute path; empty means `<modsRoot>/<Name>.zip`.
+   */
+  const exportOut = h("input", "mod-export-out", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      placeholder: "(optional) FolderName.zip",
+      title: "where the zip goes -- relative to the mods root, or absolute; empty means <modsRoot>/<Name>.zip",
+    },
+  });
+  const exportButton = button("export zip", "write this package as a zip to hand to someone else", () => exportZip());
+  const exportControls = h("div", "mod-controls mod-export", {
+    children: [exportOut, exportButton],
+  });
+
   const headline = h("div", "mod-headline");
   const counts = h("div", "mod-counts");
   const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"));
@@ -178,7 +201,7 @@ export function renderMod(card, ctx) {
   let opened = null;
 
   const body = h("div", "card-body card-body-mod", {
-    children: [controls, newControls, importControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
+    children: [controls, newControls, importControls, exportControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
   });
   const shell = cardShell(card, body);
   shell.label.textContent = dirInput.value === "" ? "(no dir)" : dirInput.value;
@@ -375,6 +398,44 @@ export function renderMod(card, ctx) {
     }
   }
 
+  /**
+   * Write the open package as a distributable zip, or say why it did not leave.
+   *
+   * The shell answers with the archive size and the file count, and with the
+   * precheck's warning/info counts: errors block the export, warnings do not.
+   * `file` is the path relative to the mods root when it is inside it, which is
+   * what the log line should name.
+   */
+  async function exportZip() {
+    const dir = dirInput.value.trim();
+    if (dir === "") {
+      status.textContent = "give a mod directory first";
+      app.log("warn", "mod export: type NewMod (relative to the mods root) or an absolute path first");
+      return;
+    }
+    const out = exportOut.value.trim();
+    status.textContent = "exporting…";
+    let answer;
+    try {
+      answer = await client.call("mod.export", {
+        dir,
+        ...(out === "" ? {} : { out }),
+      });
+    } catch (err) {
+      status.textContent = `not exported: ${err.message}`;
+      app.log("warn", `cannot export ${dir}: ${err.message}`);
+      return;
+    }
+    const where = typeof answer.file === "string" && answer.file !== "" ? answer.file : answer.out;
+    status.textContent = `exported ${where} (${answer.files} files, ${answer.bytes} bytes)`;
+    app.log("info",
+      `exported ${where}: ${answer.files} files, ${answer.bytes} bytes, ` +
+      `${answer.warnings ?? 0} warnings and ${answer.infos ?? 0} infos from the precheck`);
+    if (Array.isArray(answer.skipped) && answer.skipped.length > 0) {
+      app.log("info", `left out ${answer.skipped.length} file(s): ${answer.skipped.join(", ")}`);
+    }
+  }
+
   async function openMod() {
     const dir = dirInput.value.trim();
     if (dir === "") {
@@ -511,6 +572,12 @@ export function renderMod(card, ctx) {
       }
     });
   }
+  exportOut.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      exportZip();
+    }
+  });
 
   loadTypes();
 
