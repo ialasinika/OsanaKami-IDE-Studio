@@ -91,6 +91,20 @@ npm start                      # the Electron window (kernel must be built)
 npm run dist                   # unpacked tree in dist/win-unpacked + NSIS installer
 ```
 
+The game layer runs without a window, which is how most of it is verified:
+
+```powershell
+node shell/main.mjs validate DIR --json              # errors/warnings/infos, exit 0/1/2
+node shell/main.mjs export DIR [--out FILE.zip]      # deterministic zip
+node shell/main.mjs install DIR [--game-dir DIR] [--overwrite]
+node shell/main.mjs log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
+```
+
+`install` copies into the game's own `Mods/` folder (the last mile `export` does
+not cover), and `log` reads or follows `Player.log`, which is where the game's
+verdict on a package is written. Both are contained by the mods root the same
+way `export` is.
+
 `ELECTRON_RUN_AS_NODE` is set to `1` in some sandboxes and breaks Electron
 spawns. Clear it for the current shell before running node/Electron work:
 
@@ -110,15 +124,18 @@ change, then the full suite:
 & $make -f Makefile cli-check      # the second client: tools/seide_cli.py selfcheck
 & $make -f Makefile version-check  # every copy of VERSION agrees; CHANGELOG has a section
 & $make -f Makefile path-check     # no machine-local paths in tracked files
+& $make -f Makefile installer-check # the installer's ownership manifest, real NSIS
+& $make -f Makefile sign-check     # the signing wiring, against a stand-in signtool
 & $make -f Makefile smoke          # real browser, headless: browser + input smoke
 & $make -f Makefile test           # all of the above except smoke, plus the unit/self-tests
+& $make -f Makefile ci             # what the GitHub test job runs: test, fixture installer, workflow audit
 ```
 
 `make test` runs, in order: `check`, `fullcheck`, `probe`, `cli-check`,
-`version-check`, `path-check`, `build/obj/test_json.exe`,
-`build/obj/test_blob.exe`, then `node langs/selftest.mjs`,
-`node shell/web/selftest.mjs`, `node shell/mods/selftest.mjs`,
-`node shell/ai/selftest.mjs`.
+`version-check`, `path-check`, `installer-check`, `sign-check`,
+`build/obj/test_json.exe`, `build/obj/test_blob.exe`, then
+`node langs/selftest.mjs`, `node shell/web/selftest.mjs`,
+`node shell/mods/selftest.mjs`, `node shell/ai/selftest.mjs`.
 
 Run a single JavaScript suite directly:
 
@@ -135,6 +152,16 @@ Rules of thumb:
 - **`make smoke` drives a real browser.** Do not run it concurrently with another
   agent or another smoke run on this machine — they collide on browser profiles
   and windows. A missing browser is a **skip with exit 0**, not a failure.
+- **Do not run two suites at once either.** The mods suite rebuilds
+  `build/knowledge-fixture` and its own scratch trees under `build/`; a second
+  suite process (or a concurrent `make test`) can see the fixture half-written
+  and report a generator failure that is not real. One suite per machine at a
+  time, exactly like `smoke`.
+- `installer-check` and `sign-check` compile against the real Windows binaries;
+  they **skip with exit 0** when `makensis`, `gcc` or the sign stand-in's
+  prerequisites are missing, and `sign-check` never needs a certificate. Do not
+  read a skip as proof that signing works — a real Authenticode signature has
+  never been produced in this repository.
 - When you add a check, **prove it can fail**: invert the assertion (or
   temporarily break the code), watch the suite go red, then restore the file
   byte-for-byte. A check that has never been red is not evidence.
@@ -150,14 +177,15 @@ Rules of thumb:
 | `core/` | the C89 kernel: JSON, RPC, workspace/view/blob layers, exec |
 | `core/port/` | the only OS-aware layer (`sys_win32.c`, `proc_win32.c`) |
 | `core/tests/` | `test_json.c`, `test_blob.c` |
-| `shell/main.mjs` | CLI, HTTP/stdio endpoints, `serve` / `rpc` verbs |
+| `shell/main.mjs` | CLI (`rpc`, `serve`, `validate`, `export`, `install`, `log`), HTTP/stdio endpoints, `MOD_METHODS` |
 | `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (thirteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
-| `shell/mods/` | the game layer: schema validation, Yarn diagnosis, scaffolding, search; `selftest.mjs` is the entry over `selftest/` |
+| `shell/mods/` | the game layer: schema validation and its `D` codes, Yarn diagnosis, the `#line:` id cross-check, scaffolding, search, zip export (`zip.js`), install into the game (`gamepath.js` also finds the folder and reads/follows `Player.log`); `selftest.mjs` is the entry over `selftest/` (`game.mjs` is the install/log group) |
 | `shell/ai/` | the AI layer (config, provider, tools); `selftest.mjs` is the entry over `selftest/` and runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |
-| `tools/` | build/protocol/smoke drivers, scaffolders, installer builder |
+| `tools/` | build/protocol/smoke drivers, scaffolders, the installer builder and its checks: `make-installer.mjs`, `installer_smoke.py`, `sign_smoke.py`, and `ci_installer.py`/`ci_audit.py` for the workflow's test job |
 | `electron/` | the Windows wrapper: `main.js`, `newmod.js`, menus |
-| `docs/` | the argument: protocol, architecture, paradigm, mods, trim map, bugs, the open gap list |
+| `.github/workflows/ci.yml` | the `test` job as a file: four jobs, every action pinned, signing gated on repository secrets; `make ci` runs the test job locally |
+| `docs/` | the argument: protocol, architecture, paradigm, mods, trim map, bugs, the open gap list (now round three) |
 | `examples/` | shipped fixtures (`board.json`, `hello.yarn`, `sample.json`, `Mods/`) |
 | `build/` | **gitignored** scratch: binaries, objects, test scratch, probes |
 | `dist/` | **gitignored** packaging output |
@@ -188,6 +216,12 @@ area:
   (generated by `tools/newlang.py` / `tools/gen_knowledge.mjs`).
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes; `version-check` requires a
   section for `VERSION`.
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the release pipeline
+  as a file: four jobs, every action pinned. It has never run on a runner
+  (this repository has no remote), so `make ci` is the local equivalent to trust
+  and the workflow file itself is checked offline by `tools/ci_audit.py`. Signing
+  is opt-in and needs the `SIGN_PFX`/`SIGN_PASSWORD` secrets; without them the
+  `sign` job is skipped, not failed.
 - `shell/web/README.md` — the UI's own manual (views, gestures, card kinds).
 - `electron/README.md` — the wrapper: menus, spawning, sandboxing, packaging.
 
@@ -206,7 +240,20 @@ Recipes:
   client wrapper, and (if it is client-visible) the `seide_cli.py` verb; then
   `make check fullcheck cli-check`.
 - **Add a mod verb**: `shell/mods/index.js` + the `MOD_METHODS` table in
-  `shell/main.mjs` + `docs/MODS.md` + `shell/mods/selftest.mjs`.
+  `shell/main.mjs` + the CLI usage block in the same file + `docs/MODS.md`'s
+  verb table and a section if the verb is user-visible + a check in the matching
+  group under `shell/mods/selftest/` + `README.md`'s `shell/mods/` sentence if
+  the verb is a headline feature; then `node shell/mods/selftest.mjs`.
+- **Add a validation code**: `shell/mods/validate.js` (the code table at the top
+  of the file is part of the contract) + the prose in `docs/MODS.md` + checks in
+  `shell/mods/selftest/spec.mjs`, calibrated so the shipped `MyMod`/`SODefines`
+  stay quiet unless the code really fires on them; then prove it red.
+- **Change installer, signing or CI**: `tools/make-installer.mjs` (flags, JSON
+  record, exit codes), `tools/installer_smoke.py` / `tools/sign_smoke.py` for
+  what the change must keep true, `tools/ci_audit.py` for the workflow's shape,
+  `README.md`'s installer/CI paragraphs and `docs/ARCHITECTURE.md`'s
+  `What the build proves` table; then `make installer-check sign-check ci`.
+  Signing without a certificate is a **skip** — never claim a real signature.
 
 ## 6. Working discipline
 
@@ -222,6 +269,12 @@ Recipes:
   filesystem guard. Scripts and formatters are not protected — coordinate them.
 - If a behavior and a doc disagree, find out which one the code actually does,
   then fix the doc (or the code) and say which in your report.
+- **A doc you did not write may be in the tree.** `docs/GAPS.md` has been
+  rewritten by a different session mid-task; treat uncommitted docs as someone
+  else's work: read the current file before editing it, keep their structure
+  where it is sound, re-pin any line numbers your changes would invalidate, and
+  say in your report which parts you verified and which you inherited.
+  Never silently revert another agent's copy.
 - If the task says "do not touch X", do not touch X even to fix an obvious typo.
 - Report what you measured: commands, exit codes, and the raw failing output for
   anything that did not hold. State plainly what you could **not** verify.
