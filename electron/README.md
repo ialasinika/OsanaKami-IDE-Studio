@@ -182,7 +182,7 @@ npm run dist                                 # NSIS installer in dist/
 produces something you can run directly. To check the installer too:
 
 ```sh
-"dist/OsanaKami IDE Studio Setup 0.1.0.exe" /S   # silent, per-user
+"dist/OsanaKami IDE Studio Setup 0.1.2-beta.exe" /S   # silent, per-user
 %LOCALAPPDATA%\Programs\OsanaKami IDE Studio\OsanaKami IDE Studio.exe
 ```
 
@@ -279,7 +279,7 @@ DigiCert's RFC 3161 responder, which is what keeps the signature verifiable afte
 the certificate expires in 2029.
 
 ```
-> Get-AuthenticodeSignature "dist\OsanaKami IDE Studio Setup 0.1.0.exe"
+> Get-AuthenticodeSignature "dist\OsanaKami IDE Studio Setup 0.1.2-beta.exe"
 
 Status  Valid
 Signer  CN=OsanaKami IDE Studio

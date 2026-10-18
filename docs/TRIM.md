@@ -119,7 +119,7 @@ grep -rn "sde_exec" core/
 `infantgod modules` on this build prints exactly this:
 
 ```text
-InfantGod Studio kernel 0.1.0 -- 10 source modules
+InfantGod Studio kernel 0.1.2-beta -- 10 source modules
 To drop one: delete its line in the Makefile SRC list, its file
 under core/, and any method in rpc.c that calls it.
 

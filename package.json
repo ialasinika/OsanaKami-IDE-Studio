@@ -1,7 +1,7 @@
 {
   "name": "osanakami-ide-studio",
   "productName": "OsanaKami IDE Studio",
-  "version": "0.1.0",
+  "version": "0.1.2-beta",
   "private": true,
   "description": "OsanaKami IDE Studio — a mod IDE for story-driven games",
   "license": "MIT",

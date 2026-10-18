@@ -4,17 +4,17 @@ What changed, in the order it changed.  This project is a prototype: the
 version number says how usable it is, not how finished.
 
 OsanaKami IDE Studio is a fork of seIDE at `v0.1.0-alpha`.  It carried the name
-InfantGod Studio (幼神工坊) until the rename recorded in `## Unreleased` below; the
+InfantGod Studio (幼神工坊) until the rename recorded in `## v0.1.2-beta` below; the
 kernel, the shell, the protocol and the tools are upstream's, renamed: `seIDE`
 becomes OsanaKami IDE Studio, `.seide/` becomes `.infantgod/`,
 `core/include/seide_cfg.h` becomes `core/include/infantgod_cfg.h`, the protocol
 name `seide/1` becomes `infantgod/1` — the fork's first protocol version,
-replaced by `infantgod/2` in `## Unreleased` below.  The Brainfuck fixtures are
+replaced by `infantgod/2` in `## v0.1.2-beta` below.  The Brainfuck fixtures are
 retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  The
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
-## Unreleased
+## v0.1.2-beta — 2026-10-18
 
 ### A package goes into the game, not only into a zip
 
@@ -2044,7 +2044,7 @@ screen in the README.
 - Newline-delimited JSON-RPC over stdio; `hello`, `workspace.info`,
   `workspace.list`, `file.read`, `file.write`, `file.stat`, `board.load`,
   `board.save`, `board.newId`, `exec.start`, `exec.stop`, `exec.list`.  (That
-  list is the 0.1 state: `## Unreleased` above replaced the three `board.*`
+  list is the 0.1 state: `## v0.1.2-beta` above replaced the three `board.*`
   methods with `view.load` / `view.save` and moved the schema into the shell.)
 - Modules are trimmable per line in the Makefile's `SRC` list; `infantgod
   modules` prints what each one costs.

@@ -618,7 +618,7 @@ With `--json` stdout is exactly one JSON object:
 
 ```json
 {
-  "tool": "infantgod-validate", "version": "0.1.0", "ok": false,
+  "tool": "infantgod-validate", "version": "0.1.2-beta", "ok": false,
   "modsRoot": "…/examples/Mods", "knowledge": "present",
   "gameMods": { "dir": "…", "source": "discover", "found": true },
   "packages": [{ "root": "…/Lantern", "name": "Lantern", "ok": false,
