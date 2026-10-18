@@ -16,6 +16,26 @@ stands in this tree.
 
 ## Unreleased
 
+### The mod suite is eleven groups behind one runner
+
+- `shell/mods/selftest.mjs` was 2,809 lines: the prelude (a `--mods` argument,
+  the harness), the corpus fixtures, the spec packages, the dispatch seam, the
+  File menu's two verbs, the knowledge-base states and the generator, the
+  language service, `mod.newFile`, `mod.importFile` and the shipped demo
+  packages, with all 431 checks interleaved.  It is now a 55-line runner over
+  `shell/mods/selftest/` — eleven modules named for the group of sections they
+  hold (foundation, corpus, spec, dispatch, examples-menu, knowledge-state,
+  knowledge-facts, language, newfile, importfile, demos).
+- The groups share one `mods` facade (and so one scan cache) and one of them
+  spawns a real `serve`; the runner awaits each group in turn so the order the
+  single file had is the order they run in.  The only edit to the code is `HERE`:
+  it now resolves `shell/mods/selftest/..` so `index.js`, `gamepath.js` and the
+  bundled `knowledge.json` are still found.
+- The suite is unchanged: same 431 checks, same names, same order, same tally
+  line, same `ok 431/431`.  A one-shot verifier rebuilt every code line from the
+  modules (2,768 lines) and compared it to the old file line for line: zero
+  mismatches.
+
 ### The browser suite is fifteen sections behind one runner
 
 - `shell/web/selftest.mjs` was 5,902 lines: the assertion harness, every stub

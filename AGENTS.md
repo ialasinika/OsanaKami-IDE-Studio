@@ -152,7 +152,7 @@ Rules of thumb:
 | `core/tests/` | `test_json.c`, `test_blob.c` |
 | `shell/main.mjs` | CLI, HTTP/stdio endpoints, `serve` / `rpc` verbs |
 | `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (thirteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
-| `shell/mods/` | the game layer: schema validation, Yarn diagnosis, scaffolding, search |
+| `shell/mods/` | the game layer: schema validation, Yarn diagnosis, scaffolding, search; `selftest.mjs` is the entry over `selftest/` |
 | `shell/ai/` | the AI layer (config, provider, tools); self-test runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |
 | `tools/` | build/protocol/smoke drivers, scaffolders, installer builder |

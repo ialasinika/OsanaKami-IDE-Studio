@@ -495,6 +495,8 @@ shell/                  the front end and the endpoints
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
     selftest.mjs        node shell/mods/selftest.mjs -- 431 checks, no kernel
+    selftest/           one module per group of sections (knowledge, corpus,
+                        validation, dispatch, language, files, demos)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
                         (the barrel), cards/ (thirteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,

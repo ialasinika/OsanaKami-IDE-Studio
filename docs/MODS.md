@@ -518,6 +518,11 @@ python tools/input_smoke.py                  # a real browser, against examples/
 make test                                    # the whole project
 ```
 
+The entry point is `shell/mods/selftest.mjs`; the checks live one group of
+sections per module under `shell/mods/selftest/`, which the entry awaits in
+order — the groups share one `mods` facade and one of them spawns a real
+`serve`, so load order is the order the checks were written in.
+
 The suite covers the knowledge-base counts, the game's own `MyMod` and
 `SODefines` packages, a freshly scaffolded mod validating clean, the locale
 mapping, the protocol seam with a kernel that throws if it is ever consulted,
