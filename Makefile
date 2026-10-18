@@ -60,7 +60,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check icon window package
+.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check installer-check icon window package
 
 all: $(BIN)
 
@@ -145,6 +145,16 @@ path-check:
 	$(PYTHON) tools/path_guard.py --self-test
 	$(PYTHON) tools/path_guard.py
 
+# The installer's own promises, on the real Windows installer and uninstaller:
+# a new folder installs and an upgrade works, the uninstaller removes the files
+# it laid down and leaves a stranger's files alone, a folder holding a stranger's
+# file is refused, and an uninstaller away from its manifest deletes nothing
+# (G36).  It compiles a two-file installer with the cached NSIS; a machine
+# without makensis skips with exit 0, the way the browser smokes skip without a
+# browser.
+installer-check:
+	$(PYTHON) tools/installer_smoke.py
+
 # The window, without a human: starts the host, drives the system browser
 # headless, and asserts on the rendered DOM.  Then the same window with a
 # pointer, a keyboard and a wheel: --dump-dom drives none of them, so
@@ -162,7 +172,7 @@ smoke: $(BIN)
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe cli-check version-check path-check $(JSONTEST) $(BLOBTEST)
+test: check fullcheck probe cli-check version-check path-check installer-check $(JSONTEST) $(BLOBTEST)
 	$(JSONTEST)
 	$(BLOBTEST)
 	$(NODE) langs/selftest.mjs

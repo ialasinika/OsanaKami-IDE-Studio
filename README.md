@@ -297,8 +297,9 @@ skips them (rather than failing) when it is not there; point it at your own copy
 with `node shell/mods/selftest.mjs --mods <dir>`.
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
-`version-check`, then the JSON test and the three JavaScript self-tests **in that
-order**, so a `fullcheck` failure would stop the run before the self-tests are
+`version-check`, then `installer-check`, then the JSON test and the three
+JavaScript self-tests **in that order**, so a `fullcheck` failure would stop the
+run before the self-tests are
 reached. `check`
 drives the bare kernel (`tools/e2e.py --kernel build/infantgod.exe`) and
 `fullcheck` the same suite through the shell
@@ -678,6 +679,19 @@ developer's absolute path, and it fails while the audit's allow-list is non-empt
 `build/make-installer.json` records whether the build that ran was a `--dev` build
 and whether it was `releaseReady`. The knowledge baseline is not shipped because
 the app derives it from the player's own game; `docs/MODS.md` says how.
+
+The installer knows what it laid down: `tools/make-installer.mjs` walks the
+payload once and compiles both an `install-manifest.txt` (written beside the app)
+and the same list as deletes into the uninstaller. So the uninstaller removes
+exactly those files, the licence, the manifest and itself — it no longer ends
+with `RMDir /r "$INSTDIR"`. A file you put in the folder stops that folder's
+removal instead of being deleted with it, and a folder that holds anything not
+the app's is refused before install (a silent install exits 2). A folder without
+the manifest is treated as not provably ours: the uninstaller removes its
+shortcuts and registry keys and nothing else. `python tools/installer_smoke.py`
+compiles a two-file installer and checks all four promises against the real
+Windows installer and uninstaller; `make test` runs it (`installer-check`) and
+skips cleanly on a machine without NSIS.
 
 CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml): the `test` job runs
 the same `make CC=gcc test` a maintainer runs, and the `smoke` job renders the

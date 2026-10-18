@@ -16,6 +16,39 @@ stands in this tree.
 
 ## Unreleased
 
+### The uninstaller removes the app, not the folder it sits in
+
+The uninstaller ended with `RMDir /r "$INSTDIR"`, which deletes whatever happens
+to be in the install folder — a backup you dropped there, an exported zip, a
+`Mods` folder you pointed at — and left nothing behind for the installer to
+recognise on the next run. It also never heard of the folder the user picked:
+`InstallDir` was whatever the script defined, so a silent install could treat a
+non-empty directory of someone's files as its own.
+
+The installer now writes an ownership manifest, `install-manifest.txt`, beside
+the app: `tools/make-installer.mjs` already walks the payload once for the
+audit, and that same walk becomes the list of files installed, the list of
+directories to remove, and the deletes compiled into the uninstaller
+(`installer-manifest.nsi`, folded in at build time). The uninstaller removes
+exactly those files plus the licence, the manifest and itself — a stranger's file
+in the folder stops that folder's removal instead of being deleted with it, and
+every directory is `RMDir` (not `/r`), so only empty ones go. The `.onInit`
+guard refuses to install into a non-empty folder that does not already hold this
+manifest (a silent install exits 2, nothing written), and a second install over
+the first keeps a foreign file intact while replacing the app. An uninstaller
+found away from its manifest — copied somewhere else — has no list and deletes
+nothing but its own shortcuts and registry keys.
+
+`python tools/installer_smoke.py` compiles a two-file installer and checks four
+promises against the real Windows binaries: a new folder installs and an upgrade
+over it works; the uninstaller removes what it laid down and leaves both stranger
+files and their empty folder; a folder holding a stranger's file is refused with
+exit 2 and no write; an uninstaller copied away from its manifest deletes
+nothing. `make test` runs it as `installer-check`; it skips with exit 0 when
+makensis is not installed. Red proof: turning the uninstaller's manifest deletes
+back into `RMDir /r "$INSTDIR"` fails the smoke with
+`uninstall left [], expected only the two stranger files`.
+
 ### A translation is edited where it is shown
 
 The story card could show a line's translation beside it and add a row when a
