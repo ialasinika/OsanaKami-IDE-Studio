@@ -507,6 +507,102 @@ section("techName collisions the game resolves silently (G3)");
     JSON.stringify(blindOut.diagnostics.filter((d) => d.code === "M012")));
 }
 
+section("audio references and the #vo tag (G21)");
+
+{
+  const kb = specMods.knowledge();
+
+  function audioPackage(prefix) {
+    const root = join(specTemp(prefix), "AudioMod");
+    specWrite(join(root, "mod.json"), JSON.stringify({
+      name: "AudioMod",
+      version: "1.0.0",
+      gameVersion: "1.0",
+      author: "selftest",
+      description: "selftest fixture: audio references",
+    }, null, 2) + "\n");
+    return root;
+  }
+
+  function codesOf(root) {
+    return validateCore.validateModPackage(root, {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics;
+  }
+
+  // Song：externalAudioFile 在 Mod 根目录下不存在 / 存在
+  const songRoot = audioPackage("infantgod-audio-song-");
+  specWrite(join(songRoot, "Defines", "Song", "Missing.json"),
+    JSON.stringify({ techName: "ZzSongMissing", externalAudioFile: "Audio/missing.wav" }, null, 2) + "\n");
+  specWrite(join(songRoot, "Defines", "Song", "Present.json"),
+    JSON.stringify({ techName: "ZzSongPresent", externalAudioFile: "Audio/tone.wav" }, null, 2) + "\n");
+  specWrite(join(songRoot, "Audio", "tone.wav"), "RIFF");
+  const songOut = codesOf(songRoot);
+  const songD006 = songOut.filter((d) => d.code === "D006");
+  check("a Song whose externalAudioFile is missing is D006",
+    songD006.length === 1 && songD006[0].message.indexOf("missing.wav") >= 0,
+    JSON.stringify(songD006.map((d) => d.message)));
+  check("a Song whose externalAudioFile exists is not D006",
+    songD006.every((d) => d.message.indexOf("tone.wav") < 0),
+    JSON.stringify(songD006.map((d) => d.message)));
+
+  // VoiceOverDefinition：voiceOverFolder 是目录，voiceOverFiles 可在它下面解析
+  const voRoot = audioPackage("infantgod-audio-vo-");
+  specWrite(join(voRoot, "Defines", "VoiceOverDefinition", "V.json"),
+    JSON.stringify({ techName: "ZzVo", voiceOverFolder: "Audio", voiceOverFiles: ["a.wav"] }, null, 2) + "\n");
+  specWrite(join(voRoot, "Audio", "a.wav"), "RIFF");
+  const voOut = codesOf(voRoot).filter((d) => d.code === "D006");
+  check("a voice-over set whose folder and file both exist is not D006",
+    voOut.length === 0, JSON.stringify(voOut.map((d) => d.message)));
+
+  const badVoRoot = audioPackage("infantgod-audio-vobad-");
+  specWrite(join(badVoRoot, "Defines", "VoiceOverDefinition", "V.json"),
+    JSON.stringify({ techName: "ZzVo", voiceOverFolder: "Audio/Nowhere", voiceOverFiles: ["a.wav"] }, null, 2) + "\n");
+  const badVoOut = codesOf(badVoRoot).filter((d) => d.code === "D006");
+  check("a missing voiceOverFolder is D006", badVoOut.length === 2, JSON.stringify(badVoOut.map((d) => d.message)));
+  check("and the missing voiceOverFolder is named",
+    badVoOut.some((d) => d.message.indexOf("Audio/Nowhere") >= 0), JSON.stringify(badVoOut.map((d) => d.message)));
+
+  // AudioEvent 的双命名：D001 要说清两条键都要写
+  const eventRoot = audioPackage("infantgod-audio-event-");
+  specWrite(join(eventRoot, "Defines", "AudioEvent", "E.json"),
+    JSON.stringify({ techName: "ZzEvent" }, null, 2) + "\n");
+  const eventD001 = codesOf(eventRoot).filter((d) => d.code === "D001");
+  check("an AudioEvent with only techName gets a D001 that explains the double name",
+    eventD001.length === 1 && eventD001[0].message.indexOf("双命名") >= 0 &&
+      eventD001[0].message.indexOf("TechName") >= 0,
+    JSON.stringify(eventD001.map((d) => d.message)));
+
+  // Y122 / Y123：`#vo:` 指向不存在的语音集合 / 废弃指令
+  const yarnRoot = audioPackage("infantgod-audio-yarn-");
+  specWrite(join(yarnRoot, "Defines", "VoiceOverDefinition", "V.json"),
+    JSON.stringify({ techName: "ZzVo", voiceOverFolder: "Audio", voiceOverFiles: [] }, null, 2) + "\n");
+  function yarnCodes(name, body) {
+    const rel = "Yarn/" + name + ".yarn";
+    specWrite(join(yarnRoot, rel), "title: Zz" + name + "\n---\n" + body + "\n===\n");
+    specMods.openMod({ dir: yarnRoot });
+    return specMods.diagnoseYarn({
+      text: readFileSync(join(yarnRoot, rel), "utf8"),
+      fileName: rel,
+      root: yarnRoot,
+    }).diagnostics;
+  }
+  const badVoCodes = yarnCodes("badvo", "台词。 #vo:ZzNope #line:9");
+  check("an unknown #vo value is Y122", badVoCodes.some((d) => d.code === "Y122"),
+    JSON.stringify(badVoCodes.map((d) => d.code)));
+  const localVoCodes = yarnCodes("localvo", "台词。 #vo:ZzVo #line:9");
+  check("a voice-over set defined by this package satisfies #vo",
+    !localVoCodes.some((d) => d.code === "Y122"), JSON.stringify(localVoCodes.map((d) => d.code)));
+  const baselineVoCodes = yarnCodes("basevo", "台词。 #vo:Lick #line:9");
+  check("a baseline voice-over set satisfies #vo",
+    !baselineVoCodes.some((d) => d.code === "Y122"), JSON.stringify(baselineVoCodes.map((d) => d.code)));
+  const deprecatedCodes = yarnCodes("deprecated", '<<PlayDialogueWithVoice "Lick">>');
+  check("PlayDialogueWithVoice is an info-level Y123",
+    deprecatedCodes.some((d) => d.code === "Y123" && d.severity === "info"),
+    JSON.stringify(deprecatedCodes.map((d) => d.code + ":" + d.severity)));
+}
+
 section("no state leaks between runs");
 
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });

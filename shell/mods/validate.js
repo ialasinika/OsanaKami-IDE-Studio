@@ -63,6 +63,8 @@
  *      D102 warning techName 已是基线定义（整份覆写提示；G3 由 info 提级）
  *      D103 error    同类型的 techName 已被兄弟 Mod 或同包另一个文件定义：
  *                    游戏对重复的 (类型, TechName) 保留先加载的那一份，后一份被静默丢弃（G3）
+ *      D006（音频分支，G21）error  Song.externalAudioFile / VoiceOverDefinition.voiceOverFolder
+ *                    或 voiceOverFiles[] 指向的文件/目录在 Mod 根目录下不存在
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -92,6 +94,14 @@ const RE_YARN_SUBTITLE = /^subtitle:\s*(.+?)\s*$/;
  */
 const X_REF_KEY = 'x-techReference';
 const X_SPRITE_KEY = 'x-sprite';
+
+/*
+ * G21：文件型音频引用。schema 对这些字段没有 description（知识库只记了字段名），
+ * 所以这里按字段名识别；它们与 sprite 一样相对 Mod 根目录解析——语料里唯一的
+ * 外部音频范例（官方 Mods/Audio 演示包）把 6 个 wav 全放在包根目录。
+ */
+const AUDIO_FILE_FIELDS = ['externalAudioFile', 'voiceOverFiles'];
+const AUDIO_FOLDER_FIELD = 'voiceOverFolder';
 
 /** 泛型引用：类型未知，只能做非空检查。 */
 const GENERIC_REF = 'ScriptableObject';
@@ -597,6 +607,56 @@ function checkSprite(value, jsonPath, ctx, out) {
 }
 
 /**
+ * G21：音频路径的候选绝对路径。
+ * 相对 Mod 根目录；若同一个定义给了 voiceOverFolder，也在该目录下找一遍
+ * （两种写法都见过：文件名带目录，或文件名 + voiceOverFolder 分开写）。
+ */
+function audioCandidates(modRoot, raw, folder) {
+  const norm = String(raw).trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  if (!norm) return [];
+  const out = [path.join(modRoot, norm)];
+  const dir = String(folder || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  if (dir) out.push(path.join(modRoot, dir, norm));
+  return out;
+}
+
+/** D006（G21 音频分支）：音频文件存在性。 */
+function checkAudioFile(raw, jsonPath, ctx, out, folder) {
+  if (typeof raw !== 'string') return;
+  const value = raw.trim();
+  if (!value) return; // 空值由 D001 负责
+  if (!ctx.modRoot) return;
+  const cands = audioCandidates(ctx.modRoot, value, folder);
+  for (const c of cands) {
+    if (fileExistsCached(c, ctx)) return;
+  }
+  out.push(diag('error', 'D006', jsonPath, ctx.type,
+    '音频文件不存在：' + value + '（在 Mod 根目录下尝试了 ' + cands.length + ' 个候选路径）',
+    'Audio file not found: ' + value + ' (tried ' + cands.length + ' candidate path(s) under the mod root)',
+    { expected: 'modRoot 下存在的音频文件', actual: value }));
+}
+
+/** D006（G21 音频分支）：voiceOverFolder 是一个目录，不是文件。 */
+function checkAudioFolder(raw, jsonPath, ctx, out) {
+  if (typeof raw !== 'string') return;
+  const value = raw.trim();
+  if (!value) return;
+  if (!ctx.modRoot) return;
+  const norm = value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  let ok = false;
+  try {
+    ok = fs.statSync(path.join(ctx.modRoot, norm)).isDirectory();
+  } catch {
+    ok = false;
+  }
+  if (ok) return;
+  out.push(diag('error', 'D006', jsonPath, ctx.type,
+    '音频目录不存在：' + value + '（voiceOverFolder 必须是 Mod 根目录下的目录）',
+    'Audio folder not found: ' + value + ' (voiceOverFolder must be a folder under the mod root)',
+    { expected: 'modRoot 下存在的目录', actual: value }));
+}
+
+/**
  * 递归校验一个实例节点。
  * @param {object} rawNode      schema 节点（可能是 $ref）
  * @param {object} schema       该类型的根 schema（用于解析 $ref）
@@ -659,9 +719,20 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
     // D001：required 缺失 / null / 空字符串
     for (const key of requiredKeys) {
       if (!hasValue(value, key)) {
-        out.push(diag('error', 'D001', ip ? ip + '.' + key : key, ctx.type,
-          '缺少必填字段 "' + key + '"' + (hasOwn(value, key) ? '（值为空）' : '') + '。',
-          'Missing required field "' + key + '"' + (hasOwn(value, key) ? ' (empty value)' : '') + '.',
+        let zh = '缺少必填字段 "' + key + '"' + (hasOwn(value, key) ? '（值为空）' : '') + '。';
+        let en = 'Missing required field "' + key + '"' + (hasOwn(value, key) ? ' (empty value)' : '') + '.';
+        /*
+         * G21：AudioEvent 的双命名怪癖。它的 schema 同时要求 techName 与 TechName，
+         * 语料里 117 个文件两个键都写；只写一个的手写作者会吃到一句没头没尾的 D001。
+         */
+        const twin = requiredKeys.filter((k) => k !== key && k.toLowerCase() === 'techname');
+        if (twin.length) {
+          zh += '（' + ctx.type + ' 在这里是双命名：必须同时写 "' + twin[0] + '" 与 "' + key +
+            '" 两个键，游戏两套 JSON 各认一个。）';
+          en += ' (' + ctx.type + ' uses both spellings here: write "' + twin[0] + '" and "' + key +
+            '" together; each consumer reads one of them.)';
+        }
+        out.push(diag('error', 'D001', ip ? ip + '.' + key : key, ctx.type, zh, en,
           { expected: key, actual: hasOwn(value, key) ? describe(value[key]) : 'undefined' }));
       }
     }
@@ -672,6 +743,24 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
           'schema 中未声明的字段 "' + key + '"（可能是拼写错误，游戏不会读取它）。',
           'Undeclared field "' + key + '" (possible typo; the game will ignore it).',
           { expected: Object.keys(props).join('|'), actual: key }));
+      }
+    }
+
+    /* ---- G21：文件型音频引用（schema 没有 description，按字段名识别） ---- */
+    if (ctx.modRoot) {
+      const folder = typeof value[AUDIO_FOLDER_FIELD] === 'string' ? value[AUDIO_FOLDER_FIELD] : '';
+      for (const key of AUDIO_FILE_FIELDS) {
+        if (!hasOwn(value, key)) continue;
+        const v = value[key];
+        const jp = ip ? ip + '.' + key : key;
+        if (typeof v === 'string') {
+          checkAudioFile(v, jp, ctx, out, folder);
+        } else if (Array.isArray(v)) {
+          for (let i = 0; i < v.length; i++) checkAudioFile(v[i], jp + '[' + i + ']', ctx, out, folder);
+        }
+      }
+      if (typeof value[AUDIO_FOLDER_FIELD] === 'string') {
+        checkAudioFolder(folder, ip ? ip + '.' + AUDIO_FOLDER_FIELD : AUDIO_FOLDER_FIELD, ctx, out);
       }
     }
     // 下钻

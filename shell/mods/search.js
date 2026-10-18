@@ -19,6 +19,7 @@
  *     types:      [{ type, defineCount, propertyCount, required }],
  *     defines:    { <TypeName>: techName[] },
  *     characters: [...], locales: [...],
+ *     voiceOvers: [...],   // G21：VoiceOverDefinition 的 techName（`#vo:` 的候选）
  *     emotionTags: [...],  // 表情标签；来源见 meta.emotionSource
  *     meta:       { commands, functions, variables, nodes, types, defines,
  *                   emotionTags, emotionSource, ... },
@@ -487,6 +488,8 @@ function buildIndex(kb, options) {
     types: types,
     defines: defines,
     characters: characters,
+    // G21：`#vo:` 的候选（基线 VoiceOverDefinition 的 techName 列表）。
+    voiceOvers: toArray(defines.VoiceOverDefinition),
     locales: locales,
     emotionTags: emotion.tags,
     meta: meta,

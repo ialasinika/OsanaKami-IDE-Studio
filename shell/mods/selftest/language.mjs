@@ -93,8 +93,12 @@ section("language service: completion and hover");
   {
     const text = "#vo:";
     const ctx = lang.classify(text, at(text));
-    eq("#vo is a tag value with no index behind it", [ctx.kind, ctx.tag, ctx.context], ["tagvalue", "vo", ""]);
-    eq("so it offers nothing", lang.complete(text, at(text), index).items.length, 0);
+    eq("#vo is a tag value whose values are the game's voice-over sets", [ctx.kind, ctx.tag, ctx.context], ["tagvalue", "vo", ""]);
+    const result = lang.complete(text, at(text), index);
+    eq("it offers one item per VoiceOverDefinition", result.items.length, (index.voiceOvers || []).length);
+    check("and the first one is a baseline name",
+      (index.voiceOvers || []).length > 0 && index.voiceOvers.includes(result.items[0].label),
+      JSON.stringify(result.items.map((i) => i.label)));
   }
   {
     const text = "  $Achi";

@@ -16,6 +16,36 @@ stands in this tree.
 
 ## Unreleased
 
+### The editor can hear the audio a definition points at
+
+- `D006` used to mean only "a sprite path is missing".  It now also covers the
+  file-shaped audio references: `Song.externalAudioFile`, and a
+  `VoiceOverDefinition`'s `voiceOverFolder` (checked as a folder) and
+  `voiceOverFiles[]`.  All of them are resolved against the mod root, with
+  `voiceOverFolder` also tried in front of each file name — that is where every
+  audio file in the shipped corpus lives, and the two spellings both occur.
+  `knowledge.json` records no description for these fields, only their names, so
+  the branch keys on the field names.
+- `D001` explains the one double-named definition: `AudioEvent` requires both
+  `techName` and `TechName` (each consumer reads one), so a missing half now says
+  so instead of reading like an ordinary missing field.
+- `#vo:<name>` is checked: `Y122` (error) fires when the name is not a
+  VoiceOverDefinition — the four the baseline ships plus this package's own
+  `Defines/VoiceOverDefinition/*.json`; it names a near miss when there is one,
+  because a misspelled `#vo:` silently loses the voice line.
+- `<<PlayDialogueWithVoice>>` is reported as `Y123` (info): the corpus still
+  calls it, but voice now rides the dialogue line's `#vo:` tag.
+- `mod.complete` now offers the baseline VoiceOverDefinition names for `#vo:`;
+  the tag used to complete to nothing.
+- Evidence: `shell/mods/selftest.mjs` is 449 checks (was 438).  The eleven new
+  ones cover a missing `externalAudioFile` and one that exists, a missing
+  `voiceOverFolder` (and that it is named), a `voiceOverFiles[]` entry resolved
+  through `voiceOverFolder`, the `AudioEvent` `D001` wording, `Y122` for an
+  unknown name and for a baseline name and a package-defined name, `Y123`'s
+  severity, and `#vo:` completing to the baseline list.  The audio and `#vo`
+  branches were watched red first: with both disabled the suite reads
+  `mods: FAIL (3)`.
+
 ### The validator says which definitions the game will drop, and why
 
 - The game resolves a duplicate `(type, techName)` by keeping the first definition

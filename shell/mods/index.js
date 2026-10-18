@@ -937,8 +937,9 @@ function createMods(options) {
   /**
    * 一个 Mod 包内的跨文件索引（按 root 缓存）：
    *   declarations {name:{file,line}}、nodeGroups Map(title → members)、
-   *   commands [{name,file,line,args}]、characters Set(techName)、modNames []。
-   * 供 CR-104 / CR-115 / CR-116 / CR-201..203 / CR-114 / CR-105 使用。
+   *   commands [{name,file,line,args}]、characters Set(techName)、
+   *   voiceOvers Map(techName → voiceOverFiles[])、modNames []。
+   * 供 CR-104 / CR-115 / CR-116 / CR-201..203 / CR-114 / CR-105 / G21 的 #vo 检查使用。
    */
   function localModIndex(root) {
     if (!root) return null;
@@ -951,6 +952,7 @@ function createMods(options) {
     const groups = new Map();
     const commands = [];
     const characters = new Set();
+    const voiceOvers = new Map();
     for (const f of files) {
       if (/\.yarn$/i.test(f.rel)) {
         const r = readText(f.abs);
@@ -985,6 +987,19 @@ function createMods(options) {
         } catch {
           /* 坏 JSON 由 validate 报，这里静默 */
         }
+      } else if (/^Defines\/VoiceOverDefinition\/[^/]+\.json$/i.test(f.rel)) {
+        // G21：`#vo:` 也能引用本包自己定义的语音集合（name -> voiceOverFiles）。
+        try {
+          const obj = JSON.parse(stripBom(fs.readFileSync(f.abs, 'utf8')));
+          if (obj && typeof obj.techName === 'string' && obj.techName) {
+            const files = Array.isArray(obj.voiceOverFiles)
+              ? obj.voiceOverFiles.filter((x) => typeof x === 'string' && x)
+              : [];
+            voiceOvers.set(obj.techName, files);
+          }
+        } catch {
+          /* 坏 JSON 由 validate 报，这里静默 */
+        }
       }
     }
     // 同级目录名也是合法标签（`#MyMod` 这类 mod 命名空间标签）
@@ -996,7 +1011,7 @@ function createMods(options) {
     } catch {
       /* 读不到父目录就算了 */
     }
-    const info = { declarations, groups, commands, characters, modNames };
+    const info = { declarations, groups, commands, characters, voiceOvers, modNames };
     cache.modIndexByRoot.set(root, info);
     return info;
   }
@@ -1028,6 +1043,30 @@ function createMods(options) {
     }
     if (idx && idx.characters) for (const n of idx.characters) set.add(n);
     return Array.from(set);
+  }
+
+  /**
+   * 语音集合（G21）：基线库的 VoiceOverDefinition ∪ 本包自己的定义。
+   * 返回 [{name, files}]——基线没有文件清单（原版游戏资源不在 Mod 里），本包的有。
+   */
+  function voiceOverNames(kb, idx) {
+    const out = [];
+    const seen = new Set();
+    const baseline = (kb && kb.baseline) || {};
+    for (const n of baseline.VoiceOverDefinition || []) {
+      const name = String(n);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name: name, files: [] });
+    }
+    if (idx && idx.voiceOvers) {
+      for (const [name, files] of idx.voiceOvers) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        out.push({ name: name, files: Array.isArray(files) ? files.slice() : [] });
+      }
+    }
+    return out;
   }
 
   /**
@@ -1096,6 +1135,7 @@ function createMods(options) {
       stateTags: STATE_TAGS.slice(),
       knownMetaKeys: KNOWN_META_KEYS.slice(),
       characters: characterNames(kb, idx),
+      voiceOvers: voiceOverNames(kb, idx),
       tagVocabulary: tagVocabulary(kb),
       modNames: idx ? idx.modNames : [],
       declarations: declarations,

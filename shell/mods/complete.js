@@ -292,6 +292,19 @@ function complete(text, caret, index, opts) {
     items.sort(byLabel);
     return { context: ctx, items: items.slice(0, options.limit || 200), isIncomplete: items.length > (options.limit || 200) };
   }
+  if (ctx.kind === 'tagvalue' && ctx.tag === 'vo') {
+    // G21：`#vo:` values are VoiceOverDefinition names from the knowledge base's
+    // baseline (the original game's voice-over sets) plus, when the caller merged
+    // them in, this package's own definitions.
+    const voices = Array.isArray(index.voiceOvers) ? index.voiceOvers : [];
+    const p = String(ctx.prefix || '').toLowerCase();
+    for (const name of voices) {
+      if (p && String(name).toLowerCase().indexOf(p) !== 0) continue;
+      items.push(makeItem(name, 'voice', '语音集合 ' + name, name, ctx));
+    }
+    items.sort(byLabel);
+    return { context: ctx, items: items.slice(0, options.limit || 200), isIncomplete: items.length > (options.limit || 200) };
+  }
   if (ctx.kind === 'tagvalue') return { context: ctx, items: [], isIncomplete: false };
 
   const res = search(index, ctx.prefix, ctx.context, { limit: options.limit || 200 }) || {};

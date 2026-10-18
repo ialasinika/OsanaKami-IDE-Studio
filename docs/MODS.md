@@ -110,7 +110,9 @@ the disk, so an editor can ask about an unsaved buffer without writing first.
 `mod.complete` answers with what the caret is inside (`context.kind` — `none`,
 `command`, `argument`, `variable`, `character`, `tag`, `tagvalue`), the exact
 span to replace, and the candidates; `mod.hover` answers `null` when it has
-nothing trustworthy to say rather than inventing a doc.
+nothing trustworthy to say rather than inventing a doc.  Two tag values have a
+list behind them: `#state:` offers the game's emotion states and `#vo:` offers
+the game's VoiceOverDefinition names (the four the baseline ships).
 
 A diagnostic is uniformly shaped:
 
@@ -341,6 +343,8 @@ exists without a spec counterpart.
 | Y119 | info | CR-202 | a suspicious start/end pair has its start but never its end (message starts `可疑：`) |
 | Y120 | error | CR-203 | a certain pair has its end but never its start |
 | Y121 | error | CR-501 | an option line's `#` is followed by plain text |
+| Y122 | error | 我们自有、规格无此条 | `#vo:` names a VoiceOverDefinition that does not exist (baseline plus this package's own) |
+| Y123 | info | 我们自有、规格无此条 | `<<PlayDialogueWithVoice>>` is deprecated: voice now rides the line's `#vo:` tag |
 | Y900 | error | internal | the Yarn parser threw; a failure of ours, not of the file |
 
 ### Defines (`shell/mods/validate.js`)
@@ -359,6 +363,15 @@ from info) marks a `techName` that is already a baseline definition, where the f
 is a full override and must carry every field it needs. `M012` (warning) says the
 game's Mods folder could not be read, so the cross-mod half of `D103` and the
 `loadOrder` collision check were skipped for this run.
+
+`D006` also covers audio. `Song.externalAudioFile` and a `VoiceOverDefinition`'s
+`voiceOverFolder` (which must be a folder) and `voiceOverFiles[]` are resolved
+against the mod root, with `voiceOverFolder` tried in front of each file name as
+well. The knowledge base records no description sentence for those fields — only
+their names — so the branch keys on the names; every audio file in the shipped
+corpus sits beside the package root. One definition is double-named: `AudioEvent`
+requires both `techName` and `TechName`, and `D001` says so in the message instead
+of leaving the author to guess why one key is still "missing".
 
 The `mod.validatePackage` verb passes the game's Mods folder in as
 `gameMods: { dir, readable }`; `shell/mods/index.js` fills it from the folder
@@ -526,7 +539,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 438 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 449 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

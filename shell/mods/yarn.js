@@ -738,12 +738,12 @@ function isLegalTagArea(tail) {
  *   - 未知 #state 值（CR-109）保留原码 Y104（warning），新增 CR-102/104/105/106/107/108/
  *     113/114/115/116/201/202/203/501；
  *   - §11.2 槽位让路、§11.1 索引为空静默、§11.7 去重键；
- *   - Y003/Y005/Y006/Y101/Y103/Y105/Y106/Y107 是「我们自有、规格无此条」的检查，
+ *   - Y003/Y005/Y006/Y101/Y103/Y105/Y106/Y107/Y122/Y123 是「我们自有、规格无此条」的检查，
  *     按规格没有对应 error 就一律降为 warning/info（详见 docs/MODS.md 码表）。
  *
  * ctx 字段（都能缺省，缺了对应规则就静默）：
  *   fileName, commands, functions, variables, nodeIndex, stateTags,
- *   characters, tagVocabulary {builtin,result,personality}, modNames,
+ *   characters, voiceOvers [{name, files}], tagVocabulary {builtin,result,personality}, modNames,
  *   declarations {name:{file,line}}, nodeGroups (Map|Object title -> members),
  *   modCommands [{name,file,line,args}], pairs [{start,end,certain,why}],
  *   checks {defines,variables,nodes}
@@ -779,6 +779,11 @@ function diagnose(text, ctx) {
   const nodeIndex = normalizeMap(ctx.nodeIndex, 'title');
   const stateTags = Array.isArray(ctx.stateTags) ? ctx.stateTags : null;
   const characters = Array.isArray(ctx.characters) ? ctx.characters : null;
+  /*
+   * G21：语音集合。`#vo:X` 引用 VoiceOverDefinition 的名字（基线 + 本包）。
+   * 缺省时 Y122 静默——和 #state 一样，没有词表就不许把每个值都报成未知。
+   */
+  const voiceOvers = Array.isArray(ctx.voiceOvers) ? ctx.voiceOvers.filter((v) => v && typeof v.name === 'string' && v.name) : null;
   const modNames = Array.isArray(ctx.modNames) ? ctx.modNames : null;
   const declarations = ctx.declarations && typeof ctx.declarations === 'object' ? ctx.declarations : null;
   const pairs = Array.isArray(ctx.pairs) ? ctx.pairs : null;
@@ -798,6 +803,8 @@ function diagnose(text, ctx) {
   const stateTablePresent = !!stateTags && stateTags.length > 0;
   const stateTagsUsable = checks.defines && stateTablePresent;
   const charactersUsable = checks.defines && !!characters && characters.length > 0;
+  // G21：语音集合词表。有词表才检查 `#vo:` 的值，否则整族静默（同 #state 的规矩）。
+  const voiceOversUsable = checks.defines && !!voiceOvers && voiceOvers.length > 0;
   const variablesUsable = checks.variables && hasIndex(variables);
   const declarationsUsable = checks.variables && !!declarations && Object.keys(declarations).length > 0;
   const nodeIndexUsable = checks.nodes && hasIndex(nodeIndex);
@@ -811,7 +818,7 @@ function diagnose(text, ctx) {
   ).filter((s) => typeof s === 'string' && s) : [];
   const tagNames = legalTags.concat(modNames || []);
   const tagsUsable = legalTags.length > 0;
-  const specialTags = { state: true, Topic: true, Check: true, Modify: true };
+  const specialTags = { state: true, vo: true, Topic: true, Check: true, Modify: true };
 
   for (let ni = 0; ni < nodes.length; ni++) {
     const node = nodes[ni];
@@ -878,6 +885,15 @@ function diagnose(text, ctx) {
       }
       if (commands && !_BUILTIN_SET.has(d.name) && !Object.prototype.hasOwnProperty.call(commands, d.name)) {
         err(1, 'Y001', d.line, d.col, loc('未知指令 `' + d.name + '`'));
+      }
+      /*
+       * Y123（G21，我们自有）：`<<PlayDialogueWithVoice>>` 已废弃。
+       * 语料里唯一的风声是脚本内调用；知识库没有任何 AudioEvent 指令带这个形状，
+       * 语音现在由对话行的 `#vo:` 标签给。info 级——旧脚本仍能跑。
+       */
+      if (d.name === 'PlayDialogueWithVoice') {
+        info(1, 'Y123', d.line, d.col, loc(
+          '`<<PlayDialogueWithVoice>>` 已废弃：语音改为在对话行末写 `#vo:<VoiceOverDefinition 名>`'));
       }
       if (commands && !_BUILTIN_SET.has(d.name)) {
         const sig = Object.prototype.hasOwnProperty.call(commands, d.name) ? commands[d.name] : null;
@@ -962,9 +978,10 @@ function diagnose(text, ctx) {
         err(5, 'Y110', t.line, t.col, loc(
           '`#' + t.key + '` 缺少参数，游戏无法识别；写全应为 `#' + t.key + ':<参数>`' +
           (t.key === 'state' ? '（例：`#state:Idle`）'
-            : t.key === 'Topic' ? '（例：`#Topic:Topic_Law`）'
-              : t.key === 'Check' ? '（例：`#Check:Troll:20:Topic_Law`）'
-                : '（例：`#Modify:$变量:true`）')));
+            : t.key === 'vo' ? '（例：`#vo:Lick`）'
+              : t.key === 'Topic' ? '（例：`#Topic:Topic_Law`）'
+                : t.key === 'Check' ? '（例：`#Check:Troll:20:Topic_Law`）'
+                  : '（例：`#Modify:$变量:true`）')));
         continue;
       }
 
@@ -994,6 +1011,28 @@ function diagnose(text, ctx) {
       const sug = suggestName(t.key, tagNames);
       err(5, 'Y112', t.line, t.col, loc(
         '未知标签 `#' + t.key + '`：游戏不认识这个标签' + (sug ? '；相近的标签：`#' + sug + '`' : '')));
+    }
+
+    // --- Y122（G21，我们自有）：`#vo:` 指向不存在的语音集合 -----------------
+    if (voiceOversUsable) {
+      const voiceNames = voiceOvers.map((v) => v.name);
+      for (const t of m.tags) {
+        if (t.key !== 'vo' || t.value == null || t.value === '') continue;
+        if (hasSlot(t.text || '')) continue;              // §11.2 槽位让路
+        if (voiceNames.indexOf(t.value) >= 0) continue;
+        const caseHit = voiceNames.filter((n) => n.toLowerCase() === t.value.toLowerCase());
+        if (caseHit.length) {
+          err(6, 'Y122', t.line, t.col, loc(
+            '`#vo:' + t.value + '` 与语音集合 `' + caseHit[0] + '` 只有大小写不同；' +
+            '游戏区分大小写，应写成 `#vo:' + caseHit[0] + '`'));
+          continue;
+        }
+        const near = suggestName(t.value, voiceNames);
+        err(6, 'Y122', t.line, t.col, loc(
+          '`#vo:' + t.value + '` 不是已存在的 VoiceOverDefinition（基线 + 本包共 ' +
+          voiceNames.length + ' 个）' + (near ? '；相近的名字：`' + near + '`' : '') +
+          '；这一行不会带语音'));
+      }
     }
 
     // CR-108（Y115）/ CR-109（Y104）：#state 的值
