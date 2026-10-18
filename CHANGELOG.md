@@ -16,6 +16,23 @@ stands in this tree.
 
 ## Unreleased
 
+### The AI suite is nine modules behind one runner
+
+- `shell/ai/selftest.mjs` was 1,630 lines: the fake OpenAI-compatible server,
+  the config and settings stores, the wire bytes, the reply shapes, the stream
+  events, the tool registry and the loop, with all 86 checks (1 skipped)
+  interleaved between them.  It is now a runner that keeps the doc, the imports,
+  `main()` and the tally, over `shell/ai/selftest/` — nine modules (harness,
+  fixtures, config, settings, wire, reply, stream, registry, loop).
+- The only code change is the two places a section counted a skip: they call
+  `skip()` rather than reassigning `skipped`, which an imported counter cannot
+  do.  Everything else is the same file, cut at its section comments.
+- The suite is unchanged: same 86 checks, same names, same order, same tally
+  line, same `86/86 checks passed (1 skipped)`.  A one-shot verifier reproduced
+  every code line from the modules and the runner and compared them to the old
+  file: zero mismatches, watched red by breaking one `section(` call and then
+  restored byte-for-byte.
+
 ### The mod suite is eleven groups behind one runner
 
 - `shell/mods/selftest.mjs` was 2,809 lines: the prelude (a `--mods` argument,
