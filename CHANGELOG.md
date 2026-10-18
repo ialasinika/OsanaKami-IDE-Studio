@@ -16,6 +16,25 @@ stands in this tree.
 
 ## Unreleased
 
+### The portrait a character names is checked, not just stored
+
+- `Character.spineAssetPath` is the one field that decides whether a custom
+  character has spine art, and the schema says only that it is a string: no
+  sprite description, no `TechName` reference. A typo therefore validated clean
+  and the game silently loaded no art. `shell/mods/validate.js` now resolves
+  the value against the package root and reports `D011` (error) when no
+  candidate exists, naming the file and the definition that points at it. A
+  leading `Spine/` may be present or absent, an empty string means "use the
+  default portrait" (26 of the 56 shipped characters do that) and is not an
+  error, and a spine JSON export must ship with its same-named
+  `.atlas`/`.atlas.txt` beside it. Skeleton version, atlas pages and orphan
+  atlases remain `D009`'s job, so no file is reported twice; the shipped
+  `SODefines` package has 30 characters with a path and produces no `D011`.
+- Mods suite: 487 checks, was 479. Red proof: making the `spineAssetPath`
+  branch skip its call turns three checks red (`mods: FAIL (3)`: the missing
+  file, the message naming the definition, and the atlas-less JSON export);
+  restored, 487/487.
+
 ### The editor stops treating a 4 MiB call limit as a file limit
 
 - A text file over 4 MiB used to open in the editor and the Yarn card as an

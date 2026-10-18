@@ -867,6 +867,96 @@ section("the wiki's support matrix says which definitions the game consumes (G4)
     JSON.stringify(definePack && definePack.files));
 }
 
+section("the portrait a Character names through spineAssetPath (G22)");
+
+{
+  const kb = specMods.knowledge();
+
+  function spinePackage(prefix) {
+    const root = join(specTemp(prefix), "SpineMod");
+    specWrite(join(root, "mod.json"), JSON.stringify({
+      name: "SpineMod",
+      version: "1.0.0",
+      gameVersion: "1.0",
+      author: "selftest",
+      description: "selftest fixture: spineAssetPath",
+    }, null, 2) + "\n");
+    return root;
+  }
+
+  function characterAt(root, techName, spinePath) {
+    const obj = { techName };
+    if (spinePath !== undefined) obj.spineAssetPath = spinePath;
+    specWrite(join(root, "Defines", "Character", techName + ".json"),
+      JSON.stringify(obj, null, 2) + "\n");
+  }
+
+  function d011(root) {
+    return validateCore.validateModPackage(root, {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics.filter((d) => d.code === "D011");
+  }
+
+  /* 文件在：静默。语料里的写法是包内 Spine/<名字>.skel.bytes。 */
+  const present = spinePackage("infantgod-spine-present-");
+  characterAt(present, "Hero", "Spine/Hero.skel.bytes");
+  mkdirSync(join(present, "Spine"), { recursive: true });
+  writeFileSync(join(present, "Spine", "Hero.skel.bytes"), Buffer.from("fake skeleton"));
+  check("a spineAssetPath whose file exists produces no D011",
+    d011(present).length === 0, JSON.stringify(d011(present).map((d) => d.message)));
+
+  /* 文件缺失：一处报错，点名文件和定义。 */
+  const missing = spinePackage("infantgod-spine-missing-");
+  characterAt(missing, "Hero", "Spine/Nowhere.skel.bytes");
+  const missingDiags = d011(missing);
+  check("a spineAssetPath whose file does not exist is one D011 error",
+    missingDiags.length === 1, JSON.stringify(missingDiags.map((d) => d.code + ": " + d.message)));
+  check("the D011 names the missing file and the definition that points at it",
+    missingDiags[0] && missingDiags[0].message.indexOf("Nowhere.skel.bytes") >= 0 &&
+      String(missingDiags[0].path).indexOf("Defines/Character/Hero.json") === 0,
+    JSON.stringify(missingDiags[0] && { path: missingDiags[0].path, message: missingDiags[0].message }));
+
+  /* 空字符串在语料里表示「没有自定义立绘」（26/56），不是错误。 */
+  const empty = spinePackage("infantgod-spine-empty-");
+  characterAt(empty, "Hero", "");
+  check("an empty spineAssetPath means the default portrait and is not an error",
+    d011(empty).length === 0, JSON.stringify(d011(empty).map((d) => d.message)));
+
+  /* 少写 Spine/ 前缀也能找到包内 Spine/ 下的文件。 */
+  const bare = spinePackage("infantgod-spine-bare-");
+  characterAt(bare, "Hero", "Hero.skel.bytes");
+  mkdirSync(join(bare, "Spine"), { recursive: true });
+  writeFileSync(join(bare, "Spine", "Hero.skel.bytes"), Buffer.from("fake skeleton"));
+  check("a path written without the Spine/ prefix still finds the file under Spine/",
+    d011(bare).length === 0, JSON.stringify(d011(bare).map((d) => d.message)));
+
+  /* Spine 的 JSON 导出要带同名图集。 */
+  const jsonOnly = spinePackage("infantgod-spine-json-");
+  characterAt(jsonOnly, "Hero", "Spine/Hero.json");
+  mkdirSync(join(jsonOnly, "Spine"), { recursive: true });
+  writeFileSync(join(jsonOnly, "Spine", "Hero.json"), Buffer.from("{}"));
+  const jsonDiags = d011(jsonOnly);
+  check("a Spine JSON export without its atlas is one D011 error about the atlas",
+    jsonDiags.length === 1 && jsonDiags[0].message.indexOf("图集") >= 0,
+    JSON.stringify(jsonDiags.map((d) => d.message)));
+  writeFileSync(join(jsonOnly, "Spine", "Hero.atlas.txt"), Buffer.from("Hero.png\nsize: 2,2\n"));
+  check("the same JSON export with a matching atlas is silent",
+    d011(jsonOnly).length === 0, JSON.stringify(d011(jsonOnly).map((d) => d.message)));
+
+  /* 真实语料：30 个带路径的 Character 全部在包内可解析，不产生任何 D011。 */
+  if (!HAVE_CORPUS) {
+    skip("the shipped SODefines package has no D011 (no Mods folder)");
+  } else {
+    const corpusDiags = validateCore.validateModPackage(join(MODS_DIR, "SODefines"), {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics.filter((d) => d.code === "D011");
+    check("the shipped SODefines package has no D011", corpusDiags.length === 0,
+      JSON.stringify(corpusDiags.map((d) => d.message)));
+  }
+}
+
 section("no state leaks between runs");
 
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });

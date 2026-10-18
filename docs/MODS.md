@@ -400,6 +400,18 @@ reports exactly the same 2 `D006` errors, plus one `D007` info per referenced RG
 (18 in the shipped package) and one `D010` info for the mixed BOM. Headers are read
 once per package, so a sprite used by several definitions is reported once.
 
+`G22` adds `D011` for the one portrait reference the schema describes with nothing
+but `{ "type": "string" }`. `Character.spineAssetPath` is neither a sprite field nor
+a `TechName reference`, so a typo in it used to validate clean and the game simply
+never loaded the character's spine art. The checker resolves the value against the
+mod root, tolerating a missing or doubled `Spine/` prefix, and reports an error when
+no candidate exists; an empty string means "use the default portrait" (26 of the 56
+shipped characters do that) and is not an error. A spine JSON export must ship with
+its same-named `.atlas`/`.atlas.txt` beside it, otherwise the runtime cannot load it
+either. Skeleton version, atlas pages and orphan atlases stay `D009`'s job, so this
+branch only reports each file once. The shipped `SODefines` package has 30 characters
+with a path and produces no `D011`.
+
 ### Type support (`shell/mods/support.json`)
 
 `knowledge.json` says what a type looks like; it cannot say whether the game
@@ -597,7 +609,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 479 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 487 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

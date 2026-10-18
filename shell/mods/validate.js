@@ -76,6 +76,8 @@
  *                    能注册进 ModRegistry，但没有 manager 消费它（每个类型每包只报一次）
  *      M014（G4）info     定义类型只被部分支持：报出消费者 manager 与前提
  *                    （矩阵来自 shell/mods/support.json）
+ *      D011（G22）error  Character.spineAssetPath 指向的骨架/图集在 Mod 根目录下不存在；
+ *                    写成游戏自带的相对地址（Spine/*.skel.bytes）时也查包内是否存在
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -114,6 +116,15 @@ const X_SPRITE_KEY = 'x-sprite';
  */
 const AUDIO_FILE_FIELDS = ['externalAudioFile', 'voiceOverFiles'];
 const AUDIO_FOLDER_FIELD = 'voiceOverFolder';
+
+/*
+ * G22：立绘骨架路径。schema 里 `spineAssetPath` 只有 `{ "type": "string" }`，
+ * 没有 description，所以既进不了 sprite 集合（RE_SPRITE_DESC），也不在任何引用
+ * 映射里 —— 写错就是静默失效：定义能注册，角色却不会加载立绘。语料 56 个
+ * Character 里有 30 个给了路径（全部写作 `Spine/<名字>.skel.bytes`，文件在
+ * 包内 `Spine/` 下），26 个留空字符串表示使用默认/无立绘，空值不算错。
+ */
+const SPINE_ASSET_FIELD = 'spineAssetPath';
 
 /** 泛型引用：类型未知，只能做非空检查。 */
 const GENERIC_REF = 'ScriptableObject';
@@ -673,6 +684,59 @@ function checkAudioFolder(raw, jsonPath, ctx, out) {
 }
 
 /* ------------------------------------------------------------------ *
+ * G22：立绘骨架引用
+ *
+ * `Character.spineAssetPath` 指向包内 Spine 资产（语料写法 `Spine/Aistalt.skel.bytes`），
+ * 但它既不是 sprite 字段也不是引用字段，写错时游戏只会在运行时静默不加载立绘。
+ * 这里只查「文件在不在」：骨架版本/图集/页图由 G46 的包级体检（D009）负责，
+ * 逐文件重复报错没有意义。空字符串表示没有自定义立绘（语料 26/56），静默跳过。
+ * ------------------------------------------------------------------ */
+
+/** 立绘路径的候选绝对路径：相对包根，容忍多写/少写 `Spine/` 前缀。 */
+function spineCandidates(modRoot, raw) {
+  const norm = String(raw).trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  if (!norm) return [];
+  const out = [path.join(modRoot, norm)];
+  if (/^Spine\//i.test(norm)) out.push(path.join(modRoot, norm.slice(6)));
+  else out.push(path.join(modRoot, 'Spine', norm));
+  return out;
+}
+
+/** D011：spineAssetPath 的存在性；`.json` 骨架还要有同名图集。 */
+function checkSpineAsset(raw, jsonPath, ctx, out) {
+  if (typeof raw !== 'string') return;
+  const value = raw.trim();
+  if (!value) return; // 空字符串 = 使用默认立绘，不是错误
+  if (!ctx.modRoot) return;
+  const cands = spineCandidates(ctx.modRoot, value);
+  let found = null;
+  for (const c of cands) {
+    if (fileExistsCached(c, ctx)) { found = c; break; }
+  }
+  if (!found) {
+    out.push(diag('error', 'D011', jsonPath, ctx.type,
+      '立绘骨架文件不存在：' + value + '（在 Mod 根目录下尝试了 ' + cands.length + ' 个候选路径）',
+      'Spine asset not found: ' + value + ' (tried ' + cands.length + ' candidate path(s) under the mod root)',
+      { expected: 'modRoot 下存在的 .skel.bytes / .json / .atlas 文件', actual: value }));
+    return;
+  }
+  /*
+   * Spine 的 JSON 导出与图集是两个文件；只给 .json 而没给同名 .atlas(.txt) 时，
+   * 运行时同样加载失败。`.skel.bytes` 的这一份由 G46 的包级体检覆盖。
+   */
+  if (/\.json$/i.test(found)) {
+    const base = found.slice(0, -5);
+    if (!fileExistsCached(base + '.atlas', ctx) && !fileExistsCached(base + '.atlas.txt', ctx)) {
+      out.push(diag('error', 'D011', jsonPath, ctx.type,
+        '立绘骨架缺少同名图集：' + path.basename(base) + '.atlas（Spine 的 JSON 导出需要与图集一起交付）',
+        'Spine skeleton has no atlas beside it: expected ' + path.basename(base) +
+          '.atlas (a Spine JSON export ships with its atlas)',
+        { expected: base + '.atlas', actual: path.basename(found) }));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * G46：文件格式体检
  *
  * 这层只读文件头，不解析整个文件：PNG 的 IHDR、WAV 的 RIFF/fmt 块、Spine 骨架
@@ -1043,6 +1107,11 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
       }
       if (typeof value[AUDIO_FOLDER_FIELD] === 'string') {
         checkAudioFolder(folder, ip ? ip + '.' + AUDIO_FOLDER_FIELD : AUDIO_FOLDER_FIELD, ctx, out);
+      }
+      /* ---- G22：立绘骨架引用（schema 无 description，按字段名识别） ---- */
+      if (hasOwn(value, SPINE_ASSET_FIELD) && typeof value[SPINE_ASSET_FIELD] === 'string') {
+        checkSpineAsset(value[SPINE_ASSET_FIELD],
+          ip ? ip + '.' + SPINE_ASSET_FIELD : SPINE_ASSET_FIELD, ctx, out);
       }
     }
     // 下钻
