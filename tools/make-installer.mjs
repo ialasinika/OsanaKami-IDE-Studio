@@ -304,7 +304,7 @@ function resolveSignConfig() {
       + " (PATH and electron-builder's cache are searched too)");
   }
   const timestampUrl = args.timestamp === false ? null : args.signTimestamp || SIGN_DEFAULT_TIMESTAMP;
-  const argv = ["/sign", "/fd", "SHA256"];
+  const argv = ["sign", "/fd", "SHA256"];
   if (timestampUrl) argv.push("/td", "SHA256", "/tr", timestampUrl);
   let passwordIndex = -1;
   if (scheme === "pfx") {

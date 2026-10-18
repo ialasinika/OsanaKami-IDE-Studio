@@ -10,7 +10,7 @@ That proves four things the wiring has to get right:
      redacted, and does not compile or sign anything.
   2. A requested signature with no certificate, or with a missing signtool,
      exits 2 instead of quietly producing an unsigned installer.
-  3. The real compile invokes the shim with `/sign /fd SHA256 /td SHA256 /tr
+  3. The real compile invokes the shim with `sign /fd SHA256 /td SHA256 /tr
      <url> /f <pfx> /p <password>` against the built installer only, and the
      build log and build/make-installer.json contain no password.
   4. A non-zero signtool is a build failure, and the JSON records it.
@@ -44,6 +44,7 @@ THUMBPRINT = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD"
 SHIM_C = r"""
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main(int argc, char **argv) {
   const char *log = getenv("SIGN_SMOKE_LOG");
@@ -51,6 +52,12 @@ int main(int argc, char **argv) {
   FILE *out;
   int i;
 
+  /* Real signtool takes the command without a slash; a leading /sign is the
+     mistake this smoke exists to catch, so the shim rejects it the same way. */
+  if (argc < 2 || strcmp(argv[1], "sign") != 0) {
+    fprintf(stderr, "SignTool Error: Invalid command: %s\n", argc > 1 ? argv[1] : "");
+    return 5;
+  }
   if (log == NULL) return 3;
   out = fopen(log, "wb");
   if (out == NULL) return 4;
@@ -156,8 +163,8 @@ def base_command(payload, out):
 
 def assert_argv(argv, pfx, out):
     """The documented signtool argv, in the documented order."""
-    if not argv or argv[0] != "/sign":
-        return f"argv does not start with /sign: {argv}"
+    if not argv or argv[0] != "sign":
+        return f"argv does not start with the sign command: {argv}"
     for flag, value in (("/fd", "SHA256"), ("/td", "SHA256"), ("/tr", TIMESTAMP),
                         ("/f", str(pfx)), ("/p", PASSWORD)):
         if flag not in argv:
@@ -183,7 +190,7 @@ def check_dry_run(ctx, payload):
     text = output_of(result)
     if result.returncode != 0:
         return fail(f"--sign-dry-run exited {result.returncode}:\n{text}")
-    for needle in ("/sign", "/fd SHA256", "/td SHA256", f"/tr {TIMESTAMP}",
+    for needle in ("sign /fd SHA256", "/td SHA256", f"/tr {TIMESTAMP}",
                    f"/f {pfx}", "/p ***"):
         if needle not in text:
             return fail(f"--sign-dry-run output is missing {needle!r}:\n{text}")
