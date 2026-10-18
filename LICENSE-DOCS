@@ -19,11 +19,11 @@ Scope -- this licence covers every Markdown file in the repository:
 
     README.md            CHANGELOG.md        AGENTS.md
     docs/ARCHITECTURE.md docs/BUGS.md        docs/EDITOR_GAPS.md
-    docs/FORK.md         docs/LANGUAGE.md    docs/MODS.md
-    docs/PARADIGM.md     docs/PROJECT.md     docs/PROTOCOL.md
-    docs/SURFACES.md     docs/TRIM.md        docs/VIEWS.md
-    electron/README.md   langs/README.md     shell/ai/README.md
-    shell/web/README.md  tools/README.md
+    docs/FORK.md         docs/GAPS.md        docs/LANGUAGE.md
+    docs/MODS.md         docs/PARADIGM.md    docs/PROJECT.md
+    docs/PROTOCOL.md     docs/SURFACES.md    docs/TRIM.md
+    docs/VIEWS.md        electron/README.md  langs/README.md
+    shell/ai/README.md   shell/web/README.md tools/README.md
 
 Everything else stays under MIT (see LICENSE): the C kernel in core/, the shell
 and the language layer in shell/ and langs/ (*.mjs, *.lang), the Python tools in
