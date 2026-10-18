@@ -16,6 +16,34 @@ stands in this tree.
 
 ## Unreleased
 
+### The validator says which definitions the game will drop, and why
+
+- The game resolves a duplicate `(type, techName)` by keeping the first definition
+  it loads and dropping the later file without a word.  `shell/mods/validate.js`
+  now reports that: `D103` (error) fires when a sibling mod in the game's Mods
+  folder already defines the same `(type, techName)`, or when another file in the
+  same package defines it again — naming the winner in the message, since "it
+  loaded first" is the whole explanation.  Identity is the pair, so the same name
+  under another type is not a collision.
+- `D102`, the full-override hint for a `techName` that is already a baseline
+  definition, was `info`; it is now `warning`, because being shadowed by a
+  built-in definition is exactly the failure this check exists to catch.
+- `M012` (warning) reports that the game's Mods folder could not be read, so the
+  cross-mod half of `D103` and the `loadOrder` collision check were skipped.  The
+  previous behaviour was silence: a package validated against itself looked
+  validated against the game.
+- `mod.validatePackage` receives the game folder through the new
+  `gameMods: { dir, readable }` option; `shell/mods/index.js` passes the folder it
+  already discovers.  Sibling `Defines` are indexed once per validation by
+  `siblingTechNames()`; unreadable sibling files are skipped rather than failing
+  the package under test.
+- Evidence: `shell/mods/selftest.mjs` is 438 checks (was 431).  The seven new ones
+  cover a repeat inside one package (and that the message names the first file), a
+  sibling collision (and that the message names the sibling), the same name under
+  a different type not firing, `D102`'s severity, and `M012` when the folder is
+  unreadable.  The sibling checks were watched red before they were kept: with the
+  sibling branch disabled they fail and the suite reads `mods: FAIL (2)`.
+
 ### The AI suite is nine modules behind one runner
 
 - `shell/ai/selftest.mjs` was 1,630 lines: the fake OpenAI-compatible server,

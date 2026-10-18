@@ -351,6 +351,20 @@ unchanged. `D005` (a `TechName reference to …` points at nothing) and `D006` (
 `Relative path to …` file is missing) have the same conditions as spec CR-301 and
 CR-302; the rest of the D/M family has no spec counterpart and is local to us.
 
+Three of those local codes answer what the game does silently. `D103` (error) fires
+when the same `(type, techName)` is already defined — by a sibling mod in the game's
+Mods folder, or by another file in this package — because the game keeps the first
+one it loads and drops the later file without a word. `D102` (warning, promoted
+from info) marks a `techName` that is already a baseline definition, where the file
+is a full override and must carry every field it needs. `M012` (warning) says the
+game's Mods folder could not be read, so the cross-mod half of `D103` and the
+`loadOrder` collision check were skipped for this run.
+
+The `mod.validatePackage` verb passes the game's Mods folder in as
+`gameMods: { dir, readable }`; `shell/mods/index.js` fills it from the folder
+discovery it already does. Without that information the checker still runs, but it
+only compares this package with itself.
+
 ### What of §11 is implemented
 
 - **§11.1** switches and empty-index silence: `checkDefines`/`checkVariables`/
@@ -512,7 +526,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 431 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 438 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

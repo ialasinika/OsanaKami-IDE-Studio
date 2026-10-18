@@ -59,6 +59,13 @@
  *      M009 info     mod.json 推荐字段缺失
  *      M010 error    定义文件不是合法 JSON
  *      M011 error/warning  Yarn 文件不可读 / 不是合法 UTF-8
+ *      M012 warning  读不到游戏 Mods 目录：跨 Mod 检查已跳过（G3）
+ *      D102 warning techName 已是基线定义（整份覆写提示；G3 由 info 提级）
+ *      D103 error    同类型的 techName 已被兄弟 Mod 或同包另一个文件定义：
+ *                    游戏对重复的 (类型, TechName) 保留先加载的那一份，后一份被静默丢弃（G3）
+ *
+ *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
+ *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
  *
  * 8. 兼容别名：app/core/api.js:308 用旧名 `validatePackage(root, {kb, otherMods})`
  *    调用本模块，本模块的对外契约则是 `validateModPackage`。故在导出对象上挂了
@@ -747,15 +754,29 @@ function validateDefine(type, obj, opts) {
     }
   }
 
-  // D102：整份覆写提示
+  // D102：整份覆写提示（G3：从 info 提级为 warning —— 这是「被内置定义吞掉」的最高风险信号）
   if (tv) {
     const list = kb.baseline ? kb.baseline[type] : null;
     if (Array.isArray(list) && list.includes(tv)) {
-      out.push(diag('info', 'D102', tk, type,
+      out.push(diag('warning', 'D102', tk, type,
         '"' + tv + '" 已是基线定义，本文件属于「整份覆写」：必须包含你需要的全部字段，而不只是你要改的字段。',
         '"' + tv + '" is already a baseline definition; this file is a full override: it must ' +
         'contain every field you need, not only the ones you are changing.',
         { expected: '整份完整定义', actual: '覆写 ' + type }));
+    }
+  }
+
+  // D103：兄弟 Mod 已经有同类型的同名定义（游戏对 (类型, TechName) 保留先加载的那一份）
+  if (tv && isPlainObject(o.otherTechNames)) {
+    const bucket = o.otherTechNames[type];
+    if (bucket && typeof bucket.get === 'function' && bucket.has(tv)) {
+      const owner = bucket.get(tv);
+      out.push(diag('error', 'D103', tk, type,
+        '"' + tv + '" 已由 Mod "' + owner + '" 定义为 ' + type +
+        '；游戏只保留先加载的那一份，本文件会被静默丢弃。',
+        '"' + tv + '" is already defined as ' + type + ' by mod "' + owner +
+        '"; the game keeps only the first one loaded, so this file is dropped silently.',
+        { expected: '唯一的 (类型, TechName)', actual: tv + ' @ ' + owner }));
     }
   }
 
@@ -776,6 +797,51 @@ function countSeverities(diagnostics) {
     else if (d.severity === 'info') infos++;
   }
   return { errors: errors, warnings: warnings, infos: infos };
+}
+
+/**
+ * G3：兄弟 Mod 的定义名索引 `{ [type]: Map<techName, 所属 Mod 名> }`。
+ *
+ * 撞名规则是 (类型, TechName)：游戏按加载顺序保留第一个，后来的静默丢弃。
+ * 所以要在校验本包时把游戏 Mods 目录里其它包的 Defines 扫一遍。读不出来的
+ * 文件跳过（它们不该让本包的校验失败）。
+ */
+function siblingTechNames(otherMods, selfRoot) {
+  const index = Object.create(null);
+  if (!Array.isArray(otherMods) || otherMods.length === 0) return index;
+  for (const other of otherMods) {
+    if (!isPlainObject(other) || typeof other.dir !== 'string' || !other.dir) continue;
+    let otherRoot = null;
+    try {
+      otherRoot = path.resolve(String(other.dir));
+    } catch {
+      continue;
+    }
+    if (otherRoot === selfRoot) continue;
+    const label = (isPlainObject(other.manifest) && typeof other.manifest.name === 'string' && other.manifest.name)
+      ? other.manifest.name
+      : (typeof other.name === 'string' && other.name ? other.name : path.basename(otherRoot));
+    const defines = path.join(otherRoot, 'Defines');
+    if (!isDir(defines)) continue;
+    for (const typeDir of safeReaddir(defines, true)) {
+      if (!typeDir.isDirectory()) continue;
+      const bucket = index[typeDir.name] || (index[typeDir.name] = new Map());
+      const files = listFilesRecursive(path.join(defines, typeDir.name), [], 0)
+        .filter((f) => /\.json$/i.test(f));
+      for (const abs of files) {
+        let obj = null;
+        try {
+          obj = JSON.parse(fs.readFileSync(abs, 'utf8').replace(/^\uFEFF/, ''));
+        } catch {
+          continue;
+        }
+        if (!isPlainObject(obj)) continue;
+        const tv = techNameValue(obj, null);
+        if (tv && !bucket.has(tv)) bucket.set(tv, label);
+      }
+    }
+  }
+  return index;
 }
 
 /**
@@ -807,6 +873,17 @@ function validateModPackage(modRoot, opts) {
   const byType = {};
   const typeSet = new Set();
   const otherMods = Array.isArray(o.otherMods) ? o.otherMods : [];
+  const siblingNames = otherMods.length > 0 ? siblingTechNames(otherMods, root) : Object.create(null);
+
+  const gameMods = isPlainObject(o.gameMods) ? o.gameMods : null;
+  if (gameMods && gameMods.readable === false) {
+    diagnostics.push(diag('warning', 'M012', '', '',
+      '读不到游戏 Mods 目录' + (gameMods.dir ? '（' + gameMods.dir + '）' : '') +
+        '：跨 Mod 的 loadOrder 冲突与 techName 重名检查已跳过，这次只看到本包内部。',
+      'The game Mods folder' + (gameMods.dir ? ' (' + gameMods.dir + ')' : '') +
+        ' cannot be read: cross-mod loadOrder and techName collision checks were skipped; ' +
+        'only this package was visible.'));
+  }
 
   let manifest = null;
   let manifestFileCount = 0;
@@ -923,6 +1000,7 @@ function validateModPackage(modRoot, opts) {
     // 先扫一遍收齐本 Mod 自己定义的 TechName（按类型），再统一校验：
     // 这样 Mod 内部互相引用（如 Topic.attrType -> 本 Mod 的 Attr）不会被 D005 误判。
     const techNames = {};
+    const firstSeen = {};
     const pending = [];
 
     for (const e of entries) {
@@ -962,6 +1040,18 @@ function validateModPackage(modRoot, opts) {
           if (tv) {
             if (!techNames[type]) techNames[type] = [];
             techNames[type].push(tv);
+            const seen = firstSeen[type] || (firstSeen[type] = new Map());
+            if (seen.has(tv)) {
+              diagnostics.push(diag('error', 'D103', rel + '#techName', type,
+                '同包里 "' + tv + '" 被重复定义为 ' + type + '（首次出现于 ' + seen.get(tv) +
+                '）；游戏对重复的 (类型, TechName) 只保留先加载的那一份，后一个文件会被静默丢弃。',
+                'This package defines "' + tv + '" as ' + type + ' twice (first in ' + seen.get(tv) +
+                '); the game keeps only the first (type, TechName) it loads, so the later file is ' +
+                'dropped silently.',
+                { expected: '唯一的 (类型, TechName)', actual: tv + ' 出现两次' }));
+            } else {
+              seen.set(tv, rel);
+            }
           }
         }
         pending.push({ type: type, rel: rel, abs: abs, obj: obj });
@@ -974,7 +1064,8 @@ function validateModPackage(modRoot, opts) {
         modRoot: root,
         filePath: p.abs,
         fileName: path.basename(p.abs),
-        techNames: techNames
+        techNames: techNames,
+        otherTechNames: siblingNames
       });
       for (const d of sub) {
         // 前缀：相对 modRoot 的 POSIX 路径

@@ -1247,7 +1247,9 @@ function createMods(options) {
     const root = resolveArg(rootArg, 'root');
     const result = validateCore.validateModPackage(root, {
       kb: kbView(),
-      otherMods: listInstalledMods()
+      otherMods: listInstalledMods(),
+      // G3：读不到游戏 Mods 目录时，跨 Mod 的检查要显式说明被跳过（M012）
+      gameMods: { dir: gameModsDir, readable: isDir(gameModsDir) }
     });
     return {
       ok: !!result.ok,

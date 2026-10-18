@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import * as validateCore from "../validate.js";
 
 section("the open package as a reference target");
 
@@ -394,6 +395,116 @@ section("the modsRoot allowlist");
     nestedErr === null && nested !== null && relative !== null &&
       nested.root === relative.root,
     nestedErr ? nestedErr.message : JSON.stringify(nested && nested.root));
+}
+
+/* G3：techName 撞名。游戏对重复的 (类型, TechName) 只保留先加载的那一份，
+ * 后一份被静默丢弃；这里证明校验器把「静默」变成了可读的诊断。 */
+section("techName collisions the game resolves silently (G3)");
+
+{
+  const kb = specMods.knowledge();
+
+  function collidePackage(prefix) {
+    const root = join(specTemp(prefix), "CollideMod");
+    specWrite(join(root, "mod.json"), JSON.stringify({
+      name: "CollideMod",
+      version: "1.0.0",
+      gameVersion: "1.0",
+      loadOrder: 70,
+      author: "selftest",
+      description: "selftest fixture: techName collisions",
+    }, null, 2) + "\n");
+    return root;
+  }
+
+  // 同包内两个文件定义同一个 (类型, TechName)
+  const twice = collidePackage("infantgod-collide-");
+  specWrite(join(twice, "Defines", "Attr", "A.json"),
+    JSON.stringify({ techName: "ZzTwiceAttr" }, null, 2) + "\n");
+  specWrite(join(twice, "Defines", "Attr", "B.json"),
+    JSON.stringify({ techName: "ZzTwiceAttr" }, null, 2) + "\n");
+  const twiceOut = validateCore.validateModPackage(twice, {
+    kb: kb,
+    gameMods: { dir: null, readable: false },
+  });
+  const twiceD103 = twiceOut.diagnostics.filter((d) => d.code === "D103");
+  check("the same techName defined twice in one package is D103",
+    twiceD103.length === 1, JSON.stringify(twiceOut.diagnostics.map((d) => d.code)));
+  check("D103 names the file that defined the name first",
+    twiceD103.length === 1 && twiceD103[0].message.indexOf("A.json") >= 0,
+    twiceD103.length === 1 ? twiceD103[0].message : "");
+
+  // 兄弟 Mod 已经定义了同一个 (类型, TechName)
+  const sibling = join(specTemp("infantgod-sibling-"), "SiblingMod");
+  specWrite(join(sibling, "mod.json"), JSON.stringify({
+    name: "SiblingMod",
+    version: "1.0.0",
+    gameVersion: "1.0",
+    loadOrder: 80,
+    author: "selftest",
+    description: "selftest fixture: the sibling that got there first",
+  }, null, 2) + "\n");
+  specWrite(join(sibling, "Defines", "Attr", "A.json"),
+    JSON.stringify({ techName: "ZzSiblingAttr" }, null, 2) + "\n");
+  const mine = collidePackage("infantgod-mine-");
+  specWrite(join(mine, "Defines", "Attr", "A.json"),
+    JSON.stringify({ techName: "ZzSiblingAttr" }, null, 2) + "\n");
+  const mineOut = validateCore.validateModPackage(mine, {
+    kb: kb,
+    otherMods: [{ dir: sibling, manifest: { name: "SiblingMod", loadOrder: 80 } }],
+    gameMods: { dir: dirname(sibling), readable: true },
+  });
+  const mineD103 = mineOut.diagnostics.filter((d) => d.code === "D103");
+  check("a techName a sibling mod already defines is D103",
+    mineD103.length === 1 && mineD103[0].severity === "error", JSON.stringify(mineD103));
+  check("D103 names the sibling mod that won",
+    mineD103.length === 1 && mineD103[0].message.indexOf("SiblingMod") >= 0,
+    mineD103.length === 1 ? mineD103[0].message : "");
+
+  // 身份是 (类型, TechName)：不同目录里的同名不算撞名
+  const typed = collidePackage("infantgod-typed-");
+  specWrite(join(typed, "Defines", "Attr", "A.json"),
+    JSON.stringify({ techName: "ZzTypedName" }, null, 2) + "\n");
+  specWrite(join(typed, "Defines", "Topic", "A.json"),
+    JSON.stringify({ techName: "ZzTypedName", attrType: "ZzOtherAttr" }, null, 2) + "\n");
+  const typedOut = validateCore.validateModPackage(typed, {
+    kb: kb,
+    gameMods: { dir: null, readable: false },
+  });
+  check("the same name under a different type is not a collision",
+    typedOut.diagnostics.every((d) => d.code !== "D103"),
+    JSON.stringify(typedOut.diagnostics.filter((d) => d.code === "D103").map((d) => d.message)));
+
+  // 基线定义：整份覆写提示从 info 提级为 warning
+  const baselineType = Object.keys(kb.baseline || {})
+    .find((t) => Array.isArray(kb.baseline[t]) && kb.baseline[t].length > 0);
+  if (!baselineType) {
+    skip("D102 is a warning (the knowledge base names no baseline definitions)");
+  } else {
+    const over = collidePackage("infantgod-baseline-");
+    specWrite(join(over, "Defines", baselineType, "A.json"),
+      JSON.stringify({ techName: kb.baseline[baselineType][0] }, null, 2) + "\n");
+    const overOut = validateCore.validateModPackage(over, {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    });
+    const d102 = overOut.diagnostics.filter((d) => d.code === "D102");
+    check("a baseline techName is a warning, not an info",
+      d102.length === 1 && d102[0].severity === "warning", JSON.stringify(d102));
+  }
+
+  // 读不到游戏 Mods 目录：跨 Mod 检查被跳过这件事本身要报出来
+  const blind = collidePackage("infantgod-blind-");
+  specWrite(join(blind, "Defines", "Attr", "A.json"),
+    JSON.stringify({ techName: "ZzBlindAttr" }, null, 2) + "\n");
+  const blindOut = validateCore.validateModPackage(blind, {
+    kb: kb,
+    otherMods: [],
+    gameMods: { dir: "/nonexistent/game/Mods", readable: false },
+  });
+  check("an unreadable game Mods folder is an explicit M012 warning",
+    blindOut.diagnostics.some((d) => d.code === "M012" && d.severity === "warning"),
+    JSON.stringify(blindOut.diagnostics.filter((d) => d.code === "M012")));
 }
 
 section("no state leaks between runs");
