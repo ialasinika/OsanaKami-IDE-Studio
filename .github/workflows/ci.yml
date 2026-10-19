@@ -31,6 +31,14 @@ on:
 permissions:
   contents: read
 
+# The suite prints paths and document text, and a runner's console code page
+# cannot represent all of it: path-check died with UnicodeEncodeError instead of
+# reporting a path, and the browser smoke died the same way.  UTF-8 mode makes
+# every Python the suite starts encode what it prints, whatever console it is
+# attached to.
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   test:
     runs-on: windows-latest
