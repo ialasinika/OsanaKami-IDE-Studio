@@ -217,11 +217,14 @@ area:
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes; `version-check` requires a
   section for `VERSION`.
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the release pipeline
-  as a file: four jobs, every action pinned. It has never run on a runner
-  (this repository has no remote), so `make ci` is the local equivalent to trust
-  and the workflow file itself is checked offline by `tools/ci_audit.py`. Signing
-  is opt-in and needs the `SIGN_PFX`/`SIGN_PASSWORD` secrets; without them the
-  `sign` job is skipped, not failed.
+  as a file: four jobs, every action pinned. It runs on the GitHub runner for
+  every push to `main`; this repository's first pushes were its first runs, and
+  they exposed two assumptions a maintainer's machine hides (the recipe shell
+  under MSYS2's make, and the Python console code page). `make ci` remains the
+  local equivalent of the `test` job, and the workflow file itself is checked
+  offline by `tools/ci_audit.py`. Signing is opt-in and needs the
+  `SIGN_PFX`/`SIGN_PASSWORD` secrets; without them the `sign` job is skipped, not
+  failed.
 - `shell/web/README.md` — the UI's own manual (views, gestures, card kinds).
 - `electron/README.md` — the wrapper: menus, spawning, sandboxing, packaging.
 

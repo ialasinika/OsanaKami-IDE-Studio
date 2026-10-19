@@ -736,8 +736,9 @@ audit of the workflow itself, and uploads both artifacts; `smoke` renders the
 board headless and is allowed to fail; `sign_gate` only reports whether the
 `SIGN_PFX`/`SIGN_PASSWORD` secrets exist, and `sign` runs the installer with
 `--sign` only when they do — with no secrets the signing is skipped, not failed.
-The workflow actions are pinned by tag and the job permissions are read-only. No
-job has run on a GitHub runner — this repository has no remote — so the
-runner-specific steps (action downloads, the NSIS cache, the secrets gate) are
-unproven until the first green run; the commands inside are exactly the ones in
-**Quick start** above, which is what `make ci` reproduces locally.
+The workflow actions are pinned by tag and the job permissions are read-only. The
+workflow runs on every push to `main`: its first runs, on this repository's first
+pushes, found two things a maintainer's machine hides — the recipe shell under
+MSYS2's make and the runner's Python console code page — and both are fixed now.
+The commands inside are exactly the ones in **Quick start** above, which is what
+`make ci` reproduces locally.
