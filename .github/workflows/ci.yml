@@ -63,18 +63,24 @@ jobs:
 
       # NSIS is what turns installer-check and sign-check from skips into real
       # checks, and what builds the uploaded installer.  The runner image may
-      # already have it, and the location comes from the environment: choco's
-      # shim puts makensis.exe on PATH, so no directory is written into this file
-      # (tools/path_guard.py fails the tree for one).
+      # already have it, and the location comes from the environment: no
+      # directory is written into this file (tools/path_guard.py fails the tree
+      # for one).  choco's shim lands on the machine PATH, which this process
+      # cannot see yet, so the install location is taken from
+      # %ProgramFiles(x86)% and published to the later steps.
       - name: install NSIS
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) {
             choco install nsis --no-progress -y
+            $candidate = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+            if (Test-Path $candidate) { $makensis = $candidate }
           }
-          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
-          if (-not $makensis) { throw "makensis.exe is not on PATH after installing NSIS" }
-          Write-Host "makensis: $($makensis.Source)"
+          if (-not $makensis) { throw "makensis.exe was not found after installing NSIS" }
+          Split-Path $makensis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "makensis: $makensis"
 
       - name: toolchain
         shell: msys2 {0}
@@ -168,16 +174,22 @@ jobs:
           path-type: inherit
           cache: true
 
-      # The runner image may already have NSIS; choco's shim puts makensis.exe on
-      # PATH, and no directory is written into this file.
+      # The runner image may already have NSIS; choco installs it when it is
+      # missing, and the location comes from %ProgramFiles(x86)% -- no directory
+      # is written into this file.
       - name: install NSIS
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) {
             choco install nsis --no-progress -y
+            $candidate = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+            if (Test-Path $candidate) { $makensis = $candidate }
           }
-          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
-          if (-not $makensis) { throw "makensis.exe is not on PATH after installing NSIS" }
+          if (-not $makensis) { throw "makensis.exe was not found after installing NSIS" }
+          Split-Path $makensis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "makensis: $makensis"
 
       # The runner image ships a Windows SDK but does not put signtool on PATH.
       - name: locate signtool
