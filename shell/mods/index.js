@@ -6,8 +6,8 @@
  * 与 knowledge.json 收成一个对 shell 友好的同步 API：
  *
  *   const { createMods } = require('./mods');
- *   const mods = createMods({ modsRoot: 'C:/work/mods' });
- *   mods.openMod({ dir: 'C:/work/mods/Probe' });
+ *   const mods = createMods({ modsRoot: '<mods-root>' });
+ *   mods.openMod({ dir: '<mods-root>/Probe' });
  *
  * 设计约束（照抄原 app/core/api.js 的行为，只做必要改动）：
  *  1. 本 Mod 自己的定义就是合法的引用目标 —— 由 validate.js 的

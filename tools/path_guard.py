@@ -6,30 +6,29 @@ read by people who do not own this author's disk.  A path like
 ``C:\\Users\\someone\\Documents\\project`` is therefore not a path: it is a
 leaked fact about one computer, and it is useless to everyone else.
 
-This tool is the *gradual* half of that rule.  It does not try to know every
-convention; it walks ``git ls-files`` (or, in a source tarball with no ``.git``,
-the tree itself) and reports what it finds in two grades:
+This tool is the *strict* half of that rule: it walks ``git ls-files`` (or, in a
+source tarball with no ``.git``, the tree itself) and reports what it finds in
+two grades:
 
 ``error``
     A home directory (Windows or POSIX) or a UNC share.  These never mean
-    anything except "this came from somebody's disk", so they fail the run.
+    anything except "this came from somebody's disk".
 
 ``note``
     An absolute drive path or a path segment from a game's developer project
-    (``UnityProject``, ``YarnScripts``).  A drive letter is a Windows
-    convention -- a browser fallback legitimately starts at ``C:\\Program
-    Files`` -- so these are reported and summarised instead of failed.  They
-    are still a burn-down list: ``--strict`` fails on them, and the allow-list
-    below is meant to shrink.
+    (``UnityProject``, ``YarnScripts``).  Both fail under ``--strict``, which is
+    what ``make path-check`` runs, so a new one cannot slip in.
 
 Placeholders are allowed everywhere (``you``, ``<user>``, ``%USERNAME%``,
 ``$HOME``, ``…``): a document may show the *shape* of a path without naming a
-machine.
+machine.  The allow-list below answers the two legitimate exceptions --
+Windows-shaped test fixtures whose strings are *inputs* to path handling, and
+the rules' own self-test cases -- and each entry records why.
 
 Usage::
 
     python tools/path_guard.py             # errors fail, notes are listed
-    python tools/path_guard.py --strict    # notes fail too
+    python tools/path_guard.py --strict    # notes fail too; what `make path-check` runs
     python tools/path_guard.py --list      # show the allow-list, then report
     python tools/path_guard.py --json      # machine-readable report
 
@@ -45,11 +44,6 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-#: Files another workstream owns, or that are regenerated: scanned by nobody.
-SKIP_PATHS = {
-    "docs/EDITOR_GAPS.md",
-}
 
 #: Suffixes that are never source text.  A binary can contain anything; the
 #: payload audit in ``tools/make-installer.mjs`` is what guards shipped bytes.
@@ -70,32 +64,53 @@ PLACEHOLDERS = {
 #: ``(kind, repository-relative path) -> why it is allowed``.
 #:
 #: Keyed by path, not by line: a line number rots the moment the file is
-#: edited, and then the entry hides a real hit.  An entry here says "this
-#: whole file is allowed to contain this kind of path", which is a decision a
-#: reviewer can read.
+#: edited, and then the entry hides a real hit.  An entry here says "this whole
+#: file is allowed to contain this kind of path", which is a decision a
+#: reviewer can read.  Only two things belong here: strings that are *inputs*
+#: to path handling in a test, and the rules' own self-test cases.  A real
+#: machine path -- a user profile, a toolchain directory, a checkout -- is
+#: never allowed; it belongs in the environment or in a placeholder.
 ALLOW: dict[tuple[str, str], str] = {
-    ("drive", "shell/web/selftest.mjs"):
-        "fixtures whose text *is* a Windows path: CSV cells and table offsets",
     ("drive", "shell/mods/selftest.mjs"):
         "fixtures for new-mod URL building; the strings are never touched on disk",
-    ("drive", "tools/make-installer.mjs"):
-        "NSIS/Program Files candidates and the audit rule itself",
-    ("drive", "shell/main.mjs"):
-        "browser candidates under %ProgramFiles% (the env var is preferred)",
-    ("drive", "shell/mods/gamepath.js"):
-        "Program Files fallback when the environment does not carry the variable",
-    ("drive", "electron/README.md"):
-        "settings.json example, with placeholder names",
-    ("drive", "tools/browser_smoke.py"):
-        "the default Edge/Chrome locations, overridable with --edge",
+    ("drive", "shell/web/selftest.mjs"):
+        "fixtures whose text *is* a Windows path: CSV cells and table offsets",
     ("game-dev", "shell/web/selftest.mjs"):
         "fixtures copied from a real Yarn project table: they exercise long paths",
-    ("unc", "tools/path_guard.py"):
-        "the rule needs a share in its own self-test; nothing else here is one",
+    ("drive", "shell/ai/selftest/config.mjs"):
+        "a synthetic APPDATA table for the Windows user-data directory test",
+    ("drive", "shell/mods/selftest/dispatch.mjs"):
+        "Windows-shaped package roots fed to the URL builder; never read from disk",
+    ("drive", "shell/mods/selftest/examples-menu.mjs"):
+        "a synthetic ProgramFiles(x86) value for the Steam discovery test",
+    ("drive", "shell/mods/selftest/importfile.mjs"):
+        "an out-of-root import target: the refusal is the check, nothing is opened",
+    ("drive", "shell/mods/selftest/knowledge-state.mjs"):
+        "synthetic APPDATA/LOCALAPPDATA values for defaultUserDir",
+    ("drive", "shell/web/selftest/main.mjs"):
+        "an absolute-path fixture for the mod path join",
+    ("drive", "shell/web/selftest/story.mjs"):
+        "translation-table cells that carry the file column's Windows path",
+    ("game-dev", "shell/web/selftest/story.mjs"):
+        "as above: the cells are copied from a real Yarn project table",
+    ("drive", "shell/web/selftest/translation.mjs"):
+        "the shipped table's file field is a Windows path and is displayed as-is",
+    ("game-dev", "shell/web/selftest/translation.mjs"):
+        "as above: the field is copied from a real Yarn project table",
+    ("drive", "shell/web/selftest/views.mjs"):
+        "a Windows-shaped package root fed to the view's new-mod command",
+    ("drive", "tools/make-installer.mjs"):
+        "the payload audit's own absolute-developer-path rule",
+    ("drive", "tools/path_guard.py"):
+        "the rules' own cases and doc examples: each string is an input to a rule",
+    ("game-dev", "tools/path_guard.py"):
+        "as above: the game-project segment is one of the rules under test",
     ("home", "tools/path_guard.py"):
         "the rules' own self-test cases: each string is an input to a rule, not a path",
     ("home-posix", "tools/path_guard.py"):
         "as above: the POSIX and macOS home cases",
+    ("unc", "tools/path_guard.py"):
+        "the rule needs a share in its own self-test; nothing else here is one",
 }
 
 #: ``(kind, pattern, severity)``.  Both home-directory rules and the UNC rule
@@ -175,8 +190,6 @@ def tracked_files() -> list[str]:
 
 
 def is_text_candidate(rel: str) -> bool:
-    if rel in SKIP_PATHS:
-        return False
     return Path(rel).suffix.lower() not in SKIP_SUFFIXES
 
 
@@ -342,7 +355,11 @@ def main(argv: list[str]) -> int:
         )
         return 1
     if strict and notes:
-        print("--strict: notes are failures too", file=sys.stderr)
+        print(
+            "--strict: every note above is a hardcoded path; use a placeholder, a "
+            "relative path, or add a reviewed allow-list entry",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

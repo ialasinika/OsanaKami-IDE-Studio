@@ -100,8 +100,10 @@ function steamInstallDirs(env, platform) {
   const e = env || {};
   const p = platform || process.platform;
   if (p === 'win32') {
-    const programFiles = e['ProgramFiles(x86)'] || e.ProgramFiles || 'C:\\Program Files (x86)';
-    return [path.join(programFiles, 'Steam')];
+    /* 不写死任何目录：Program Files 的位置由环境给出（D 盘系统、32/64 位都不一样），
+       源码里烘焙一个目录在别的机器上就是错的 —— tools/path_guard.py 会拦。 */
+    const programFiles = e['ProgramFiles(x86)'] || e.ProgramFiles;
+    return programFiles ? [path.join(programFiles, 'Steam')] : [];
   }
   const home = e.HOME || e.USERPROFILE || os.homedir();
   if (!home) return [];

@@ -148,7 +148,7 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "C:\\art\\icon.png",
+      placeholder: "<art>/icon.png",
       title: "the file to copy in -- absolute, or relative to the workspace",
     },
   });

@@ -258,9 +258,13 @@ python tools/build.py --check     # print resolved make + gcc and exit
 python tools/build.py             # build (pass --release / --clean / targets)
 ```
 
-It finds the toolchain on `PATH` first; if MinGW-w64 lives somewhere else, set
-`MINGW_BIN` to that `bin` directory and it looks there instead. No directory
-outside the repository is hard-coded — `python tools/path_guard.py` checks that.
+It resolves `make` and `gcc` from `MAKE`/`GCC`, then from `MINGW_BIN` (the `bin`
+directory MinGW-w64 lives in), then from `PATH`, and passes the compiler to make.
+No directory outside the repository is hard-coded in it — `python
+tools/path_guard.py --strict` checks that the whole tree keeps it that way.
+
+`mingw32-make` itself reads `MINGW_BIN` from the environment for `CC`; without it
+the compiler must be on `PATH`, or pass `CC=<path>`.
 
 Run the checks:
 
@@ -533,7 +537,7 @@ tools/                  Python 3.12, standard library only
   installer_smoke.py    builds a real installer and installs/uninstalls it
   ci_installer.py       the two-file fixture installer the CI test job builds
   ci_audit.py           offline audit of .github/workflows/ci.yml
-  path_guard.py         no machine path may be hard-coded
+  path_guard.py         strict: no hard-coded path outside the reviewed allow-list
   README.md             what each tool is for
 
 examples/               hello.yarn, sample.json (the shipped fixtures), and

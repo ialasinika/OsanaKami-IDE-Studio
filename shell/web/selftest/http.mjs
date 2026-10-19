@@ -83,7 +83,7 @@ await testAsync("e2e: a real HTTP host, real SSE and real chunk boundaries", asy
       };
       switch (parsed.method) {
         case "hello":
-          reply({ ok: true, result: { protocol: "infantgod/2", kernel_version: "0.1.0", root: "C:/codes/OsanaKami IDE Studio", pid: 4242 } });
+          reply({ ok: true, result: { protocol: "infantgod/2", kernel_version: "0.1.0", root: "<workspace>", pid: 4242 } });
           return;
         case "view.load":
           // The client names the document it wants; the host answers with that

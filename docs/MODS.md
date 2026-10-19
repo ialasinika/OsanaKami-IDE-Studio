@@ -252,7 +252,7 @@ reaches the wire. Three measured refusals, each of the shape
 
 - a directory inside the workspace but outside the mods root —
   `路径越界，已拒绝: <workspace>/Thing`;
-- a directory outside both — `路径越界，已拒绝: C:/Windows/Temp`;
+- a directory outside both — `路径越界，已拒绝: <other-volume>/Temp`;
 - a relative path that escapes the root — `路径越界，已拒绝: ../outside`
   (relative paths resolve against the mods root, not the process's working
   directory).
@@ -680,7 +680,7 @@ package into the folder `ModLoader` scans:
 
 ```sh
 node shell/main.mjs install examples/Mods/ShipIt
-node shell/main.mjs install examples/Mods/ShipIt --game-dir "D:\Games\InfantGod" --overwrite
+node shell/main.mjs install examples/Mods/ShipIt --game-dir "<game install>" --overwrite
 ```
 
 The folder comes from `discoverGameModsDir` in `shell/mods/gamepath.js`, already
@@ -719,7 +719,7 @@ That file is where the author is least likely to look, so the editor reads it:
 
 ```sh
 node shell/main.mjs log --mod ShipIt
-node shell/main.mjs log --path "C:\Users\<user>\AppData\LocalLow\Company\InfantGod\Player.log" --mod ShipIt
+node shell/main.mjs log --path "<user-home>/AppData/LocalLow/Company/InfantGod/Player.log" --mod ShipIt
 ```
 
 Discovery (`discoverPlayerLog`) looks under the same platform roots the game

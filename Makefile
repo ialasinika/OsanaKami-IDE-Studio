@@ -8,7 +8,16 @@
 # matching file under core/, and any method in core/src/rpc.c that calls it.
 # `infantgod modules` prints what each line costs.
 
-CC      = C:/mingw64/mingw64/bin/gcc.exe
+# CC is the compiler on PATH unless something names another.  The MinGW-w64
+# toolchain this project is developed with is often not on PATH: set MINGW_BIN
+# to the directory that holds gcc.exe (a machine fact, so it lives in the
+# environment, not here) and it is used.  `make CC=...` and tools/build.py,
+# which resolves the same two knobs and passes CC through, work too.
+MINGW_BIN ?=
+# ``?=`` would leave make's built-in ``CC=cc`` in place, so this is a plain
+# assignment; a command-line ``CC=...`` still wins, which is what tools/build.py
+# and a developer who names a compiler rely on.
+CC      = $(if $(MINGW_BIN),$(MINGW_BIN)/gcc.exe,gcc)
 CFLAGS  = -std=c89 -pedantic -Wall -Wextra -Werror -O2 -Icore/include
 LDFLAGS =
 
@@ -136,14 +145,15 @@ version-check:
 cli-check: $(BIN)
 	$(PYTHON) tools/seide_cli.py selfcheck
 
-# No tracked file may name a directory that exists only on one machine: a home
-# directory or a network share fails the run, and every other absolute path is
-# listed so the list can be burned down (`--strict` fails on those too).  The
-# rules are checked against synthetic strings first: a guard that silently
-# stops matching is worse than none.
+# No tracked file may name a directory that exists only on one machine.  The run
+# is `--strict`: any absolute path that is not a documented placeholder or an
+# allow-listed Windows-shaped test fixture fails it.  The allow-list in the tool
+# records each exception with a reason; the rules themselves are checked against
+# synthetic strings first, because a guard that silently stops matching is worse
+# than none.
 path-check:
 	$(PYTHON) tools/path_guard.py --self-test
-	$(PYTHON) tools/path_guard.py
+	$(PYTHON) tools/path_guard.py --strict
 
 # The installer's own promises, on the real Windows installer and uninstaller:
 # a new folder installs and an upgrade works, the uninstaller removes the files

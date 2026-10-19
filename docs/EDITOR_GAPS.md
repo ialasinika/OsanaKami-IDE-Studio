@@ -6,7 +6,7 @@
 
 - 快照时间：2026-10-16（本轮只读，未修改任何代码）。
 - 代码快照 = `HEAD` + 当时未提交的改动（`shell/web/cards.mjs`、`board.mjs`、`main.mjs`、`selftest.mjs`、`style.css`、`CHANGELOG.md` 已改；`shell/web/pixelpng.mjs`、`shell/web/pixelreview-zz.mjs` 未跟踪）。审计期间工作区另有写入者活动，见第 8 节。
-- 语料 = `knowledge.json` 自己记录的 `gameModsDir`：`C:\Users\PC\Documents\deepseek-harness\default-workspace\ModsFull\Mods`（3 个 Mod、3359 个文件、77.4 MB）。
+- 语料 = `knowledge.json` 自己记录的 `gameModsDir`：`<workspace>\ModsFull\Mods`（3 个 Mod、3359 个文件、77.4 MB）。
 
 已经写在别处的缺口（本仓库自己的 `docs/PARADIGM.md:262`、`docs/SURFACES.md:167`、`docs/FORK.md:351`、`docs/BUGS.md:378`）不重复展开，只在第 5 节列索引。本文只写**还没被记下来、或记下来但没意识到严重性**的问题。
 
@@ -78,7 +78,7 @@
 复现内核探针：
 
 ```powershell
-$root = 'C:\Users\PC\Documents\deepseek-harness\default-workspace'
+$root = '<workspace>'
 '{"jsonrpc":"2.0","id":1,"method":"file.read","params":{"path":"ModsFull/Mods/MyMod/Yarn/NewProject_EN.csv"}}' |
   & .\build\infantgod.exe rpc --root $root
 ```
@@ -592,7 +592,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 | 项 | 实测值 |
 | --- | --- |
-| Python | 3.12.9（`C:\Program Files\Python312\python.exe`；项目 `tools/` 本来就是 Python 3.12） |
+| Python | 3.12.9（`%ProgramFiles%\Python312\python.exe`；项目 `tools/` 本来就是 Python 3.12） |
 | torch | 2.13.0**+cpu**，`torch.cuda.is_available()` = **False** |
 | diffusers / onnxruntime | **均未安装** |
 | GPU | NVIDIA GeForce MX150，**2048 MiB**，驱动 572.40 |
@@ -915,7 +915,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 | 编号 | 发现 | 证据 | 后果 |
 |---|---|---|---|
-| F1 | 保存对话框不受工作区约束，唯一的补救分支默认走不到 | `electron/main.js:420-425` 只设 `defaultPath`，无 containment 预检；`:429` 直接把所选路径交给 `plan()`；`shell/main.mjs:440` root 默认 workspace；`shell/mods/index.js:250-251` 抛 `路径越界`；补救在 `:462-477`（`isInside` 为假才问"设为工作区"），而默认 `defaultParent` 是 modsRoot 不是 workspace | 对话框邀请用户选 `D:\Mods`，唯一反馈是一句原始 EOUTSIDE；补救代码存在但默认永不执行 |
+| F1 | 保存对话框不受工作区约束，唯一的补救分支默认走不到 | `electron/main.js:420-425` 只设 `defaultPath`，无 containment 预检；`:429` 直接把所选路径交给 `plan()`；`shell/main.mjs:440` root 默认 workspace；`shell/mods/index.js:250-251` 抛 `路径越界`；补救在 `:462-477`（`isInside` 为假才问"设为工作区"），而默认 `defaultParent` 是 modsRoot 不是 workspace | 对话框邀请用户选 `<another-volume>/Mods`，唯一反馈是一句原始 EOUTSIDE；补救代码存在但默认永不执行 |
 | F2 | 同名二次尝试是死局 | 帧不带 `overwrite`（`shell/main.mjs:487-491` 只转发 dir/modName/template），`shell/mods/scaffold.js:1227` 拒绝非空目标；对话框却带 `showOverwriteConfirmation`（`electron/main.js:424`） | 任何部分失败后只能去资源管理器删目录，菜单永远修不好自己写了一半的东西 |
 | F3 | 脚手架成功后写设置失败，被报成整体失败 | `electron/main.js:436` 先写 `newModDir` 再弹成功框；任何抛错落到 `:478-482` → "新建模组失败"，`:462-466` 被跳过 | 包已在盘上却报失败，用户重试即撞 F2 |
 | F4 | scaffold POST 没有超时 | `electron/newmod.js:130-134` 裸 `await post(...)`，无 `AbortController`；shell 启动有 10 s 界（`electron/main.js:197-201`） | 内核卡住 = 菜单项毫无反应（无对话框、无错误），连按 Ctrl+N 会叠请求 |
@@ -929,7 +929,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 | F7 | 发布闸门是红的，而发布候选都带 `--no-audit` 编 | `tools/make-installer.mjs:411-414`（`--no-audit` 只 `console.warn`）；allow-list `:254-258` 只有 3 个文件而发布树在 14 个文件里出现《幼神》；`CHANGELOG.md:722-725` 自述 red 且 RC 用 `--no-audit` | 唯一的自动防泄漏在文档化发布路径上被关掉（= G30） |
 | F8 | 安装包里有真实游戏台词 + 一张只能本机跑的开发卡 | `package.json:54-57` 原样收 `examples`（`dist/win-unpacked/resources/examples` 26 文件）；`examples/hello.yarn:10` = `Aistalt: 嗨，大家好。欢迎来到幼神的直播间。 #line:0630975`；`examples/board.json:40` 跑 `python tools/e2e.py`；而 electron/ 与 shell/ 全仓不引用 `examples/` | 游戏文本进 Program Files；这份"示例"用户点不到（既泄漏又不可达） |
 | F9 | 295 KB 知识库是游戏数据、被 git 跟踪、未被过滤地进包 | `package.json:37-45` 只排除两个 selftest；`git ls-files` 含 `shell/mods/knowledge.json`；内容 = 53 角色名+配色（`{"name":"Aistalt","colour":"#7c4ec1"}`）、1221 节点标题+文件路径、1305 baseline 定义名、136 命令+C# 源路径 | 分发问题集中在一个文件里 —— 而这正是审计 allow-list 第一项（= G30） |
-| F10 | 卸载是盲删，而安装目录可改 | `tools/installer.nsi:111` `MUI_PAGE_DIRECTORY`、`package.json:75` 可改目录、`:165` `RMDir /r "$INSTDIR"` 无标记/归属校验；且从不删 `%APPDATA%\<product>`（`electron/main.js:60-61`：settings.json、boot.log） | 装到 `D:\Mods` 再卸载会删掉无关文件；"卸载"又留下设置，重装不是干净状态 |
+| F10 | 卸载是盲删，而安装目录可改 | `tools/installer.nsi:111` `MUI_PAGE_DIRECTORY`、`package.json:75` 可改目录、`:165` `RMDir /r "$INSTDIR"` 无标记/归属校验；且从不删 `%APPDATA%\<product>`（`electron/main.js:60-61`：settings.json、boot.log） | 装到 `<another-volume>/Mods` 再卸载会删掉无关文件；"卸载"又留下设置，重装不是干净状态 |
 | F11 | 无原地升级、无运行中检查 | `installer.nsi:128-129` `SetOverwrite on` + `File /r`；`:142-153` 只覆盖一个 HKCU 卸载键；无版本比较、无进程检查、无旧目录清理 | 程序开着升级 → 0.1/0.2 混合树但"安装成功"；旧副本变孤儿（卸载器还在盘上，已不注册） |
 | F12 | 两条安装器管线写同一文件名、卸载语义不同 | `package.json:14`（`dist` = sign `--dir` + 我们的 `installer.nsi`）vs `:16`（`dist:nsis` = electron-builder 自己的 NSIS）+ 惰性的 `nsis` 块 `:73-78`；两者默认都产出 `dist/OsanaKami IDE Studio Setup 0.1.0.exe` | 最后跑谁就发谁：注册表键/页面流/卸载器完全不同 |
 | F13 | MIT 文本没进包，而 EULA 让人去看它 | `EULA.txt:7` 指向 LICENSE/LICENSE-DOCS；`package.json:28-58` 两个都不收；`dist/win-unpacked` 只有 Electron 的两个许可 + `installer.nsi:134` 放的 EULA；文档同样缺席（demo README 引用的 docs/MODS.md、docs/EDITOR_GAPS.md 都不在包内） | 声称 MIT 却发不带许可的二进制；装完的程序让读者去查两个不存在的文件 |
@@ -962,7 +962,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 - containment 在服务端强制，被拒的异步动词是帧而不是崩溃（`index.js:250-251`、`shell/main.mjs:560-567`）。
 - 安装器会验证自己产出的东西：mtime、25 % 体积下限、sha256、签名后重算、`Get-AuthenticodeSignature === "Valid"`、`build/make-installer.json` 汇总。
 - per-user 免 UAC 安装做对了（`RequestExecutionLevel user`、`SetShellVarContext current`、HKCU 卸载键含 `QuietUninstallString`、内嵌 `WriteUninstaller`）。
-- 目录发现不写死任何机器路径并报告来源（`gamepath.js:134-181`）；整棵发布树 grep 不到 `C:\Users`；`tools/make_icon.py:22-23` 同样干净。
+- 目录发现不写死任何机器路径并报告来源（`gamepath.js:134-181`）；整棵发布树 grep 不到用户主目录；`tools/make_icon.py:22-23` 同样干净。
 - 审计设计本身是对的（身份遮蔽、真解 `app.asar` 条目、从 payload KB 推角色表、allow-list 带理由与 TODO）——问题只在它默认不执行。
 
 ### 16.7 本轮结论（与 15.8 合并读）

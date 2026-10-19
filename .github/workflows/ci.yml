@@ -63,21 +63,18 @@ jobs:
 
       # NSIS is what turns installer-check and sign-check from skips into real
       # checks, and what builds the uploaded installer.  The runner image may
-      # already have it; cache the install directory so a warm run does neither
-      # a download nor an install.
-      - uses: actions/cache@v4
-        id: nsis-cache
-        with:
-          path: 'C:\Program Files (x86)\NSIS'
-          key: nsis-3-${{ runner.os }}
-
+      # already have it, and the location comes from the environment: choco's
+      # shim puts makensis.exe on PATH, so no directory is written into this file
+      # (tools/path_guard.py fails the tree for one).
       - name: install NSIS
-        if: steps.nsis-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
             choco install nsis --no-progress -y
           }
+          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if (-not $makensis) { throw "makensis.exe is not on PATH after installing NSIS" }
+          Write-Host "makensis: $($makensis.Source)"
 
       - name: toolchain
         shell: msys2 {0}
@@ -171,19 +168,16 @@ jobs:
           path-type: inherit
           cache: true
 
-      - uses: actions/cache@v4
-        id: nsis-cache
-        with:
-          path: 'C:\Program Files (x86)\NSIS'
-          key: nsis-3-${{ runner.os }}
-
+      # The runner image may already have NSIS; choco's shim puts makensis.exe on
+      # PATH, and no directory is written into this file.
       - name: install NSIS
-        if: steps.nsis-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
             choco install nsis --no-progress -y
           }
+          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if (-not $makensis) { throw "makensis.exe is not on PATH after installing NSIS" }
 
       # The runner image ships a Windows SDK but does not put signtool on PATH.
       - name: locate signtool

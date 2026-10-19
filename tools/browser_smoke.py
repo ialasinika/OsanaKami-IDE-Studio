@@ -119,10 +119,12 @@ STARTER_BOARD = REPO_ROOT / "examples" / "board.json"
 
 #: Where the system browser normally lives on Windows.  ``--edge`` overrides it,
 #: and so does ``INFANTGOD_BROWSER`` -- the same variable ``shell/main.mjs``
-#: honours when it opens a window.
-EDGE_CANDIDATES = (
-    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
-    Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
+#: honours when it opens a window.  The bases come from the environment, never
+#: from a directory written into this file: that is wrong on every other machine.
+EDGE_CANDIDATES = tuple(
+    Path(base, "Microsoft", "Edge", "Application", "msedge.exe")
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"))
+    if base
 )
 
 #: Headless flags proven in this repository for screenshots and DOM dumps.
@@ -147,7 +149,7 @@ READY_TEXT = "kernel ready"
 
 #: The two spellings of the boot log's workspace line.  ``main.mjs`` resolves
 #: the flag with Node's own path rules, which render Windows separators as
-#: forward slashes (``workspace C:/codes/InfantGodIDE``), while the flag a developer
+#: forward slashes (``workspace <checkout>``), while the flag a developer
 #: types -- and the one printed by ``serve`` -- keeps backslashes.  Both are the
 #: same root, so both count; see ``workspace_lines``.
 WORKSPACE_TEXTS = (
@@ -850,7 +852,7 @@ NEWMOD_CHECK_COUNT = 6
 #: The wrapper page.  It is deliberately dumb: no imports, no build, plain
 #: browser JS, so what it observes is what the shipped page does.  ``?app=`` in
 #: the wrapper's own query string is the address to frame -- the caller encodes
-#: it, which keeps ``?mod=C:\...`` out of the wrapper's parsing job.
+#: it, which keeps ``?mod=<path>`` out of the wrapper's parsing job.
 MOD_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>

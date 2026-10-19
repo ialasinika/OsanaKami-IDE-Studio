@@ -961,15 +961,19 @@ function readBody(req, limit = 64 * 1024 * 1024) {
 function browserCandidates() {
   const list = [];
   if (process.env.INFANTGOD_BROWSER) list.push(process.env.INFANTGOD_BROWSER);
-  const pf = process.env["ProgramFiles"] ?? "C:\\Program Files";
-  const pf86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
-  const local = process.env["LOCALAPPDATA"] ?? "";
+  // Program Files comes from the environment, never from this file: the
+  // project's machines disagree about it, and a directory baked in here would
+  // be wrong on every other machine (tools/path_guard.py enforces that).
+  const under = (base, ...parts) => (base ? path.join(base, ...parts) : null);
+  const pf = process.env["ProgramFiles"];
+  const pf86 = process.env["ProgramFiles(x86)"];
+  const local = process.env["LOCALAPPDATA"];
   list.push(
-    path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
-    path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
-    path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
-    path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
-    path.join(local, "Google", "Chrome", "Application", "chrome.exe"),
+    under(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+    under(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+    under(pf, "Google", "Chrome", "Application", "chrome.exe"),
+    under(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+    under(local, "Google", "Chrome", "Application", "chrome.exe"),
   );
   return list;
 }

@@ -16,6 +16,28 @@ stands in this tree.
 
 ## v0.1.2-beta — 2026-10-18
 
+### Nothing in the tree names a machine any more
+
+The repository went to GitHub, which put the tree in front of people who do not
+own this disk, and the audit found paths that only meant something here: the
+`Makefile` named the MinGW compiler by absolute path, `tools/build.py` fell back
+to the same directory, `tools/sign_smoke.py` carried its own literal, the NSIS
+and browser discovery had theirs, and the archived audit in
+`docs/EDITOR_GAPS.md` still quoted the author's profile. Each one now comes from the environment
+(`MINGW_BIN`, `ProgramFiles`, `ProgramFiles(x86)`, `LOCALAPPDATA`) or is a
+documented placeholder. `tools/build.py` also passes the compiler it resolved to
+make, so one answer serves both tools instead of two defaults that could drift.
+
+`tools/path_guard.py` used to be a burn-down list -- drive paths were notes, and
+only home directories, shares and the strict flag failed. `make path-check` now
+runs it with `--strict`: any absolute path fails unless it is a documented
+placeholder or on the tool's allow-list, and that list is down to Windows-shaped
+test fixtures (strings that are *inputs* to path handling and are never touched
+on disk) and the rules' own self-test cases, each with a reason. The archived
+audit stopped being skipped and is scanned like the rest of the tree; the
+workflow no longer caches NSIS at a directory written into the YAML, it asks the
+environment where `makensis.exe` is.
+
 ### A package goes into the game, not only into a zip
 
 `export` stopped at a zip, and the game does not read zips: `ModLoader` scans

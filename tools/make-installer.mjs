@@ -190,7 +190,12 @@ function findMakensis() {
       .reverse();
     for (const v of versions) candidates.push(join(cache, v, "Bin", "makensis.exe"));
   }
-  candidates.push("C:\\Program Files (x86)\\NSIS\\makensis.exe", "C:\\Program Files\\NSIS\\makensis.exe");
+  // The NSIS directory is a machine fact that comes from the environment: a
+  // directory written into this file is wrong on every other machine, and
+  // tools/path_guard.py fails the tree for it.
+  for (const base of [process.env["ProgramFiles(x86)"], process.env["ProgramFiles"]]) {
+    if (base) candidates.push(join(base, "NSIS", "makensis.exe"));
+  }
   for (const dir of (process.env.PATH || "").split(";")) {
     if (dir) candidates.push(join(dir, "makensis.exe"));
   }

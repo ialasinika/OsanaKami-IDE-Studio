@@ -75,8 +75,8 @@ There is no settings UI. Settings live in Electron's per-user directory:
 
 ```json
 {
-  "workspace": "C:\\Users\\you\\Documents\\OsanaKamiIDEStudio",
-  "modsRoot": "D:\\Games\\Infant God\\StreamingAssets\\Mods"
+  "workspace": "<home>\\Documents\\OsanaKamiIDEStudio",
+  "modsRoot": "<game>\\StreamingAssets\\Mods"
 }
 ```
 
@@ -301,7 +301,7 @@ To use a real one, export it to the same `.pfx` path and rerun `npm run cert`'s
 sibling step — or skip all of this and set the environment directly:
 
 ```sh
-CSC_LINK=C:\path\to\real.pfx CSC_KEY_PASSWORD=... npm run dist
+CSC_LINK=<path-to-pfx> CSC_KEY_PASSWORD=... npm run dist
 ```
 
 `win.signtoolOptions.publisherName` in `package.json` is `OsanaKami IDE Studio` and

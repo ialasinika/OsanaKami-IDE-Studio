@@ -115,7 +115,7 @@ or mis-typing them produces `-32602 INVALID_PARAMS`.
 ### `hello`
 
 ```json
-{"protocol":2,"protocol_name":"infantgod/2","kernel_version":"0.1.2-beta","root":"C:/work/project","pid":12345}
+{"protocol":2,"protocol_name":"infantgod/2","kernel_version":"0.1.2-beta","root":"<workspace>","pid":12345}
 ```
 
 `protocol` is the integer a client can compare; `protocol_name` is the same
@@ -129,7 +129,7 @@ board.  See `docs/VIEWS.md` for why that line is where it is.
 ### `workspace.info`
 
 ```json
-{"root":"C:/work/project","name":"project","file_count":42,"view_path":".infantgod/board.json","view_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
+{"root":"<workspace>","name":"project","file_count":42,"view_path":".infantgod/board.json","view_revision":3901234567,"ignored":[".git",".infantgod",".hg",".svn","node_modules","__pycache__",".vscode",".idea",".cache","dist","build","target","obj"]}
 ```
 
 `name` is the last path segment of `root`. `view_path` is the path of the

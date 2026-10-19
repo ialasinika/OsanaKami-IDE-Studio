@@ -111,7 +111,6 @@ def find_gcc():
         candidates.append(os.environ["CC"])
     if os.environ.get("MINGW_BIN"):
         candidates.append(str(Path(os.environ["MINGW_BIN"]) / "gcc.exe"))
-    candidates.append(r"C:\mingw64\mingw64\bin\gcc.exe")
     candidates.append(shutil.which("gcc"))
     candidates.append(shutil.which("cc"))
     for candidate in candidates:

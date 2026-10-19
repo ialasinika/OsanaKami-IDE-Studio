@@ -47,8 +47,12 @@ If you only remember one thing: **run the narrow check first, then
 4. **One document, two views.** Do not reintroduce a pannable/zoomable canvas,
    viewport writes, or a third view. Views are projections: they create, move
    and save nothing.
-5. **No hard-coded machine paths.** `tools/path_guard.py` fails the build if a
-   tracked file names a home directory or machine-specific absolute path.
+5. **No hard-coded machine paths.** `tools/path_guard.py --strict` -- what
+   `make path-check` runs -- fails the build on any absolute path that is not a
+   documented placeholder or an allow-listed Windows-shaped test fixture; the
+   allow-list in that tool records every exception with a reason. Machine facts
+   (`MINGW_BIN`, `ProgramFiles`, the game directory) come from the environment,
+   never from a file in this tree.
 6. **Docs are English**, and they argue rather than list. Do not replace a
    reasoned paragraph with bullets.
 7. **Numbers are measured, not invented.** Check counts change as checks are
@@ -79,8 +83,9 @@ python tools/build.py --check
 python tools/build.py            # build; --release / --clean / targets
 ```
 
-`tools/build.py` looks on `PATH` first and on `MINGW_BIN` second; it must never
-need a directory outside the repository (that is what `path-check` enforces).
+`tools/build.py` resolves make and gcc from `MAKE`/`GCC`, then `MINGW_BIN`, then
+`PATH`, and passes the resolved compiler to make; it must never need a directory
+outside the repository (that is what `path-check` enforces).
 
 Other entry points:
 
@@ -123,7 +128,7 @@ change, then the full suite:
 & $make -f Makefile probe          # every fixed bug in docs/BUGS.md
 & $make -f Makefile cli-check      # the second client: tools/seide_cli.py selfcheck
 & $make -f Makefile version-check  # every copy of VERSION agrees; CHANGELOG has a section
-& $make -f Makefile path-check     # no machine-local paths in tracked files
+& $make -f Makefile path-check     # no hard-coded absolute path (strict, allow-listed fixtures only)
 & $make -f Makefile installer-check # the installer's ownership manifest, real NSIS
 & $make -f Makefile sign-check     # the signing wiring, against a stand-in signtool
 & $make -f Makefile smoke          # real browser, headless: browser + input smoke

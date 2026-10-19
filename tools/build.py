@@ -4,10 +4,12 @@
     python tools/build.py [--check] [--release] [--clean] [target ...]
 
 This tool **never** invents compiler flags: it locates ``mingw32-make`` (falling
-back to ``make``) and runs the repository's own ``Makefile`` with the targets it
-was given.  ``--release`` passes the make variable ``RELEASE=1``; ``--clean``
-prepends the ``clean`` target.  ``--check`` only reports the resolved toolchain
-and exits.
+back to ``make``) and ``gcc`` -- from ``$MAKE``/``$GCC`` when set, then from
+``MINGW_BIN`` (the directory that holds them), then from ``PATH`` -- and runs
+the repository's own ``Makefile`` with the targets it was given, passing the
+resolved compiler as ``CC=``.  ``--release`` passes the make variable
+``RELEASE=1``; ``--clean`` prepends the ``clean`` target.  ``--check`` only
+reports the resolved toolchain and exits.
 
 Exit codes
     0   the build (or ``--check``) succeeded
@@ -33,10 +35,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO_ROOT / "Makefile"
 
-#: Where MinGW-w64 usually lives when it is not on ``PATH``.  ``MINGW_BIN``
-#: replaces it: a directory baked into a tool is wrong on every other machine,
-#: and ``python tools/path_guard.py`` is the test that keeps it that way.
-MINGW_BIN = Path(os.environ.get("MINGW_BIN", r"C:\mingw64\mingw64\bin"))
+#: A not-on-``PATH`` MinGW-w64 directory, from the environment and with no
+#: default: a directory baked into a tool is wrong on every other machine, and
+#: ``python tools/path_guard.py`` is the test that keeps it that way.
+MINGW_BIN = Path(os.environ["MINGW_BIN"]) if os.environ.get("MINGW_BIN") else None
 MAKE_NAMES = ("mingw32-make.exe", "mingw32-make", "make.exe", "make")
 GCC_NAMES = ("gcc.exe", "gcc")
 
@@ -51,7 +53,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def find_tool(names, env_var: str):
-    """Return the first existing tool: ``$env_var``, MinGW bin, then ``PATH``."""
+    """Return the first existing tool: ``$env_var``, ``MINGW_BIN``, then ``PATH``."""
     override = os.environ.get(env_var)
     if override:
         candidate = Path(override)
@@ -60,10 +62,11 @@ def find_tool(names, env_var: str):
         found = shutil.which(override)
         if found:
             return Path(found)
-    for name in names:
-        candidate = MINGW_BIN / name
-        if candidate.is_file():
-            return candidate
+    if MINGW_BIN is not None:
+        for name in names:
+            candidate = MINGW_BIN / name
+            if candidate.is_file():
+                return candidate
     for name in names:
         found = shutil.which(name)
         if found:
@@ -88,6 +91,7 @@ def do_check(make, gcc) -> int:
     """Print the resolved toolchain and signal whether a build could run."""
     print(f"repo      : {REPO_ROOT}")
     print(f"makefile  : {MAKEFILE}" + ("" if MAKEFILE.is_file() else "  (MISSING)"))
+    print(f"mingw bin : {MINGW_BIN if MINGW_BIN is not None else '(not set; PATH only)'}")
     print(f"make      : {make if make else 'NOT FOUND'}")
     if make:
         print(f"            {version_line(make)}")
@@ -106,13 +110,17 @@ def do_check(make, gcc) -> int:
     return 0 if (make and gcc) else 1
 
 
-def do_build(make, args) -> int:
+def do_build(make, gcc, args) -> int:
     """Invoke the repository Makefile, returning make's own exit code."""
     if not MAKEFILE.is_file():
         print(f"build.py: no Makefile at {MAKEFILE}", file=sys.stderr)
         return 2
 
     command = [str(make), "-f", "Makefile"]
+    if gcc is not None:
+        # The Makefile's own CC is PATH-or-MINGW_BIN; passing the compiler this
+        # driver resolved keeps one answer for both tools.
+        command.append(f"CC={gcc}")
     targets = list(args.targets)
     if args.clean:
         targets = ["clean"] + [target for target in targets if target != "clean"]
@@ -152,13 +160,18 @@ def main(argv=None) -> int:
     if args.check:
         return do_check(make, gcc)
     if make is None:
+        where = (
+            f"MINGW_BIN ({MINGW_BIN}) and PATH"
+            if MINGW_BIN is not None
+            else "PATH (MINGW_BIN is not set)"
+        )
         print(
-            f"build.py: no make found (looked for {', '.join(MAKE_NAMES)} in "
-            f"{MINGW_BIN} and PATH); set MAKE to override",
+            f"build.py: no make found (looked for {', '.join(MAKE_NAMES)} in {where}); "
+            f"set MAKE or MINGW_BIN to override",
             file=sys.stderr,
         )
         return 2
-    return do_build(make, args)
+    return do_build(make, gcc, args)
 
 
 if __name__ == "__main__":
