@@ -109,7 +109,17 @@ section("a freshly scaffolded mod");
 {
   const sandbox = mkdtempSync(join(tmpdir(), "infantgod-mods-"));
   try {
-    const fresh = createMods({ modsRoot: sandbox });
+    /*
+     * A readable game Mods folder with no baseline in it.  The checks below are
+     * about the package, and a machine with no game install adds M012 ("cross-Mod
+     * checks skipped") to every report it validates -- true, but about the machine,
+     * not about the mod.  An empty SODefines/Schema satisfies the structure marker
+     * and contributes no baseline, so the knowledge the checker uses is the bundled
+     * one whether or not the machine has a game.
+     */
+    const emptyGameMods = join(sandbox, "game-mods");
+    mkdirSync(join(emptyGameMods, "SODefines", "Schema"), { recursive: true });
+    const fresh = createMods({ modsRoot: sandbox, gameModsDir: emptyGameMods });
     const created = await fresh.scaffold({ dir: join(sandbox, "Probe"), modName: "Probe", template: "full" });
     check("scaffold reports the files it wrote", Array.isArray(created.created) && created.created.length > 0,
       JSON.stringify(created.created));

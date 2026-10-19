@@ -90,6 +90,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -151,6 +152,13 @@ PIXEL_PNGS = tuple(REPO_ROOT / relative for _, relative in PIXEL_STROKES)
 #: and one row is absent.
 MODS_ROOT = REPO_ROOT / "examples" / "Mods"
 MOD_NAME = "Lantern"
+
+#: A game Mods folder with the structure marker and nothing else.  The problems
+#: card this run reads must report the package's findings, so the cross-Mod input
+#: is pinned: a machine without the game -- CI included -- otherwise adds M012
+#: ("cross-Mod checks skipped") to every report, and this check would pass or fail
+#: on whether the developer had installed the game.
+GAME_MODS_FIXTURE = REPO_ROOT / "build" / "__input_smoke_game_mods"
 
 #: The example mod ships one 8-bit RGB sprite (colour type 2) beside its RGBA
 #: ones: the pixel card reads both shapes but writes colour type 6 back, so the
@@ -1911,6 +1919,10 @@ def main(argv=None) -> int:
     # repository ships, so the host is browser_smoke's default command plus that
     # one flag.  Without it the problems card would answer from the workspace,
     # which holds no mod, and there would be no D006 row to click.
+    # Pin the cross-Mod input (GAME_MODS_FIXTURE): the host inherits this
+    # environment, and an empty readable folder contributes no baseline.
+    (GAME_MODS_FIXTURE / "SODefines" / "Schema").mkdir(parents=True, exist_ok=True)
+    os.environ["INFANTGOD_MODS_DIR"] = str(GAME_MODS_FIXTURE)
     port = args.port or free_port()
     host_argv = None
     if MODS_ROOT.is_dir():
@@ -1980,6 +1992,7 @@ def main(argv=None) -> int:
         if alive:
             terminate(host.proc)
         shutil.rmtree(profile, ignore_errors=True)
+        shutil.rmtree(GAME_MODS_FIXTURE, ignore_errors=True)
         restored = backup.restore()
         backup.discard()
         host_gone = not (host.proc is not None and host.proc.poll() is None)
@@ -2471,11 +2484,13 @@ def main(argv=None) -> int:
     results.check("the example story carries the whole tag surface, and the tools judge one of the four extra tags",
                   tags_ok, tags_detail)
 
-    # What the package's own PROBLEMS card says: exactly the two findings it
-    # carries on purpose -- a sprite it names that is not there (D006) and the
-    # second language's row count (M008) -- and no D005, which is what every
-    # cross-reference in the package resolving means.  The two WAV files the
-    # defines name are not mentioned anywhere on it: nothing in the IDE checks an
+    # What the package's own PROBLEMS card says: the findings the example carries
+    # on purpose, and no D005 -- every cross-reference in the package resolves.
+    # The shipped example exercises the type set (a Song and a
+    # VoiceOverDefinition the game only partly consumes, M013/M014), a spine JSON
+    # with no atlas beside it (D011), two 8 kHz WAVs (D008), a sprite it names
+    # that is not there (D006) and the second language's row count (M008).  The
+    # two WAV files are named by nobody on the card: nothing in the IDE checks an
     # audio file (G21), and this records that rather than implying otherwise.
     refs = parse_problems(body)
     ref_labels = [str(row.get("label", "")) for row in (refs.get("rows") or [])]
@@ -2488,8 +2503,8 @@ def main(argv=None) -> int:
         ("Song", "Song_Lantern.json"), ("VoiceOverDefinition", "Vo_Lantern.json"))]
     counts = str(refs.get("counts", ""))
     refs_ok = (bool(refs) and refs.get("card") is True
-               and ref_codes == ["D006", "M008"]
-               and counts.startswith("1 errors") and "1 warnings" in counts and "0 infos" in counts
+               and ref_codes == ["D006", "D008", "D008", "D011", "M008", "M013", "M014"]
+               and counts.startswith("2 errors") and "2 warnings" in counts and "3 infos" in counts
                and ".wav" not in ref_text.lower()
                and all(path.is_file() for path in defines + audio))
     refs_detail = (f"counts={counts!r} codes={ref_codes} wav-mentioned={'.wav' in ref_text.lower()} "

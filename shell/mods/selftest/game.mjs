@@ -82,7 +82,16 @@ specWrite(join(pkgRoot, "notes.txt"), "a package that only carries a manifest an
 mkdirSync(join(gameModsDir, "SODefines", "Schema"), { recursive: true });
 writeFileSync(join(gameModsDir, "SODefines", "Schema", "Item.json"), "{}\n");
 
-const game = createMods({ modsRoot: modsHome, userDir, env: {} });
+/*
+ * An explicit, readable game Mods folder with no baseline in it.  Every install
+ * below names its target through the call's `gameDir`, but the precheck validates
+ * against the instance's knowledge view: on a machine with no game install a
+ * missing folder adds M012 ("cross-Mod checks skipped") and the precheck counts a
+ * warning the package did not cause.
+ */
+const emptyGameMods = join(base, "game-mods");
+mkdirSync(join(emptyGameMods, "SODefines", "Schema"), { recursive: true });
+const game = createMods({ modsRoot: modsHome, userDir, env: {}, gameModsDir: emptyGameMods });
 
 check("the fake tree is recognisable as a game Mods folder", gamepath.looksLikeGameModsDir(gameModsDir) === true);
 check("installGame is on the facade", typeof game.installGame === "function");
