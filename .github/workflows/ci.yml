@@ -4,10 +4,13 @@
 # magic.
 #
 # Honest status: this file was authored on a Windows machine with no GitHub
-# remote, so it has never executed on a GitHub runner.  It is locally
-# reproducible (`make ci` runs the test job's sequence), but the runner-specific
-# parts -- action downloads, the NSIS cache, the secrets gate -- are unproven
-# until the repository has a remote.
+# remote; the repository's first push was its first run.  It is locally
+# reproducible (`make ci` runs the test job's sequence).  That first run failed
+# while building the kernel, because the steps forced `SHELL=cmd.exe` on MSYS2's
+# make: make hands a recipe to its shell with `-c`, which cmd.exe does not
+# accept, so every recipe started an interactive cmd instead of running.  The
+# steps below let MSYS2's make pair its recipes with the POSIX shell it ships;
+# the Makefile's recipes are written to work under either shell.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   SIGN_PFX       base64 of a .pfx file:  [Convert]::ToBase64String([IO.File]::ReadAllBytes("codesign.pfx"))
@@ -80,7 +83,7 @@ jobs:
       # sign-check), the fixture installer CI uploads, and the workflow audit.
       - name: make ci
         shell: msys2 {0}
-        run: make -f Makefile SHELL=cmd.exe CC=gcc ci
+        run: make -f Makefile CC=gcc ci
 
       - uses: actions/upload-artifact@v4
         with:
@@ -115,9 +118,9 @@ jobs:
       - name: build and render the board headless
         shell: msys2 {0}
         run: |
-          make -f Makefile SHELL=cmd.exe CC=gcc
+          make -f Makefile CC=gcc
           python tools/demo.py
-          make -f Makefile SHELL=cmd.exe CC=gcc smoke
+          make -f Makefile CC=gcc smoke
 
   # GitHub does not expose `secrets` to a job-level `if`; a step may read them.
   # This one-step job turns "both secrets are present" into an output the sign
@@ -200,7 +203,7 @@ jobs:
         env:
           INFANTGOD_SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
         run: |
-          make -f Makefile SHELL=cmd.exe CC=gcc
+          make -f Makefile CC=gcc
           python tools/ci_installer.py --out build/signed-setup.exe -- --sign --sign-pfx build/sign/codesign.pfx
 
       - name: verify the signature
