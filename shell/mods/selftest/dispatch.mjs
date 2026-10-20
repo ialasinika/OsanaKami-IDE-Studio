@@ -548,3 +548,86 @@ if (!CAN_SPAWN_SHELL) {
  * with newmod.js, the frame and the address are the parts that can be wrong
  * without a window, and both are pure here.
  */
+
+/* ------------------------------------------------------------------ */
+/* G49: the agent's provider and tools (shell/main.mjs)               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * These frames are what the agent card asks before it can run one round:
+ * whether a provider is configured, which tools exist, one completion, and one
+ * tool call.  No network here -- `ai.chat` is only exercised on its parameter
+ * checks, because a real completion needs a provider and a key.  The context is
+ * handed in explicitly with a throwaway user dir, so the test never reads (or
+ * writes) the machine's own settings.
+ */
+
+{
+  const { createConfigStore } = await import(
+    pathToFileURL(join(ROOT, "shell", "ai", "config.mjs")).href
+  );
+  const { createPreferenceStore } = await import(
+    pathToFileURL(join(ROOT, "shell", "ai", "settings.mjs")).href
+  );
+  const aiUserDir = mkdtempSync(join(tmpdir(), "infantgod-ai-"));
+  const settings = {
+    userDir: aiUserDir,
+    app: { workspace: null, modsRoot: null },
+    ai: createConfigStore({ dir: aiUserDir }),
+    prefs: createPreferenceStore({ dir: aiUserDir }),
+  };
+  const aiFrame = (id, method, params) =>
+    dispatch({ jsonrpc: "2.0", id, method, params }, kernel, languages, mods, settings);
+  try {
+    const status = await aiFrame(300, "ai.status", {});
+    check("ai.status answers with the provider and the tools it can offer",
+      status.result !== undefined &&
+        typeof status.result.configured === "boolean" &&
+        typeof status.result.model === "string" &&
+        status.result.hasApiKey === false &&
+        Array.isArray(status.result.tools) &&
+        status.result.tools.includes("kb.search") &&
+        status.result.tools.includes("mod.validate"),
+      JSON.stringify(status).slice(0, 200));
+
+    const tools = await aiFrame(301, "ai.tools", {});
+    const listed = Array.isArray(tools.result && tools.result.tools) ? tools.result.tools : [];
+    check("ai.tools answers with OpenAI function declarations",
+      listed.length >= 2 &&
+        listed.every((entry) => entry.type === "function" &&
+          entry.function !== null && typeof entry.function.name === "string" &&
+          typeof entry.function.parameters === "object"),
+      JSON.stringify(tools).slice(0, 200));
+
+    const searched = await aiFrame(302, "ai.invoke", {
+      name: "kb.search",
+      arguments: { prefix: "Love", limit: 3 },
+    });
+    check("ai.invoke runs a read-only tool and answers with its result",
+      searched.result !== undefined && searched.result.ok === true &&
+        searched.result.name === "kb.search" &&
+        Array.isArray(searched.result.result && searched.result.result.items),
+      JSON.stringify(searched).slice(0, 200));
+
+    const unknownTool = await aiFrame(303, "ai.invoke", { name: "kb.nothing", arguments: {} });
+    check("ai.invoke reports an unknown tool as an outcome, not a frame error",
+      unknownTool.result !== undefined && unknownTool.result.ok === false &&
+        unknownTool.result.error !== null && unknownTool.result.error.code === "unknown_tool",
+      JSON.stringify(unknownTool).slice(0, 200));
+
+    const noMessages = await aiFrame(304, "ai.chat", {});
+    check("ai.chat without messages is INVALID_PARAMS",
+      noMessages.error !== undefined && noMessages.error.code === -32602,
+      JSON.stringify(noMessages.error));
+
+    const tooManyTools = await aiFrame(305, "ai.chat", {
+      messages: [{ role: "user", content: "hi" }],
+      tools: Array.from({ length: 65 }, () => ({ type: "function" })),
+    });
+    check("ai.chat caps the tools array at 64",
+      tooManyTools.error !== undefined && tooManyTools.error.code === -32602,
+      JSON.stringify(tooManyTools.error));
+  } finally {
+    rmSync(aiUserDir, { recursive: true, force: true });
+  }
+}

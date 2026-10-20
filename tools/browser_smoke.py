@@ -1358,7 +1358,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
     "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings",
-    "help", "audio",
+    "help", "audio", "agent",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1382,6 +1382,7 @@ CARD_COMMANDS = (
     "settings",
     "help",
     "open tone.wav",
+    "agent",
 )
 
 #: The close facts the card page prints after the reachability walk: the three

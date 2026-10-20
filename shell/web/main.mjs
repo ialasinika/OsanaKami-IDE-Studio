@@ -57,6 +57,8 @@ import {
 import {
   COMMAND_HELP,
   PIXEL_NEW_SIZE,
+  buildCardTools,
+  cardKind,
   describeCard,
   emptySheet,
   parseCommandLine,
@@ -951,7 +953,13 @@ function createApp() {
       seen.add(card.id);
       let entry = mounted.get(card.id);
       if (entry === undefined) {
-        const node = renderCard(card, { client, app });
+        // `call` is the same bridge as `client.call`, named for the card tools
+        // that need one function rather than the client object (G49).
+        const node = renderCard(card, {
+          client,
+          app,
+          call: (verb, params) => client.call(verb, params),
+        });
         node.el.style.width = `${card.w}px`;
         node.el.style.height = `${card.h}px`;
         node.el.dataset.kind = card.kind;
@@ -1891,6 +1899,54 @@ function createApp() {
   }
 
   /**
+   * The agent card, if the board already has one.
+   *
+   * One seat is one conversation: focusing the card that is already there keeps
+   * the history it has been building, which is the opposite of what a second
+   * copy would do (a fresh card with a fresh prompt and no context).
+   */
+  function agentCard() {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind === "agent") {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put the agent card on the board, asking `prompt` when one is given (G49).
+   *
+   * The card runs the loop itself: the shell's provider answers, the declared
+   * card tools do the reading, and every call lands in `ai.invoke` where the
+   * read-only rule is enforced.  The window only decides where the seat is.
+   */
+  function openAgentCard(prompt) {
+    const question = typeof prompt === "string" ? prompt.trim() : "";
+    const existing = agentCard();
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      if (question !== "") {
+        existing.handle.ask(question);
+      }
+      log("info", "agent card focused — one conversation, one seat");
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.agent;
+    const centre = centreWorld();
+    const card = addCard(
+      "agent",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      { prompt: question },
+      size,
+    );
+    log("info", "agent card added — read-only tools, the provider from settings");
+    return card;
+  }
+
+  /**
    * Create one file from the game's own schema (G50), then open it.
    *
    * The shell owns the generator and the knowledge base; this side only names
@@ -1935,6 +1991,23 @@ function createApp() {
     return answer;
   }
 
+  /**
+   * The tools the mounted cards put in an agent's hands (G49).
+   *
+   * Built on demand: the set of mounted cards changes, and a tool must answer
+   * against the card that is open now, not the one that was open at boot.  The
+   * names are namespaced by card kind (`card.editor.read`), so two cards of one
+   * kind would collide -- `buildCardTools` refuses that rather than letting one
+   * silently shadow the other.
+   */
+  function cardTools() {
+    const cards = [];
+    for (const entry of mounted.values()) {
+      cards.push({ kind: entry.card.kind, handle: entry.handle, spec: cardKind(entry.card.kind) });
+    }
+    return buildCardTools({ cards, host: { call: (verb, params) => client.call(verb, params) } });
+  }
+
   const app = {
     log,
     boardTouched,
@@ -1949,7 +2022,9 @@ function createApp() {
     openAudioCard,
     openSettingsCard,
     openHelpCard,
+    openAgentCard,
     openProblemsCard,
+    cardTools,
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
     // selected card first: a handle that answers `true` took the step itself
@@ -2350,6 +2425,13 @@ function createApp() {
       }
       case "redo": {
         cardRedoOrRing();
+        return;
+      }
+      case "agent": {
+        // `agent` alone opens the seat; `agent <question>` opens it and asks.
+        // The prompt stays the user's words: the card sends them unchanged.
+        const question = argc >= 1 ? tokens.slice(1).join(" ") : "";
+        openAgentCard(question);
         return;
       }
       case "help": {

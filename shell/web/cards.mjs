@@ -127,13 +127,30 @@ export {
 } from "./cards/card-mod.mjs";
 export { diagLine, diagTarget } from "./cards/card-problems.mjs";
 export { describeSources } from "./cards/card-settings.mjs";
+// G49: the declarations a card kind puts in an agent's hands, and the builder
+// that turns mounted cards into tools.  Re-exported here so the host imports
+// the card layer once.
+export {
+  CARD_TOOL_CONTRACT,
+  CARD_TOOL_PREFIX,
+  CARD_TOOL_SAFETY,
+  CardToolError,
+  buildCardTools,
+  cardAgentTools,
+  cardToolInventory,
+  cardToolName,
+  defineCardTool,
+  isCardToolName,
+} from "./cards/agent-tools.mjs";
 
 import { renderDocs } from "./cards/card-docs.mjs";
+import { defineCardTool } from "./cards/agent-tools.mjs";
+import { renderAgent } from "./cards/card-agent.mjs";
 import { renderAudio } from "./cards/card-audio.mjs";
 import { renderEditor } from "./cards/card-editor.mjs";
 import { renderFiles } from "./cards/card-files.mjs";
 import { renderHelp } from "./cards/card-help.mjs";
-import { renderMod } from "./cards/card-mod.mjs";
+import { diagCounts, renderMod } from "./cards/card-mod.mjs";
 import { renderNote } from "./cards/card-note.mjs";
 import { PIXEL_NEW_SIZE, PIXEL_PALETTE, renderPixel } from "./cards/card-pixel.mjs";
 import { renderProblems } from "./cards/card-problems.mjs";
@@ -146,12 +163,138 @@ import { renderStory } from "./cards/card-story.mjs";
 import { registerCardKind } from "./cards/registry.mjs";
 import { emptySheet, sheetSummary } from "./cards/sheet.mjs";
 
+/* -- the agent surface (G49) ------------------------------------------ */
+
+/*
+ * What each kind tells an agent it may do.  Only kinds whose handle can answer
+ * honestly are here; a kind that declares nothing is absent from
+ * `cardToolInventory` rather than silently offered.  All six are read-only:
+ * writes still go through the user, a save button and the diff card that does
+ * not exist yet.
+ */
+function agentBridge(ctx, tool) {
+  if (ctx === null || typeof ctx !== "object" || typeof ctx.call !== "function") {
+    throw new Error(`${tool}: this card is not connected to the shell`);
+  }
+  return ctx.call;
+}
+
+/** Shared by the mod and problems cards: run the validator, report its shape. */
+function diagnosticsTool(kind) {
+  return defineCardTool({
+    kind,
+    name: "diagnostics",
+    description:
+      "Validate a package and return the counts plus the first 50 diagnostics. "
+      + "Every diagnostic's path is relative to `root`, the resolved package folder.",
+    parameters: {
+      type: "object",
+      properties: { root: { type: "string" } },
+      additionalProperties: false,
+    },
+    handler: async (handle, args, ctx) => {
+      const call = agentBridge(ctx, `card.${kind}.diagnostics`);
+      const root = typeof args.root === "string" && args.root !== "" ? args.root : handle.root();
+      if (root === "") {
+        throw new Error(`card.${kind}.diagnostics: name a package first`);
+      }
+      const report = await call("mod.validate", { root });
+      const counts = diagCounts(report.diagnostics);
+      return {
+        root: typeof report.root === "string" && report.root !== "" ? report.root : root,
+        ok: report.ok === true,
+        counts,
+        diagnostics: report.diagnostics.slice(0, 50),
+      };
+    },
+  });
+}
+
+const editorAgentTools = [
+  defineCardTool({
+    kind: "editor",
+    name: "read",
+    description: "The text this editor shows, its path, whether it has unsaved edits, and the last revision read.",
+    handler: (handle) => ({
+      path: handle.path,
+      text: handle.text(),
+      dirty: handle.dirty,
+      revision: handle.revision,
+    }),
+  }),
+  defineCardTool({
+    kind: "editor",
+    name: "reveal",
+    description: "Scroll this editor to a line or a JSON pointer; true when the place exists in the text.",
+    parameters: {
+      type: "object",
+      properties: { line: { type: "integer" }, pointer: { type: "string" } },
+      additionalProperties: false,
+    },
+    handler: (handle, args) => handle.reveal({
+      line: typeof args.line === "number" ? args.line : undefined,
+      pointer: typeof args.pointer === "string" ? args.pointer : undefined,
+    }) === true,
+  }),
+];
+
+const docsAgentTools = [
+  defineCardTool({
+    kind: "docs",
+    name: "lookup",
+    description: "One documentation entry by kind and name, optionally from a package's own definitions.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string" },
+        name: { type: "string" },
+        root: { type: "string" },
+      },
+      required: ["kind", "name"],
+      additionalProperties: false,
+    },
+    handler: async (_handle, args, ctx) => {
+      const call = agentBridge(ctx, "card.docs.lookup");
+      const text = await call("mod.docFor", {
+        kind: String(args.kind),
+        name: String(args.name),
+        root: typeof args.root === "string" && args.root !== "" ? args.root : undefined,
+      });
+      return { text };
+    },
+  }),
+  defineCardTool({
+    kind: "docs",
+    name: "search",
+    description: "Search the knowledge base (and optionally a package) for a word; returns matching entries.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        limit: { type: "integer" },
+        root: { type: "string" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    handler: async (_handle, args, ctx) => {
+      const call = agentBridge(ctx, "card.docs.search");
+      return call("mod.search", {
+        query: String(args.query),
+        limit: typeof args.limit === "number" ? args.limit : undefined,
+        root: typeof args.root === "string" && args.root !== "" ? args.root : undefined,
+      });
+    },
+  }),
+];
+
 registerCardKind({
   kind: "editor",
   title: "Editor",
   describe: (card) => `editor ${card.file || "(no file)"}`,
   create: () => ({ file: "" }),
   render: renderEditor,
+  agent: editorAgentTools,
 });
 
 registerCardKind({
@@ -232,6 +375,7 @@ registerCardKind({
   describe: (card) => `mod ${card.dir || "(no dir)"}`,
   create: () => ({ dir: "" }),
   render: renderMod,
+  agent: [diagnosticsTool("mod")],
 });
 
 registerCardKind({
@@ -240,6 +384,7 @@ registerCardKind({
   describe: (card) => `problems ${card.root || "(no mod)"}`,
   create: () => ({ root: "" }),
   render: renderProblems,
+  agent: [diagnosticsTool("problems")],
 });
 
 registerCardKind({
@@ -248,6 +393,7 @@ registerCardKind({
   describe: (card) => `docs ${card.query || "(knowledge base)"}`,
   create: () => ({ query: "" }),
   render: renderDocs,
+  agent: docsAgentTools,
 });
 
 registerCardKind({
@@ -272,4 +418,14 @@ registerCardKind({
   describe: (card) => `audio ${card.file || "(no file)"}`,
   create: () => ({ file: "" }),
   render: renderAudio,
+});
+
+// G49: the agent seat.  It declares no tools of its own -- it is the caller,
+// not one of the hands -- so it is deliberately absent from `cardToolInventory`.
+registerCardKind({
+  kind: "agent",
+  title: "Agent",
+  describe: (card) => `agent ${card.prompt || "(one conversation)"}`,
+  create: () => ({ prompt: "" }),
+  render: renderAgent,
 });

@@ -16,6 +16,7 @@
  *   replies  -- the error taxonomy and the non-streaming answer
  *   stream   -- SSE framing, cross-chunk deltas, tool_call accumulation, abort
  *   registry -- tool definitions, schema validation, path sandbox
+ *   cards    -- the tools a card declares, through the registry (G49)
  *   loop     -- provider + registry + tools, one complete model turn
  *
  * Exit code 0 when everything passes.
@@ -73,6 +74,7 @@ import { runWireSection } from "./selftest/wire.mjs";
 import { runReplySection } from "./selftest/reply.mjs";
 import { runStreamSection } from "./selftest/stream.mjs";
 import { runRegistrySection } from "./selftest/registry.mjs";
+import { runCardsSection } from "./selftest/cards.mjs";
 import { runLoopSection } from "./selftest/loop.mjs";
 
 /* ------------------------------------------------------------------ */
@@ -89,6 +91,7 @@ async function main() {
     await runReplySection(server);
     await runStreamSection(server);
     await runRegistrySection(tempRoot);
+    await runCardsSection();
     await runLoopSection(server, tempRoot);
   } finally {
     await server.close();

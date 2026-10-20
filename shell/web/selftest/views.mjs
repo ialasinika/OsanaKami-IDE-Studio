@@ -87,7 +87,7 @@ export const ALL_CARD_KINDS = knownCardKinds();
 test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
   assert.deepEqual(
     [...CARD_KINDS].sort(),
-    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings", "help", "audio"].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings", "help", "audio", "agent"].sort(),
     "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
   );
   for (const kind of CARD_KINDS) {

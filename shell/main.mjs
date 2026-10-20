@@ -40,7 +40,9 @@ import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createConfigStore, defaultUserDataDir, describeConfig } from "./ai/config.mjs";
+import { createProvider } from "./ai/provider.mjs";
 import { createPreferenceStore } from "./ai/settings.mjs";
+import { createReadOnlyTools, createToolRegistry, invokeToolCall } from "./ai/tools.mjs";
 
 const SHELL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(SHELL_DIR);
@@ -621,6 +623,127 @@ function optionalString(params, name) {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+/* ------------------------------------------------------------------ */
+/* the agent's verbs -- G49: the card tools need a provider to hold    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The window's cards declare what an agent may call (`shell/ai/cards.mjs`),
+ * but the provider settings and the card tools' reachable shell verbs live on
+ * this side, where the key does.  These four verbs are the smallest surface
+ * that lets an agent work without ever seeing the key:
+ *
+ *   ai.status   what provider is configured and which read-only tools exist
+ *   ai.tools    the full OpenAI `tools` array, schemas included
+ *   ai.chat     one non-streaming completion (the loop lives in the caller)
+ *   ai.invoke   run one read-only tool by name, with JSON arguments
+ *
+ * The chat loop is deliberately not here: a card owns the conversation, this
+ * side owns the key and the tools.  Every frame is redacted by the provider
+ * before it leaves (`describeConfig`, `redact`), and `ai.chat` returns only the
+ * assistant message -- never the request that produced it.
+ */
+
+/** The tool registry this shell can honestly offer: the two read-only tools. */
+function agentRegistry(context, mods) {
+  const modsRoot = context !== null && context.app && typeof context.app.modsRoot === "string"
+    ? context.app.modsRoot
+    : null;
+  return createToolRegistry({
+    tools: createReadOnlyTools({ mods, modsRoot }),
+  });
+}
+
+function aiStatus(context, mods) {
+  const view = describeConfig(context.ai.load());
+  let tools = [];
+  try {
+    tools = agentRegistry(context, mods).openaiTools()
+      .map((entry) => entry && entry.function ? entry.function.name : null)
+      .filter((name) => typeof name === "string");
+  } catch (error) {
+    tools = [];
+  }
+  return {
+    configured: view.baseUrl !== "",
+    endpoint: view.endpoint,
+    model: view.model,
+    hasApiKey: view.hasApiKey,
+    stream: view.stream,
+    timeoutMs: view.timeoutMs,
+    tools,
+  };
+}
+
+function aiTools(context, mods) {
+  return { tools: agentRegistry(context, mods).openaiTools() };
+}
+
+/** One completion.  The caller owns the loop and the transcript. */
+async function aiChat(context, params) {
+  const messages = params !== null && typeof params === "object" ? params.messages : undefined;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new RpcError({
+      code: -32602,
+      name: "INVALID_PARAMS",
+      message: "ai.chat needs a non-empty `messages` array",
+    });
+  }
+  for (const message of messages) {
+    if (message === null || typeof message !== "object" || typeof message.role !== "string") {
+      throw new RpcError({
+        code: -32602,
+        name: "INVALID_PARAMS",
+        message: "every message is an object with a string `role`",
+      });
+    }
+  }
+  const config = context.ai.load();
+  const provider = createProvider({ ...config });
+  const request = { messages: messages.map((message) => ({ ...message })) };
+  if (params.tools !== undefined) {
+    if (!Array.isArray(params.tools) || params.tools.length > 64) {
+      throw new RpcError({
+        code: -32602,
+        name: "INVALID_PARAMS",
+        message: "`tools` is the OpenAI tools array, at most 64 entries",
+      });
+    }
+    if (params.tools.length > 0) {
+      request.tools = params.tools;
+      request.toolChoice = "auto";
+    }
+  }
+  if (typeof params.temperature === "number") request.temperature = params.temperature;
+  if (typeof params.maxTokens === "number") request.maxTokens = params.maxTokens;
+  const answer = await provider.chat(request);
+  return {
+    id: answer.id,
+    model: answer.model,
+    created: answer.created,
+    message: answer.message,
+    finishReason: answer.finishReason,
+    usage: answer.usage,
+    streamed: answer.streamed === true,
+  };
+}
+
+/** Run one read-only shell tool by name; the open outcome is the answer. */
+async function aiInvoke(context, mods, params) {
+  const name = needParam(params, "name");
+  const args = params !== null && typeof params === "object" ? params.arguments : undefined;
+  const registry = agentRegistry(context, mods);
+  return invokeToolCall(registry, {
+    // The shape the model produces, which is what `invokeToolCall` parses;
+    // `aiInvoke` only re-labels an explicit tool call from the agent card.
+    type: "function",
+    function: {
+      name,
+      arguments: args === undefined ? "{}" : JSON.stringify(args),
+    },
+  });
+}
+
 /*
  * Every `mod.*` verb, in one table, so adding one is a row and not a branch.
  * The facade behind these is synchronous; `mod.scaffold`, `mod.newFile`,
@@ -750,6 +873,7 @@ const MOD_METHODS = {
  *   lang.list, lang.tokenize            served from langs/, no kernel involved
  *   mod.*                               served from shell/mods/, no kernel involved
  *   config.get, config.set              the shell's settings files; no kernel involved
+ *   ai.status/tools/chat/invoke         the agent's provider and read-only tools (G49)
  *   workspace.info                      the kernel's answer plus `langs`
  * Everything else is forwarded verbatim.
  */
@@ -814,6 +938,27 @@ export async function dispatch(frame, kernel, languages, mods = null, settings =
     if (method === "config.set") {
       const context = settingsContext(settings);
       return answer(() => response(id, applySettings(context, params)));
+    }
+
+    // G49: the agent's provider and tools.  Like `config.*`, these never touch
+    // the kernel; the read-only tools behind `ai.invoke` are wrappers around
+    // the mod layer the shell already loaded.
+    if (method === "ai.status") {
+      return answer(() => response(id, aiStatus(settingsContext(settings), mods)));
+    }
+
+    if (method === "ai.tools") {
+      return answer(() => response(id, aiTools(settingsContext(settings), mods)));
+    }
+
+    if (method === "ai.chat") {
+      const result = await aiChat(settingsContext(settings), params);
+      return answer(() => response(id, result));
+    }
+
+    if (method === "ai.invoke") {
+      const result = await aiInvoke(settingsContext(settings), mods, params);
+      return answer(() => response(id, result));
     }
 
     const result = await kernel.call(method, frame.params);

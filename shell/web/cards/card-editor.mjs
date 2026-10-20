@@ -1041,6 +1041,14 @@ export function renderEditor(card, ctx) {
       get path() {
         return state.path;
       },
+      /**
+       * The text currently in the buffer, unsaved edits included (G49: the
+       * `card.editor.read` tool answers with what the user sees, not with what
+       * is on disk -- a difference that matters while a line is half-typed).
+       */
+      text() {
+        return area.value;
+      },
       get dirty() {
         return state.dirty;
       },

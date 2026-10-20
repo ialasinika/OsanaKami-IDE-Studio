@@ -37,7 +37,7 @@ export const KIND_REGISTRY = new Map();
  */
 export const CARD_KIND_CONTRACT = Object.freeze({
   required: Object.freeze(["kind", "render"]),
-  optional: Object.freeze(["title", "describe", "create"]),
+  optional: Object.freeze(["title", "describe", "create", "agent"]),
 });
 
 /**
@@ -120,6 +120,7 @@ export const COMMAND_HELP = [
   "problems <dir>           游戏 Mod 校验结果（错误/警告/提示，可跳转）",
   "docs [query]             游戏知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
   "settings                 AI provider, default view and poll interval",
+  "agent [question]         the agent's seat: ask about the package with the cards' tools",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "focus <id>               select and centre a card",

@@ -37,7 +37,7 @@
  */
 export const CARD_KINDS = [
   "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-  "rig", "mod", "problems", "docs", "settings", "help", "audio",
+  "rig", "mod", "problems", "docs", "settings", "help", "audio", "agent",
 ];
 
 export const BOARD_VERSION = 1;
@@ -68,6 +68,7 @@ export const DEFAULT_SIZE = {
   docs: { w: 460, h: 520 },
   settings: { w: 540, h: 520 },
   help: { w: 560, h: 560 },
+  agent: { w: 560, h: 520 },
   audio: { w: 380, h: 200 },
 };
 

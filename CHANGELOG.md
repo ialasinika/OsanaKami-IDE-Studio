@@ -16,6 +16,50 @@ stands in this tree.
 
 ## Unreleased
 
+### The window has a seat for an agent
+
+The AI layer shipped with a provider, a key kept out of every log, and two
+read-only tools (`kb.search`, `mod.validate`) -- and no way to reach the three
+things a person actually has open. G49 closes that: a card family now declares
+the tools it can hand an agent, next to its `render`, and the window runs the
+conversation.
+
+A declaration is `defineCardTool({kind, name, description, handler})` and
+becomes the model-visible name `card.<kind>.<verb>`
+(`shell/web/cards/agent-tools.mjs`, which imports nothing so the contract is
+pinned under Node). Four kinds declare one: the editor's `card.editor.read`
+(the path, the saved state and the text) and `card.editor.reveal` (move the
+caret to a line or a JSON Pointer); the mod and problems cards' `diagnostics`
+(the package root, its counts and the first fifty rows); and the docs card's
+`lookup` and `search`, with the optional package root G18 added. Writes are
+refused by `defineCardTool` itself -- "read only until a diff card exists" --
+so this surface cannot quietly grow one.
+
+The shell grew four read-only verbs in `shell/main.mjs`: `ai.status` (whether a
+provider is configured, and the tool names on offer), `ai.tools` (the OpenAI
+function declarations), `ai.chat` (one completion, with `tools` and
+`tool_choice` passed through after the same parameter checks) and `ai.invoke`
+(one tool call, answered as `{ok, name, result | error}` and never as a failed
+frame). The endpoint and the key stay in the settings store and never leave the
+shell process; the frames carry model traffic only.
+
+The new `agent` card is a plain client of those verbs. It asks `ai.status` and
+`ai.tools`, merges them with the mounted cards' own declarations (a card that
+is not open contributes nothing), sends at most six rounds, and routes a
+`card.*` call back through the window's client to the card that declared it
+while everything else goes to `ai.invoke`. A handler that throws becomes a
+`role: "tool"` message naming the failure, not a dead turn.
+
+Three seats hold the result: `shell/mods/selftest/dispatch.mjs` exercises the
+new frames (including `ai.chat`'s parameter refusals and `ai.invoke`'s
+unknown-tool outcome, which is what caught `aiInvoke` handing the shared helper
+a bare `{name, arguments}` instead of the wire shape),
+`shell/ai/selftest/cards.mjs` proves the Node adapter is the same module and
+that the tool registry accepts a card declaration with no translation, and
+`shell/web/selftest/agent.mjs` pins the read-only construction, the bridge and
+the duplicate-name refusal. The browser smoke sees the card in both views.
+Suites: mods 684/684 (+6), web 324/324 (+3), ai 93/93 (+7).
+
 ### The new-mod menu recovers from its own failures
 
 The File menu's shortcut scaffolds a package through one `mod.scaffold` frame,

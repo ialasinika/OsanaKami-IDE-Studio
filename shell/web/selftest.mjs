@@ -34,6 +34,7 @@ import { stats } from "./selftest/harness.mjs";
 await import("./selftest/rpc.mjs");
 await import("./selftest/board.mjs");
 await import("./selftest/cards.mjs");
+await import("./selftest/agent.mjs");
 await import("./selftest/project.mjs");
 await import("./selftest/http.mjs");
 await import("./selftest/sheet.mjs");

@@ -176,18 +176,19 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers fifteen kinds from `shell/web/cards/` — one module per card
+The shell registers sixteen kinds from `shell/web/cards/` — one module per card
 family — through the barrel `shell/web/cards.mjs`, which re-exports the public
-names and makes the fifteen calls: `editor`, `runner`, `note`, `files`,
+names and makes the sixteen calls: `editor`, `runner`, `note`, `files`,
 `project` and `sheet`, then `story`, `pixel`, `rig`, `audio`, `mod`, `problems`,
-`docs`, `settings` and `help`, `sheet` being a structured-data grid
+`docs`, `settings`, `help` and `agent`, `sheet` being a structured-data grid
 (typed cells, rows, columns, TSV export) that exists to prove nothing downstream
 assumes text, `project` being the workspace as one project: what the project
 contains, merged with what the document has open, `rig` being a skeleton and its
 atlas read from the game's own bytes, `audio` being a recording played where the
 checks name it, `settings` being the one card that talks
 about the machine instead of the project, and `help` being where the wiki link,
-the type-support matrix and the command list are rendered. See
+the type-support matrix and the command list are rendered, and `agent` being
+the seat where the shell's model asks the other cards' read-only tools. See
 [`docs/SURFACES.md`](docs/SURFACES.md) and [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
@@ -292,14 +293,14 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 66 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 68 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 321/321 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 678/678 checks passed
+node shell/web/selftest.mjs                    # ok 324/324 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 684/684 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -319,7 +320,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 66 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 68 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -509,11 +510,11 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 678 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 684 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
-                        (the barrel), cards/ (fifteen kinds, one family per
+                        (the barrel), cards/ (sixteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
                         classic.mjs, modview.mjs, main.mjs, story.mjs,
                         storycsv.mjs, ysls.mjs, pixelpng.mjs, pixelview.mjs,

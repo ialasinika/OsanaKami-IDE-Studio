@@ -1,4 +1,4 @@
-# 缺口清单（2026-10-20 第六轮：G18/G44/G34 已关；第五轮 A/B 清账与冒烟轮并入）
+# 缺口清单（2026-10-20 第七轮：G18/G44/G34/G49 已关；第五轮 A/B 清账与冒烟轮并入）
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
@@ -11,6 +11,7 @@
 冒烟轮（2026-10-20 晚，第五轮之后）：把两个浏览器冒烟真正跑起来——此前"Edge 155 headless 坏"是误判，死因是 harness 拼 wrapper 时的页内脚本语法错误（Python 非 raw 字符串里的换行），修好后 `browser_smoke.py` 65/65、`input_smoke.py` 44/44 在本机真实 headless Edge 上全绿。冒烟抓到五处真实缺陷并已修：相对路径 `open README.md` 因把相对名当绝对路径与 workspace 根比较而被拒（新纯模块 `shell/web/openpath.mjs`，套件 1 条）；像素卡在 G52 改为居中取景后，冒烟仍按"画布左上即图像左上"点击，卡现在发布 `data-pan-x`/`data-pan-y`/`data-zoom`、冒烟按像素中心点击而不是在 Python 里重抄取景规则；示例包 `Audio_Lantern_Hum.json` 手写 `EventReference` 触发自己的 D019 两条（示例改为只写能诚实写的字段，`EditorNote` 说明引用必须来自游戏导出）；`D011` 行状态以路径开头、RGB 精灵按 G20 存回 RGB 两条断言过期；`audio`/`help` 已注册却不在 board 卡种表与冒烟清单里（面板点不开、冒烟点不到）。文档同轮更正：卡种数按实际注册数（十五种）与冒烟检查数（65 + 44）改齐。
 
 第六轮（2026-10-20 晚）：用户按队列点名 18/44/34/49/内核硬化，按此顺序逐项独立提交。G18 本轮关闭：`mod.stats`/`mod.types`/`mod.search`/`mod.docFor` 接受可选包根、docs 卡新增包根输入与 `read this package`，没给 root 时所有返回形状不变（`selftest/spec.mjs` 11 条）。G44 本轮也关闭：`mod.sources` 把"KB/游戏目录从哪来"从启动日志里的一句话变成一个只读动词（`knowledgeState()` + `gameMods()` 在一帧里返回），CLI `sources [--json]` 与设置卡两行渲染同一答案，缺游戏目录或缺 KB 都是可回答的状态（`found: false` / `state: "missing"` 带 tried 列表），只有 mod 层加载失败才 exit 2。G34/G49 与 port 硬化按队列随后处理。G34 也在本轮关闭：`electron/newmod.js` 把 0.1.0 审计的 F1–F5 全部落到可测的原语上——越界父目录先问"改到 Mods 根下"（`confine()`）、二次创建带 `overwrite`（`shell/main.mjs` 的 `mod.scaffold` 转发该旗标）、POST 有截止时间（`createMod({timeoutMs})`，忽略 signal 的 fetch 也会超时）、设置写失败只是成功框里的一句备注（不再把已写好的包报成整体失败）、`?mod=` 打不开时页面继续 boot 并记 `cannot open <dir>: …`（不再变成 "kernel not reachable" 与重连风暴）。
+第七轮（2026-10-20 深夜）：G49 关闭——卡种可在 `registerCardKind` 旁声明只读 `agent` 工具（`defineCardTool`，模型可见名 `card.<kind>.<verb>`；`shell/web/cards/agent-tools.mjs` 零 import，契约可在 Node 下钉住）。editor 提供 `card.editor.read`/`card.editor.reveal`，mod 与 problems 提供`diagnostics`（包根、计数、前 50 行），docs 提供 `lookup`/`search`（带 G18 的可选包根）。`shell/main.mjs` 新增四个只读动词 `ai.status`/`ai.tools`/`ai.chat`/`ai.invoke`；供应商与密钥留在 shell 进程，帧只带模型流量。新 `agent` 卡（第十六种）合并 shell 工具与已挂载卡的声明、最多六轮，`card.*` 本地路由回声明它的卡、其余走 `ai.invoke`，handler 抛错变成 `role:"tool"` 失败消息而不是断掉的回合。测试：`selftest/agent.mjs` 3 条、`selftest/dispatch.mjs` 6 条、`shell/ai/selftest/cards.mjs` 7 条，浏览器冒烟两视图可见；顺带修了 `aiInvoke` 把裸 `{name, arguments}` 交给 `invokeToolCall` 的帧形状错误。
 
 
 ## 已关闭（历轮累计，均有代码证据）
@@ -86,7 +87,6 @@
 
 | 条目 | 当日证据（2026-10-18 第三轮，行号已重钉） |
 | --- | --- |
-| G49 agent 界面 | `cards/` 十五种卡仍未注册 agent；`shell/ai` 仍只是地基（provider/config/tools） |
 
 ### 已决策关闭
 
@@ -99,6 +99,6 @@
 
 第一批：
 
-1. **G49** agent 界面：`cards/` 十五种卡仍未注册 agent；`shell/ai` 仍只是地基（G44 已关闭，形态可以先定）。
+1. **内核 port 硬化**（用户队列的下一项，也是上游 0.4.2 的并行技术轨转正）：junction/reparse point 逃逸、`revision 0` 二义、原子写——三条都能在本机不装游戏的情况下造出真实失败，适合先写红证。
 
 其余：**G9 残余**（Addressables 窗口里登记了哪些 address）无本地数据源，等游戏侧暴露清单。上游 0.4.2 的 port 层硬化（junction 逃逸、revision 0 二义、原子写）仍建议作为并行技术轨。

@@ -310,8 +310,8 @@ The browser side, `shell/web/`, is module-per-concern:
 | `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it, and which cards ask | a file rewritten outside the app stays silently stale under an open card |
-| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the fifteen kinds | no card has anything to draw with |
-| `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs` and `story.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
+| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the sixteen kinds | no card has anything to draw with |
+| `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs`, `story.mjs` and `agent-tools.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
 | `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
 | `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the app has no tiling to open in -- `DEFAULT_VIEW` would name a view nobody draws |
 | `modview.mjs` | the same cards arranged as a mod workbench: a package column, a code area and a report panel (pure) | the app has no second tiling to switch to |
@@ -329,7 +329,7 @@ The browser side, `shell/web/`, is module-per-concern:
 
 `board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs`,
 `views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs`, `pixelpng.mjs`,
-`pixelview.mjs`, `audioinfo.mjs` and `openpath.mjs` are deliberately UI-free —
+`pixelview.mjs`, `audioinfo.mjs`, `openpath.mjs` and `cards/agent-tools.mjs` are deliberately UI-free —
 no `document`, no `window`, no timer — so the same objects
 are used by the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
 that feeds it lives in `main.mjs`, which is why the decision table can be pinned
@@ -348,6 +348,15 @@ another tab measures itself when it has real pixels rather than when it was
 built. And the mod card's sections fold from their titles, recording the folded
 set on the card document so a re-render keeps it; the card body scrolls only
 when the window is shorter than the unfolded sections.
+
+The agent card keeps the same shape one level up. A card family may declare
+`agent` tools beside its `render` (`defineCardTool` in
+`cards/agent-tools.mjs`, names `card.<kind>.<verb>`, read-only only), and the
+card merges those declarations with the shell's own tools for each round. The
+shell holds the provider, the key and the four `ai.*` verbs; the window holds
+the loop, routes a `card.*` call back to the card that declared it, and turns a
+throwing handler into a tool message. Neither side can reach past that seam:
+the model never sees a key, and a card cannot offer a write.
 
 The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
@@ -393,12 +402,13 @@ its tile first shows it, a mod card section folding and remembering the
 fold on the card document, and the watch accepting any card that names a file
 and can reload it -- through getters or methods -- while a card holding a folder
 or a query stays out of the poll, and the sources rows the settings card prints
-say which folder and which knowledge base answered
-(321 checks), no DOM |
+say which folder and which knowledge base answered,
+and the agent card's tool inventory, read-only construction and the bridge into the tool
+registry are covered as well (324 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte
-(66 checks) |
+(68 checks) |
 | — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D011` row opening the file it names (and a `D006` row explaining the file it cannot find), and a window checked to open on the mod tile (44 checks) |
 
 | — | `node shell/mods/selftest.mjs` | the mod layer without a browser: discovery order (setting, environment, the platform's Steam defaults, the named no-knowledge state) and `describeDiscovery`, scaffolding, package validation and every `D`/`M`/`E` code, the Yarn parser's diagnostics, the tag sources, the knowledge base's resolution order and the derivation into the user directory when no file ships, the knowledge generator's `--check` and `--diff`, a facts-only knowledge base keeping the sprite and reference fields the checker looks at (down to a `validatePackage` run on one), the language service's position and completion cores, creating one file from a
@@ -425,8 +435,8 @@ node / file hits and their text) while the no-root shapes stay what they were,
 the sources report behind the settings card and `sources` (the game folder and
 the places discovery tried, the knowledge state and its source), and the row
 wording kept as pure data, with the shipped corpus pinned at zero false
-positives (678 checks) |
-| — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
+positives and the `ai.*` frames the agent card asks (684 checks) |
+| — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, the settings store and its two verbs, and the card-tool bridge into the tool registry (93 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.
 
