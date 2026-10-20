@@ -16,6 +16,133 @@ stands in this tree.
 
 ## Unreleased
 
+### A lock has to name the text it was taken from
+
+The `lock` column in a localisation table is not decoration. Measured on the
+shipped MyMod package (11 tables, 18 609 rows) it is the first four bytes of
+`sha256(text)` as lower-case hex, and every language table repeats the source
+row's lock — 18 609 out of 18 609 in each of them. Editing a line of dialogue
+without recomputing the lock therefore leaves the game holding a translation of
+text that no longer exists, which neither the game nor the editor used to
+notice. `validatePackage` now reports `D023` when a row's lock hashes none of
+the texts the package records for its id, naming the recorded and the expected
+hash; an all-zero lock is read as "not locked" and skipped. The scaffold writes
+real locks instead of random hex, so a generated package passes its own
+validation, and the `Lantern` example's `file` column is package-relative. Both
+the shipped corpus and the example report zero `D023`, so the check costs an
+existing author nothing.
+
+### A voice line can be heard where it is checked
+
+The checks could say that a `VoiceOverDefinition` pointed at a `.wav` under the
+mod root, and the window could not play it: `file.read` refuses binary, so
+clicking a recording opened an editor full of replacement characters. Opening a
+`.wav`, `.ogg`, `.mp3`, `.flac`, `.aiff`, `.m4a` or `.opus` now raises an audio
+card that plays the bytes the kernel hands over — the same capped, contained
+`file.read_bytes` the pixel and rig cards use — with the file's size and, once
+the browser knows it, its length. One recording is one card, so a second click
+focuses the player already on the board instead of starting a second one.
+
+### The mod layer reads text the way the kernel does
+
+The kernel refuses a directory, a file over four mebibytes, and anything with a
+NUL byte when a text read is asked for; the mod layer, which reads its own files
+with `node:fs`, had no such rules, so the same file could open in a card and be
+read whole and mojibake by the checks. `shell/mods/readtext.js` holds the one
+rule now — cap, binary detection, BOM — and every text read in the mod layer
+goes through it. The two layers still have their own readers, so the numbers
+cannot be trusted to stay equal; the suite parses `SDE_WKSP_MAX_READ` out of
+`core/include/wksp.h` and fails if the cap drifts.
+
+### The window can explain itself without the manual
+
+Everything the app does was only written down in markdown files beside the
+repository, which is fine for whoever has the repository and useless for
+whoever installed the app. `help` now opens a card that says which commands
+exist, which of the game's definition types the app can write and how well,
+and where the game's own wiki is. The command list is built from the same
+table the command line prints, so the two cannot drift apart; the wiki link
+is rendered as a real link, which is the first place the app hands one out.
+The card is a card like any other — it can be moved, stacked and kept open
+while the mod card is open next to it — and asking for `help` again brings
+the same one forward instead of stacking copies.
+
+### A sprite saved back is still the same PNG
+
+The pixel card used to read only 8-bit RGBA or RGB, never interlaced, and wrote
+every file back as 8-bit RGBA. Opening a palette sprite or a 16-bit one and
+saving it therefore changed bytes the game never asked to change; opening an
+interlaced one simply failed. The reader in `shell/web/pixelpng.mjs` now takes
+every colour/depth pair the format defines — grey 1/2/4/8/16, RGB 8/16, palette
+1/2/4/8, grey+alpha 8/16, RGBA 8/16 — with Adam7 and a CRC check on every chunk,
+and still names what it refuses (`unsupported PNG:` / `damaged PNG:`). The
+writer re-emits the file's own format when the plan can be proved from the
+pixels: palette entries and their `tRNS` stay in order with new colours
+appended, 16-bit stays 16-bit, grey stays grey at its depth, interlacing stays.
+It falls back to literal RGBA8 only where the file's format cannot survive a
+round trip — a 16-bit key colour, partial alpha in a grey or RGB source, more
+than 256 palette colours — and says so in the module header. The new tests build
+their PNGs with a separate hand-rolled writer rather than feeding the editor its
+own output, so a reader and writer that agree with each other cannot pass alone.
+
+### The shipped schema notes lose their mojibake
+
+The 220 documentation strings in `knowledge.json` are what the docs card
+shows for a field, so a wrong one is worse than a missing one: it looks
+authoritative. Twenty-one of them were not prose — the wiki's own editing
+markers (`#region …`) had been decoded as if they were Chinese text, leaving
+strings that start with `闊抽` and similar. They are gone; the 199 that are
+real prose are kept with the source wiki URLs beside them. The mods suite now
+reads the shipped `knowledge.json` and fails if that residue appears again, so
+a future regeneration cannot quietly put it back.
+
+### The checks name the traps the wiki keeps warning about
+
+The validator said nothing about four things the game's own documentation warns
+authors away from. It does now, each with the field or line it came from:
+`D019` marks an `EventReference` written by hand as a string or a bare object —
+that value is serialised by Unity/FMOD and cannot be invented, so the warning
+says it has to come from the game or a copy; `D020` marks `GetTopic()` and
+`WasVisited()` called inside Yarn, once per calling file, because the first
+reads runtime state and the second is only a placeholder; `D021` checks the
+scaffolded canvas against the documented 256×144 and `initialTransform: -7.2`;
+`D022` lints Unity GUID shapes — an all-zero GUID is a warning, a dashed .NET
+guid or a string that is neither 32 hex digits nor a dashed UUID is an info.
+`selftest/traps.mjs` builds a package per trap and pins the code, the path and
+the severity, including the complete `{Guid, Path}` object that must not be
+reported.
+
+### A scaffolded package is validated by the same run that made it
+
+The templates and the validator were only ever tested apart, so a template
+change that produced a package the validator rejects could pass both suites.
+`selftest/scaffold-cross.mjs` now scaffolds each of the four templates into a
+temporary mods folder and runs `validatePackage` on what it wrote, asserting the
+package is clean and that the files it names exist.
+
+### The knowledge generator cannot quietly replace a richer file
+
+`--out` pointed at a file that was already a knowledge base replaced it with the
+facts-only generation, dropping documentation, parameter names and return types
+that the committed file had. `outOverwriteRefusal()` refuses that overwrite with
+exit code 2 unless `--force` is given, and says how much would be lost. The
+other half of the same gap: when `--schema-dir` or `--defines-dir` was set
+explicitly and did not resolve, the generator fell back to discovery without
+saying why the message looked like a missing game; the error now carries
+`explicit: "schema-dir"`/`"defines-dir"` and the text says the fallback was
+switched off by the explicit setting.
+
+### The kernel can be told about a second place to read
+
+The game's own Mods folder usually lives outside the workspace, and the kernel
+only resolved paths inside it, so a package installed in the game could be
+validated but not opened. `--read-root DIR` registers up to eight additional
+directories that `file.read`, `file.read_bytes`, `file.stat` and blob sessions
+may read from: normalised, case-folded for duplicate detection, required to be
+directories, and still subject to the workspace refusal for anything else. The
+`rpc` and `serve` commands pass the flag through; `tools/kernel_probe.py` proves
+that a file under a read root opens while a workspace escape still fails.
+
 ### The problem list opens the file it names
 
 The problems card drew its rows from the text someone had typed into the card,

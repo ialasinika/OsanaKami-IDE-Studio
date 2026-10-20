@@ -10,7 +10,13 @@ Everything 《幼神》-specific in this fork lives in two places:
 The kernel is not involved in either. It validates a card's *shape* — id, kind,
 geometry — and deliberately not its vocabulary, so a new card kind needs no C
 change; and `file.read`/`file.write` treat `.yarn`, `.json` and `.csv` as text,
-so a mod package is just files on the board.
+so a mod package is just files on the board. The mod layer reads its own files
+with `node:fs`, so it used to have no rules at all; `shell/mods/readtext.js` now
+holds the kernel's — a directory, a file over four mebibytes, or one NUL byte is
+not text — and the suite reads `SDE_WKSP_MAX_READ` out of the kernel's header so
+the two caps cannot drift apart (G14). A recording is read as bytes on purpose:
+clicking a diagnostic that names a `.wav` raises the audio card and plays it
+(G2), and the file's place on disk is never turned into a URL.
 
 ## Why it is not in the kernel
 
@@ -30,6 +36,12 @@ file, not a keyword list compiled into the binary.
 
 All three are read-mostly. They call the shell's `mod.*` verbs and hand file
 paths to the existing `editor` card; none of them writes source text.
+
+The window has one more reading surface that belongs to no package: the `help`
+card renders the game's wiki link, the type-support matrix (the same one
+`mod.stats` hands to this layer, which M013/M014 read) and the command list, so
+those answers exist in the window instead of only in `support.json` and the
+test files (G15). `help` on the command line opens it.
 
 ### `mod` — the package
 
@@ -51,7 +63,9 @@ Clicking a row opens the file the diagnostic points at and stands on its
 `line` or JSON Pointer: the row's relative `path` is resolved against the
 package root the validation answered with (`root`), not against whatever text
 was typed into the card, so the file opens even when that text names the
-folder differently.
+folder differently. A recording is the exception that proves the rule: the row
+opens the audio card and plays it, because a `.wav`'s bytes are the finding
+(G2).
 
 ### `docs` — the knowledge base
 
@@ -227,6 +241,15 @@ The base is optional, and the layer now procures it in a fixed order:
 5. nothing found: derive the base from the discovered game install by running the
    same `buildKnowledge` code `tools/gen_knowledge.mjs` uses, write it atomically
    into the user dir and report it as `source: "derived"`.
+
+The shipped base's `documentation` strings are the wiki's prose quoted as-is, with
+the URL they came from beside them; they are what the docs card shows for a field,
+so a wrong one is worse than a missing one. The wiki keeps its own editing markers
+in the text, and a decode that treated them as Chinese left 21 strings starting
+with `闊抽`-style fragments — those are gone from the shipped file. A check in
+`shell/mods/selftest.mjs` reads the shipped `knowledge.json` on every run and fails
+if a region marker or a private-use character appears in a `documentation` string,
+so regenerating the base cannot quietly bring one back.
 
 Why this order: while the repository *is* the installed shell the module directory
 wins, so tests never write the user's profile; while a release can ship without the
@@ -479,6 +502,33 @@ against, so `D018` (warning) reports only the shape of a mistake — an `Assets/
 or `Packages/` prefix, a drive letter, a backslash, or a
 `.prefab`/`.asset`/`.unity` suffix. The empty string means "no asset" and any
 string that does not look like a path stays silent; `SODefines` is quiet.
+
+`G10` — the traps the wiki keeps warning about. Four things the game cannot
+diagnose for an author, because it accepts them and then behaves oddly. `D019`
+(warning) fires on a hand-written `EventReference` — the value is a Unity/FMOD
+serialization (`{ Guid: {Data1..4}, Path }`), so a JSON object with a single key,
+or any object shape that could not have come from the editor, cannot name an FMOD
+event; the message says to copy a real one or leave the field alone. `D020`
+(warning, once per Yarn file) fires on `GetTopic()` / `WasVisited()` calls in
+dialogue: they read runtime state and have effects, so caching the result in a
+variable keeps the old value after a jump. `D021` (warning) covers the two
+values the wiki documents that the export writes differently — a canvas/geometry
+field whose value is not 256×144, and `Character.initialTransform` not being
+`-7.2` (the corpus stores the float32 `-7.199999809265137`). `D022`
+(warning for an all-zero GUID, info otherwise) catches GUID shapes that cannot be
+Unity asset GUIDs: the dashed .NET spelling or anything that is neither 32 hex
+digits nor a UUID. Each branch is pinned by `shell/mods/selftest/traps.mjs`.
+
+`G38` — the lock names a line. A table row's `lock` is not bookkeeping: measured
+on the shipped MyMod corpus (11 tables × 18 609 rows) it is the first four bytes
+of `sha256(text column)`, lower-case hex, and every language table repeats the
+source row's lock. `D023` (warning) fires when a row's lock hashes none of the
+texts the package records for that id, and names both the recorded and the
+expected hash; `00000000` is read as "not locked" and skipped. Editing a line
+without recomputing its lock — or writing random hex, which the scaffold used to
+do — leaves the game holding a translation of text that no longer exists. The
+scaffold now writes real locks, the `Lantern` example's `file` column is
+package-relative, and both report zero `D023`.
 
 ### Type support (`shell/mods/support.json`)
 
@@ -832,7 +882,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 590 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 652 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

@@ -229,6 +229,20 @@ says the file is too large. That keeps a 2 KB define's round trip at one call
 and gives a 5.75 MB table or `.yarn` the session without a second code path,
 and it means the boundary is enforced in exactly one place: the kernel.
 
+The same argument reaches the mod layer, which reads files itself with
+`node:fs` rather than asking the kernel. It cannot share code with the kernel —
+it runs in the shell's process — so it shares the rule: `shell/mods/readtext.js`
+refuses a directory, a file over the same four mebibytes and anything that holds
+a NUL byte, and every text read in `shell/mods/` goes through it. The suite
+parses `SDE_WKSP_MAX_READ` out of `core/include/wksp.h` and fails if the two
+numbers stop agreeing (G14).
+
+A recording is the case where the two read verbs disagree on purpose: the audio
+card (G2) asks for `file.read_bytes` because the bytes are the point, and hands
+the player a data URL rather than a URL — the shell's HTTP front end serves the
+app, not project files, so a project file reaches a card only through the
+kernel.
+
 ---
 
 ## Why the kernel is language-agnostic
@@ -296,7 +310,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it, and which cards ask | a file rewritten outside the app stays silently stale under an open card |
-| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the thirteen kinds | no card has anything to draw with |
+| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the sixteen kinds | no card has anything to draw with |
 | `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs` and `story.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
 | `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
 | `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the app has no tiling to open in -- `DEFAULT_VIEW` would name a view nobody draws |
@@ -306,6 +320,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | `ysls.mjs` | the game's own command schema read as two ordered lists, and where a `<<name` is being typed in a line (pure) | completion would have to be a hand-kept list in the shell, which is wrong the day the mod's commands change |
 | `pixelpng.mjs` | a PNG reader and writer that carries its own inflate, CRC-32 and Adler-32, and reads the two shapes this game's art is (pure) | a `.png` could only travel as base64 and nothing could show or change a pixel |
 | `pixelview.mjs` | the pixel card's framing arithmetic: where the image sits on a measured surface, what a wheel does under the cursor, and the zoom range (pure) | the card would have to keep zoom and pan consistent inside its own paint, and no test could pin the arithmetic without a DOM |
+| `audioinfo.mjs` | what the window knows about a recording before playing it: which extensions are audio, the media type, a size and a clock read as a person reads them, and the data URL for bytes it already holds (pure) | the audio card would decide media types and durations in the DOM, where no test reaches, and two cards would eventually disagree about `.oga` |
 | `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | the entry: imports `selftest/` in order and prints the tally (`node shell/web/selftest.mjs`, no DOM, no network) | nothing; it is only a test |
@@ -376,7 +391,7 @@ its tile first shows it, a mod card section folding and remembering the
 fold on the card document, and the watch accepting any card that names a file
 and can reload it -- through getters or methods -- while a card holding a folder
 or a query stays out of the poll
-(305 checks), no DOM |
+(319 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte
@@ -399,8 +414,10 @@ Addressables addresses that look like asset paths rather than names, the package
 root a validation answers with so another card can open what its diagnostics
 point at, the demo
 packages' listing and
-byte-identical copy (openable only where it was copied), and `config.get`/`config.set`
-keeping a real API key off the wire (590 checks) |
+byte-identical copy (openable only where it was copied), `config.get`/`config.set`
+keeping a real API key off the wire, the wiki-trap lint (`D019`–`D022`) and the
+localisation lock lint (`D023`), with the shipped corpus pinned at zero false
+positives (652 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

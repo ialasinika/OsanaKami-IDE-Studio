@@ -176,16 +176,18 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers thirteen kinds from `shell/web/cards/` — one module per card
+The shell registers sixteen kinds from `shell/web/cards/` — one module per card
 family — through the barrel `shell/web/cards.mjs`, which re-exports the public
-names and makes the thirteen calls: `editor`, `runner`, `note`, `files`,
-`project` and `sheet`, then `story`, `pixel`, `rig`, `mod`, `problems`, `docs`
-and `settings`, `sheet` being a structured-data grid
+names and makes the sixteen calls: `editor`, `runner`, `note`, `files`,
+`project` and `sheet`, then `story`, `pixel`, `rig`, `audio`, `mod`, `problems`,
+`docs`, `settings` and `help`, `sheet` being a structured-data grid
 (typed cells, rows, columns, TSV export) that exists to prove nothing downstream
 assumes text, `project` being the workspace as one project: what the project
 contains, merged with what the document has open, `rig` being a skeleton and its
-atlas read from the game's own bytes, and `settings` being the one card that
-talks about the machine instead of the project. See
+atlas read from the game's own bytes, `audio` being a recording played where the
+checks name it, `settings` being the one card that talks
+about the machine instead of the project, and `help` being where the wiki link,
+the type-support matrix and the command list are rendered. See
 [`docs/SURFACES.md`](docs/SURFACES.md) and [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ### 4. The build is fully offline
@@ -296,8 +298,8 @@ python tools/version.py check                        # every copy of the version
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 305/305 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 590/590 checks passed
+node shell/web/selftest.mjs                    # ok 319/319 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 652/652 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -507,11 +509,11 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 590 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 652 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
-                        (the barrel), cards/ (thirteen kinds, one family per
+                        (the barrel), cards/ (sixteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
                         classic.mjs, modview.mjs, main.mjs, story.mjs,
                         storycsv.mjs, ysls.mjs, pixelpng.mjs, pixelview.mjs,

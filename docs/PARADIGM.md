@@ -112,7 +112,7 @@ with:
 | `z` | numeric stacking order, defaults to 0 | the board model's load defaults |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships thirteen kinds:
+The shell ships sixteen kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -125,14 +125,16 @@ The shell ships thirteen kinds:
 | `story` | a Yarn story beside its translation table | `file`, `table`, `schema` |
 | `pixel` | a PNG canvas: the pixels are the file, not the board | `file`, `width`, `height`, `palette` |
 | `rig` | a Spine rig: bones, skins, an animation timeline; posable, and the pose saves back to the rig file | `file`, `animation`, `skin`, `bones` |
+| `audio` | one recording from the package, played from the bytes the kernel returns | `file` |
 | `mod` | one Mod package: its manifest and diagnostics | `dir` |
 | `problems` | the diagnostics of one Mod, as a list | `root` |
 | `docs` | the game's knowledge base, searched | `query` |
 | `settings` | the machine rather than the project: AI provider, the view a window opens in, poll interval | none |
+| `help` | the sources: the game's wiki link, the type-support matrix the checks use, and the command list | none |
 
 The board model does **not** interpret `kind`, and the kernel never sees it.
 `core/include/view.h` stores any document verbatim; `shell/web/board.mjs` states
-the schema, and `docs/VIEWS.md` states the seam: those thirteen kinds are
+the schema, and `docs/VIEWS.md` states the seam: those sixteen kinds are
 conventions the shell implements, and a fork that invents `timeline` or
 `waveform` changes the shell and nothing else. A card with an unknown kind still
 loads, still saves, and still renders — `renderCard` in `shell/web/cards.mjs`
