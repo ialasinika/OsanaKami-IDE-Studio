@@ -220,7 +220,7 @@ int sde_view_store(sde_view *v, const sde_app *app, const char *rel,
         set_err(err, errcap, "out of memory");
         return -1;
     }
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+    if (sde_wksp_resolve_write(app, rel, &abs, err, errcap) != 0) {
         free(path_copy);
         return -1;
     }

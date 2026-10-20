@@ -265,7 +265,11 @@ int sde_blob_open(const sde_app *app, sde_blobset *bs, const char *rel,
 
     blob_reap(bs);
 
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+    if (is_write) {
+        if (sde_wksp_resolve_write(app, rel, &abs, err, errcap) != 0) {
+            return SDE_BLOB_FAIL;
+        }
+    } else if (sde_wksp_resolve_read(app, rel, &abs, NULL, err, errcap) != 0) {
         return SDE_BLOB_FAIL;
     }
     if (sde_port_is_dir(abs)) {

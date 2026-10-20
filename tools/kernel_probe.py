@@ -19,9 +19,15 @@ write must leave the file as it was.
 import base64
 import json
 import os
+import queue
 import re
 import shutil
+import subprocess
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kernel_drive import EXE, ROOT, Kernel, show  # noqa: E402
@@ -423,6 +429,106 @@ def run(k):
           "result" in k.call("view.save", {"path": DOC, "document": before["document"]}), "")
 
 
+def read_root_probe(workspace):
+    """Prove `serve --read-root` reaches the kernel.
+
+    The kernel tests already pin the containment itself; what is not visible
+    from the C side is whether the shell passes the flag on.  So this spawns the
+    real `serve` command, waits for the address it prints, and then talks to it
+    over HTTP exactly as the browser does -- one read that must succeed, one
+    write that must be refused.  The extra root is a sibling of the scratch
+    workspace, created here and removed on the way out.
+
+    `node` is optional: on a machine without it this is a skip, not a failure,
+    because the kernel half of the guarantee is still covered above.
+    """
+    node = os.environ.get("NODE") or shutil.which("node")
+    if not node:
+        print("skip serve --read-root: node is not on PATH")
+        return
+
+    extra = os.path.join(ROOT, "build", f"probe-readroot-{os.getpid()}")
+    shutil.rmtree(extra, ignore_errors=True)
+    os.makedirs(extra)
+    with open(os.path.join(extra, "mod.yarn"), "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("from the game\n")
+    target = os.path.join(extra, "mod.yarn")
+
+    env = dict(os.environ)
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    proc = subprocess.Popen(
+        [node, os.path.join(ROOT, "shell", "main.mjs"), "serve",
+         "--workspace", workspace,
+         "--read-root", extra,
+         "--mods-root", workspace,
+         "--user-dir", os.path.join(workspace, "user"),
+         "--kernel", EXE, "--no-open", "--port", "0"],
+        cwd=ROOT, env=env, text=True, encoding="utf-8", errors="replace",
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+
+    lines = queue.Queue()
+
+    def pump():
+        for line in proc.stdout:
+            lines.put(line.rstrip("\n"))
+
+    threading.Thread(target=pump, daemon=True).start()
+
+    port = None
+    reported = False
+    deadline = time.time() + 30.0
+    # Keep reading until both lines arrive: the address is printed before the
+    # read roots, so stopping at the port would miss the line that names them.
+    while time.time() < deadline and (port is None or not reported):
+        try:
+            line = lines.get(timeout=0.5)
+        except queue.Empty:
+            if proc.poll() is not None:
+                break
+            continue
+        match = re.search(r"http://127\.0\.0\.1:(\d+)/", line)
+        if match:
+            port = int(match.group(1))
+        if line.strip() == f"read    {extra}":
+            reported = True
+
+    check("serve --read-root says which root it registered", reported)
+    check("serve --read-root starts a server", port is not None)
+
+    def rpc(method, params):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                           "params": params}).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/rpc", data=body,
+            headers={"content-type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10.0) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    try:
+        if port is not None:
+            read = rpc("file.read", {"path": target})
+            check("file.read under --read-root succeeds through serve",
+                  read.get("result", {}).get("text") == "from the game\n",
+                  json.dumps(read)[:160])
+            write = rpc("file.write", {"path": target, "text": "overwritten"})
+            check("file.write under --read-root is refused as read-only root",
+                  "read-only root" in str(write.get("error", {}).get("message", "")),
+                  json.dumps(write)[:160])
+    except (urllib.error.URLError, ConnectionError) as err:
+        check("serve answers over HTTP", False, repr(err))
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10.0)
+        proc.stdout.close()
+        proc.stderr.close()
+        shutil.rmtree(extra, ignore_errors=True)
+
+
 def main():
     root = prepare_workspace()
     if root is None:
@@ -431,6 +537,10 @@ def main():
     try:
         k = Kernel(root)
         run(k)
+        k.close()
+        k = None
+        print("\n== the shell passes --read-root to the kernel ==")
+        read_root_probe(root)
     finally:
         if k is not None:
             k.close()

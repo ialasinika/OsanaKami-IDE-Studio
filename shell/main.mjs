@@ -107,11 +107,13 @@ export class Kernel {
   constructor({
     exe = DEFAULT_KERNEL,
     workspace = process.cwd(),
+    readRoots = [],
     verbose = false,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}) {
     this.exe = exe;
     this.workspace = workspace;
+    this.readRoots = [...readRoots];
     this.verbose = verbose;
     this.timeoutMs = timeoutMs;
   }
@@ -149,7 +151,14 @@ export class Kernel {
       );
     }
 
-    const child = spawn(this.exe, ["rpc", "--root", this.workspace], {
+    /*
+     * Read-only roots are the kernel's own containment decision, so they go on
+     * the kernel's command line rather than being enforced here: the kernel is
+     * the only place that knows which verbs read and which write.
+     */
+    const args = ["rpc", "--root", this.workspace];
+    for (const dir of this.readRoots) args.push("--read-root", dir);
+    const child = spawn(this.exe, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -1199,6 +1208,7 @@ async function runServe(options) {
   process.stdout.write(`  board   ${url}\n`);
   process.stdout.write(`  kernel  ${kernel.exe}\n`);
   process.stdout.write(`  root    ${kernel.workspace}\n`);
+  for (const dir of kernel.readRoots) process.stdout.write(`  read    ${dir}\n`);
   process.stdout.write(`  langs   ${languages.available ? LANGS_DIR : "(none -- plain text)"}\n`);
 
   if (!options.noOpen) {
@@ -1594,14 +1604,14 @@ const USAGE = `OsanaKami IDE Studio shell ${SHELL_VERSION}
 
 usage: node shell/main.mjs <command> [options]
 
-  rpc     [--workspace DIR] [--mods-root DIR] [--kernel PATH]
+  rpc     [--workspace DIR] [--read-root DIR]... [--mods-root DIR] [--kernel PATH]
           [--timeout-ms N] [--user-dir DIR] [--verbose]
           Speak newline-delimited JSON-RPC on stdin/stdout.  Forwards to the
           kernel; answers lang.list and lang.tokenize from langs/, mod.* from
           shell/mods/; adds the \`langs\` and \`mods\` members to workspace.info.
 
-  serve   [--workspace DIR] [--mods-root DIR] [--kernel PATH] [--port N]
-          [--user-dir DIR] [--no-open] [--timeout-ms N] [--verbose]
+  serve   [--workspace DIR] [--read-root DIR]... [--mods-root DIR] [--kernel PATH]
+          [--port N] [--user-dir DIR] [--no-open] [--timeout-ms N] [--verbose]
           Serve shell/web/ over HTTP with POST /rpc and GET /events, then
           launch the system browser in --app= mode.  --port 0 (default) picks
           a free port; --no-open skips the browser.
@@ -1654,6 +1664,13 @@ usage: node shell/main.mjs <command> [options]
 --workspace DIR is the directory the kernel may read and write; it is also
 what the board's file tree, editor and runner cards see.
 
+--read-root DIR registers a second directory the kernel may read from but
+never write to, which is what makes a game installed outside the workspace
+openable from a problem row.  Repeat the flag for more than one directory.
+Nothing is added automatically: a game's Mods folder becomes readable only when
+the user says so.  The directory does not have to exist yet, so a later install
+is picked up; writes to it are refused as "read-only root".
+
 --mods-root DIR bounds every \`mod.*\` call: a path that resolves outside it is
 refused.  Defaults to --workspace.
 
@@ -1678,6 +1695,7 @@ function parseArgs(argv) {
     target: null,
     out: null,
     workspace: process.cwd(),
+    readRoots: [],
     modsRoot: null,
     userDir: null,
     kernel: null,
@@ -1695,8 +1713,8 @@ function parseArgs(argv) {
   };
 
   const takesValue = new Set([
-    "--workspace", "--mods-root", "--user-dir", "--kernel", "--port", "--timeout-ms", "--out",
-    "--game-dir", "--path", "--mod", "--duration-ms",
+    "--workspace", "--read-root", "--mods-root", "--user-dir", "--kernel", "--port",
+    "--timeout-ms", "--out", "--game-dir", "--path", "--mod", "--duration-ms",
   ]);
   const rest = [];
 
@@ -1748,6 +1766,7 @@ function parseArgs(argv) {
   }
   options.exe = path.resolve(options.kernel ?? DEFAULT_KERNEL);
   options.workspace = path.resolve(options.workspace);
+  options.readRoots = options.readRoots.map((dir) => path.resolve(dir));
   if (options.modsRoot !== null) options.modsRoot = path.resolve(options.modsRoot);
   if (options.userDir !== null) options.userDir = path.resolve(options.userDir);
   if (options.gameDir !== null) options.gameDir = path.resolve(options.gameDir);
@@ -1760,6 +1779,7 @@ function applyOption(options, name, value) {
   // worked.
   if (value === "") throw new Error(`${name} needs a value`);
   if (name === "--workspace") options.workspace = value;
+  else if (name === "--read-root") options.readRoots.push(value);
   else if (name === "--mods-root") options.modsRoot = value;
   else if (name === "--user-dir") options.userDir = value;
   else if (name === "--kernel") options.kernel = value;

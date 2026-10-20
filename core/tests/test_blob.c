@@ -1058,6 +1058,196 @@ static int mentions(const char *hay, const char *needle)
     return strstr(hay, needle) != NULL;
 }
 
+/*
+ * The read-only roots: the kernel may read a game's Mods folder without ever
+ * writing there.  Four things must hold, and each is checked through the same
+ * door a client uses:
+ *
+ *   * a file under an extra root reads, text and bytes alike;
+ *   * a write to it is refused, and the message says which rule refused it;
+ *   * a path under none of the roots still says "path escapes the workspace";
+ *   * a duplicate or a non-directory is refused when the root is registered.
+ *
+ * The directory is a sibling of the scratch workspace, so it is genuinely
+ * outside `app->root` rather than a path that happens to normalise inside it.
+ */
+#define READ_ROOT "build/test-blob-readonly"
+
+static void test_read_roots(sde_app *app)
+{
+    char          err[256];
+    char          params[320];
+    char         *abs = NULL;
+    int           extra = -1;
+    sde_json     *res;
+    sde_json     *out = NULL;
+    unsigned long cur = 0;
+    int           i;
+
+    printf("\n== read-only roots ==\n");
+
+    rm_rf(READ_ROOT);
+    err[0] = '\0';
+    if (sde_port_mkdirs(READ_ROOT, err, sizeof(err)) != 0) {
+        ok(0, "the read-only scratch directory is created");
+        return;
+    }
+    ok(sde_port_write_file(READ_ROOT "/mod.yarn", "from the game\n", 14,
+                           err, sizeof(err)) == 0,
+       "a file exists outside the workspace");
+
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, READ_ROOT, err, sizeof(err)) == 0,
+       "an extra read-only root is accepted");
+
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, READ_ROOT, err, sizeof(err)) != 0
+       && mentions(err, "duplicate read root"),
+       "the same root twice is refused");
+
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, SCRATCH, err, sizeof(err)) != 0
+       && mentions(err, "duplicate read root"),
+       "the workspace root cannot be re-added as a read root");
+
+    ok(sde_port_write_file(SCRATCH "/plain.txt", "x", 1, err, sizeof(err)) == 0,
+       "a plain file exists inside the workspace");
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, SCRATCH "/plain.txt", err, sizeof(err)) != 0
+       && mentions(err, "not a directory"),
+       "a file is refused as a read root");
+
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, "build/test-blob-not-installed", err,
+                             sizeof(err)) == 0,
+       "a root that does not exist yet is accepted");
+
+    res = sde_wksp_read(app, "../test-blob-not-installed/mod.yarn", err,
+                        sizeof(err));
+    ok(res == NULL && mentions(err, "no such file"),
+       "a read under an uninstalled root says no such file");
+    sde_json_free(res);
+
+    res = sde_wksp_read(app, "../test-blob-readonly/mod.yarn", err, sizeof(err));
+    ok(res != NULL
+       && strcmp(sde_json_gets(res, "text", ""), "from the game\n") == 0,
+       "a text file under an extra root reads");
+    sde_json_free(res);
+
+    abs = sde_port_path_abs(READ_ROOT "/mod.yarn");
+    res = sde_wksp_read(app, abs, err, sizeof(err));
+    ok(res != NULL, "the same file reads through its absolute path");
+    sde_json_free(res);
+    free(abs);
+
+    abs = NULL;
+    extra = -1;
+    ok(sde_wksp_resolve_read(app, "../test-blob-readonly/mod.yarn", &abs, &extra,
+                             err, sizeof(err)) == 0
+       && extra == 1 && abs != NULL,
+       "the read resolver reports the extra root as provenance");
+    free(abs);
+
+    abs = NULL;
+    extra = -1;
+    ok(sde_wksp_resolve_read(app, "plain.txt", &abs, &extra, err,
+                             sizeof(err)) == 0
+       && extra == 0,
+       "the read resolver reports the workspace for a workspace path");
+    free(abs);
+
+    /*
+     * A write must fail at the write door, with a message that names the rule
+     * rather than only the containment: the user can add a file to the
+     * workspace, but nothing makes a read root writable.
+     */
+    err[0] = '\0';
+    out = NULL;
+    cur = 0;
+    ok(sde_wksp_write(app, "../test-blob-readonly/mod.yarn", "overwritten\n", 12,
+                      0, 0, &out, &cur, err, sizeof(err)) == SDE_WKSP_FAIL
+       && mentions(err, "read-only root"),
+       "a write to an extra root says read-only root");
+    ok(out == NULL, "and returns no result");
+
+    {
+        sde_buf kept;
+
+        sde_buf_init(&kept);
+        ok(sde_port_read_file(READ_ROOT "/mod.yarn", &kept, err, sizeof(err)) == 0
+           && kept.len == 14
+           && memcmp(kept.data, "from the game\n", 14) == 0,
+           "the refused write left the file as it was");
+        sde_buf_free(&kept);
+    }
+
+    snprintf(params, sizeof(params),
+             "{\"path\":\"../test-blob-readonly/mod.yarn\",\"text\":\"nope\"}");
+    res = call(app, "file.write", params);
+    ok(mentions(err_message(res), "read-only root"),
+       "file.write refuses an extra root with the same words");
+    sde_json_free(res);
+
+    snprintf(params, sizeof(params),
+             "{\"path\":\"../test-blob-readonly/mod.yarn\",\"mode\":\"write\"}");
+    res = call(app, "file.blobOpen", params);
+    ok(mentions(err_message(res), "read-only root"),
+       "a write-mode blob session is refused the same way");
+    sde_json_free(res);
+    ok(!sde_port_file_exists(SCRATCH "/../test-blob-readonly/mod.yarn.tmp"),
+       "and left no temporary file behind");
+
+    /* Neither root: the message every caller already depended on. */
+    err[0] = '\0';
+    abs = NULL;
+    extra = -1;
+    ok(sde_wksp_resolve_read(app, "../test-blob-unrelated/x.txt", &abs, &extra,
+                             err, sizeof(err)) != 0
+       && mentions(err, "path escapes the workspace"),
+       "a path under neither root still says path escapes the workspace");
+    free(abs);
+
+    res = call(app, "file.read", "{\"path\":\"../test-blob-unrelated/x.txt\"}");
+    ok(mentions(err_message(res), "path escapes the workspace"),
+       "file.read says it too");
+    sde_json_free(res);
+
+    /* The table is fixed at SDE_APP_MAX_READ_ROOTS; a ninth root is refused. */
+    for (i = 0; i < SDE_APP_MAX_READ_ROOTS - 2; i++) {
+        char name[64];
+
+        snprintf(name, sizeof(name), "build/test-blob-extra-%d", i);
+        err[0] = '\0';
+        ok(sde_app_add_read_root(app, name, err, sizeof(err)) == 0,
+           "a root within the table is accepted");
+    }
+    err[0] = '\0';
+    ok(sde_app_add_read_root(app, "build/test-blob-overflow", err,
+                             sizeof(err)) != 0
+       && mentions(err, "too many read roots"),
+       "a root past the fixed table is refused");
+
+    /*
+     * If the directory disappears the registration stays, and reads under it
+     * fail like any other missing file: no caching, no stale handle.
+     */
+    rm_rf(READ_ROOT);
+    err[0] = '\0';
+    res = sde_wksp_read(app, "../test-blob-readonly/mod.yarn", err, sizeof(err));
+    ok(res == NULL && mentions(err, "no such file"),
+       "a read root that disappears yields no such file");
+    sde_json_free(res);
+
+    err[0] = '\0';
+    abs = NULL;
+    extra = -1;
+    ok(sde_wksp_resolve_read(app, "../test-blob-readonly/mod.yarn", &abs, &extra,
+                             err, sizeof(err)) == 0
+       && extra == 1,
+       "the registration itself remains, matching no file on disk");
+    free(abs);
+}
+
 static void test_rpc_surface(void)
 {
     char          err[256];
@@ -1303,12 +1493,14 @@ int main(void)
     test_abort(&app);
     test_limits(&app);
     test_large_file(&app);
+    test_read_roots(&app);
 
     sde_app_free(&app);
     test_shutdown_cleanup();
     test_rpc_surface();
 
     /* No litter, on the failing path too. */
+    rm_rf(READ_ROOT);
     rm_rf(SCRATCH);
     ok(!sde_port_is_dir(SCRATCH) && !sde_port_file_exists(SCRATCH),
        "the scratch directory is removed on the way out");

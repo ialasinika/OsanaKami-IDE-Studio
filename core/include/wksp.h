@@ -1,9 +1,12 @@
 /*
- * wksp.h - the workspace: files under `root`, and nothing outside it.
+ * wksp.h - the workspace: files under `root`, plus the read-only roots.
  *
- * Every path the kernel touches goes through sde_wksp_resolve(), which is the
- * single place that decides what "inside the workspace" means.  A fork that
- * wants a sandbox with different rules changes one function.
+ * Every path the kernel touches goes through one of the three resolve doors
+ * declared below.  Writes only ever land under the workspace root; reads may
+ * also land under the extra roots the application registered explicitly
+ * (`--read-root`), which is how a game's Mods folder can be opened without
+ * being made writable.  A fork that wants a sandbox with different rules
+ * changes those functions, not every caller.
  *
  * The kernel reports facts about files (text, size, end-of-line style, a
  * content revision).  It deliberately does not guess a file's language: that
@@ -52,11 +55,35 @@ unsigned long sde_rev_final(unsigned long h);
 unsigned long sde_rev_of(const char *data, size_t len);
 
 /*
- * Resolves a workspace-relative path.  Rejects absolute paths, `..` escapes
- * and anything that normalises outside `root`.  `*out_abs` is malloc'd.
+ * Resolves a path for a write.  Absolute paths are accepted when they land
+ * inside `root`; a path that normalises outside it is refused.  For a path
+ * under a registered read-only root the message names that fact
+ * ("read-only root"), because "escapes the workspace" would be true but would
+ * not tell the user the one thing they can act on.  `*out_abs` is malloc'd.
  */
 int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
                      char *err, size_t errcap);
+
+/*
+ * Resolves a path for a read: the workspace root or any root registered with
+ * `sde_app_add_read_root()`.  `*out_extra` (when not NULL) is 0 for a path
+ * inside the workspace and 1 for a path inside an extra root, which is the
+ * provenance a caller needs to know whether a save could ever be allowed
+ * there.  `*out_abs` is malloc'd.
+ *
+ * A path inside none of the roots fails with the workspace message every
+ * caller and test already knows: "path escapes the workspace: <rel>".
+ */
+int sde_wksp_resolve_read(const sde_app *app, const char *rel, char **out_abs,
+                          int *out_extra, char *err, size_t errcap);
+
+/*
+ * The write-side door: exactly `sde_wksp_resolve()`, except that a path under
+ * a read-only root fails with "read-only root" instead of the generic
+ * containment message.  Write verbs use this; read verbs use the read door.
+ */
+int sde_wksp_resolve_write(const sde_app *app, const char *rel, char **out_abs,
+                           char *err, size_t errcap);
 
 /* {"root","name","file_count"} -- the shell adds anything it alone knows. */
 sde_json *sde_wksp_info(const sde_app *app, char *err, size_t errcap);

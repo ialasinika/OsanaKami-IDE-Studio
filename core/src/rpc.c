@@ -203,7 +203,7 @@ static void fail_path(sde_call *c, const char *rel, const char *err)
 {
     char *abs = NULL;
 
-    if (sde_wksp_resolve(c->app, rel, &abs, NULL, 0) == 0) {
+    if (sde_wksp_resolve_read(c->app, rel, &abs, NULL, NULL, 0) == 0) {
         int exists = sde_port_file_exists(abs);
         free(abs);
         if (!exists) {

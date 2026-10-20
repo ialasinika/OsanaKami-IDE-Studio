@@ -129,6 +129,34 @@ static const char *opt_root(int argc, char **argv)
     return root == NULL ? "." : root;
 }
 
+/*
+ * `--read-root` may repeat: the shell passes one per directory.  Adding them
+ * after `sde_app_init()` keeps the workspace root the first root and lets the
+ * same duplicate/non-directory checks apply to every extra one.
+ */
+static int add_read_roots(sde_app *app, int argc, char **argv,
+                          char *err, size_t errcap)
+{
+    int i;
+
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--read-root") != 0) {
+            continue;
+        }
+        if (i + 1 >= argc) {
+            if (err != NULL && errcap > 0) {
+                snprintf(err, errcap, "--read-root needs a directory");
+            }
+            return -1;
+        }
+        if (sde_app_add_read_root(app, argv[i + 1], err, errcap) != 0) {
+            return -1;
+        }
+        i++;
+    }
+    return 0;
+}
+
 static void usage(FILE *out)
 {
     /*
@@ -139,9 +167,13 @@ static void usage(FILE *out)
     fprintf(out, "\n");
     fprintf(out, "usage: infantgod <command> [options]\n");
     fprintf(out, "\n");
-    fprintf(out, "  rpc [--root DIR] [--verbose]\n");
+    fprintf(out, "  rpc [--root DIR] [--read-root DIR]... [--verbose]\n");
     fprintf(out, "        Speak newline-delimited JSON-RPC on stdin/stdout\n");
     fprintf(out, "        until EOF.  This is the mode the shell drives.\n");
+    fprintf(out, "        --read-root adds a directory the read verbs may\n");
+    fprintf(out, "        resolve under; writes still land only inside --root.\n");
+    fprintf(out, "        The flag repeats, and a directory that is not there\n");
+    fprintf(out, "        yet is accepted (the game may be installed later).\n");
     fprintf(out, "\n");
     fprintf(out, "  view show --path REL [--root DIR]\n");
     fprintf(out, "        Print the JSON document a client keeps at REL.\n");
@@ -189,6 +221,12 @@ static int cmd_rpc(int argc, char **argv)
         return 1;
     }
     app.verbose = has_flag(argc, argv, "--verbose");
+    if (add_read_roots(&app, argc, argv, err, sizeof(err)) != 0) {
+        fprintf(stderr, "infantgod: %s\n",
+                err[0] != '\0' ? err : "cannot add a read root");
+        sde_app_free(&app);
+        return 1;
+    }
 
     /* sde_serve owns the app from here and releases it on EOF. */
     code = sde_serve(&app);

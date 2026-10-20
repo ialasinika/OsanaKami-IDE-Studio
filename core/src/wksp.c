@@ -4,8 +4,10 @@
  *
  * Two properties matter more than speed here:
  *
- *   1. Nothing outside `root` is ever touched, however creative the path in a
- *      request is.  sde_wksp_resolve() is the only door.
+ *   1. Nothing outside the workspace root is ever written, and nothing
+ *      outside it or a registered read-only root is ever read, however
+ *      creative the path in a request is.  The three resolve doors below are
+ *      the only ones.
  *   2. A write that raced with someone else's write is refused rather than
  *      silently winning.  A document and the editor both rely on this.
  */
@@ -95,33 +97,33 @@ static unsigned long rev_of_file(const char *path, char *err, size_t errcap)
 /* paths                                                                  */
 /* ====================================================================== */
 
-int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
-                     char *err, size_t errcap)
+/*
+ * Joins `rel` onto `root` (or takes it as it stands when absolute) and
+ * normalises the result.  This is the input half of every resolve; what
+ * differs between the doors is which roots the normalised path is then
+ * compared against.
+ */
+static int normalize_path(const char *root, const char *rel, char **out_norm,
+                          char *err, size_t errcap)
 {
     char *joined;
     char *norm;
 
-    if (out_abs != NULL) {
-        *out_abs = NULL;
-    }
-    if (app == NULL || app->root == NULL) {
-        set_err(err, errcap, "no workspace root");
-        return -1;
-    }
+    *out_norm = NULL;
     if (rel == NULL || rel[0] == '\0') {
         set_err(err, errcap, "empty path");
         return -1;
     }
     /*
-     * Absolute paths are accepted as long as they land inside the workspace.
-     * Refusing them outright would only push the join-and-check dance onto
-     * every client (and the shell already knows absolute paths, because that
-     * is what the kernel reports back).
+     * Absolute paths are accepted as long as they land inside one of the
+     * allowed roots.  Refusing them outright would only push the
+     * join-and-check dance onto every client (and the shell already knows
+     * absolute paths, because that is what the kernel reports back).
      */
     if (sde_port_path_is_abs(rel)) {
         joined = sde_port_strdup(rel);
     } else {
-        joined = sde_port_path_join(app->root, rel);
+        joined = sde_port_path_join(root, rel);
     }
     if (joined == NULL) {
         set_err(err, errcap, "out of memory");
@@ -131,6 +133,25 @@ int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
     free(joined);
     if (norm == NULL) {
         set_err(err, errcap, "out of memory");
+        return -1;
+    }
+    *out_norm = norm;
+    return 0;
+}
+
+int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
+                     char *err, size_t errcap)
+{
+    char *norm = NULL;
+
+    if (out_abs != NULL) {
+        *out_abs = NULL;
+    }
+    if (app == NULL || app->root == NULL) {
+        set_err(err, errcap, "no workspace root");
+        return -1;
+    }
+    if (normalize_path(app->root, rel, &norm, err, errcap) != 0) {
         return -1;
     }
     if (!sde_port_path_within(app->root, norm)) {
@@ -144,6 +165,74 @@ int sde_wksp_resolve(const sde_app *app, const char *rel, char **out_abs,
         free(norm);
     }
     return 0;
+}
+
+int sde_wksp_resolve_read(const sde_app *app, const char *rel, char **out_abs,
+                          int *out_extra, char *err, size_t errcap)
+{
+    char   *norm = NULL;
+    size_t  i;
+
+    if (out_abs != NULL) {
+        *out_abs = NULL;
+    }
+    if (out_extra != NULL) {
+        *out_extra = 0;
+    }
+    if (app == NULL || app->root == NULL) {
+        set_err(err, errcap, "no workspace root");
+        return -1;
+    }
+    if (normalize_path(app->root, rel, &norm, err, errcap) != 0) {
+        return -1;
+    }
+    if (sde_port_path_within(app->root, norm)) {
+        if (out_abs != NULL) {
+            *out_abs = norm;
+        } else {
+            free(norm);
+        }
+        return 0;
+    }
+    for (i = 0; i < app->read_root_count; i++) {
+        if (sde_port_path_within(app->read_roots[i], norm)) {
+            if (out_extra != NULL) {
+                *out_extra = 1;
+            }
+            if (out_abs != NULL) {
+                *out_abs = norm;
+            } else {
+                free(norm);
+            }
+            return 0;
+        }
+    }
+    set_err_path(err, errcap, "path escapes the workspace", rel);
+    free(norm);
+    return -1;
+}
+
+int sde_wksp_resolve_write(const sde_app *app, const char *rel, char **out_abs,
+                           char *err, size_t errcap)
+{
+    char *probe = NULL;
+    int   extra = 0;
+
+    if (sde_wksp_resolve(app, rel, out_abs, err, errcap) == 0) {
+        return 0;
+    }
+    /*
+     * Failed the write door.  If it would have resolved as a read under an
+     * extra root, say why it cannot be written rather than only where it is:
+     * the two failures have different fixes.
+     */
+    if (sde_wksp_resolve_read(app, rel, &probe, &extra, NULL, 0) == 0) {
+        free(probe);
+        if (extra != 0) {
+            set_err_path(err, errcap, "read-only root", rel);
+        }
+    }
+    return -1;
 }
 
 /* ====================================================================== */
@@ -487,7 +576,7 @@ static int read_whole_file(const sde_app *app, const char *rel, sde_buf *buf,
     char *abs = NULL;
 
     *out_abs = NULL;
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+    if (sde_wksp_resolve_read(app, rel, &abs, NULL, err, errcap) != 0) {
         return -1;
     }
     if (sde_port_is_dir(abs)) {
@@ -629,7 +718,7 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
     long          size = 0;
     unsigned long rev = 0;
 
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+    if (sde_wksp_resolve_read(app, rel, &abs, NULL, err, errcap) != 0) {
         return NULL;
     }
     is_dir = sde_port_is_dir(abs);
@@ -726,7 +815,7 @@ static int begin_write(const sde_app *app, const char *rel, int has_base,
 
     *out_abs = NULL;
     *out_cur = 0;
-    if (sde_wksp_resolve(app, rel, &abs, err, errcap) != 0) {
+    if (sde_wksp_resolve_write(app, rel, &abs, err, errcap) != 0) {
         return SDE_WKSP_FAIL;
     }
     if (sde_port_is_dir(abs)) {
