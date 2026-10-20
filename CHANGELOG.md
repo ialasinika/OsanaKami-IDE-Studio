@@ -14,6 +14,51 @@ retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  Th
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
+## Unreleased
+
+### The problem list opens the file it names
+
+The problems card drew its rows from the text someone had typed into the card,
+not from the root the validation had actually resolved, so a workspace whose
+mods folder was configured somewhere else left every row pointing at a file
+that did not exist. `mod.validate` now answers with the resolved package root
+(`root`), the card composes its rows against that answer, and a row opens the
+file standing on the diagnostic's `line` or on its JSON Pointer instead of
+leaving the pointer as text at the end of the row. The mod card hands the same
+report to a problems card rather than pressing it into one status line, so a
+failed validation leaves a list that can be walked. The editor screens grew a
+`reveal` place that survives a re-render, and `tools/input_smoke.py` now clicks
+a row whose file exists (`D011`) rather than the deliberately missing sprite,
+which is the case that had been passing while the real one was broken.
+
+`main.mjs` keeps the caller's own path form instead of rewriting a relative
+name into a workspace path, and refuses only what it should: a path the kernel
+would not read gets a message naming that reason.
+
+### A canvas is measured when it is on screen, and a zoom follows the mouse
+
+A pixel card created behind another tab measured its canvas at 0×0, and
+nothing measured it again when the tab came forward; zooming also kept the
+canvas centre rather than the image centre, so a small picture left the view at
+the first click. A tile now calls the optional `shown()` a card may expose the
+first time that card is displayed, the pixel card takes its measurements
+there, and its framing arithmetic moved into a UI-free `shell/web/pixelview.mjs`:
+an un-panned image is centred on the measured surface, a pan the person made is
+kept, and a wheel zoom anchors the pixel under the cursor, clamped to the image
+and to the zoom range.
+
+### A short window does not have to scroll through the whole mod card
+
+The mod card's sections fold from their titles. The folded set is recorded on
+the card document, so a re-render keeps it, and the body scrolls only when the
+window is shorter than the sections that are open.
+
+Suites: mods 590/590, web 304/304, langs 91/91, ai 86/86 (one skipped).  Each
+new check was red-proved by a one-line sabotage and restored byte for byte.
+The DOM wiring is checked by `tools/input_smoke.py`; this machine's Edge cannot
+run it headless, so the script and the page script inside it were parse-checked
+here, not executed.
+
 ## v0.1.2-beta — 2026-10-18
 
 ### Nothing in the tree names a machine any more

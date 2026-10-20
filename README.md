@@ -291,13 +291,13 @@ python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; 61 checks; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 43 checks
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 46 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 294/294 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 588/588 checks passed
+node shell/web/selftest.mjs                    # ok 304/304 (pure JS: no DOM)
+node shell/mods/selftest.mjs                   # 590/590 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -507,15 +507,15 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 588 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 590 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
                         (the barrel), cards/ (thirteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
                         classic.mjs, modview.mjs, main.mjs, story.mjs,
-                        storycsv.mjs, ysls.mjs, pixelpng.mjs, selftest.mjs,
-                        README.md
+                        storycsv.mjs, ysls.mjs, pixelpng.mjs, pixelview.mjs,
+                        selftest.mjs, README.md
 
 tools/                  Python 3.12, standard library only
   build.py              drives the Makefile; --check / --release / --clean

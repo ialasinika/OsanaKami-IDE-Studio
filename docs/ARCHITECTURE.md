@@ -305,20 +305,32 @@ The browser side, `shell/web/`, is module-per-concern:
 | `storycsv.mjs` | the translation tables the game keeps beside a story: CSV in and out, `lock` = the first four bytes of SHA-256 of the source text, and each row's state (pure) | a translation cannot be shown beside the line it belongs to, and nothing can tell a fresh translation from one the source has moved under |
 | `ysls.mjs` | the game's own command schema read as two ordered lists, and where a `<<name` is being typed in a line (pure) | completion would have to be a hand-kept list in the shell, which is wrong the day the mod's commands change |
 | `pixelpng.mjs` | a PNG reader and writer that carries its own inflate, CRC-32 and Adler-32, and reads the two shapes this game's art is (pure) | a `.png` could only travel as base64 and nothing could show or change a pixel |
+| `pixelview.mjs` | the pixel card's framing arithmetic: where the image sits on a measured surface, what a wheel does under the cursor, and the zoom range (pure) | the card would have to keep zoom and pan consistent inside its own paint, and no test could pin the arithmetic without a DOM |
 | `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | the entry: imports `selftest/` in order and prints the tally (`node shell/web/selftest.mjs`, no DOM, no network) | nothing; it is only a test |
 | `selftest/` | one module per section of the suite (harness, fixtures, rpc, board, cards, project, http, sheet, main, views, story, translation, mods, pixel, spine) | the suite is one 5,900-line file again |
 
 `board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs`,
-`views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs` and `pixelpng.mjs` are
-deliberately UI-free — no `document`, no `window`, no timer — so the same objects
+`views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs`, `pixelpng.mjs` and
+`pixelview.mjs` are deliberately UI-free — no `document`, no `window`, no timer — so the same objects
 are used by the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
 that feeds it lives in `main.mjs`, which is why the decision table can be pinned
 without a browser, a kernel or a clock. `classic.mjs` and `modview.mjs` are the
 same kind of arithmetic: they compute the role and the tile for the cards a
 document already holds, `views.mjs` names the modes and says which one a window
 opens in, and `main.mjs` owns the pixels.
+
+Three host contracts keep a card honest without letting it reach around the
+shell. A card's `openFile(path, {line, pointer})` keeps the caller's own path
+form (a name it was given stays a name) but refuses what the kernel cannot
+read; the editor screens answer it by moving the caret to the line, or to the
+JSON Pointer the diagnostic was written with. A tile calls a card's optional
+`shown()` the first time that card is displayed, so a canvas created behind
+another tab measures itself when it has real pixels rather than when it was
+built. And the mod card's sections fold from their titles, recording the folded
+set on the card document so a re-render keeps it; the card body scrolls only
+when the window is shorter than the unfolded sections.
 
 The HTTP front end serves `shell/web/` as static files, so there is no build
 step between editing these modules and reloading the page. `index.html` loads
@@ -356,13 +368,18 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, against its own scratch directory under `build/` (130 checks) |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, every card kind's tab in both views, the tab-close neighbour rule, the close question and what each answer means, the Yarn card's completion menu and hover line, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM (kept byte for byte, non-UTF-8 refused), line endings, derived `lock` and row states, the 4 MiB refusal answered by a session on all three cards that show a file (editor, story, table), a translation cell written back through `setColumn` with its `lock` refreshed and a row created for a line the table did not have, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip, the Spine binary reader's layout and refusals, the pose, frame and edit-model arithmetic, the writer's byte identity on the rig the suite owns, the settings card's
-kind and the boot view and poll interval a preferences file can ask for
-(294 checks), no DOM |
+kind and the boot view and poll interval a preferences file can ask for, the
+pixel view's framing arithmetic (an un-panned image centred on the measured
+surface, a pan the person made kept, a wheel zooming around the pixel under the
+cursor and clamped to the image), the pixel card taking its measurements when
+its tile first shows it, and a mod card section folding and remembering the
+fold on the card document
+(304 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte
 (61 checks) |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D006` row opening the sprite it names, and a window checked to open on the mod tile (43 checks) |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D011` row opening the file it names (and a `D006` row explaining the file it cannot find), and a window checked to open on the mod tile (46 checks) |
 
 | — | `node shell/mods/selftest.mjs` | the mod layer without a browser: discovery order (setting, environment, the platform's Steam defaults, the named no-knowledge state) and `describeDiscovery`, scaffolding, package validation and every `D`/`M`/`E` code, the Yarn parser's diagnostics, the tag sources, the knowledge base's resolution order and the derivation into the user directory when no file ships, the knowledge generator's `--check` and `--diff`, a facts-only knowledge base keeping the sprite and reference fields the checker looks at (down to a `validatePackage` run on one), the language service's position and completion cores, creating one file from a
 schema for all 51 definition types (each validating clean), importing a file
@@ -376,10 +393,12 @@ knowledge base can state (`pattern`, `minimum`/`maximum`, `minItems`, `uniqueIte
 `oneOf`/`anyOf`/`allOf`/`not`), unresolved `$ref`s, the Yarn `#line:` ids checked
 both ways against the translation tables (missing from the table, orphaned in it,
 duplicated across files, the non-hex ids reported rather than matched), the
-Addressables addresses that look like asset paths rather than names, the demo
+Addressables addresses that look like asset paths rather than names, the package
+root a validation answers with so another card can open what its diagnostics
+point at, the demo
 packages' listing and
 byte-identical copy (openable only where it was copied), and `config.get`/`config.set`
-keeping a real API key off the wire (588 checks) |
+keeping a real API key off the wire (590 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

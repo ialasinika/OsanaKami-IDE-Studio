@@ -37,16 +37,21 @@ Persisted field: `dir` (workspace-relative or absolute path to the mod root).
 
 Controls: a path field, `open`, `validate`. Shows `mod.json`, a file count
 line, the defines grouped by type, and every `.yarn` file. Clicking a row opens
-it in an editor card. `validate` reports counts to the log without leaving the
-card.
+it in an editor card. `validate` reports counts to the log and hands the same
+diagnostics to a `problems` card, so the findings outlive the status line.
+Each section folds from its title and the folded state is kept on the card, so
+a short window does not force a scroll past lists the person is not reading.
 
 ### `problems` — validation output
 
 Persisted field: `root`.
 
 Renders `validatePackage()`'s diagnostics, worst first, tinted by severity.
-Clicking a row opens the file the diagnostic points at — the `#json/pointer`
-suffix is stripped for the filesystem path and kept as the row's detail.
+Clicking a row opens the file the diagnostic points at and stands on its
+`line` or JSON Pointer: the row's relative `path` is resolved against the
+package root the validation answered with (`root`), not against whatever text
+was typed into the card, so the file opens even when that text names the
+folder differently.
 
 ### `docs` — the knowledge base
 
@@ -93,7 +98,7 @@ write files or wait on one.
 | `mod.templates` | — | `[{id, title, titleEn, description, descriptionEn, files[]}]` |
 | `mod.characters` | — | `[{techName, nameKey, colour, …}]` |
 | `mod.open` | `dir` | `{root, manifest, defines[], yarnFiles[], csvFiles[], sprites[], summary, diagnostics}` |
-| `mod.validate` | `root` | `{ok, manifest, summary, diagnostics[], types, knowledge}` |
+| `mod.validate` | `root` | `{ok, root, manifest, summary, diagnostics[], types, knowledge}` — `root` is the resolved package root the diagnostics' `path`s are relative to |
 | `mod.validateDefine` | `type`, `text`, `relPath?` | `{diagnostics[]}` |
 | `mod.diagnose` | `text`, `fileName?`, `root?` | `{available, diagnostics[], nodes[]}` |
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
@@ -827,7 +832,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 588 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 590 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
