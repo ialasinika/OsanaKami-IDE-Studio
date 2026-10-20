@@ -136,3 +136,34 @@ const extra = runCli(["rpc", "extra"]);
 check("the old commands still refuse a stray positional argument",
   extra.status === 2 && String(extra.stderr).includes("unexpected argument: extra"),
   String(extra.stderr).slice(0, 160));
+
+/*
+ * G44: `sources` is the command that answers "where do the mod layer's answers
+ * come from?" without a window -- the game folder discovery settled on and the
+ * knowledge.json in effect.  The game folder is an explicit fixture here, so
+ * the answer does not depend on what this machine happens to have installed.
+ */
+const game = specTemp("infantgod-cli-game-");
+specWrite(join(game, "Mods", "Placeholder.txt"), "not a package\n");
+
+const sources = runCli(["sources", "--json", "--mods-root", root, "--game-dir", game, "--user-dir", userDir]);
+const sourcesDoc = asJson(sources);
+check("sources answers with the game folder and the knowledge base it uses",
+  sources.status === 0 && sourcesDoc !== null && sourcesDoc.ok === true &&
+    sourcesDoc.game !== undefined && sourcesDoc.game.found === true &&
+    String(sourcesDoc.game.dir).replace(/\\/g, "/").toLowerCase().endsWith("/mods") &&
+    sourcesDoc.knowledge !== undefined && sourcesDoc.knowledge.state === "present" &&
+    sourcesDoc.knowledge.schemas === 51,
+  sources.status + " " + JSON.stringify(sourcesDoc && { game: sourcesDoc.game, knowledge: sourcesDoc.knowledge }).slice(0, 300));
+
+check("and the JSON says where the knowledge came from, not just that it exists",
+  sourcesDoc !== null && typeof sourcesDoc.knowledge.source === "string" &&
+    sourcesDoc.knowledge.source !== "" && typeof sourcesDoc.knowledge.path === "string" &&
+    sourcesDoc.knowledge.path !== "",
+  JSON.stringify(sourcesDoc && { source: sourcesDoc.knowledge.source, path: sourcesDoc.knowledge.path }));
+
+const sourcesText = runCli(["sources", "--mods-root", root, "--game-dir", game, "--user-dir", userDir]);
+check("without --json it prints both answers as plain lines",
+  sourcesText.status === 0 && /^game mods: /m.test(String(sourcesText.stdout)) &&
+    /^knowledge base: /m.test(String(sourcesText.stdout)),
+  String(sourcesText.stdout).slice(0, 240));

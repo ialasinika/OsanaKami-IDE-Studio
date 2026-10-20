@@ -632,6 +632,9 @@ const MOD_METHODS = {
   // `root` so the card's call reaches the facade it was written for.
   "mod.stats": (params, mods) => mods.stats({ root: optionalString(params, "root") ?? undefined }),
   "mod.types": (params, mods) => mods.types({ root: optionalString(params, "root") ?? undefined }),
+  // G44: the sources behind every other answer -- the game folder discovery
+  // picked and the knowledge base in effect -- as one read-only verb.
+  "mod.sources": (_params, mods) => ({ knowledge: mods.knowledgeState(), game: mods.gameMods() }),
   "mod.templates": (_params, mods) => mods.templates(),
   "mod.characters": (_params, mods) => mods.characters(),
 
@@ -1600,6 +1603,52 @@ async function runLog(options) {
   return 0;
 }
 
+/*
+ * `sources` is G44: the answer to "where do the mod layer's answers come from?"
+ * -- the game folder the discovery settled on (and where it looked when there
+ * was none), and which knowledge.json is in effect: shipped, derived into the
+ * user directory, or missing.  A missing game or a missing knowledge base is
+ * an answer, not an error; only a mod layer that cannot load is code 2.
+ */
+async function runSources(options) {
+  const json = options.json === true;
+  const modsRoot = options.modsRoot !== null ? options.modsRoot : options.workspace;
+  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  if (!mods) {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: "the mod layer did not load" }, null, 2) + "\n");
+    }
+    process.stderr.write("OsanaKami IDE Studio: the mod layer did not load\n");
+    return 2;
+  }
+
+  const answer = { knowledge: mods.knowledgeState(), game: mods.gameMods() };
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...answer }, null, 2) + "\n");
+    return 0;
+  }
+
+  const game = answer.game;
+  if (game.found === true && game.dir) {
+    process.stdout.write(`game mods: ${game.dir} (found via ${game.source})\n`);
+  } else {
+    const tried = Array.isArray(game.tried) ? game.tried : [];
+    process.stdout.write(`game mods: not found -- looked in ${plural(tried.length, "place")}\n`);
+    for (const entry of tried.slice(0, 10)) {
+      process.stdout.write(`  ${entry && entry.path ? entry.path : String(entry)}\n`);
+    }
+    if (tried.length > 10) process.stdout.write(`  (and ${tried.length - 10} more)\n`);
+  }
+  const knowledge = answer.knowledge;
+  process.stdout.write(
+    `knowledge base: ${knowledge.path ?? "(none)"} (${knowledge.source}, ` +
+    `${plural(knowledge.schemas, "schema")})\n`,
+  );
+  if (knowledge.loadError) process.stdout.write(`  load error: ${knowledge.loadError}\n`);
+  if (knowledge.deriveError) process.stdout.write(`  derive error: ${knowledge.deriveError}\n`);
+  return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* command line                                                        */
 /* ------------------------------------------------------------------ */
@@ -1662,6 +1711,14 @@ usage: node shell/main.mjs <command> [options]
           --json prints one object (path, offsets, totals, lines).  Exit codes:
           0 the log was read (even with zero matches), 1 the read failed, 2 no
           log was found -- the message lists where it looked.
+
+  sources [--json]
+          Say where the mod layer's answers come from without opening the
+          window: the game Mods folder discovery settled on (and where it
+          looked when there was none), and which knowledge.json is in effect
+          -- shipped, derived into --user-dir, or missing.  A missing game or a
+          missing knowledge base is an answer, not an error.  Exit codes: 0
+          answered, 2 the mod layer did not load.
 
   help    This text.
 
@@ -1834,6 +1891,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "export") return await runExport(options);
     if (options.command === "install") return await runInstall(options);
     if (options.command === "log") return await runLog(options);
+    if (options.command === "sources") return await runSources(options);
   } catch (err) {
     process.stderr.write(`OsanaKami IDE Studio: ${err && err.message ? err.message : err}\n`);
     return 1;

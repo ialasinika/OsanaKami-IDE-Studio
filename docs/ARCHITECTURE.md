@@ -392,8 +392,9 @@ cursor and clamped to the image), the pixel card taking its measurements when
 its tile first shows it, a mod card section folding and remembering the
 fold on the card document, and the watch accepting any card that names a file
 and can reload it -- through getters or methods -- while a card holding a folder
-or a query stays out of the poll
-(320 checks), no DOM |
+or a query stays out of the poll, and the sources rows the settings card prints
+say which folder and which knowledge base answered
+(321 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte
@@ -421,7 +422,10 @@ keeping a real API key off the wire, the wiki-trap lint (`D019`–`D022`) and th
 localisation lock lint (`D023`), the package-side answers the docs verbs give
 when a root is passed (`stats` package block, per-type `packageCount`, define /
 node / file hits and their text) while the no-root shapes stay what they were,
-with the shipped corpus pinned at zero false positives (665 checks) |
+the sources report behind the settings card and `sources` (the game folder and
+the places discovery tried, the knowledge state and its source), and the row
+wording kept as pure data, with the shipped corpus pinned at zero false
+positives (669 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

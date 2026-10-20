@@ -103,6 +103,7 @@ node shell/main.mjs validate DIR --json              # errors/warnings/infos, ex
 node shell/main.mjs export DIR [--out FILE.zip]      # deterministic zip
 node shell/main.mjs install DIR [--game-dir DIR] [--overwrite]
 node shell/main.mjs log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
+node shell/main.mjs sources [--json]                 # where the game folder and the knowledge base came from
 ```
 
 `install` copies into the game's own `Mods/` folder (the last mile `export` does
@@ -182,7 +183,7 @@ Rules of thumb:
 | `core/` | the C89 kernel: JSON, RPC, workspace/view/blob layers, exec |
 | `core/port/` | the only OS-aware layer (`sys_win32.c`, `proc_win32.c`) |
 | `core/tests/` | `test_json.c`, `test_blob.c` |
-| `shell/main.mjs` | CLI (`rpc`, `serve`, `validate`, `export`, `install`, `log`), HTTP/stdio endpoints, `MOD_METHODS` |
+| `shell/main.mjs` | CLI (`rpc`, `serve`, `validate`, `export`, `install`, `log`, `sources`), HTTP/stdio endpoints, `MOD_METHODS` |
 | `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (fifteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `openpath.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
 | `shell/mods/` | the game layer: schema validation and its `D` codes, Yarn diagnosis, the `#line:` id cross-check, scaffolding, search, zip export (`zip.js`), install into the game (`gamepath.js` also finds the folder and reads/follows `Player.log`); `selftest.mjs` is the entry over `selftest/` (`game.mjs` is the install/log group) |
 | `shell/ai/` | the AI layer (config, provider, tools); `selftest.mjs` is the entry over `selftest/` and runs in `make test` |

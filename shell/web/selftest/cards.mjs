@@ -14,6 +14,7 @@ import {
   cardKind,
   completionKindLabel,
   completionState,
+  describeSources,
   findMatches,
   formatAge,
   formatListing,
@@ -37,6 +38,28 @@ import {
 import {
   test,
 } from "./harness.mjs";
+test("settings: the sources rows say where the game and the knowledge came from", () => {
+  const found = describeSources({
+    game: { found: true, dir: "games/Mods", source: "env" },
+    knowledge: { state: "present", path: "shell/mods/knowledge.json", source: "bundled", schemas: 51 },
+  });
+  assert.deepEqual(found.map((row) => row.label), ["game mods", "knowledge base"]);
+  assert.equal(found[0].value, "games/Mods");
+  assert.match(found[0].note, /found via env/);
+  assert.equal(found[1].value, "shell/mods/knowledge.json");
+  assert.match(found[1].note, /present · bundled · 51 schemas/);
+
+  const missing = describeSources({
+    game: { found: false, dir: null, source: "discover", tried: [{ path: "a" }, { path: "b" }] },
+    knowledge: { state: "missing", path: null, source: "missing", schemas: 0, loadError: "no knowledge.json" },
+  });
+  assert.equal(missing[0].value, "not found");
+  assert.match(missing[0].note, /looked in 2 places/);
+  assert.equal(missing[1].value, "(none)");
+  assert.equal(missing[2].label, "knowledge error");
+  assert.match(missing[2].value, /no knowledge\.json/);
+});
+
 
 /* ------------------------------------------------------------------ */
 /* cards.mjs -- token spans and the pure helpers                        */

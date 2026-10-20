@@ -138,6 +138,7 @@ write files or wait on one.
 | `mod.complete` | `text`, `caret`, `limit?` | `{context, items[{label, kind, detail, insertText, documentation, sortText, replace}], isIncomplete}` |
 | `mod.hover` | `text`, `caret` | `{range, kind, name, contents[{kind, value}]}` or `null` |
 | `mod.localization` | `root` | `{locales: [{code, file, base, rows, bytes}], baseLanguage}` |
+| `mod.sources` | — | `{knowledge, game}` -- `knowledge` is `knowledgeState()` (`state`, `path`, `source`, `schemas`, errors) and `game` is `gameMods()` (`dir`, `source`, `found`, `tried[]`); read-only (G44) |
 
 `mod.complete` and `mod.hover` take the **document being edited**, not a path:
 `text` is the buffer (saved or not) and `caret` is a 0-based UTF-16 offset into
@@ -232,6 +233,28 @@ and it says which it got.
   derived base must not switch the checks off either. A rich knowledge base and a
   facts-only one describe the same fields, which `shell/mods/selftest.mjs` pins from
   both ends (including a `validatePackage` run on a facts-only base).
+
+### Where an answer came from
+
+Both answers that decide what the layer knows -- the discovered game folder and
+the knowledge base in effect -- were already computed in the shell and
+impossible to ask from outside it. `mod.sources` returns them in one frame:
+`game` is `gameMods()` (the folder, the rule that found it, and, when nothing
+was found, every place discovery tried) and `knowledge` is
+`knowledgeState()` (the file, whether it is `bundled`, `derived` or `missing`,
+how many schemas loaded, and the error if one step failed). The settings card
+renders both under the paths it already lists, read-only, and the command line
+has the same answer:
+
+```sh
+node shell/main.mjs sources              # the game folder and the knowledge base in effect
+node shell/main.mjs sources --json       # the same answer as a document
+```
+
+Neither a missing game nor a missing knowledge base is an error: `found: false`
+and `state: "missing"` are the answer, with the places discovery tried, and
+only a mod layer that cannot load is exit code 2 -- the same line `validate`
+draws between "answered with problems" and "did not answer".
 
 ### Where the knowledge base comes from
 
@@ -890,7 +913,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 665 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 669 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

@@ -7,6 +7,33 @@
 import { button, cardShell, h, makeStatus } from "./dom.mjs";
 
 /**
+ * G44: the two answers the settings card shows but may not edit -- where the
+ * game's Mods folder was found (or where discovery looked when it was not),
+ * and which knowledge.json is in effect.  Kept pure and exported so the suite
+ * can pin the wording without a DOM: the card is only the renderer.
+ */
+export function describeSources(sources) {
+  const game = (sources && sources.game) || {};
+  const knowledge = (sources && sources.knowledge) || {};
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const rows = [];
+  if (game.found === true && typeof game.dir === "string" && game.dir !== "") {
+    rows.push({ label: "game mods", value: game.dir, note: `found via ${game.source}` });
+  } else {
+    const tried = Array.isArray(game.tried) ? game.tried : [];
+    rows.push({ label: "game mods", value: "not found", note: `looked in ${plural(tried.length, "place")}` });
+  }
+  const value = typeof knowledge.path === "string" && knowledge.path !== "" ? knowledge.path : "(none)";
+  const bits = [typeof knowledge.state === "string" ? knowledge.state : "missing"];
+  if (knowledge.source) bits.push(knowledge.source);
+  if (Number.isFinite(knowledge.schemas)) bits.push(`${knowledge.schemas} schemas`);
+  rows.push({ label: "knowledge base", value, note: bits.join(" · ") });
+  const error = knowledge.loadError || knowledge.deriveError;
+  if (error) rows.push({ label: "knowledge error", value: String(error), note: "" });
+  return rows;
+}
+
+/**
  * The settings card (G48): the one place a card may talk about the machine
  * rather than the project.
  *
@@ -106,6 +133,10 @@ export function renderSettings(card, ctx) {
   const electronSettings = codeRow("window settings");
   const workspaceRow = codeRow("workspace");
   const modsRow = codeRow("mods");
+  const gameRow = codeRow("game mods");
+  const knowledgeRow = codeRow("knowledge base");
+  const gameNote = h("span", "settings-note");
+  const knowledgeNote = h("span", "settings-note");
   const pathsBlock = h("div", "settings-block", {
     children: [
       h("h3", "settings-heading", { text: "where this lives" }),
@@ -115,6 +146,10 @@ export function renderSettings(card, ctx) {
       electronSettings.row,
       workspaceRow,
       modsRow,
+      gameRow.row,
+      gameNote,
+      knowledgeRow.row,
+      knowledgeNote,
     ],
   });
 
@@ -133,6 +168,17 @@ export function renderSettings(card, ctx) {
   shell.label.textContent = "the user's machine";
 
   let last = null;
+
+  /** G44: the read-only half -- filled from `mod.sources`, never editable. */
+  function showSources(sources) {
+    const rows = describeSources(sources);
+    const game = rows[0];
+    gameRow.value.textContent = game.value;
+    gameNote.textContent = game.note;
+    const knowledge = rows[1];
+    knowledgeRow.value.textContent = knowledge.value;
+    knowledgeNote.textContent = knowledge.note;
+  }
 
   function show(answer) {
     last = answer;
@@ -170,6 +216,20 @@ export function renderSettings(card, ctx) {
 
   async function load() {
     status.textContent = "reading settings…";
+    let sources = null;
+    try {
+      sources = await client.call("mod.sources", {});
+    } catch (err) {
+      sources = null;
+    }
+    if (sources) {
+      showSources(sources);
+    } else {
+      gameRow.value.textContent = "(unavailable)";
+      gameNote.textContent = "the mod layer did not answer";
+      knowledgeRow.value.textContent = "(unavailable)";
+      knowledgeNote.textContent = "";
+    }
     try {
       show(await client.call("config.get", {}));
     } catch (err) {

@@ -16,6 +16,21 @@ stands in this tree.
 
 ## Unreleased
 
+### The settings card can say where its answers come from
+
+Two read-only questions had no answer outside the code: which folder the
+game's Mods discovery settled on (and, when it found none, where it had
+looked), and which `knowledge.json` was in effect -- the shipped one, one
+derived into the user directory from an installed game, or none at all. Both
+were already computed while the shell started; nothing could ask them, so a
+user whose validation "knew" about the wrong folder had no way to see that.
+`mod.sources` answers both from one frame, `sources` asks it from the command
+line (`--json` for a document), and the settings card renders the two rows
+under the paths it already shows. A missing game or a missing knowledge base
+is an answer, not an error: `found: false` and `state: "missing"` come back
+with the places discovery tried, and only a mod layer that cannot load is
+exit code 2.
+
 ### The docs card can read the package it belongs to
 
 `mod.stats`, `mod.types`, `mod.search` and `mod.docFor` answered only from the

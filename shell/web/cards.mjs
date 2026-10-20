@@ -126,6 +126,7 @@ export {
   setModSectionCollapsed,
 } from "./cards/card-mod.mjs";
 export { diagLine, diagTarget } from "./cards/card-problems.mjs";
+export { describeSources } from "./cards/card-settings.mjs";
 
 import { renderDocs } from "./cards/card-docs.mjs";
 import { renderAudio } from "./cards/card-audio.mjs";

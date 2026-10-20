@@ -54,6 +54,22 @@ export async function frame(id, method, params) {
     Array.isArray(searches.result) && searches.result.length > 0 && searches.result[0].name === "Love",
     JSON.stringify(searches.result).slice(0, 120));
 
+  /*
+   * G44: `mod.sources` is the read-only answer the settings card renders -- the
+   * game folder discovery picked and the knowledge base in effect.  The seam is
+   * the one table a verb can be forgotten in, so it gets its own frame.
+   */
+  const sourcesFrame = await frame(6, "mod.sources", {});
+  check("mod.sources answers with the game folder and the knowledge state",
+    sourcesFrame.result !== undefined &&
+      sourcesFrame.result.game !== undefined &&
+      typeof sourcesFrame.result.game.found === "boolean" &&
+      Array.isArray(sourcesFrame.result.game.tried) &&
+      sourcesFrame.result.knowledge !== undefined &&
+      typeof sourcesFrame.result.knowledge.state === "string" &&
+      typeof sourcesFrame.result.knowledge.schemas === "number",
+    JSON.stringify(sourcesFrame).slice(0, 240));
+
   const notified = await dispatch({ jsonrpc: "2.0", method: "mod.stats", params: {} }, kernel, languages, mods);
   check("a notification is not answered", notified === null, JSON.stringify(notified));
 
