@@ -7,6 +7,7 @@ import {
   readFileSync,
 } from "node:fs";
 import {
+  deflateSync,
   inflateSync,
 } from "node:zlib";
 import {
@@ -99,6 +100,156 @@ export function pngCrc32(bytes) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/*
+ * A writer of PNGs that shares nothing with the module under test: the bytes
+ * below are packed here, deflated by the platform zlib and stamped with the
+ * CRC above.  `pngFile` takes the filtered stream already built, so a test
+ * decides exactly what a damaged or unusual file looks like.
+ */
+export function pngJoin(parts) {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+export function pngChunk(type, body) {
+  const out = new Uint8Array(body.length + 12);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, body.length);
+  for (let i = 0; i < 4; i += 1) out[4 + i] = type.charCodeAt(i);
+  out.set(body, 8);
+  view.setUint32(8 + body.length, pngCrc32(out.subarray(4, 8 + body.length)));
+  return out;
+}
+
+export function pngFile({
+  width, height, depth, colour,
+  interlace = 0,
+  palette = null,
+  paletteAlpha = null,
+  transparent = null,
+  raw,
+  extra = [],
+}) {
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = depth;
+  ihdr[9] = colour;
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = interlace;
+  const parts = [PNG_SIGNATURE, pngChunk("IHDR", ihdr)];
+  if (palette !== null) parts.push(pngChunk("PLTE", new Uint8Array(palette)));
+  if (paletteAlpha !== null) parts.push(pngChunk("tRNS", new Uint8Array(paletteAlpha)));
+  if (transparent !== null) parts.push(pngChunk("tRNS", new Uint8Array(transparent)));
+  for (const chunk of extra) parts.push(chunk);
+  parts.push(pngChunk("IDAT", new Uint8Array(deflateSync(Buffer.from(raw)))));
+  parts.push(pngChunk("IEND", new Uint8Array(0)));
+  return pngJoin(parts);
+}
+
+/* The seven Adam7 passes, copied here from the format so the test's idea of
+   the layout is not the module's. */
+export const PNG_PASSES = [
+  { x0: 0, y0: 0, dx: 8, dy: 8 },
+  { x0: 4, y0: 0, dx: 8, dy: 8 },
+  { x0: 0, y0: 4, dx: 4, dy: 8 },
+  { x0: 2, y0: 0, dx: 4, dy: 4 },
+  { x0: 0, y0: 2, dx: 2, dy: 4 },
+  { x0: 1, y0: 0, dx: 2, dy: 2 },
+  { x0: 0, y0: 1, dx: 1, dy: 2 },
+];
+
+export function pngPassCount(size, start, step) {
+  return size <= start ? 0 : Math.ceil((size - start) / step);
+}
+
+/** Samples packed MSB-first for depths 1/2/4 (identical to the bytes at 8). */
+export function pngBits(samples, depth) {
+  const out = new Uint8Array(Math.ceil((samples.length * depth) / 8));
+  let bit = 0;
+  for (const sample of samples) {
+    out[bit >> 3] |= sample << (8 - depth - (bit & 7));
+    bit += depth;
+  }
+  return out;
+}
+
+/** Sixteen-bit samples, big-endian, no scaling. */
+export function pngWords(samples) {
+  const out = new Uint8Array(samples.length * 2);
+  samples.forEach((sample, index) => {
+    out[index * 2] = (sample >>> 8) & 0xff;
+    out[index * 2 + 1] = sample & 0xff;
+  });
+  return out;
+}
+
+/** Rows of packed samples, each behind a filter-type-0 byte. */
+export function pngRaw(rows) {
+  return pngJoin(rows.map((row) => pngJoin([new Uint8Array([0]), row])));
+}
+
+export function pngChunksOf(bytes) {
+  const found = [];
+  for (let at = 8; at + 12 <= bytes.length;) {
+    const length = ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+    const type = String.fromCharCode(bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]);
+    found.push({ type, data: bytes.slice(at + 8, at + 8 + length) });
+    at += 12 + length;
+  }
+  return found;
+}
+
+export function pngChunkOf(bytes, type) {
+  return pngChunksOf(bytes).find((chunk) => chunk.type === type) ?? null;
+}
+
+export function pngRawOf(bytes) {
+  return new Uint8Array(inflateSync(Buffer.from(pngChunkOf(bytes, "IDAT").data)));
+}
+
+/* A 3x3 RGB8 image for the Adam7 check: every pixel a different colour. */
+export function adam7Pixels(width, height) {
+  const rgb = [];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) rgb.push(x * 40 + 1, y * 50 + 2, x * 10 + y * 7);
+  }
+  return rgb;
+}
+
+/* The same image as the filtered stream an interlaced encoder must produce:
+   the passes in order, each row a filter byte and its pixels. */
+export function adam7Raw(rgb, width, height) {
+  const rows = [];
+  for (const pass of PNG_PASSES) {
+    const columns = pngPassCount(width, pass.x0, pass.dx);
+    if (columns === 0) continue;
+    const lines = pngPassCount(height, pass.y0, pass.dy);
+    for (let line = 0; line < lines; line += 1) {
+      const y = pass.y0 + line * pass.dy;
+      const row = new Uint8Array(1 + columns * 3);
+      for (let column = 0; column < columns; column += 1) {
+        const x = pass.x0 + column * pass.dx;
+        const from = (y * width + x) * 3;
+        row[1 + column * 3] = rgb[from];
+        row[2 + column * 3] = rgb[from + 1];
+        row[3 + column * 3] = rgb[from + 2];
+      }
+      rows.push(row);
+    }
+  }
+  return pngJoin(rows);
+}
+
 test("pixelpng: the module imports nothing, reads no clock and touches no DOM", () => {
   const code = readFileSync(new URL("../pixelpng.mjs", import.meta.url), "utf8");
   assert.equal(/^\s*import\b/m.test(code), false, "no imports");
@@ -161,22 +312,241 @@ test("pixelpng: a real exporter's file comes back at the size its own header say
   assert.deepEqual([...decodePng(encodePng(decoded)).pixels], [...decoded.pixels]);
 });
 
-test("pixelpng: a PNG this reader does not decode is refused, not guessed at", () => {
-  const withByte = (offset, value) => {
-    const bytes = pngBytes(PNG_FILTERED);
-    bytes[offset] = value;
-    return bytes;
-  };
-  // assert.throws matches its pattern against String(error), which begins with
-  // "Error: ", so these patterns are not anchored at the start of the message.
-  assert.throws(() => decodePng(withByte(25, 3)), /unsupported PNG: /, "a palette image");
-  assert.throws(() => decodePng(withByte(25, 0)), /unsupported PNG: /, "greyscale");
-  assert.throws(() => decodePng(withByte(24, 4)), /unsupported PNG: /, "four bits per sample");
-  assert.throws(() => decodePng(withByte(28, 1)), /unsupported PNG: /, "interlaced");
+test("pixelpng: every greyscale depth decodes to the byte its scale names", () => {
+  const cases = [
+    { depth: 1, samples: [0, 1, 0, 1], expected: [0, 255, 0, 255] },
+    { depth: 2, samples: [0, 1, 2, 3], expected: [0, 85, 170, 255] },
+    { depth: 4, samples: [0, 7, 15], expected: [0, 119, 255] },
+    { depth: 8, samples: [10, 200], expected: [10, 200] },
+  ];
+  for (const entry of cases) {
+    const raw = pngRaw([pngBits(entry.samples, entry.depth)]);
+    const file = pngFile({ width: entry.samples.length, height: 1, depth: entry.depth, colour: 0, raw });
+    const decoded = decodePng(file);
+    assert.equal(decoded.width, entry.samples.length, `${entry.depth}-bit width`);
+    assert.deepEqual([...decoded.pixels], entry.expected.flatMap((value) => [value, value, value, 255]),
+      `${entry.depth}-bit grey`);
+    assert.deepEqual(decoded.format, {
+      colourType: 0,
+      bitDepth: entry.depth,
+      interlace: 0,
+      palette: null,
+      paletteAlpha: null,
+      transparent: null,
+    }, `${entry.depth}-bit format is reported`);
+  }
+});
+
+test("pixelpng: grey+alpha keeps both channels", () => {
+  const raw = pngRaw([new Uint8Array([10, 255, 20, 0])]);
+  const decoded = decodePng(pngFile({ width: 2, height: 1, depth: 8, colour: 4, raw }));
+  assert.deepEqual([...decoded.pixels], [10, 10, 10, 255, 20, 20, 20, 0]);
+  assert.equal(decoded.format.colourType, 4);
+  assert.equal(decoded.format.bitDepth, 8);
+});
+
+test("pixelpng: a palette index becomes its PLTE entry, tRNS and all", () => {
+  const palette = [255, 0, 0, 0, 255, 0, 0, 0, 255];
+  const file = pngFile({
+    width: 3, height: 1, depth: 8, colour: 3,
+    palette,
+    paletteAlpha: [0, 128],
+    raw: pngRaw([new Uint8Array([2, 1, 0])]),
+  });
+  const decoded = decodePng(file);
+  assert.deepEqual([...decoded.pixels], [0, 0, 255, 255, 0, 255, 0, 128, 255, 0, 0, 0]);
+  assert.deepEqual([...decoded.format.palette], palette, "the PLTE body is carried, not rebuilt");
+  assert.deepEqual([...decoded.format.paletteAlpha], [0, 128], "a short tRNS leaves the rest opaque");
+  assert.equal(decoded.format.colourType, 3);
+  /* Four-bit indices are packed two to a byte, and an entry with no tRNS byte
+     is fully opaque. */
+  const four = decodePng(pngFile({
+    width: 2, height: 1, depth: 4, colour: 3,
+    palette: [10, 20, 30, 40, 50, 60],
+    paletteAlpha: [200],
+    raw: pngRaw([pngBits([1, 0], 4)]),
+  }));
+  assert.deepEqual([...four.pixels], [40, 50, 60, 255, 10, 20, 30, 200],
+    "tRNS names entries from the front: entry 0 is 200, entry 1 has no byte and stays opaque");
+  assert.equal(four.format.bitDepth, 4);
+  assert.deepEqual([...four.format.palette], [10, 20, 30, 40, 50, 60]);
+  assert.deepEqual([...four.format.paletteAlpha], [200], "a four-bit palette carries a tRNS just the same");
+});
+
+test("pixelpng: a sixteen-bit sample is rounded to the byte the card holds", () => {
+  const rgb = decodePng(pngFile({
+    width: 2, height: 1, depth: 16, colour: 2,
+    raw: pngRaw([pngWords([1000, 2000, 3000, 65535, 0, 257])]),
+  }));
+  /* The expected bytes are round(sample * 255 / 65535), worked out here rather
+     than read back from the module. */
+  assert.deepEqual([...rgb.pixels], [4, 8, 12, 255, 255, 0, 1, 255]);
+  assert.equal(rgb.format.bitDepth, 16);
+  assert.equal(rgb.format.colourType, 2);
+  const rgba = decodePng(pngFile({
+    width: 1, height: 1, depth: 16, colour: 6,
+    raw: pngRaw([pngWords([0, 257, 65535, 32896])]),
+  }));
+  assert.deepEqual([...rgba.pixels], [0, 1, 255, 128], "257 and 32896 are multiples of 257, so exact");
+});
+
+test("pixelpng: an Adam7 file is put back together pixel by pixel", () => {
+  const width = 5;
+  const height = 4;
+  const rgb = adam7Pixels(width, height);
+  const decoded = decodePng(pngFile({
+    width, height, depth: 8, colour: 2, interlace: 1,
+    raw: adam7Raw(rgb, width, height),
+  }));
+  const expected = [];
+  for (let at = 0; at < rgb.length; at += 3) expected.push(rgb[at], rgb[at + 1], rgb[at + 2], 255);
+  assert.deepEqual([...decoded.pixels], expected, "every pass lands on its own pixels");
+  assert.equal(decoded.format.interlace, 1);
+});
+
+test("pixelpng: a malformed or impossible PNG is named, not guessed at", () => {
+  const grey = (options) => pngFile({ width: 2, height: 1, depth: 8, colour: 0, raw: pngRaw([new Uint8Array([1, 2])]), ...options });
+  assert.throws(() => decodePng(pngFile({
+    width: 2, height: 1, depth: 8, colour: 3, palette: null,
+    raw: pngRaw([new Uint8Array([0, 1])]),
+  })), /damaged PNG: a palette image has no PLTE chunk/, "a palette image needs its PLTE");
+  assert.throws(() => decodePng(grey({ interlace: 2 })), /unsupported PNG: interlace 2/,
+    "an interlace method the format does not define");
+  assert.throws(() => decodePng(pngFile({
+    width: 1, height: 1, depth: 4, colour: 2,
+    raw: pngRaw([pngBits([0, 0, 0], 4)]),
+  })), /unsupported PNG: bit depth 4 for colour type 2/, "RGB has no four-bit form");
+  assert.throws(() => decodePng(grey({ transparent: [0, 0, 0] })),
+    /damaged PNG: tRNS carries 3 bytes where colour type 0 needs 2/, "a grey tRNS is one sample");
+  assert.throws(() => decodePng(pngFile({
+    width: 1, height: 1, depth: 8, colour: 3,
+    palette: [1, 2, 3, 4, 5, 6],
+    raw: pngRaw([new Uint8Array([5])]),
+  })), /damaged PNG: palette index 5 is past the 2-entry PLTE/, "an index outside the palette");
+  assert.throws(() => decodePng(pngFile({
+    width: 1, height: 1, depth: 1, colour: 3,
+    palette: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    raw: pngRaw([pngBits([0], 1)]),
+  })), /damaged PNG: PLTE has 3 entries where bit depth 1 can address 2/,
+  "a palette larger than its depth can index");
+
+  /* A flipped byte in the IDAT body leaves the zlib stream plausible, so the
+     chunk CRC is the only thing that catches it. */
+  const good = grey({});
+  const marker = good.findIndex((byte, index) => index >= 8
+    && byte === 0x49 && good[index + 1] === 0x44 && good[index + 2] === 0x41 && good[index + 3] === 0x54);
+  const flipped = new Uint8Array(good);
+  flipped[marker + 4] ^= 0x01;
+  assert.throws(() => decodePng(flipped), /damaged PNG: the IDAT chunk's CRC-32 is/,
+    "a corrupt chunk is named by its CRC");
+
   assert.throws(() => decodePng(Buffer.from("title: T\n---\n")), /not a PNG/);
   assert.throws(() => decodePng(new Uint8Array(2)), /not a PNG/);
   assert.throws(() => decodePng(pngBytes(PNG_FILTERED).slice(0, 40)), /damaged PNG: /,
     "a stream that stops early");
+});
+
+test("pixelpng: an RGB file saves as RGB, stream and header unchanged", () => {
+  const raw = pngRaw([new Uint8Array([1, 2, 3, 4, 5, 6])]);
+  const file = pngFile({ width: 2, height: 1, depth: 8, colour: 2, raw });
+  const decoded = decodePng(file);
+  const saved = encodePng(decoded);
+  assert.deepEqual([...pngChunkOf(saved, "IHDR").data], [...pngChunkOf(file, "IHDR").data], "same IHDR");
+  /* The IDAT bytes come from two different compressors, so "the same stream"
+     means the bytes after inflating: the row filters and the samples. */
+  assert.deepEqual([...pngRawOf(saved)], [...raw], "the same filtered rows");
+  assert.equal(pngChunkOf(saved, "PLTE"), null, "no palette was invented");
+  const back = decodePng(saved);
+  assert.deepEqual([...back.pixels], [...decoded.pixels]);
+  assert.equal(back.format.colourType, 2);
+  assert.equal(back.format.bitDepth, 8);
+  /* An edited pixel is still carried by an RGB file: the card wrote an opaque
+     colour, which RGB can hold. */
+  setPixelAt(decoded, 1, 0, [9, 9, 9, 255]);
+  const edited = decodePng(encodePng(decoded));
+  assert.deepEqual(pixelAt(edited, 1, 0), [9, 9, 9, 255]);
+  assert.equal(edited.format.colourType, 2);
+});
+
+test("pixelpng: a palette file saves its PLTE and tRNS back", () => {
+  const palette = [255, 0, 0, 0, 255, 0, 0, 0, 255];
+  const file = pngFile({
+    width: 3, height: 1, depth: 8, colour: 3,
+    palette,
+    paletteAlpha: [0, 128],
+    raw: pngRaw([new Uint8Array([2, 1, 0])]),
+  });
+  const decoded = decodePng(file);
+  const saved = encodePng(decoded);
+  assert.deepEqual([...pngChunkOf(saved, "PLTE").data], palette, "the same entries in the same order");
+  assert.deepEqual([...pngChunkOf(saved, "tRNS").data], [0, 128]);
+  assert.deepEqual([...decodePng(saved).pixels], [...decoded.pixels]);
+  /* A colour the card introduced is appended, and its alpha with it. */
+  setPixelAt(decoded, 0, 0, [1, 2, 3, 255]);
+  const edited = decodePng(encodePng(decoded));
+  assert.deepEqual(pixelAt(edited, 0, 0), [1, 2, 3, 255]);
+  assert.equal(edited.format.colourType, 3);
+  assert.deepEqual([...edited.format.palette], [...palette, 1, 2, 3], "the new colour is appended");
+});
+
+test("pixelpng: sixteen-bit files save at sixteen bits", () => {
+  const rgb = decodePng(pngFile({
+    width: 2, height: 1, depth: 16, colour: 2,
+    raw: pngRaw([pngWords([1000, 2000, 3000, 65535, 0, 257])]),
+  }));
+  const rgbSaved = encodePng(rgb);
+  assert.equal(pngChunkOf(rgbSaved, "IHDR").data[8], 16);
+  assert.equal(pngChunkOf(rgbSaved, "IHDR").data[9], 2);
+  assert.deepEqual([...decodePng(rgbSaved).pixels], [...rgb.pixels]);
+  /* Every sample is written as byte * 257, the inverse of the decode map: the
+     low seven bits 1000 never had were lost at decode, not at save. */
+  assert.deepEqual([...pngRawOf(rgbSaved)], [...pngRaw([pngWords([1028, 2056, 3084, 65535, 0, 257])])],
+    "the sixteen-bit samples are the inverse of the decode map");
+  /* A sample that is a multiple of 257 survives exactly. */
+  const rgba = decodePng(pngFile({
+    width: 1, height: 1, depth: 16, colour: 6,
+    raw: pngRaw([pngWords([0, 257, 65535, 32896])]),
+  }));
+  const rgbaSaved = encodePng(rgba);
+  assert.equal(pngChunkOf(rgbaSaved, "IHDR").data[9], 6);
+  assert.deepEqual([...pngRawOf(rgbaSaved)], [...pngRaw([pngWords([0, 257, 65535, 32896])])]);
+  assert.deepEqual([...decodePng(rgbaSaved).pixels], [0, 1, 255, 128]);
+});
+
+test("pixelpng: a grey file stays grey, and falls back to RGBA only when it must", () => {
+  const raw = pngRaw([pngBits([0, 7, 15], 4)]);
+  const decoded = decodePng(pngFile({ width: 3, height: 1, depth: 4, colour: 0, raw }));
+  const saved = encodePng(decoded);
+  assert.equal(pngChunkOf(saved, "IHDR").data[8], 4, "the grey depth is kept");
+  assert.equal(pngChunkOf(saved, "IHDR").data[9], 0, "and the colour type");
+  assert.deepEqual([...pngRawOf(saved)], [...raw], "four-bit samples are packed back the way they came");
+  assert.deepEqual([...decodePng(saved).pixels], [...decoded.pixels]);
+  /* One pixel off the depth's scale: no four-bit grey can name 200, so the
+     writer falls back to the shape it always knows. */
+  setPixelAt(decoded, 1, 0, [200, 200, 200, 255]);
+  const fallback = decodePng(encodePng(decoded));
+  assert.equal(fallback.format.colourType, 6);
+  assert.equal(fallback.format.bitDepth, 8);
+  assert.deepEqual(pixelAt(fallback, 1, 0), [200, 200, 200, 255]);
+  assert.deepEqual([...fallback.pixels], [...decoded.pixels], "the pixels are what the card sees either way");
+  setPixelAt(decoded, 0, 0, [255, 0, 0, 255]);
+  const red = decodePng(encodePng(decoded));
+  assert.equal(red.format.colourType, 6, "a grey file repainted red cannot stay grey");
+  assert.deepEqual(pixelAt(red, 0, 0), [255, 0, 0, 255]);
+});
+
+test("pixelpng: an interlaced file is written interlaced again", () => {
+  const width = 5;
+  const height = 4;
+  const rgb = adam7Pixels(width, height);
+  const raw = adam7Raw(rgb, width, height);
+  const decoded = decodePng(pngFile({ width, height, depth: 8, colour: 2, interlace: 1, raw }));
+  const saved = encodePng(decoded);
+  assert.equal(pngChunkOf(saved, "IHDR").data[12], 1, "interlace is layout, and layout is kept");
+  assert.deepEqual([...pngRawOf(saved)], [...raw], "the passes are written in the same order");
+  const back = decodePng(saved);
+  assert.deepEqual([...back.pixels], [...decoded.pixels]);
+  assert.equal(back.format.interlace, 1);
 });
 
 test("pixelpng: what it writes is a PNG, chunk for chunk", () => {

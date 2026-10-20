@@ -128,8 +128,10 @@ export {
 export { diagLine, diagTarget } from "./cards/card-problems.mjs";
 
 import { renderDocs } from "./cards/card-docs.mjs";
+import { renderAudio } from "./cards/card-audio.mjs";
 import { renderEditor } from "./cards/card-editor.mjs";
 import { renderFiles } from "./cards/card-files.mjs";
+import { renderHelp } from "./cards/card-help.mjs";
 import { renderMod } from "./cards/card-mod.mjs";
 import { renderNote } from "./cards/card-note.mjs";
 import { PIXEL_NEW_SIZE, PIXEL_PALETTE, renderPixel } from "./cards/card-pixel.mjs";
@@ -253,4 +255,20 @@ registerCardKind({
   describe: () => "settings the user's machine",
   create: () => ({}),
   render: renderSettings,
+});
+
+registerCardKind({
+  kind: "help",
+  title: "Help",
+  describe: () => "where the answers come from",
+  create: () => ({}),
+  render: renderHelp,
+});
+
+registerCardKind({
+  kind: "audio",
+  title: "Audio",
+  describe: (card) => `audio ${card.file || "(no file)"}`,
+  create: () => ({ file: "" }),
+  render: renderAudio,
 });

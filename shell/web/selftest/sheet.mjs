@@ -42,7 +42,7 @@ import {
 test("hook: the built-in kinds register in a known order", () => {
   assert.deepEqual(knownCardKinds(), [
     "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-    "rig", "mod", "problems", "docs", "settings",
+    "rig", "mod", "problems", "docs", "settings", "help", "audio",
   ]);
   for (const kind of knownCardKinds()) {
     const spec = cardKind(kind);

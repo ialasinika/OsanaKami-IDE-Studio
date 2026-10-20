@@ -3,12 +3,15 @@
 /* ------------------------------------------------------------------ */
 
 import assert from "node:assert/strict";
+import { audioMime, audioSizeLabel, clockLabel, dataUrl, isAudioPath } from "../audioinfo.mjs";
 import {
+  COMMAND_HELP,
   COMPLETION_KIND_LABELS,
   COMPLETION_LIMIT,
   INDENT_UNIT,
   applyCompletion,
   applyTokenSpans,
+  cardKind,
   completionKindLabel,
   completionState,
   findMatches,
@@ -19,6 +22,7 @@ import {
   indentAfterEnter,
   indentSelection,
   isYarnPath,
+  knownCardKinds,
   lineColumn,
   markHits,
   matchesFilter,
@@ -406,4 +410,54 @@ test("mod: a folded section is remembered on the card, not in the DOM", () => {
   setModSectionCollapsed(null, "defines", true);
   setModSectionCollapsed({ collapsed: "nope" }, "defines", true);
   assert.deepEqual(card.collapsed, { yarn: true }, "folding one card must not leak into another");
+});
+
+test("help: the card is registered and reads the registry's command list", () => {
+  // G15: the help card is a card, so it must be a registered kind like any
+  // other -- a kind that exists only in a menu item would not survive a board
+  // reload.  Its command list is the one the command line prints, not a copy.
+  assert.ok(knownCardKinds().includes("help"), "the help kind is registered");
+  const help = cardKind("help");
+  assert.equal(help.title, "Help");
+  assert.equal(typeof help.render, "function");
+  assert.ok(COMMAND_HELP.length >= 10, `the command list has ${COMMAND_HELP.length} rows`);
+  assert.ok(COMMAND_HELP.some((row) => row.startsWith("help ")), "help is in the help list");
+});
+
+test("audio: a recording is recognised by extension, not by content", () => {
+  // G2: the card is chosen before any byte is read, so the extension is the
+  // only signal -- and a wrong "yes" would open the editor on bytes it must
+  // refuse.  Case and query strings are normalised; dot-less names are not audio.
+  assert.equal(audioMime("Voice/line1.wav"), "audio/wav");
+  assert.equal(audioMime("Voice/LINE.OGG"), "audio/ogg");
+  assert.equal(audioMime("Voice/line1.wav?x=1"), "audio/wav");
+  assert.equal(audioMime("Voice/song.mp3"), "audio/mpeg");
+  assert.equal(audioMime("Voice/take.flac"), "audio/flac");
+  assert.equal(audioMime("Scripts/Mod.json"), null);
+  assert.equal(audioMime("Voice/noext"), null);
+  assert.equal(audioMime(null), null);
+  assert.equal(isAudioPath("a/b/c.oga"), true);
+  assert.equal(isAudioPath("a/b/c.png"), false);
+});
+
+test("audio: sizes and lengths are written the way a listener reads them", () => {
+  assert.equal(audioSizeLabel(0), "0 B");
+  assert.equal(audioSizeLabel(812.4), "812 B");
+  assert.equal(audioSizeLabel(1024), "1.0 KiB");
+  assert.equal(audioSizeLabel(49000), "47.9 KiB");
+  assert.equal(audioSizeLabel(2.5 * 1024 * 1024), "2.5 MiB");
+  assert.equal(audioSizeLabel(NaN), "unknown size");
+  assert.equal(clockLabel(0), "0:00");
+  assert.equal(clockLabel(3.4), "0:03");
+  assert.equal(clockLabel(63), "1:03");
+  assert.equal(clockLabel(3725), "1:02:05");
+  assert.equal(clockLabel(Infinity), "--:--");
+});
+
+test("audio: bytes become a data URL the player can take", () => {
+  // The shell's HTTP front end serves the app, not project files, so a card
+  // that holds the bytes hands the player a data URL instead of a path.
+  assert.equal(dataUrl("AAEC", "audio/wav"), "data:audio/wav;base64,AAEC");
+  assert.equal(dataUrl("", ""), "data:application/octet-stream;base64,");
+  assert.equal(dataUrl(null, null), "data:application/octet-stream;base64,");
 });

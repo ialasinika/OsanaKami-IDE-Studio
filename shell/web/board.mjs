@@ -67,6 +67,8 @@ export const DEFAULT_SIZE = {
   problems: { w: 520, h: 420 },
   docs: { w: 460, h: 520 },
   settings: { w: 540, h: 520 },
+  help: { w: 560, h: 560 },
+  audio: { w: 380, h: 200 },
 };
 
 /** Cards never get smaller than this; a zero-size card is unclickable. */

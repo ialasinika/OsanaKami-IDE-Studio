@@ -26,6 +26,7 @@
  */
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
+import { isAudioPath } from "./audioinfo.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import { classicLayout, classicNeighbourAfterClose, classicTabLabel } from "./classic.mjs";
@@ -1498,6 +1499,11 @@ function createApp() {
     if (/\.(skel\.bytes|atlas\.txt)$/i.test(wanted)) {
       return openRigCard(wanted);
     }
+    // So does a recording (G2): `file.read` refuses binary, so an editor would
+    // only show replacement characters where a play button belongs.
+    if (isAudioPath(wanted)) {
+      return openAudioCard(wanted);
+    }
     // Where to put the caret when the file opens (G16): a diagnostic row knows
     // its line, a define pointer knows its JSON path.  They are card fields
     // rather than a scroll after the fact, so a re-render keeps them.
@@ -1758,6 +1764,59 @@ function createApp() {
   }
 
   /**
+   * The audio card for one file, if the board already has one.
+   *
+   * One recording, one card: the player's position belongs to the card, and a
+   * second card for the same `.wav` would mean two players racing over one file.
+   */
+  function audioCardFor(path) {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind !== "audio" || typeof entry.handle.path !== "function") {
+        continue;
+      }
+      if (entry.handle.path() === path) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put an audio card on the board for one recording (G2).  The bytes come from
+   * the kernel's `file.read_bytes`, the same read the pixel and rig cards use;
+   * the shell's HTTP front end never serves project files.
+   */
+  function openAudioCard(path, options = {}) {
+    if (typeof path !== "string" || path.trim() === "") {
+      log("warn", "audio: give a workspace-relative .wav or .ogg path");
+      return null;
+    }
+    const wanted = path.trim().replace(/\\/g, "/");
+    if (!isAudioPath(wanted)) {
+      log("warn", `audio: ${wanted} is not a recording this card opens`);
+      return null;
+    }
+    const existing = audioCardFor(wanted);
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      log("info", `audio card focused (${wanted}) — the recording is on the board already`);
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.audio;
+    const centre = centreWorld();
+    const card = addCard(
+      "audio",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      { file: wanted },
+      size,
+    );
+    log("info", `audio card added (${wanted}) — press play`);
+    return card;
+  }
+
+  /**
    * The settings card, if the board already has one.
    *
    * Settings describe the machine, not the project, so one card is enough: a
@@ -1796,6 +1855,46 @@ function createApp() {
       size,
     );
     log("info", "settings card added — the AI provider and the view a window opens in");
+    return card;
+  }
+
+  /**
+   * The help card, if the board already has one.
+   *
+   * Help is a place to read, not a state to edit: a second copy would show the
+   * same matrix at a different scroll position.  `help` focuses the one there.
+   */
+  function helpCard() {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind === "help") {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Put the help card on the board (G15): the wiki URL and the type-support
+   * matrix, rendered from the same `mod.stats` answer the checks run on.
+   */
+  function openHelpCard() {
+    const existing = helpCard();
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      log("info", "help card focused — the wiki, the support matrix and the commands");
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.help;
+    const centre = centreWorld();
+    const card = addCard(
+      "help",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      {},
+      size,
+    );
+    log("info", "help card added — where the matrix, the links and the commands come from");
     return card;
   }
 
@@ -1855,7 +1954,9 @@ function createApp() {
     revealCard,
     openPixelCard,
     openRigCard,
+    openAudioCard,
     openSettingsCard,
+    openHelpCard,
     openProblemsCard,
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
@@ -2260,13 +2361,15 @@ function createApp() {
         return;
       }
       case "help": {
-        // An answer to a question is not something to go looking for: the strip
-        // opens itself so that what was asked for is on screen.
+        // The strip still gets the list (it is the quick answer), and the card
+        // is the readable copy: the wiki link, the matrix and the same list in
+        // one place that stays on the board (G15).
         showLog(true);
         log("info", "commands:");
         for (const row of COMMAND_HELP) {
           log("info", `  ${row}`);
         }
+        openHelpCard();
         return;
       }
       case "log": {

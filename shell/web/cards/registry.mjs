@@ -129,7 +129,7 @@ export const COMMAND_HELP = [
   "redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)",
   "mode classic|mod        which way of looking at the same document",
   "log                      show or hide the message strip",
-  "help                     list these commands (and open the strip to show them)",
+  "help                     list these commands, and open the card that quotes the sources",
   "clear                    empty the message strip",
 ];
 

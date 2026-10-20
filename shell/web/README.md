@@ -11,7 +11,7 @@ rpc.mjs       POST /rpc + GET /events client (SSE framing, RpcError)
 board.mjs     the board document, viewport, selection and mutations
 history.mjs   the undo ring: document snapshots, coalescing, redo branch
 watch.mjs     what a card should do when the file moves under it (pure)
-cards.mjs     the barrel: re-exports cards/ and registers the thirteen kinds
+cards.mjs     the barrel: re-exports cards/ and registers the sixteen kinds
 cards/        one module per card family, plus the dom/registry/blob helpers
 classic.mjs   the same cards as a code area, tabs and a sidebar (pure)
 views.mjs     the views by name, and what the HUD says in each (pure)
@@ -93,7 +93,9 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `project` | the workspace as one project: the tree plus what is open | `filter` |
 | `sheet` | structured data: typed cells, not text | `title`, `doc` |
 | `rig` | a Spine rig from the game: bones, skins, an animation timeline, edit and save back | `file`, `animation`, `skin`, `bones` |
+| `audio` | one recording, played from the bytes `file.read_bytes` returns | `file` |
 | `settings` | the machine, not the project: AI provider, the view a window opens in, poll interval | none |
+| `help` | the sources: the wiki link, the type-support matrix and the command list | none |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`, the barrel:
@@ -196,7 +198,7 @@ delete <id>              remove a card
 save [force]             write .infantgod/board.json
 undo                     take back the last board edit (Ctrl+Z)
 redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)
-help                     list the commands
+help                     list the commands, and open the help card that quotes the sources
 clear                    empty the log
 ```
 
