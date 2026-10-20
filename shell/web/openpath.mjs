@@ -6,8 +6,8 @@
  * A path is absolute when it starts with a drive (`C:`) or a slash.
  *
  * Callers hand `openFile` either spelling and may use either separator; the
- * kernel takes both.  A UNC share (`\\server\share`) arrives as `//server/...`
- * once separators are folded and is absolute for the same reason.
+ * kernel takes both.  A network share (`//host/share`) arrives as
+ * `//host/share` once separators are folded and is absolute for the same reason.
  */
 export function isAbsolutePath(path) {
   const clean = String(path == null ? "" : path).replace(/\\/g, "/");
