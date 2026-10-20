@@ -1144,6 +1144,29 @@ export function renderPixel(card, ctx) {
       hasPath(path) {
         return state.file !== "" && state.file === path;
       },
+      /**
+       * Adopt the PNG as it is on disk now, discarding the drawing.
+       *
+       * Only a clean card is ever asked (`watch.mjs` warns instead whenever
+       * `dirty` is set); the guard is for the race, not the normal path.
+       */
+      reload() {
+        if (!atClean() && state.index >= 0) {
+          return Promise.resolve(false);
+        }
+        return load(state.file);
+      },
+      /** The file is gone from disk: say so. The drawing stays until saved back. */
+      onFileGone() {
+        report("gone from disk — save writes it back", "warn");
+      },
+      /** External change: report it, never reload over unsaved strokes. */
+      onFileChanged(revision) {
+        if (revision !== null && revision === state.baseRevision) {
+          return;
+        }
+        report(`changed on disk (rev ${revision}) — save overwrites`, "warn");
+      },
       focus() {
         canvas.focus();
       },

@@ -1552,6 +1552,35 @@ export function renderRig(card, ctx) {
       hasPath(path) {
         return state.file === path;
       },
+      /** The skeleton path this card shows; the watch names the file by it. */
+      get path() {
+        return state.file;
+      },
+      /**
+       * Adopt the skeleton as it is on disk now, discarding the edit panel.
+       *
+       * Only a clean card is ever asked (`watch.mjs` warns instead whenever
+       * `dirty()` is true); the guard is for the race, not the normal path.
+       */
+      reload() {
+        if (hasEdits(state.edits)) {
+          return Promise.resolve(false);
+        }
+        return load(state.file);
+      },
+      /** The file is gone from disk: say so. Saving writes the model back. */
+      onFileGone() {
+        say("gone from disk — save writes it back", "warn");
+        app.log("warn", `${state.file} is gone from disk`);
+      },
+      /** External change: report it, never reload over unsaved edits. */
+      onFileChanged(revision) {
+        if (revision !== null && revision === state.baseRevision) {
+          return;
+        }
+        say(`changed on disk (rev ${revision}) — save overwrites`, "warn");
+        app.log("warn", `${state.file} changed on disk (rev ${revision})`);
+      },
       load,
       skeleton() {
         return state.skeleton;

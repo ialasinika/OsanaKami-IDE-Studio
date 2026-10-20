@@ -915,6 +915,31 @@ export function renderStory(card, ctx) {
       hasPath(path) {
         return state.path !== "" && state.path === path;
       },
+      /**
+       * Adopt the story as it is on disk now, discarding the card's text.
+       *
+       * Only a clean card is ever asked (`watch.mjs` warns instead whenever
+       * `dirty` is set); the guard is for the race, not the normal path.
+       */
+      reload() {
+        if (state.dirty) {
+          return Promise.resolve(false);
+        }
+        return load(state.path, { confirmDiscard: false });
+      },
+      /** The file is gone from disk: say so. The text stays, a save writes it back. */
+      onFileGone() {
+        renderStatus("gone from disk — saving writes it back");
+        app.log("warn", `${state.path} is gone from disk`);
+      },
+      /** External change: report it, never reload over unsaved edits. */
+      onFileChanged(revision) {
+        if (revision !== null && revision === state.baseRevision) {
+          return;
+        }
+        renderStatus(`changed on disk (rev ${revision}) — saving overwrites`);
+        app.log("warn", `${state.path} changed on disk (rev ${revision})`);
+      },
       /** What a save would write -- the card's own text, for a caller or a test. */
       text() {
         return state.story === null ? "" : serializeStory(state.story);

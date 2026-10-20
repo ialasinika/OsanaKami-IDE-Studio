@@ -82,6 +82,46 @@ export function watchDecision(known, stat) {
 }
 
 /**
+ * Which file a card handle is showing, and whether it may be watched at all.
+ *
+ * A card joins the watch by exposing `hasPath(path)`, a `path`, and `reload()`
+ * -- the two facts that name the file and the one hook that adopts the bytes.
+ * `null` means the card holds no file (a mod or docs card holds a folder or a
+ * query), so it has nothing to stat and must not keep a poll alive by mistake.
+ *
+ * @param {object} handle  a mounted card's handle
+ * @returns {string|null} the normalised path, or `null` when the card is not watchable
+ */
+export function watchTarget(handle) {
+  if (handle === undefined || handle === null) {
+    return null;
+  }
+  if (typeof handle.hasPath !== "function" || typeof handle.reload !== "function") {
+    return null;
+  }
+  const raw = handle.path;
+  const path = String(raw === undefined || raw === null ? "" : raw).replace(/\\/g, "/");
+  return path === "" ? null : path;
+}
+
+/**
+ * Read the state `watchDecision` compares.
+ *
+ * The editor's `revision` and `dirty` are getters, the rig's are methods; reading
+ * them here keeps that difference out of the poll and out of every card.
+ *
+ * @param {object} handle  a mounted card's handle
+ * @returns {{revision: number|null, dirty: boolean}}
+ */
+export function watchStateOf(handle) {
+  const read = (value) => (typeof value === "function" ? value.call(handle) : value);
+  return {
+    revision: revisionOf(read(handle.revision)),
+    dirty: read(handle.dirty) === true,
+  };
+}
+
+/**
  * Did the kernel refuse to answer because it does not have the method?
  *
  * A fork that trims `file.stat` is not broken -- it is smaller, and the board

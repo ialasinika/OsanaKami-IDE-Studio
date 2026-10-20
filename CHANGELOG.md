@@ -53,7 +53,21 @@ The mod card's sections fold from their titles. The folded set is recorded on
 the card document, so a re-render keeps it, and the body scrolls only when the
 window is shorter than the sections that are open.
 
-Suites: mods 590/590, web 304/304, langs 91/91, ai 86/86 (one skipped).  Each
+### A file that changes under a story, sprite or skeleton is noticed
+
+The poll for files changed outside the app existed for editor cards only, so a
+story, pixel or rig card kept showing the bytes it had read even after git or
+another editor rewrote the file underneath it. A card now joins by exposing
+`hasPath`, a `path` and a `reload()` -- the two facts that name the file and the
+hook that adopts it -- and `watch.mjs` gained `watchTarget()` and
+`watchStateOf()` so the poll reads getters (editor, story, pixel) and methods
+(the rig's `revision()`/`dirty()`) through one place. The three cards grew
+`reload`, `onFileChanged` and `onFileGone`: a clean card re-reads and says so, a
+card with unsaved work is warned and keeps it. A card that holds a folder or a
+query (mod, docs, problems) is not watched at all, because there is no single
+file to stat.
+
+Suites: mods 590/590, web 305/305, langs 91/91, ai 86/86 (one skipped).  Each
 new check was red-proved by a one-line sabotage and restored byte for byte.
 The DOM wiring is checked by `tools/input_smoke.py`; this machine's Edge cannot
 run it headless, so the script and the page script inside it were parse-checked

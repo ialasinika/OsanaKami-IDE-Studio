@@ -295,7 +295,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | `style.css` | layout, card chrome, the editor's two-layer metrics | cards render unstyled |
 | `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
-| `watch.mjs` | what a card should do when its file moves under it | changes made outside the app are not noticed until a card is reopened |
+| `watch.mjs` | what a card should do when its file moves under it, and which cards ask | a file rewritten outside the app stays silently stale under an open card |
 | `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the thirteen kinds | no card has anything to draw with |
 | `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs` and `story.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
 | `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
@@ -372,9 +372,11 @@ kind and the boot view and poll interval a preferences file can ask for, the
 pixel view's framing arithmetic (an un-panned image centred on the measured
 surface, a pan the person made kept, a wheel zooming around the pixel under the
 cursor and clamped to the image), the pixel card taking its measurements when
-its tile first shows it, and a mod card section folding and remembering the
-fold on the card document
-(304 checks), no DOM |
+its tile first shows it, a mod card section folding and remembering the
+fold on the card document, and the watch accepting any card that names a file
+and can reload it -- through getters or methods -- while a card holding a folder
+or a query stays out of the poll
+(305 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte

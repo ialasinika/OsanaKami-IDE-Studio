@@ -29,6 +29,8 @@ import {
   WATCH_WARN,
   watchDecision,
   watchReport,
+  watchStateOf,
+  watchTarget,
   watchTrimmed,
 } from "../watch.mjs";
 import {
@@ -577,4 +579,54 @@ test("watch: a path that is no longer open is forgotten", () => {
   const before = new Map([["gone.yarn", "ok:7"]]);
   const report = watchReport([], before);
   assert.equal(report.next.size, 0, "a long session does not grow the map forever");
+});
+
+test("watch: any card with a file and a reload joins, whatever its kind", () => {
+  // The editor's revision and dirty are getters; the rig's are methods. The poll
+  // asks both, so the difference is read once here instead of at every call site.
+  const editor = {
+    kind: "editor",
+    path: "Spine\\Hero.skel.bytes",
+    hasPath: () => true,
+    reload() {},
+    get revision() {
+      return 9;
+    },
+    get dirty() {
+      return true;
+    },
+  };
+  assert.equal(watchTarget(editor), "Spine/Hero.skel.bytes");
+  assert.deepEqual(watchStateOf(editor), { revision: 9, dirty: true });
+
+  const rig = {
+    kind: "rig",
+    get path() {
+      return "Spine/Hero.skel.bytes";
+    },
+    hasPath: () => true,
+    reload() {},
+    revision() {
+      return 12;
+    },
+    dirty() {
+      return false;
+    },
+  };
+  assert.equal(watchTarget(rig), "Spine/Hero.skel.bytes");
+  assert.deepEqual(watchStateOf(rig), { revision: 12, dirty: false });
+
+  // A mod card holds a folder and a docs card a query: neither is a file, and a
+  // card without `reload` cannot take a change, so none of them keeps the poll
+  // asking about a path that is not a file.
+  assert.equal(watchTarget({ kind: "mod", path: "MyMod" }), null);
+  assert.equal(watchTarget({ kind: "docs", hasPath: () => true }), null);
+  assert.equal(watchTarget({ kind: "editor", path: "", hasPath: () => true, reload() {} }), null);
+  assert.equal(watchTarget(null), null);
+  assert.equal(watchTarget({}), null);
+
+  // "Cannot compare" is not revision 0: a card that has not read the file yet
+  // keeps the group unknown so the next poll asks again.
+  assert.deepEqual(watchStateOf({ revision: Number.NaN, dirty: "yes" }), { revision: null, dirty: false });
+  assert.equal(watchTarget({ path: "yarn/a.yarn", hasPath: () => true, get reload() { return "not a hook"; } }), null);
 });

@@ -4,9 +4,9 @@
 
 快照：第三轮 HEAD = `89759b9`（第三轮改动提交后即以该提交为准；第四轮见下一段）。第一轮（`df08eea` 落文，`f7b6c84` 快照）关了 G3/G21/G46/G4/G39/G22/G13/G45/G40/G36 十条，但留下 13 条"未复核"；第二轮（`89759b9` 快照）把那 13 条逐条重跑，**未复核区清空**：G31/G5/G8/G14/G19/G37/G33 全部有了定论（多为关闭或大幅收窄），G2/G10/G16/G17/G18/G20/G38 核实仍然成立并重新钉了行号。第三轮关掉 G7/G6/G9（校验器可信度）与 G11/G12（闭环）：校验器现在读 schema 声明了却没人读的关键字、核对 Yarn `#line:` 与本地化表的双向一致、并对 Addressables 地址的写法提出警告；包能装进游戏自己的 Mods 目录，也能读/跟随 `Player.log`。**第二轮钉的行号因本轮 `shell/mods/validate.js`（+431）、`shell/mods/index.js`（+323）、`shell/main.mjs`（+212）、`shell/web/cards/card-mod.mjs`（+138）的增行而漂移，本轮已按当天树重钉；已关闭行保留原提交编号，不追行号。**
 
-第四轮（2026-10-20，起点快照 `0c74d9b`，代码提交 `c416b01`）：`docs/gaps2.md` 是浏览器会话实测出来的三条（问题卡路径、像素卡后台打开、缩放锚点），复核全部成立；同一轮把 C 区排队的 G16/G17 一起关掉，并补了用户在整理文档时现场报的 G54（窄窗口 mod 卡分区收不起来）。问题卡改用 `mod.validate` 回传的解析后包根打开真实文件、编辑器新增可存活重渲染的 `reveal` 位置；像素卡在标签前移到可见时按测量到的画布重新取景，平移保留人的手势、缩放锚在光标下的像素；mod 卡分区可折叠且折叠状态记在卡文档上。**G51 的另一半（mods 根在 workspace 之外时内核拒绝读）不是 bug 而是内核 containment 的产品决策，单列为 G51-b 留在 B 区；G19 的 watch 残余仍未关。**
+第四轮（2026-10-20，起点快照 `0c74d9b`，代码提交 `c416b01`）：`docs/gaps2.md` 是浏览器会话实测出来的三条（问题卡路径、像素卡后台打开、缩放锚点），复核全部成立；同一轮把 C 区排队的 G16/G17 一起关掉，并补了用户在整理文档时现场报的 G54（窄窗口 mod 卡分区收不起来）。问题卡改用 `mod.validate` 回传的解析后包根打开真实文件、编辑器新增可存活重渲染的 `reveal` 位置；像素卡在标签前移到可见时按测量到的画布重新取景，平移保留人的手势、缩放锚在光标下的像素；mod 卡分区可折叠且折叠状态记在卡文档上。**G51 的另一半（mods 根在 workspace 之外时内核拒绝读）不是 bug 而是内核 containment 的产品决策，单列为 G51-b 留在 B 区；G19 的 watch 残余在同一轮末尾关掉。**
 
-## 已关闭（两轮累计，均有代码证据）
+## 已关闭（历轮累计，均有代码证据）
 
 | 条目 | 关闭证据 |
 | --- | --- |
@@ -48,6 +48,7 @@
 | G52 像素卡后台打开不重绘 | `c416b01`：tile 在卡第一次可见时调 `handle.shown?.()`；`card-pixel.mjs` 的 `shown()` 按新测的画布尺寸重取景（未平移→居中），后台创建不再停 0×0；`shell/web/selftest/pixel.mjs` 5 条 |
 | G53 缩放锚点错 | `c416b01`：`shell/web/pixelview.mjs` 纯几何 `place`/`zoomAt`：未平移时按测量面居中，平移后保留人的位置，wheel 以光标下像素为锚且 clamp 到图内，缩放范围 `0.25×–32×`（`selftest/pixel.mjs` 钉住） |
 | G54 窄窗口分区收不起 | `c416b01`：`dom.mjs` 的 `section()` 支持可折叠标题；`card-mod.mjs` 分区折叠状态记在卡文档（`card.collapsed`，重渲染不丢），窄窗口下卡体滚动；`shell/web/selftest/cards.mjs` +1 条 |
+| G19 残余：watch 只盯 editor 卡 | 第四轮：`watch.mjs` 新增 `watchTarget()`（带 `path` 且带 `reload()` 的 handle 才入轮询，按规范斜杠取路径）与 `watchStateOf()`（getter 和方法两种读法归一）；`main.mjs` 的 `watchedPaths()`/`applyFileChange()`/`groupKnown()` 改为按这套接口收卡。story/pixel/rig 卡补 `reload()`/`onFileChanged()`/`onFileGone()`（rig 另补 `path` getter、沿用 `revision()`/`dirty()` 方法）；干净卡自动重读、脏卡只提示，`selftest/main.mjs` 钉住两种读法与"无 reload 的卡不进轮询" |
 
 ## 仍然成立（本轮逐条核实）
 
@@ -71,12 +72,11 @@
 | G15 编辑器内零帮助入口 | **证据更新**：`shell/` 不再是 0 命中——`support.js:7` 与 `support.json` 引了 wiki URL 作**数据来源注释**，但没有任何一处把链接渲染给用户；docs 卡内容仍只来自 KB。条目本身成立，旧证明行作废 |
 | G51-b mods 根在 workspace 外时文件读不到 | 内核 `core/src/wksp.c` 的 `sde_wksp_resolve` 只接受 workspace 内的绝对路径（workspace 外绝对值返回 `path escapes the workspace`）。游戏真实的 Mods 目录通常在 workspace 之外，因此“从问题行打开包内文件”“在编辑器里看游戏目录里的包”这类动作对游戏目录包仍不可用；`validate DIR --mods-root` 走 `shell/mods` 直接 `node:fs`，不受影响。修复属产品决策：放宽内核 containment，或把这类打开请求改走 `mod.*` RPC（后者可并入 G18 同批） |
 
-### C. 浏览器层：功能都在，路不通（G16/G17 已于第四轮关闭）
+### C. 浏览器层：功能都在，路不通（G16/G17/G19 已于第四轮关闭）
 
 | 条目 | 当日证据（2026-10-20 第四轮复核，行号已重钉） |
 | --- | --- |
 | G18 docs 卡看不到本包定义 | `card-docs.mjs:34,56,78,91`：`mod.docFor`/`mod.search`/`mod.stats`/`mod.types` 仍全部不带 root，卡片仍无包路径输入 |
-| G19 残余：watch 只盯 editor 卡 | `main.mjs:2502-2508` `watchedPaths()` 仍 `handle.kind !== "editor"` 就跳过——story/pixel/mod/problems/docs 卡外部改动不刷新；`card-editor.mjs` 的 `onFileChanged`/`onFileGone` 已给出卡契约先例，其它卡还没有钩子 |
 
 ### D. 全流程断点与产品
 
@@ -93,11 +93,10 @@
 
 ## 建议队列（第四轮，按"作者被卡住的频率 × 修复成本"排序）
 
-第四轮（`c416b01`）关掉了 G16/G17 与 gaps2 的 G51-a/G52/G53/G54：问题卡点得到真实文件、mod 卡校验结果可回点、像素卡在标签切回时有画布尺寸、缩放锚在鼠标下的像素、窄窗口 mod 卡能折叠。剩下的断点集中在"同一套接法还没推广到其它卡"：
+第四轮（`c416b01` 及随后的 watch 提交）关掉了 G16/G17/G19 与 gaps2 的 G51-a/G52/G53/G54：问题卡点得到真实文件、mod 卡校验结果可回点、像素卡在标签切回时有画布尺寸、缩放锚在鼠标下的像素、窄窗口 mod 卡能折叠、story/pixel/rig 卡也能被外部改动叫醒。剩下的断点集中在"同一套接法还没推广到其它卡"：
 
 第一批（低成本，卡契约照 editor 的先例加钩子）：
 
-1. **G19 残余 watch**：`watchedPaths()` 放开带 `path`/`root` 的 handle（story/pixel/mod/problems/docs），文件外部变化时重读或标脏。story/pixel 各需 `onFileChanged`/`onFileGone`，revision 冲突的提示沿用 editor。
-2. **G18 docs 卡带 root + G44 残余 `gameModsInfo` 动词**：同一层，`mod.search`/`docFor`/`stats`/`types` 加包路径参数，顺手给"KB/游戏目录从哪来"一个查询动词。
+1. **G18 docs 卡带 root + G44 残余 `gameModsInfo` 动词**：同一层，`mod.search`/`docFor`/`stats`/`types` 加包路径参数，顺手给"KB/游戏目录从哪来"一个查询动词。
 
 第二替补：**G10** 残余陷阱 lint（FMOD/GUID/副作用函数各一条）；**G34** Electron 新建模组失败路径；**G49** agent 界面（依赖 G44 关闭 + 先定形态）；**G51-b** 需要一次产品决策（放宽内核 containment，还是把打开请求改走 `mod.*` RPC——后者可并入 G18 同批）。**G9 残余**（Addressables 窗口里登记了哪些 address）无本地数据源，等游戏侧暴露清单。上游 0.4.2 的 port 层硬化（junction 逃逸、revision 0 二义、原子写）仍建议作为并行技术轨。

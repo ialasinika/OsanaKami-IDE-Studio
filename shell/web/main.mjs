@@ -48,6 +48,8 @@ import {
   WATCH_WARN,
   watchDecision,
   watchReport,
+  watchStateOf,
+  watchTarget,
   watchTrimmed,
 } from "./watch.mjs";
 import {
@@ -2560,15 +2562,12 @@ function createApp() {
   /** A kernel without `file.stat` (a trimmed fork): stop asking, say so once. */
   let watchUnavailable = false;
 
-  /** Every editor card currently holding `path`. */
-  function editorsOn(path) {
+  /** Every watchable card currently showing `path`. */
+  function cardsOn(path) {
     const out = [];
     for (const entry of mounted.values()) {
       const handle = entry.handle;
-      if (handle === undefined || handle === null || handle.kind !== "editor") {
-        continue;
-      }
-      if (typeof handle.hasPath === "function" && handle.hasPath(path)) {
+      if (watchTarget(handle) === path) {
         out.push(handle);
       }
     }
@@ -2578,23 +2577,22 @@ function createApp() {
   /**
    * One change, one answer -- whether it arrived as a notification or as the
    * answer to a poll. Each card is judged on its own: two cards on one file can
-   * hold two revisions, and only one of them may have unsaved edits.
+   * hold two revisions, and only one of them may have unsaved edits. A card that
+   * shows a file joins this poll by exposing `reload()`; the editor's
+   * `onFileChanged`/`onFileGone` are the contract every watchable card keeps.
    */
   function applyFileChange(path, stat) {
-    for (const handle of editorsOn(path)) {
-      const decision = watchDecision(
-        { revision: handle.revision, dirty: handle.dirty === true },
-        stat,
-      );
+    for (const handle of cardsOn(path)) {
+      const decision = watchDecision(watchStateOf(handle), stat);
       if (decision === WATCH_RELOAD) {
-        handle.reload().then((reloaded) => {
+        Promise.resolve(handle.reload()).then((reloaded) => {
           if (reloaded) {
             log("info", `${path} changed on disk -- reloaded`);
           }
-        }).catch((err) => log("error", `file.read ${path}: ${err.message}`));
-      } else if (decision === WATCH_WARN) {
+        }).catch((err) => log("error", `could not reload ${path}: ${err.message}`));
+      } else if (decision === WATCH_WARN && typeof handle.onFileChanged === "function") {
         handle.onFileChanged(Number.isFinite(stat.revision) ? stat.revision : null);
-      } else if (decision === WATCH_GONE) {
+      } else if (decision === WATCH_GONE && typeof handle.onFileGone === "function") {
         handle.onFileGone();
       }
     }
@@ -2604,18 +2602,14 @@ function createApp() {
   function watchedPaths() {
     const groups = new Map();
     for (const entry of mounted.values()) {
-      const handle = entry.handle;
-      if (handle === undefined || handle === null || handle.kind !== "editor") {
-        continue;
-      }
-      const path = String(handle.path || "").replace(/\\/g, "/");
-      if (path === "") {
+      const path = watchTarget(entry.handle);
+      if (path === null) {
         continue;
       }
       if (!groups.has(path)) {
         groups.set(path, []);
       }
-      groups.get(path).push(handle);
+      groups.get(path).push(entry.handle);
     }
     return groups;
   }
@@ -2630,13 +2624,13 @@ function createApp() {
     let loading = false;
     let dirty = false;
     for (const handle of handles) {
-      const held = handle.revision;
-      if (!Number.isFinite(held)) {
+      const held = watchStateOf(handle);
+      if (held.revision === null) {
         loading = true;
-      } else if (revision === null || held < revision) {
-        revision = held;
+      } else if (revision === null || held.revision < revision) {
+        revision = held.revision;
       }
-      if (handle.dirty === true) {
+      if (held.dirty) {
         dirty = true;
       }
     }
