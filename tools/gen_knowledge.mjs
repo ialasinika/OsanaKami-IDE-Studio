@@ -78,9 +78,14 @@ function usage() {
     "",
     "不写 --game-dir 时按 INFANTGOD_MODS_DIR / INFANTGOD_GAME_DIR / Steam 库探测。",
     "--schema-dir / --defines-dir 单独指向两个子目录（等价于 <game-dir>/SODefines/{Schema,Defines}）。",
+    "  显式给出的目录不存在会直接报错：显式设置会关闭自动回退。",
+    "--force 允许 --out 覆盖一份「更富」的知识库（默认拒绝，见下）。",
     "生成的 facts-only 知识库保留：command/function/variable 名字、参数名与类型、required/enum、类型名、",
     "  baseline 定义名、yarn 节点与台词 id、语言；故意丢弃：description 文档文本、#region 噪声、",
     "  属性描述、53 个角色名与颜色、以及本机绝对路径。",
+    "",
+    "覆盖守卫（G37）：--out 指向的已有文件如果带文档/命令签名（facts-only 生成版没有的数据），",
+    "  默认拒绝覆盖并以退出码 2 结束，避免把富 KB 静默换成事实版；确认要换请显式加 --force。",
     "",
     "--diff 是只读报告（退出 0）：按区段打印「只在已提交 KB 里 / 只在生成版里」的名字。",
     "  已提交的 shell/mods/knowledge.json 比 facts-only 生成版更富，原因见 --help 顶部说明；",
@@ -89,11 +94,12 @@ function usage() {
 }
 
 export function parseArgs(argv) {
-  const out = { gameDir: null, out: null, check: false, checkPath: null, diff: false, diffPath: null, json: false, help: false, schemaDir: null, definesDir: null };
+  const out = { gameDir: null, out: null, check: false, checkPath: null, diff: false, diffPath: null, json: false, help: false, schemaDir: null, definesDir: null, force: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--json") out.json = true;
+    else if (a === "--force") out.force = true;
     else if (a === "--game-dir" || a === "--mods-dir") out.gameDir = argv[++i] || "";
     else if (a.startsWith("--game-dir=")) out.gameDir = a.slice("--game-dir=".length);
     else if (a === "--schema-dir") out.schemaDir = argv[++i] || "";
@@ -142,6 +148,9 @@ export function resolveGameDir(explicit, options) {
   if (!found.dir) {
     const err = new Error(
       "未找到游戏 Mods 目录（没有 SODefines/Schema 或 SODefines/Defines）。\n" +
+        (explicit
+          ? "显式给出的 --game-dir 无效；按设计不再回退环境变量或 Steam 库探测（回退被显式设置关闭）。\n"
+          : "") +
         "用 --game-dir 指定，或设 INFANTGOD_MODS_DIR / INFANTGOD_GAME_DIR。\n" +
         "找过的地方：\n" +
         found.tried.slice(0, 40).map((t) => `  - ${t.path}  (${t.source})`).join("\n")
@@ -232,6 +241,72 @@ function formatDiff(report, kbPath, generated, resolvedDir) {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * 知识库里「文档/命令签名」的密度。facts-only 生成版恒为 0（命令只有 name/usage/
+ * arity，没有 documentation、参数名或 returnType）；已提交的富 KB 有一百多条。
+ * 守卫只用它判断「写下去会不会静默丢数据」，不参与 --check/--diff。
+ */
+export function documentationDensity(kb) {
+  if (!kb || typeof kb !== "object") return 0;
+  let n = 0;
+  for (const section of [kb.commands, kb.functions]) {
+    if (!Array.isArray(section)) continue;
+    for (const entry of section) {
+      if (!entry || typeof entry !== "object") continue;
+      if (
+        (typeof entry.documentation === "string" && entry.documentation.trim()) ||
+        (typeof entry.description === "string" && entry.description.trim()) ||
+        (typeof entry.returnType === "string" && entry.returnType.trim()) ||
+        (Array.isArray(entry.parameters) &&
+          entry.parameters.some((p) => p && typeof p.name === "string" && p.name))
+      ) {
+        n++;
+      }
+    }
+  }
+  if (typeof kb.documentation === "string" && kb.documentation.trim()) n++;
+  else if (kb.documentation && typeof kb.documentation === "object" && Object.keys(kb.documentation).length) n++;
+  if (Array.isArray(kb.undocumentedCommands)) n += kb.undocumentedCommands.length;
+  if (Array.isArray(kb.undeclaredVariables)) n += kb.undeclaredVariables.length;
+  return n;
+}
+
+/** 一份 JSON 是否长得像知识库（避免把任意 JSON 当成要保护的富 KB）。 */
+function looksLikeKnowledge(kb) {
+  if (!kb || typeof kb !== "object" || Array.isArray(kb)) return false;
+  return (
+    Array.isArray(kb.commands) ||
+    Array.isArray(kb.functions) ||
+    (kb.schemas && typeof kb.schemas === "object") ||
+    (kb.stats && typeof kb.stats === "object") ||
+    (kb.baseline && typeof kb.baseline === "object")
+  );
+}
+
+/**
+ * G37：--out 覆盖守卫。返回 null 表示可以写；否则返回要打印的拒绝原因。
+ * 条件是「已有文件是知识库且带文档/命令签名，而新生成版同类数据为 0」。
+ */
+export function outOverwriteRefusal(outPath, kb) {
+  if (!fs.existsSync(outPath)) return null;
+  let existing;
+  try {
+    existing = JSON.parse(fs.readFileSync(outPath, "utf8"));
+  } catch {
+    return null; // 不是 JSON：不是「富 KB」，守卫不拦（写坏文件的风险由调用方承担）。
+  }
+  if (!looksLikeKnowledge(existing)) return null;
+  const before = documentationDensity(existing);
+  const after = documentationDensity(kb);
+  if (before <= 0 || after > 0) return null;
+  return (
+    `拒绝覆盖更富的知识库：${outPath}\n` +
+    `  已有文件含 ${before} 条文档/命令签名（documentation、参数名、returnType 等），\n` +
+    "  本次生成是 facts-only（同类计数 0），写下去会静默丢掉这些数据。\n" +
+    "  确认要覆盖请加 --force。"
+  );
+}
+
 /** 主入口；返回退出码（0/1/2）。 */
 export async function main(argv) {
   let args;
@@ -318,6 +393,13 @@ export async function main(argv) {
   const text = `${JSON.stringify(kb)}\n`;
   if (args.out) {
     const outPath = path.resolve(args.out);
+    if (!args.force) {
+      const refusal = outOverwriteRefusal(outPath, kb);
+      if (refusal) {
+        process.stderr.write(`${refusal}\n`);
+        return 2;
+      }
+    }
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, text, "utf8");
     process.stdout.write(`${printSummary(kb, outPath)}\n`);

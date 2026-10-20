@@ -302,7 +302,13 @@ setTimeout(() => {
     /* the file is a fixture; if it is gone the check below says so */
   }
 }, 120);
-const streamed = await game.followGameLog({ path: streamFile, durationMs: 400, intervalMs: 50 });
+/*
+ * The append is scheduled by the test, not by the watch, so a loaded machine can
+ * deliver that timer late.  A two-second window keeps this check about the watch
+ * rather than about setTimeout under load: at 400 ms it flaked during full-suite
+ * runs (samples 0, the append landing after the watch had returned).
+ */
+const streamed = await game.followGameLog({ path: streamFile, durationMs: 2000, intervalMs: 50 });
 check("followGameLog collects what arrives during the watch",
   streamed.found === true && streamed.samples >= 1 && streamed.totals.errors === 1 &&
     streamed.lines.some((l) => /late failure/.test(l.text)),

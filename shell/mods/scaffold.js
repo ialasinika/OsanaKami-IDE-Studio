@@ -21,6 +21,7 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
+const crypto = require('crypto');
 
 /* ------------------------------------------------------------------ *
  * 1. 版本 / 常量
@@ -113,6 +114,14 @@ const DEFAULT_GAME_VERSION = '1.0';
 const DEFAULT_AUTHOR = 'Mod Author';
 const DEFAULT_LOCALES = ['zh-CN', 'en-US'];
 const DEFAULT_BASE_LANGUAGE = 'zh-CN';
+
+/*
+ * G10：schema 只写 `initialTransform: { type: "number" }`，默认值 0 并不是文档值。
+ * 语料里 56 个 Character 全是 -7.199999809265137（float32 的 -7.2）：那是角色在
+ * 场景里的初始 Y。脚手架生成 0 会让新角色站在原点，作者得自己发现这个数字。
+ * 256×144 的画布约定记在 validate.js 的 D021 里（知识库没有几何字段可默认）。
+ */
+const DEFAULT_INITIAL_TRANSFORM = -7.2;
 
 /** 参考工程里真实存在的语言码（MyMod/Yarn/NewProject_*.csv），外加几个常见地区变体。 */
 const KNOWN_LOCALES = [
@@ -691,9 +700,20 @@ function renderLocalisationCsv(opts) {
   const header = ['language', 'id', 'text', 'file', 'node', 'lineNumber', 'lock', 'comment'].join(',');
   const rows = [];
 
+  /*
+   * G38：lock 不是装饰。语料实测（MyMod 11 张表 × 18609 行）：lock 是
+   * sha256(text) 的前 4 字节、小写 hex，译文表沿用基础表那一行的 lock。
+   * 脚手架生成的包自己也要过校验（D023 会核对 lock 能否指回包内文本），
+   * 所以这里按基础语言的源文本算真 lock；随机 hex 会教出「lock 随便填」。
+   */
+  const lockOf = (text) =>
+    crypto.createHash('sha256').update(String(text), 'utf8').digest('hex').slice(0, 8);
+  const sourceTextOf = (e) => {
+    const translations = e.translations && typeof e.translations === 'object' ? e.translations : null;
+    if (translations && typeof translations[baseLanguage] === 'string') return translations[baseLanguage];
+    return e.text == null ? '' : String(e.text);
+  };
   locales.forEach((locale) => {
-    const rnd = mulberry32(hashSeed(`${locale}::${baseLanguage}::${entries.length}`));
-    const lockHex = () => Math.floor(rnd() * 0x100000000).toString(16).padStart(8, '0');
     for (const e of entries) {
       const key = String(e.key == null ? '' : e.key);
       const id = /^line:/.test(key) ? key : `line:${key}`;
@@ -713,8 +733,8 @@ function renderLocalisationCsv(opts) {
           e.file == null ? '' : String(e.file),
           e.node == null ? '' : String(e.node),
           e.lineNumber == null ? '' : String(e.lineNumber),
-          // lock 列固定 8 位十六进制；每行独立随机。
-          lockHex(),
+          // 译文表沿用基础语言那一行的 lock（语料里 11 张表逐行如此）。
+          lockOf(sourceTextOf(e)),
           state ? `Line metadata: state:${state}` : (e.comment == null ? '' : String(e.comment)),
         ]),
       );
@@ -886,6 +906,25 @@ function buildDefineObject(typeName, techName, overrides) {
   const field = techNameFieldOf(schema);
   if (field !== 'techName' && Object.prototype.hasOwnProperty.call(out, 'techName')) delete out.techName;
   out[field] = techName;
+  /*
+   * G8/G10：AudioEvent 的 schema 同时声明 techName 与 TechName（游戏两套 JSON 各读
+   * 一个），只写一个小写键会被校验器报 D001——脚手架自己生成的文件过不了自己的
+   * 校验。身份字段有几个拼写就写几个。
+   */
+  if (schema && schema.properties && field === 'techName' &&
+      Object.prototype.hasOwnProperty.call(schema.properties, 'TechName')) {
+    out.TechName = techName;
+  }
+  /*
+   * G10：schema 的 number 默认值是 0，但 Character.initialTransform 的文档值是
+   * -7.2。只有 schema 真的声明了这个数字字段（且没有 const/enum 另有限制）时才写，
+   * 免得把别的类型也改掉。
+   */
+  const transform = schema && schema.properties ? schema.properties.initialTransform : null;
+  if (transform && (transform.type === 'number' || transform.type === 'integer') &&
+      transform.const === undefined && !Array.isArray(transform.enum)) {
+    out.initialTransform = DEFAULT_INITIAL_TRANSFORM;
+  }
   if (schema && schema.properties && 'EditorNote' in schema.properties && !('EditorNote' in out)) {
     out.EditorNote = '';
   }
@@ -1372,5 +1411,6 @@ Object.defineProperty(module.exports, '__internal', {
   safeFileName,
   createLineIdFactory,
   loadKnowledgeCharacters,
+  makePlaceholderPng,
   },
 });

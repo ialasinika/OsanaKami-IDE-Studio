@@ -130,6 +130,58 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
   check("--diff with no readable committed file exits 2", diffMissing.status === 2,
     JSON.stringify({ status: diffMissing.status }));
 
+  /*
+   * G37 残余：--out 默认不得把「更富」的 KB（带 documentation / 参数名 / returnType）
+   * 静默换成 facts-only 版；加 --force 才允许。这里刻意造一份富 KB 当靶子。
+   */
+  const rich = JSON.parse(readFileSync(outPath, "utf8"));
+  rich.commands.push({
+    name: "GetTopic", parameters: [{ name: "topicTechName", type: "string" }],
+    returnType: "number", documentation: "rich text that facts-only output would drop", usage: 26,
+  });
+  const richPath = join(fixtureRoot, "rich.json");
+  const richText = JSON.stringify(rich) + "\n";
+  writeFileSync(richPath, richText);
+  const guarded = spawnSync(process.execPath, [gen, "--game-dir", gameDir, "--out", richPath], { encoding: "utf8" });
+  check("--out refuses to overwrite a richer knowledge base with a facts-only one",
+    guarded.status === 2 &&
+    /拒绝覆盖更富的知识库/.test(guarded.stderr || "") &&
+    /--force/.test(guarded.stderr || "") &&
+    readFileSync(richPath, "utf8") === richText,
+    JSON.stringify({ status: guarded.status, err: (guarded.stderr || "").trim().slice(-200) }));
+  const forced = spawnSync(process.execPath, [gen, "--game-dir", gameDir, "--out", richPath, "--force"], { encoding: "utf8" });
+  const forcedKb = existsSync(richPath) ? JSON.parse(readFileSync(richPath, "utf8")) : null;
+  check("--force allows the overwrite and the result is facts-only",
+    forced.status === 0 && forcedKb !== null && mod.documentationDensity(forcedKb) === 0,
+    JSON.stringify({ status: forced.status, density: forcedKb && mod.documentationDensity(forcedKb),
+      err: (forced.stderr || "").trim().slice(-160) }));
+  check("a facts-only file is not treated as rich (the guard does not block normal regeneration)",
+    mod.outOverwriteRefusal(richPath, kb) === null &&
+    mod.documentationDensity(kb) === 0 &&
+    mod.outOverwriteRefusal(join(fixtureRoot, "absent.json"), kb) === null,
+    JSON.stringify({ density: mod.documentationDensity(kb), refusal: mod.outOverwriteRefusal(richPath, kb) }));
+
+  /*
+   * G37 的另一半：显式给出的目录无效时直接报错，且文案要说明「回退被显式设置关闭」。
+   */
+  const lostSchema = join(fixtureRoot, "no-schema-dir");
+  const lostSchemaRun = spawnSync(process.execPath, [gen, "--game-dir", gameDir,
+    "--schema-dir", lostSchema, "--out", join(fixtureRoot, "never-schema.json")], { encoding: "utf8" });
+  check("a missing explicit --schema-dir is an error that says the fallback was disabled",
+    lostSchemaRun.status === 2 &&
+    /指定的目录不存在/.test(lostSchemaRun.stderr || "") &&
+    /显式设置已关闭自动回退/.test(lostSchemaRun.stderr || "") &&
+    /不会再改用 <game-dir>\/SODefines\/Schema。/.test(lostSchemaRun.stderr || "") &&
+    !existsSync(join(fixtureRoot, "never-schema.json")),
+    JSON.stringify({ status: lostSchemaRun.status, err: (lostSchemaRun.stderr || "").trim().slice(-220) }));
+  const lostDefinesRun = spawnSync(process.execPath, [gen, "--game-dir", gameDir,
+    "--defines-dir", join(fixtureRoot, "no-defines-dir"), "--out", join(fixtureRoot, "never-defines.json")], { encoding: "utf8" });
+  check("a missing explicit --defines-dir gets the same wording",
+    lostDefinesRun.status === 2 &&
+    /显式设置已关闭自动回退/.test(lostDefinesRun.stderr || "") &&
+    /不会再改用 <game-dir>\/SODefines\/Defines。/.test(lostDefinesRun.stderr || ""),
+    JSON.stringify({ status: lostDefinesRun.status, err: (lostDefinesRun.stderr || "").trim().slice(-220) }));
+
   specWrite(join(gameDir, "SODefines", "Defines", "Demo", "Extra.json"), JSON.stringify({ techName: "Demo_Extra" }, null, 2));
   const redCheck = spawnSync(process.execPath, [gen, "--game-dir", gameDir, "--check", outPath], { encoding: "utf8" });
   check("--check goes red when a fact drifted and names the section",
@@ -140,6 +192,9 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
   check("with no game directory the generator exits 2 and writes nothing",
     noGame.status === 2 && !existsSync(join(fixtureRoot, "never.json")),
     JSON.stringify({ status: noGame.status, err: (noGame.stderr || "").trim().slice(-160) }));
+  check("an invalid explicit --game-dir says the fallback was turned off by the explicit setting",
+    /显式给出的 --game-dir 无效/.test(noGame.stderr || "") && /回退被显式设置关闭/.test(noGame.stderr || ""),
+    JSON.stringify({ err: (noGame.stderr || "").trim().slice(-200) }));
 }
 
 /* ------------------------------------------------------------------ */

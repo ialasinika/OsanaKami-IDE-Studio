@@ -333,6 +333,30 @@ function buildKnowledge(gameDir, options) {
   const root = path.resolve(String(gameDir == null ? "" : gameDir));
   const schemaDir = o.schemaDir ? path.resolve(String(o.schemaDir)) : path.join(root, "SODefines", "Schema");
   const definesDir = o.definesDir ? path.resolve(String(o.definesDir)) : path.join(root, "SODefines", "Defines");
+  /*
+   * G37：显式目录优先，且显式设置会**关掉**自动回退（不回退到 <game-dir>/SODefines/
+   * 也不回退环境变量/探测）。所以显式目录无效时必须报错，而不是静默生成一份缺
+   * schemas/baseline 的 facts-only KB——文案要说明回退是被显式设置关掉的，否则用户
+   * 只会看到「未找到」，以为游戏目录不对。
+   */
+  if (o.schemaDir && !gamepath.isDir(schemaDir)) {
+    const err = new Error(
+      `--schema-dir 指定的目录不存在：${schemaDir}\n` +
+        "显式设置已关闭自动回退：不会再改用 <game-dir>/SODefines/Schema。"
+    );
+    err.code = "ENOGAME";
+    err.explicit = "schema-dir";
+    throw err;
+  }
+  if (o.definesDir && !gamepath.isDir(definesDir)) {
+    const err = new Error(
+      `--defines-dir 指定的目录不存在：${definesDir}\n` +
+        "显式设置已关闭自动回退：不会再改用 <game-dir>/SODefines/Defines。"
+    );
+    err.code = "ENOGAME";
+    err.explicit = "defines-dir";
+    throw err;
+  }
   if (!o.schemaDir && !o.definesDir && !gamepath.looksLikeGameModsDir(root)) {
     const err = new Error(`不是游戏 Mods 目录（没有 SODefines/Schema 或 SODefines/Defines）：${root}`);
     err.code = "ENOGAME";

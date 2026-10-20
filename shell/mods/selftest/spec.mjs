@@ -1,6 +1,7 @@
 import { createMods, MODS_DIR, checks, check, section, skip, mods, types, characters } from "./foundation.mjs";
 import { HAVE_CORPUS, specMods, specTemps, specTemp, specWrite } from "./corpus.mjs";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1157,8 +1158,73 @@ section("schema constraints, line ids and addressable addresses (G6, G7, G9)");
   }
 }
 
-section("no state leaks between runs");
+  /* ---------------- G38：lock 列必须指回本包的一行文字 ---------------- */
+  /*
+   * 契约来自 MyMod 语料（11 张表 × 18609 行，全部成立）：lock 是 sha256(text)
+   * 前 4 字节的小写 hex，译文表沿用基础表那一行的 lock。这里造一个小包：一张源表
+   * 一张译文表，lock 都对得上；然后把源表文本改掉却不改 lock，锁就悬空了。
+   */
+  const lockOf = (text) => createHash("sha256").update(text, "utf8").digest("hex").slice(0, 8);
+  const kb = mods.knowledge();
+  const lockRoot = join(specTemp("infantgod-g38-"), "LockMod");
+  specWrite(join(lockRoot, "mod.json"), JSON.stringify({
+    name: "LockMod",
+    version: "1.0.0",
+    gameVersion: "1.0",
+    author: "selftest",
+    description: "selftest fixture: localisation locks",
+  }, null, 2) + "\n");
+  specWrite(join(lockRoot, "Yarn", "A.yarn"), [
+    "title: A",
+    "---",
+    "Lantern: The lamp is lit. #line:aaa0001",
+    "",
+  ].join("\n"));
+  const lockHead = "language,id,text,file,node,lineNumber,lock,comment\n";
+  const writeLocks = (sourceText, { sourceLock = lockOf(sourceText), englishLock = sourceLock } = {}) => {
+    specWrite(join(lockRoot, "Yarn", "NewProject.csv"),
+      lockHead + "zh-CN,line:aaa0001," + sourceText + ",Yarn/A.yarn,A,3," + sourceLock + ",\n");
+    specWrite(join(lockRoot, "Yarn", "NewProject_en.csv"),
+      lockHead + "en,line:aaa0001,Lantern: The lamp is bright.,Yarn/A.yarn,A,3," + englishLock + ",\n");
+  };
+  writeLocks("Lantern: The lamp is lit.");
+  const g38 = () => validateCore.validateModPackage(lockRoot, {
+    kb: kb,
+    gameMods: { dir: null, readable: false },
+  }).diagnostics.filter((d) => d.code === "D023");
+  check("a table whose locks hash a line in the package is quiet",
+    g38().length === 0, JSON.stringify(g38().map((d) => d.message)));
 
+  /* 改了台词文本却没重算 lock：译文表还记着旧文本的 hash。 */
+  const editedText = "Lantern: The lamp is burning.";
+  writeLocks(editedText, { sourceLock: lockOf("Lantern: The lamp is lit.") });
+  const strayLock = g38();
+  check("editing a line without recomputing its lock is one D023 naming the row and both hashes",
+    strayLock.length === 1 &&
+      strayLock[0].severity === "warning" &&
+      strayLock[0].message.indexOf("line:aaa0001") >= 0 &&
+      strayLock[0].message.indexOf(lockOf("Lantern: The lamp is lit.")) >= 0 &&
+      strayLock[0].message.indexOf(lockOf(editedText)) >= 0,
+    JSON.stringify(strayLock.map((d) => d.message)));
+
+  /* 全零 lock 是翻译工具的"未锁定"，按没有 lock 跳过，不当错误。 */
+  writeLocks(editedText, { sourceLock: "00000000" });
+  check("a zero lock is treated as no lock, not as a mismatched one",
+    g38().length === 0, JSON.stringify(g38().map((d) => d.message)));
+
+  /* 真实语料：MyMod 的 18k 行 lock 全部指回源表文本，D023 零误报。 */
+  if (!HAVE_CORPUS) {
+    skip("the shipped MyMod package has no D023 false positives (no Mods folder)");
+  } else {
+    const corpusLocks = validateCore.validateModPackage(join(MODS_DIR, "MyMod"), {
+      kb: kb,
+      gameMods: { dir: null, readable: false },
+    }).diagnostics.filter((d) => d.code === "D023");
+    check("the shipped MyMod package has no D023 false positives",
+      corpusLocks.length === 0, JSON.stringify(corpusLocks.map((d) => d.message)));
+  }
+
+section("no state leaks between runs");
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });
 check("every fixture this run created was removed",
   specTemps.every((d) => !existsSync(d)), specTemps.filter((d) => existsSync(d)).join(", "));

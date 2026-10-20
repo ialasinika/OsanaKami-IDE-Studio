@@ -32,6 +32,8 @@ import { failures, checks, skipped, section } from "./selftest/foundation.mjs";
 await import("./selftest/foundation.mjs");
 await import("./selftest/corpus.mjs");
 await import("./selftest/spec.mjs");
+await import("./selftest/traps.mjs");
+await import("./selftest/scaffold-cross.mjs");
 await import("./selftest/dispatch.mjs");
 await import("./selftest/examples-menu.mjs");
 await import("./selftest/knowledge-state.mjs");

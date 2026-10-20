@@ -164,13 +164,14 @@ function isDir(p) {
   }
 }
 
-/** 读文本：永不抛异常，返回 { ok, text, error }。 */
+/**
+ * 读文本：永不抛异常，返回 { ok, text, error }。
+ *
+ * G14：规则统一在 `readtext.js`（目录、4 MiB 上限、NUL 即二进制），与内核
+ * 的 `file.read` 同一套判据；这里的 `stripBom` 也只是那一份实现。
+ */
 function readText(abs) {
-  try {
-    return { ok: true, text: stripBom(fs.readFileSync(abs, 'utf8')), error: null };
-  } catch (e) {
-    return { ok: false, text: null, error: errText(e) };
-  }
+  return require('./readtext.js').readTextFile(abs);
 }
 
 /** diagnostic 形状与 validate.js 完全一致：没有 `file` 字段。 */
@@ -569,7 +570,19 @@ function createMods(options) {
   }
 
   function stats() {
-    return knowledge().stats || {};
+    const base = knowledge().stats || {};
+    // G15: the help card quotes the same support matrix the validator runs on
+    // (M013 reads an unsupported type, M014 a partial one) and renders the wiki
+    // URL the matrix was read from.  Both live in one file -- support.json --
+    // so the card cannot drift from the checks by re-typing them.
+    return Object.assign({}, base, {
+      support: {
+        wiki: supportCore.wiki(),
+        levels: supportCore.levels(),
+        managers: supportCore.managers(),
+        types: supportCore.table()
+      }
+    });
   }
 
   function types() {

@@ -88,6 +88,22 @@
  *      D016（G7）warning  同一个 #line: id 出现在多个 Yarn 文件里 → 翻译目标有歧义
  *      D017（G7）info      #line: id 不是 line:<7 位 hex> 的约定形式（演示脚本常见），无法与表核对
  *      D018（G9）warning  Addressables 地址看起来是 Unity 资源路径/文件路径（游戏按 address 查）
+ *      D019（G10）warning  EventReference（FMOD 事件引用）被当成普通字符串/普通对象手写：
+ *                    它是 Unity/FMOD 序列化出来的 {Guid:{Data1..4},Path}，必须由游戏/编辑器
+ *                    产生（或从现有定义复制），JSON 无法凭空指向一个 FMOD 事件
+ *      D020（G10）warning  Yarn 文件在台词/条件里调用 GetTopic() / WasVisited()：
+ *                    两者在对话求值时读的是“当下”的运行时状态并有副作用，wiki 记录的
+ *                    陷阱是「把它当纯函数缓存结果」；每文件只报一次
+ *      D021（G10）warning  文档记录的画布/初始变换与定义里的值不一致：
+ *                    Character.initialTransform 应为 -7.2（语料里全是 float32 的
+ *                    -7.199999809265137），画布类类型（UIAnimation）的几何字段应为 256×144
+ *      D022（G10）warning/info  GUID 形状：全零 GUID 是 warning，8-4-4-4-12 的 .NET
+ *                    写法或既非 32 hex 也非虚线 UUID 的值是 info（Unity 资源 GUID 是
+ *                    32 位不带连字符的十六进制）
+ *      D023（G38）warning  本地化表的 `lock` 列指不回本包任何一行文本：lock 是
+ *                    sha256(text) 的前 4 字节、小写 hex，11 张译文表逐行沿用基础表
+ *                    那一行的 lock（MyMod 语料 18609/18609 行成立）。改台词文本却没
+ *                    重算 lock 时，游戏与翻译工具都以为译文仍锁在旧文本上。
  *
  *     D103 只在调用方给出 otherMods（游戏 Mods 目录里的兄弟包）时才跨 Mod 比较；
  *     同包内部的重名始终检查。兄弟包的 Defines 由 siblingTechNames() 建索引。
@@ -100,6 +116,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const supportCore = require('./support.js');
 const yarnCore = require('./yarn.js');
 
@@ -138,6 +155,20 @@ const AUDIO_FOLDER_FIELD = 'voiceOverFolder';
 const SPINE_ASSET_FIELD = 'spineAssetPath';
 
 /*
+ * G38：本地化表的 `lock` 列。语料实测（MyMod 11 张表 × 18609 行，2026-10）：
+ * lock 是 sha256(`text` 列原文) 的前 4 字节、big-endian、小写 hex；`text` 列是
+ * 含 "Speaker: " 前缀的整行文本；11 张译文表逐行沿用基础表那一行的 lock，
+ * 18609/18609 全部匹配。所以「改了台词却没重算 lock」是可验证的错误：新文本的
+ * hash 与表里记录的 lock 对不上。全零 lock 语料里不存在，但翻译工具常用它表示
+ * “未锁定”，按“没有 lock”跳过，免把工具约定当成错误。
+ */
+const LOCK_SHAPE = /^[0-9a-f]{8}$/i;
+const ZERO_LOCK = '00000000';
+function lockOfText(text) {
+  return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex').slice(0, 8);
+}
+
+/*
  * G9：Addressables 地址。schema 里这些字段只有一句 "Addressable asset address"，
  * 既不是 TechName 引用也不是 sprite 路径，所以校验器过去对它们一个字都不看。
  * 游戏按 Addressables 窗口里登记的 address 查找；作者若把 Unity 资源路径
@@ -145,6 +176,34 @@ const SPINE_ASSET_FIELD = 'spineAssetPath';
  * 没有游戏资源清单可查，这里只做「像不像资源路径」的形状判断。
  */
 const ADDRESSABLE_DESC = /^Addressable asset address$/i;
+
+/*
+ * G10：wiki 上记录、但导出的 schema 说不出来的四个陷阱。schema 只给了形状，
+ * 没有给「这个形状不能手写」或「文档值是几」；不在这里说，作者就只能在游戏里
+ * 看到“定义注册成功、效果没发生”。
+ *
+ * EventReference 是 Unity/FMOD 的事件引用：{ Guid:{Data1..4}, Path } 由编辑器
+ * 序列化产生，手写的字符串（"event:/..."）或零散对象都不是一个事件。
+ * 画布 256×144 与 initialTransform -7.2 来自游戏自己的 UI/角色场景约定；语料里
+ * 56 个 Character 的 initialTransform 全是 -7.199999809265137（float32 舍入），
+ * 所以比较用 epsilon 而不是 ===。UIAnimation 是知识库里唯一的画布类类型，它的
+ * schema 目前没有几何字段——这条分支在今天的 KB 上不会命中，但游戏一旦导出
+ * canvasWidth/canvasHeight 之类字段，它必须按文档的 256×144 检查。
+ * Yarn 的 GetTopic()/WasVisited() 在求值时读运行时状态（WasVisited 还是占位实现），
+ * 把它们当纯函数缓存结果就会在跳转之后继续用旧值。
+ */
+const CHARACTER_INITIAL_TRANSFORM = -7.2;
+const INITIAL_TRANSFORM_EPSILON = 1e-4;
+const CANVAS_WIDTH = 256;
+const CANVAS_HEIGHT = 144;
+const CANVAS_TYPES = new Set(['UIAnimation']);
+const CANVAS_WIDTH_FIELD = /^(?:canvas|design|reference|resolution)?width$/i;
+const CANVAS_HEIGHT_FIELD = /^(?:canvas|design|reference|resolution)?height$/i;
+const CANVAS_SIZE_FIELD = /^(?:canvas|design|reference|resolution)?size$/i;
+const GUID_32_HEX = /^[0-9a-f]{32}$/i;
+const GUID_ZERO_32 = /^0{32}$/;
+const GUID_DASHED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const YARN_SIDE_EFFECT_CALL = /(^|[^A-Za-z0-9_])(GetTopic|WasVisited)[ \t]*\(/;
 
 /*
  * G7：`#line:` id 与本地化表双向核对。表里 id 列的契约是 `line:<7 位 hex>`
@@ -1055,6 +1114,154 @@ function checkAddressable(value, jsonPath, ctx, out) {
     { expected: 'Addressables address（窗口中登记的字符串）', actual: v }));
 }
 
+/* ---------------- G10：wiki 陷阱（schema 只能给形状，给不了约定） ---------------- */
+
+/** 路径的最后一个字段名（`a.b[0].Guid` -> `Guid`）。 */
+function lastFieldName(jsonPath) {
+  const text = String(jsonPath == null ? '' : jsonPath);
+  const clean = text.replace(/\[\d+\]/g, '');
+  const dot = clean.lastIndexOf('.');
+  return dot < 0 ? clean : clean.slice(dot + 1);
+}
+
+/** schema 节点是不是 FMOD EventReference（title 或 {Guid,Path} 的形状）。 */
+function isEventReferenceNode(n) {
+  if (!isPlainObject(n)) return false;
+  if (n.title === 'EventReference') return true;
+  const props = isPlainObject(n.properties) ? n.properties : null;
+  return !!(props && props.Guid && props.Path && !props.techName && !props.TechName);
+}
+
+/** GUID 对象的四个整数槽是否齐全。 */
+function guidDataSlots(value) {
+  return isPlainObject(value) &&
+    ['Data1', 'Data2', 'Data3', 'Data4'].every(function (k) { return hasOwn(value, k); });
+}
+
+function checkEventReference(value, ip, ctx, out) {
+  // 字符串（"event:/..."）是作者最常写的替代品：schema 会报类型不符，但那句话
+  // 说不清「为什么错」。warning 与 D003 并存，专门讲 FMOD 这一层。
+  const asObject = isPlainObject(value);
+  const guidOk = asObject && isPlainObject(value.Guid) && guidDataSlots(value.Guid) &&
+    ['Data1', 'Data2', 'Data3', 'Data4'].every(function (k) {
+      return Number.isInteger(value.Guid[k]);
+    });
+  const pathOk = asObject && typeof value.Path === 'string' && value.Path.trim() !== '';
+  if (asObject && guidOk && pathOk) return; // 与 schema 形状一致，不额外报
+  out.push(diag('warning', 'D019', ip, ctx.type,
+    'EventReference 不能由 JSON 构造：' +
+    (asObject ? '当前对象只有 ' + Object.keys(value).length + ' 个键（' + describe(value) + '）'
+      : '当前值是 ' + describe(value)) +
+    '。这个字段是 Unity/FMOD 在编辑器里序列化出来的事件引用' +
+    '（{ Guid:{Data1..4}, Path }），必须由游戏/Unity 生成，或从现有定义里整段复制；' +
+    '手写 JSON 不会让它指向一个 FMOD 事件。',
+    'An EventReference cannot be built from JSON: ' +
+    (asObject ? 'this object has only ' + Object.keys(value).length + ' key(s) (' + describe(value) + ')'
+      : 'the value is ' + describe(value)) +
+    '. This field is a Unity/FMOD event reference serialised by the editor ' +
+    '({ Guid:{Data1..4}, Path }); it must be produced by the game/Unity, or copied whole from an ' +
+    'existing definition. Hand-written JSON will not point at an FMOD event.',
+    { expected: 'Unity/FMOD EventReference（{ Guid:{Data1..4}, Path }，由编辑器产生）',
+      actual: describe(value) }));
+}
+
+function checkInitialTransform(value, ip, ctx, out) {
+  if (ctx.type !== 'Character') return;
+  if (lastFieldName(ip) !== 'initialTransform') return;
+  if (typeof value !== 'number') return;
+  if (Math.abs(value - CHARACTER_INITIAL_TRANSFORM) <= INITIAL_TRANSFORM_EPSILON) return;
+  out.push(diag('warning', 'D021', ip, ctx.type,
+    'Character.initialTransform 的文档值是 -7.2（语料里 56 个角色都是 -7.199999809265137，' +
+    'float32 舍入），当前是 ' + value + '。脚手架默认的 0 会让角色站在场景原点。',
+    'The documented Character.initialTransform is -7.2 (all 56 characters in the corpus carry ' +
+    'the float32 rounding -7.199999809265137); this file has ' + value + '. The scaffold default 0 ' +
+    'puts the character at the scene origin.',
+    { expected: String(CHARACTER_INITIAL_TRANSFORM), actual: String(value) }));
+}
+
+/** 画布类类型（今天只有 UIAnimation）：几何字段必须与文档的 256×144 一致。 */
+function checkCanvas(value, ip, ctx, out) {
+  if (!CANVAS_TYPES.has(ctx.type)) return;
+  const field = lastFieldName(ip);
+  if (typeof value === 'number') {
+    let expected = null;
+    if (CANVAS_WIDTH_FIELD.test(field)) expected = CANVAS_WIDTH;
+    else if (CANVAS_HEIGHT_FIELD.test(field)) expected = CANVAS_HEIGHT;
+    if (expected === null || value === expected) return;
+    out.push(diag('warning', 'D021', ip, ctx.type,
+      '画布尺寸与文档不一致：' + field + '=' + value + '，文档记录游戏 UI 画布是 ' +
+      CANVAS_WIDTH + '×' + CANVAS_HEIGHT + '。UI 动画按这个画布对位，别的尺寸会整体偏移/裁切。',
+      'Canvas size differs from the documented one: ' + field + '=' + value + '; the game UI canvas ' +
+      'is ' + CANVAS_WIDTH + '×' + CANVAS_HEIGHT + '. UI animations are laid out on that canvas, so ' +
+      'another size shifts or crops them.',
+      { expected: String(expected), actual: String(value) }));
+    return;
+  }
+  if (typeof value === 'string' && CANVAS_SIZE_FIELD.test(field)) {
+    const v = value.trim();
+    if (v === '' || v === '256x144' || v === '256×144') return;
+    out.push(diag('warning', 'D021', ip, ctx.type,
+      '画布尺寸与文档不一致：' + field + '=' + describe(v) + '，文档记录游戏 UI 画布是 256×144。',
+      'Canvas size differs from the documented one: ' + field + '=' + describe(v) +
+      '; the game UI canvas is 256×144.',
+      { expected: '256x144', actual: v }));
+  }
+}
+
+function checkGuidShape(n, value, ip, ctx, out) {
+  const field = lastFieldName(ip);
+  const titleGuid = isPlainObject(n) && n.title === 'GUID';
+  const nameGuid = /^guid$/i.test(field);
+  if (!titleGuid && !nameGuid) return;
+
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (v === '') return; // 空字符串 = 未设置
+    if (GUID_ZERO_32.test(v)) {
+      out.push(diag('warning', 'D022', ip, ctx.type,
+        '全零 GUID：' + describe(v) + ' 不是有效的 Unity 资源 GUID（全零通常意味着引用没接上）。',
+        'All-zero GUID: ' + describe(v) + ' is not a valid Unity asset GUID (all zeros usually means ' +
+        'the reference was never wired up).',
+        { expected: '32 位十六进制 GUID（非全零）', actual: v }));
+      return;
+    }
+    if (GUID_32_HEX.test(v)) return; // Unity 资源 GUID 的正常形状
+    if (GUID_DASHED.test(v)) {
+      out.push(diag('info', 'D022', ip, ctx.type,
+        'GUID 是 8-4-4-4-12 的 .NET 形式；Unity 资源 GUID 是 32 位十六进制、不带连字符。',
+        'The GUID is in the dashed 8-4-4-4-12 .NET form; Unity asset GUIDs are 32 hexadecimal ' +
+        'digits without dashes.',
+        { expected: '32 位 hex', actual: v }));
+      return;
+    }
+    out.push(diag('info', 'D022', ip, ctx.type,
+      '值 ' + describe(v) + ' 既不是 32 位十六进制，也不是 8-4-4-4-12 的 GUID 形状。',
+      'The value ' + describe(v) + ' is neither 32 hexadecimal digits nor a dashed 8-4-4-4-12 GUID.',
+      { expected: '32 位 hex / 8-4-4-4-12', actual: v }));
+    return;
+  }
+
+  if (guidDataSlots(value)) {
+    const slots = ['Data1', 'Data2', 'Data3', 'Data4'];
+    const integers = slots.every(function (k) { return Number.isInteger(value[k]); });
+    if (!integers) return; // 类型错误由 D003/D007 负责
+    if (slots.every(function (k) { return value[k] === 0; })) {
+      out.push(diag('warning', 'D022', ip, ctx.type,
+        '全零 GUID：Data1..Data4 都是 0，不是有效的 Unity 资源引用。',
+        'All-zero GUID: Data1..Data4 are all 0, which is not a valid Unity asset reference.',
+        { expected: '非全零的 GUID', actual: '00000000-0000-0000-0000-000000000000' }));
+    }
+  }
+}
+
+/** G10：在 validateNode 里统一调用这四个陷阱检查。 */
+function checkWikiTraps(n, value, ip, ctx, out) {
+  if (isEventReferenceNode(n)) checkEventReference(value, ip, ctx, out);
+  checkInitialTransform(value, ip, ctx, out);
+  checkCanvas(value, ip, ctx, out);
+  checkGuidShape(n, value, ip, ctx, out);
+}
+
 /**
  * G6：一个值是否满足某个子 schema（只看 error，warning/info 不算不匹配）。
  * 用于 oneOf / anyOf / allOf / not 的分支判定；递归深度设上限防止自引用爆炸。
@@ -1280,6 +1487,13 @@ function validateNode(rawNode, schema, value, ip, ctx, out, fromItems, isRequire
   }
   // null 视为「未设置 / 可空」，全部检查跳过
   if (value === null || value === undefined) return;
+
+  /*
+   * G10：陷阱检查放在类型检查之前——「把 EventReference 写成字符串」正是最典型的
+   * 误用，而类型不符会 return，再往后的分支就永远看不到它了。这些检查各自只看
+   * 值的实际形状，与 schema 声明的类型无关。
+   */
+  checkWikiTraps(n, value, ip, ctx, out);
 
   /* ---- D003 / D007 类型 ---- */
   const declaredTypes = Array.isArray(n.type)
@@ -1859,11 +2073,41 @@ function validateModPackage(modRoot, opts) {
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
 
       /*
-       * G7：把这一文件里所有带 `#line:` 的行（对话行与选项行）收进反向索引。
-       * Y103 只报「缺少 id」，这里关心的是「id 在本地化表里有没有对应行」。
+       * G10：GetTopic() / WasVisited() 是 wiki 记录的两个「看起来像纯函数」的陷阱。
+       * 它们在对话求值时读运行时的当下状态（WasVisited 在游戏里还是占位实现），
+       * 作者把它们的结果缓存到变量里，跳转之后就会继续用旧值。
+       *
+       * 只在解析出来的 `<<...>>` 指令里找调用（`<<if GetTopic("X") > 0>>`、
+       * `<<WasVisited>>`），不看台词正文和 `//` 注释，避免「对白里提到函数名」
+       * 的误报。每文件只报一处，指出第一处调用所在行。
        */
       let parsedYarn = null;
       try { parsedYarn = yarnCore.parseYarn(text); } catch (err) { parsedYarn = null; }
+      if (parsedYarn) {
+        let hit = null;
+        for (const node of parsedYarn.nodes) {
+          for (const cmd of node.commands || []) {
+            const m2 = YARN_SIDE_EFFECT_CALL.exec(cmd.name + ' ' + cmd.args);
+            if (m2 && (!hit || cmd.line < hit.line)) hit = { line: cmd.line, name: m2[2] };
+          }
+        }
+        if (hit) {
+          diagnostics.push(diag('warning', 'D020', rel, '',
+            'Yarn 第 ' + hit.line + ' 行调用了 ' + hit.name + '()：它在对话求值时读取运行时状态' +
+            '（WasVisited 是游戏的占位实现），不是可以缓存结果的纯函数。把它存进变量再条件判断，' +
+            '跳转/访问之后会继续用旧值。',
+            'Line ' + hit.line + ' calls ' + hit.name + '(), which reads runtime state while the ' +
+            'dialogue is evaluated (WasVisited is a placeholder in the game build) and is not a pure ' +
+            'function whose result can be cached. Storing it in a variable and branching on that keeps ' +
+            'the stale value after a jump or visit.',
+            { expected: '每次需要时直接调用 ' + hit.name + '()', actual: hit.name + '()' }));
+        }
+      }
+
+      /*
+       * G7：把这一文件里所有带 `#line:` 的行（对话行与选项行）收进反向索引。
+       * Y103 只报「缺少 id」，这里关心的是「id 在本地化表里有没有对应行」。
+       */
       if (parsedYarn) {
         const recordId = function (item) {
           if (!item || !item.id) return;
@@ -1968,6 +2212,8 @@ function validateModPackage(modRoot, opts) {
     const csvRows = [];
     // G7：本地化表里的 `line:<7 hex>` id -> 出现过的表文件（用于与 Yarn 双向核对）
     const tableLineIds = new Map();
+    // G38：每一行的 (id, text, lock)，用于核对 lock 是否指回本包的一行文字
+    const csvLockRows = [];
     for (const abs of csvFiles) {
       const rel = relPosix(root, abs);
       let text = null;
@@ -1996,9 +2242,13 @@ function validateModPackage(modRoot, opts) {
        */
       const tableRows = parseCsvText(text);
       let idCol = -1;
+      let textCol = -1;
+      let lockCol = -1;
       if (tableRows.length) {
         const head = tableRows[0].map(function (c) { return c.trim(); });
         idCol = head.indexOf('id');
+        textCol = head.indexOf('text');
+        lockCol = head.indexOf('lock');
       }
       if (idCol >= 0) {
         for (let ri = 1; ri < tableRows.length; ri += 1) {
@@ -2008,6 +2258,14 @@ function validateModPackage(modRoot, opts) {
           let bucket = tableLineIds.get(norm);
           if (!bucket) { bucket = []; tableLineIds.set(norm, bucket); }
           bucket.push(rel);
+          if (textCol >= 0 && lockCol >= 0) {
+            csvLockRows.push({
+              rel: rel,
+              id: norm,
+              text: tableRows[ri][textCol] || '',
+              lock: (tableRows[ri][lockCol] || '').trim(),
+            });
+          }
         }
       }
     }
@@ -2094,6 +2352,42 @@ function validateModPackage(modRoot, opts) {
           nonContract.length + ' #line: id(s) do not follow the line:<7 hex> contract (e.g. ' +
           nonContract.slice(0, 5).map(function (id) { return '#line:' + id; }).join(', ') +
           '); they never appear in the localisation tables and cannot be cross-checked.'));
+      }
+    }
+
+    /* ---------------- G38：lock 列必须指回本包的一行文字 ---------------- */
+    // lock 的契约（语料实测见常量处的注释）是 sha256(text) 的前 4 字节；一张表里
+    // 同 id 的行无论哪种语言都沿用基础表那一行的 lock。所以只要包内这个 id 有任何
+    // 一行文字的 hash 等于 lock，就说明它指得回一段真实文本；一个都对不上，说明
+    // 文本改过而 lock 没重算（或 lock 是手填的）。
+    if (csvLockRows.length) {
+      const hashesById = new Map();
+      for (const row of csvLockRows) {
+        let set = hashesById.get(row.id);
+        if (!set) { set = new Set(); hashesById.set(row.id, set); }
+        set.add(lockOfText(row.text));
+      }
+      const stray = [];
+      for (const row of csvLockRows) {
+        if (!LOCK_SHAPE.test(row.lock) || row.lock.toLowerCase() === ZERO_LOCK) continue;
+        const set = hashesById.get(row.id);
+        if (set && set.has(row.lock.toLowerCase())) continue;
+        stray.push({ row: row, want: lockOfText(row.text) });
+      }
+      if (stray.length) {
+        const sample = stray.slice(0, 5).map(function (s) {
+          return s.row.rel + '（line:' + s.row.id + '，记录 ' + s.row.lock + '，应为 ' + s.want + '）';
+        }).join('、');
+        diagnostics.push(diag('warning', 'D023', stray[0].row.rel, '',
+          stray.length + ' 行本地化表的 lock 与包内任何一行文本的 SHA-256 都对不上：' + sample +
+          (stray.length > 5 ? ' 等' : '') +
+          '。lock 是 sha256(text) 的前 4 字节；改过台词文本却没重算 lock 时，游戏仍认为' +
+          '译文锁在旧文本上，译文不会更新。',
+          stray.length + ' localisation row(s) carry a lock that matches no text the package ' +
+          'records for that id: ' + sample + (stray.length > 5 ? ', …' : '') +
+          '. A lock is the first four bytes of sha256(text); editing a line without ' +
+          'recomputing its lock leaves the game holding a translation of text that no ' +
+          'longer exists, so the translation never updates.'));
       }
     }
   }

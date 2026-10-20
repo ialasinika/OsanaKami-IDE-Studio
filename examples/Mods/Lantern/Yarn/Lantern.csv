@@ -1,6 +1,6 @@
 language,id,text,file,node,lineNumber,lock,comment
-zh-CN,line:1a2b3c4,Lantern: 灯亮着。,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,6,f29c3d78,Line metadata: state:Calm
-zh-CN,line:2b3c4d5,Warden: 我进来看看。,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,7,25df767e,
-zh-CN,line:6e7f8a9,Warden: 我把它调暗了。,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Awake,9,fba86739,
-zh-CN,line:5d6e7f8,Lantern: 房间应了一声。,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Goodnight,18,191ff4e9,
-zh-CN,line:9c0d1e2,Lantern: 晚安。,examples/Mods/Lantern/Yarn/Lantern.yarn,Lantern_Goodnight,19,29558b3e,
+zh-CN,line:1a2b3c4,Lantern: 灯亮着。,Yarn/Lantern.yarn,Lantern_Awake,6,f29c3d78,Line metadata: state:Calm
+zh-CN,line:2b3c4d5,Warden: 我进来看看。,Yarn/Lantern.yarn,Lantern_Awake,7,25df767e,
+zh-CN,line:6e7f8a9,Warden: 我把它调暗了。,Yarn/Lantern.yarn,Lantern_Awake,9,fba86739,
+zh-CN,line:5d6e7f8,Lantern: 房间应了一声。,Yarn/Lantern.yarn,Lantern_Goodnight,18,191ff4e9,
+zh-CN,line:9c0d1e2,Lantern: 晚安。,Yarn/Lantern.yarn,Lantern_Goodnight,19,29558b3e,
