@@ -442,6 +442,7 @@ async function pickNewMod(templateId) {
     typeof remembered === "string" && remembered !== ""
       ? remembered
       : newMod.defaultParent(session);
+  const root = newMod.writableRoot(session);
 
   try {
     const result = await saveDialog({
@@ -454,13 +455,75 @@ async function pickNewMod(templateId) {
 
     const chosen = result.filePath;
     const target = newMod.plan({ parent: path.dirname(chosen), typedName: path.basename(chosen) });
-    const created = await newMod.createMod({
-      endpoint: session.url,
-      dir: target.dir,
-      modName: target.modName,
-      template: templateId,
-    });
-    writeSettings({ ...readSettings(), newModDir: path.dirname(chosen) });
+
+    /*
+     * F1: the dialog can name any folder, but `mod.scaffold` only writes under
+     * the mods root (the workspace when none is configured).  Ask before the
+     * write instead of relaying `EOUTSIDE` afterwards.
+     */
+    const confined = newMod.confine({ parent: target.dir, root });
+    let dir = confined.dir;
+    if (confined.moved) {
+      const answer = await messageBox({
+        type: "question",
+        title: "新建模组",
+        message: `${target.dir} 不在可写入的 Mods 目录内`,
+        detail: `模组只能创建在 ${root} 下。要在 ${root} 里创建 "${target.modName}" 吗？`,
+        buttons: ["在这里创建", "取消"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (answer.response !== 0) return;
+      dir = root;
+    }
+
+    let created;
+    try {
+      created = await newMod.createMod({
+        endpoint: session.url,
+        dir,
+        modName: target.modName,
+        template: templateId,
+      });
+    } catch (err) {
+      /*
+       * F2: a partially written package used to be a dead end -- the dialog
+       * offered "overwrite" but the frame never carried the flag.  Recognise
+       * the refusal and let the user replace the files, which is the only way
+       * the menu can repair its own leftovers.
+       */
+      if (!newMod.needsOverwrite(err)) throw err;
+      const answer = await messageBox({
+        type: "question",
+        title: "新建模组",
+        message: `${path.join(dir, target.modName)} 里已经有文件`,
+        detail: "要用这个模板替换其中的同名文件吗？（其它文件会保留）",
+        buttons: ["替换", "取消"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (answer.response !== 0) return;
+      created = await newMod.createMod({
+        endpoint: session.url,
+        dir,
+        modName: target.modName,
+        template: templateId,
+        overwrite: true,
+      });
+    }
+
+    /*
+     * F3: remembering the folder is a convenience, not part of creating the
+     * package.  A failed settings write used to turn a written package into
+     * "新建模组失败", after which retrying hit F2's dead end.
+     */
+    let rememberedNote = "";
+    try {
+      writeSettings({ ...readSettings(), newModDir: dir });
+    } catch (err) {
+      log(`newmod: could not remember the folder ${dir}: ${err && err.message ? err.message : err}`);
+      rememberedNote = `\n（未能记住这个文件夹：${err && err.message ? err.message : err}）`;
+    }
     log(`newmod: ${created.modRoot} (${created.created.length} files, template ${templateId})`);
 
     await messageBox({
@@ -468,7 +531,7 @@ async function pickNewMod(templateId) {
       title: "新建模组",
       message: `已在 ${created.modRoot} 生成模组`,
       detail:
-        [...created.created, ...(created.warnings || [])].map(String).join("\n") || "（没有新增文件）",
+        ([...created.created, ...(created.warnings || [])].map(String).join("\n") || "（没有新增文件）") + rememberedNote,
       buttons: ["好"],
     });
 

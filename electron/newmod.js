@@ -91,6 +91,42 @@ function plan({ parent, typedName }) {
 }
 
 /**
+ * The folder `mod.*` will accept a new package in: the mods root when one is
+ * configured, the workspace otherwise.  This is the *containment* rule, and it
+ * is the same one `shell/mods/index.js` applies with `resolveArg`; a path
+ * outside it is refused before a single byte is written (`EOUTSIDE`).
+ */
+function writableRoot(session) {
+  return defaultParent(session);
+}
+
+/**
+ * F1 of the 0.1.0 audit: the save dialog can name a folder anywhere on disk,
+ * but `mod.scaffold` only writes under the mods root, so the old code showed
+ * the user a raw `EOUTSIDE` and left the remediation branch unreachable (it
+ * only fired when the *created* package turned out to be outside the
+ * workspace, which the default parent made impossible).
+ *
+ * The fix is to answer the containment question before the write and with a
+ * choice: keep the chosen parent when it is writable, otherwise offer to put
+ * the same name under the root.  Pure, so the menu's decision can be tested
+ * without Electron.
+ *
+ * @returns {{dir: string, moved: boolean, root: string}} `moved` says the
+ *   chosen parent had to be replaced by the root.
+ */
+function confine({ parent, root }) {
+  if (typeof parent !== "string" || parent.trim() === "") {
+    throw new Error("新建模组：没有可写入的目录");
+  }
+  if (typeof root !== "string" || root.trim() === "") {
+    throw new Error("新建模组：还不知道可写入的 Mods 目录");
+  }
+  const inside = isInside(parent, root);
+  return { dir: inside ? parent : root, moved: !inside, root };
+}
+
+/**
  * The one frame this menu speaks.  `id` is fixed at 1 because the dialog is a
  * single request/response with nothing to correlate it against.
  */
@@ -110,9 +146,18 @@ function isInside(child, parent) {
  * main.js omits it and gets the global fetch, while the test passes a stub and
  * inspects the frame.
  *
+ * `overwrite` is forwarded when the user has agreed to replace a folder that
+ * a previous attempt left behind (F2 of the 0.1.0 audit): without it,
+ * `scaffoldMod` refuses a non-empty target and the File menu can never repair
+ * its own half-written package.
+ *
+ * `timeoutMs` bounds the round trip (F4): a kernel that does not answer used
+ * to leave the menu item with no dialog and no error at all.  The abort turns
+ * that into an ordinary failure the menu can report.
+ *
  * @returns {Promise<{modRoot: string, created: string[], warnings: string[]}>}
  */
-async function createMod({ endpoint, dir, modName, template, fetchImpl }) {
+async function createMod({ endpoint, dir, modName, template, overwrite, timeoutMs, fetchImpl }) {
   if (typeof endpoint !== "string" || endpoint.trim() === "") {
     throw new Error("新建模组：还没有 shell 端点");
   }
@@ -127,39 +172,74 @@ async function createMod({ endpoint, dir, modName, template, fetchImpl }) {
   // session.url ends in "/" and a hand-typed endpoint may not: neither may
   // produce "//rpc".
   const url = `${endpoint.replace(/\/+$/, "")}/rpc`;
-  const response = await post(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request("mod.scaffold", { dir, modName, template })),
+  const params = { dir, modName, template };
+  if (overwrite === true) params.overwrite = true;
+
+  const limit = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 15000;
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  let timer = null;
+
+  /*
+   * One promise does the exchange; a second is the deadline.  Racing them is
+   * deliberate: aborting the fetch is the polite signal, but a fetch that
+   * ignores `signal` (or a shell that sends headers and then stalls) must still
+   * fail -- F4 was "no dialog and no error", so silence is the one outcome
+   * this path may not have.
+   */
+  const exchange = (async () => {
+    const response = await post(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request("mod.scaffold", params)),
+      ...(controller === null ? {} : { signal: controller.signal }),
+    });
+    const text = await response.text();
+    let reply = null;
+    try {
+      reply = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`mod.scaffold 的回答不是 JSON（HTTP ${response.status}）：${text.slice(0, 200)}`);
+    }
+    if (reply === null || typeof reply !== "object") {
+      throw new Error(`mod.scaffold 的回答不是对象（HTTP ${response.status}）`);
+    }
+    if (reply.error !== undefined && reply.error !== null) {
+      const server = reply.error;
+      const failure = new Error(
+        typeof server.message === "string" && server.message !== ""
+          ? server.message
+          : `mod.scaffold 失败（${server.name || server.code || "unknown"}）`
+      );
+      // Carried, not flattened: the caller wants to show the containment rule by
+      // name (`EOUTSIDE`) and the JSON-RPC code, not just the prose.
+      if (server.code !== undefined) failure.code = server.code;
+      if (typeof server.name === "string" && server.name !== "") failure.name = server.name;
+      throw failure;
+    }
+    if (reply.result === undefined || reply.result === null || typeof reply.result !== "object") {
+      throw new Error("mod.scaffold 的回答没有 result");
+    }
+    return reply.result;
+  })();
+  // The race may leave the exchange pending; its later rejection is not news.
+  exchange.catch(() => {});
+
+  const deadline = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      if (controller !== null) controller.abort();
+      const timedOut = new Error(
+        `新建模组：shell 在 ${Math.max(1, Math.round(limit / 1000))} 秒内没有回答 mod.scaffold`
+      );
+      timedOut.name = "TimeoutError";
+      reject(timedOut);
+    }, limit);
   });
 
-  const text = await response.text();
-  let reply = null;
   try {
-    reply = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`mod.scaffold 的回答不是 JSON（HTTP ${response.status}）：${text.slice(0, 200)}`);
+    return await Promise.race([exchange, deadline]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
-  if (reply === null || typeof reply !== "object") {
-    throw new Error(`mod.scaffold 的回答不是对象（HTTP ${response.status}）`);
-  }
-  if (reply.error !== undefined && reply.error !== null) {
-    const server = reply.error;
-    const failure = new Error(
-      typeof server.message === "string" && server.message !== ""
-        ? server.message
-        : `mod.scaffold 失败（${server.name || server.code || "unknown"}）`
-    );
-    // Carried, not flattened: the caller wants to show the containment rule by
-    // name (`EOUTSIDE`) and the JSON-RPC code, not just the prose.
-    if (server.code !== undefined) failure.code = server.code;
-    if (typeof server.name === "string" && server.name !== "") failure.name = server.name;
-    throw failure;
-  }
-  if (reply.result === undefined || reply.result === null || typeof reply.result !== "object") {
-    throw new Error("mod.scaffold 的回答没有 result");
-  }
-  return reply.result;
 }
 
 /**
@@ -208,9 +288,23 @@ function menuTemplate({ onPick }) {
   ];
 }
 
+/**
+ * F2: `scaffoldMod`'s refusal when the target already holds files.  The menu
+ * can offer the one thing that unblocks it -- replace those files -- only if it
+ * recognises the refusal; the JSON-RPC code does not name the reason, so the
+ * message is the handle.
+ */
+function needsOverwrite(err) {
+  const message = err !== null && err !== undefined && typeof err.message === "string" ? err.message : "";
+  return /already exists and is not empty/i.test(message);
+}
+
 module.exports = {
   TEMPLATES,
   defaultParent,
+  writableRoot,
+  confine,
+  needsOverwrite,
   plan,
   request,
   isInside,

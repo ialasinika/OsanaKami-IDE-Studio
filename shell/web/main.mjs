@@ -3007,7 +3007,17 @@ function createApp() {
     renderAll();
     // The File menu's new-mod shortcut reloads the window with `?mod=`; the
     // board is mounted by now, so the package can be opened on its card.
-    await openRequestedMod();
+    //
+    // G34/F5: a package the URL names but that cannot be opened (deleted, not
+    // readable, refused by containment) is not a dead kernel. Booting must
+    // finish -- cards, watching, status "ready" -- or the failure would be
+    // reported as "kernel not reachable" and start a reconnect storm.
+    try {
+      await openRequestedMod();
+    } catch (err) {
+      const requested = requestedModFromSearch(typeof location === "undefined" ? "" : location.search);
+      log("warn", `could not open ${requested}: ${err && err.message ? err.message : String(err)}`);
+    }
     // The cards exist now, so there is something to watch. A reconnect re-tests
     // the kernel (it may have been replaced by one without `file.stat`), but the
     // timer itself is never doubled.

@@ -654,6 +654,10 @@ const MOD_METHODS = {
     dir: needParam(params, "dir"),
     modName: needParam(params, "modName"),
     template: optionalString(params, "template") ?? "full",
+    // G34: the File menu's new-mod shortcut offers to replace a folder a
+    // previous attempt left behind; the flag has to cross the frame or that
+    // retry can never succeed.
+    overwrite: params.overwrite === true,
   }),
   // G50: one file, generated from the game's own schema, inside a package that
   // already exists.  `dir` may be the package root or any directory inside it.

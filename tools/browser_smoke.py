@@ -847,7 +847,7 @@ MOD_BUDGET_MS = 60000
 
 #: The number of assertions ``define_newmod_checks`` makes, for the "browser is
 #: not installed" summary line, which is printed before any check exists.
-NEWMOD_CHECK_COUNT = 6
+NEWMOD_CHECK_COUNT = 7
 
 #: The wrapper page.  It is deliberately dumb: no imports, no build, plain
 #: browser JS, so what it observes is what the shipped page does.  ``?app=`` in
@@ -939,12 +939,17 @@ pre{white-space:pre-wrap}
         .filter((el) => el.getAttribute("aria-pressed") === "true")
         .map((el) => el.getAttribute("data-view"));
       say("hud_pressed", pressed.join(","));
+      /* G34/F5: a ?mod= the page cannot open must leave the kernel status
+       * "ready" and say why in the log -- not report a dead kernel. */
+      say("kernel_status", textOf("#kernel-status"));
       say("error", "");
       if (!wantsMod) { finish(); return; }
       if (!/(^|\\s)is-mod(\\s|$)/.test(booted || "")) { finish(); return; }
       /* D1: the package the URL named opened itself: a title, rows, a log line. */
       const headline = await waitFor(() => textOf(".card-mod .mod-headline").trim());
       say("headline", headline || "");
+      say("log_tail", (logText() || "").slice(-160));
+      say("log_could_not_open", logText().indexOf("cannot open") !== -1);
       say("status", textOf(".card-mod [data-role=card-status]"));
       say("label", textOf(".card-mod [data-role=card-label]"));
       const dirInput = doc().querySelector(".card-mod .mod-dir");
@@ -1168,7 +1173,15 @@ def newmod_round_trip(edge, args) -> dict:
             f"{host.url}{MOD_WRAPPER_NAME}?app={urllib.parse.quote(app, safe='')}",
             "?mod= round trip",
         )
-        return {"cold": cold, "trip": trip, "mod_root": mod_root}
+        # F5: the same boot, but the folder the URL names is gone.  The window
+        # still has to come up (status "ready"); the failure belongs in the log.
+        missing = "/?mod=" + urllib.parse.quote(str(Path(sandbox) / "NotThere"), safe="")
+        lost = _drive_wrapper(
+            edge, args, profile,
+            f"{host.url}{MOD_WRAPPER_NAME}?app={urllib.parse.quote(missing, safe='')}",
+            "?mod= to a missing folder",
+        )
+        return {"cold": cold, "trip": trip, "missing": lost, "mod_root": mod_root}
     finally:
         if host is not None:
             host.close()
@@ -1179,9 +1192,10 @@ def newmod_round_trip(edge, args) -> dict:
 
 
 def define_newmod_checks(facts: dict) -> list:
-    """The six round-trip assertions, as ``(name, callable)`` pairs."""
+    """The seven round-trip assertions, as ``(name, callable)`` pairs."""
     cold = facts.get("cold") or {}
     trip = facts.get("trip") or {}
+    missing = facts.get("missing") or {}
 
     def reported(report: dict, label: str) -> None:
         require(
@@ -1302,8 +1316,23 @@ def define_newmod_checks(facts: dict) -> list:
             f"`NewMod` -> {trip.get('relative_status')!r}"
         )
 
+    def failed_open_is_not_a_dead_kernel():
+        reported(missing, "missing-folder")
+        require(
+            missing.get("kernel_status", "").strip().endswith("ready"),
+            f"a ?mod= that cannot be opened left the kernel status at {missing.get('kernel_status')!r}; "
+            "the window booted and only the package failed, so it must stay 'ready'",
+        )
+        require(
+            missing.get("log_could_not_open") == "true",
+            "a ?mod= that cannot be opened never said so in the log; the failure has to be visible "
+            f"(log tail: {missing.get('log_tail')!r})",
+        )
+        return f"status {missing.get('kernel_status')!r} and a log line"
+
     return [
         ("item 8: a cold boot opens on the mod view", cold_boot_is_mod),
+        ("D5: a ?mod= that fails leaves the kernel up and says why", failed_open_is_not_a_dead_kernel),
         ("D1: ?mod= opens the package the menu just created", mod_url_opens_package),
         ("D2: the three mod headings open the files they head", headings_open_files),
         ("D3: a page's own save is not logged as another writer", save_echo_is_not_a_warning),

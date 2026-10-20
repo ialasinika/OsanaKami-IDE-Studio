@@ -16,6 +16,36 @@ stands in this tree.
 
 ## Unreleased
 
+### The new-mod menu recovers from its own failures
+
+The File menu's shortcut scaffolds a package through one `mod.scaffold` frame,
+and the 0.1.0 audit found five ways that frame could fail without leaving the
+author a way forward. All five are answered now. A folder the save dialog named
+outside the writable mods root used to come back as a raw `EOUTSIDE` after the
+fact; the menu asks before writing and offers to put the same name under the
+root (`newmod.confine()`). A folder left half-written by a failed attempt could
+never be retried, because the frame carried no `overwrite` flag —
+`scaffoldMod`'s refusal is now recognised and a confirmed retry crosses the
+frame (`shell/main.mjs` forwards it; without that forwarding the retry would
+never succeed). The POST had no deadline, so a kernel that stalled left the
+menu item with no dialog and no error at all; `createMod` now races the exchange
+against a deadline, and a fetch that ignores the abort signal still ends in a
+`TimeoutError` the menu can show. Remembering the chosen folder was treated as
+part of creating the package, so a settings write failure reported "新建模组失败"
+over a package already on disk; it is a note inside the success box now. And a
+`?mod=` the page cannot open — deleted, unreadable, refused — used to reject out
+of `boot()`, which turned the status into "kernel not reachable" and started the
+reconnect path; the page finishes booting, stays `ready`, and logs
+`cannot open <dir>: …`.
+
+The suite pins the primitives and the seam: nine checks in
+`selftest/dispatch.mjs` cover `confine()` both ways, the writable root, the
+refusal predicate, the forwarded flag, the timeout (a fetch that never settles)
+and, against a real spawned shell, that a second attempt is refused and an
+agreed retry repairs the same folder; `tools/browser_smoke.py` gained D5, which
+boots with a `?mod=` naming a folder that does not exist and requires
+`kernel ready` plus the log line.
+
 ### The settings card can say where its answers come from
 
 Two read-only questions had no answer outside the code: which folder the

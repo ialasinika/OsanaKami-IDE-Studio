@@ -358,6 +358,78 @@ check("isInside tells a workspace from a sibling of it",
   "ws/Probe, wsTwo, ws");
 
 /*
+ * G34: the 0.1.0 audit called the new-mod shortcut's failure paths F1-F5.  The
+ * save dialog cannot be constrained to a folder, so the containment question is
+ * answered before the write; a retry after a half-written package has to carry
+ * `overwrite`; and a shell that never answers has to become an error.
+ */
+export const confinedOutside = newMod.confine({ parent: join(tmpdir(), "other"), root: join(tmpdir(), "ws") });
+check("confine rebases a folder outside the writable root",
+  confinedOutside.moved === true &&
+    confinedOutside.dir === join(tmpdir(), "ws") &&
+    confinedOutside.root === join(tmpdir(), "ws"),
+  JSON.stringify(confinedOutside));
+
+export const confinedInside = newMod.confine({ parent: join(tmpdir(), "ws", "Mods", "Deep"), root: join(tmpdir(), "ws") });
+check("and leaves a folder inside it alone",
+  confinedInside.moved === false && confinedInside.dir === join(tmpdir(), "ws", "Mods", "Deep"),
+  JSON.stringify(confinedInside));
+
+export const writableOf = newMod.writableRoot({ workspace: "W", modsRoot: "M" });
+check("writableRoot is the folder mod.scaffold would accept",
+  writableOf === "M" && newMod.writableRoot({ workspace: "W" }) === "W",
+  String(writableOf));
+
+check("needsOverwrite recognises the scaffold's non-empty refusal",
+  newMod.needsOverwrite(new Error(
+    'scaffoldMod: target "C:\\work\\Probe" already exists and is not empty (pass { overwrite: true } to replace)'
+  )) === true &&
+    newMod.needsOverwrite(new Error("路径越界，已拒绝: C:\\outside")) === false &&
+    newMod.needsOverwrite(null) === false,
+  "already exists / EOUTSIDE / null");
+
+export const overwriteFrame = [];
+await newMod.createMod({
+  endpoint: "http://127.0.0.1:12345",
+  dir: "M",
+  modName: "Probe",
+  template: "minimal",
+  overwrite: true,
+  fetchImpl: async (url, init) => {
+    overwriteFrame.push(JSON.parse(init.body));
+    return { status: 200, text: async () => JSON.stringify({ result: { modRoot: "M\\Probe", created: [], warnings: [] } }) };
+  },
+});
+check("an agreed overwrite crosses the frame",
+  overwriteFrame.length === 1 && overwriteFrame[0].params.overwrite === true,
+  JSON.stringify(overwriteFrame));
+check("an ordinary attempt does not carry the flag at all",
+  !("overwrite" in JSON.parse(sent[0].init.body).params),
+  sent.length ? sent[0].init.body : "(no request)");
+
+export let timedOut = null;
+const slowStarted = Date.now();
+try {
+  await newMod.createMod({
+    endpoint: "http://127.0.0.1:12345",
+    dir: "M",
+    modName: "Slow",
+    template: "minimal",
+    timeoutMs: 25,
+    // Never resolves and ignores `signal`: the deadline has to be independent
+    // of the fetch's cooperation, which is exactly what F4 was about.
+    fetchImpl: () => new Promise(() => {}),
+  });
+} catch (err) {
+  timedOut = err;
+}
+check("a scaffold that never answers fails with a timeout instead of silence",
+  timedOut instanceof Error && timedOut.name === "TimeoutError" &&
+    /没有回答 mod\.scaffold/.test(timedOut.message) && Date.now() - slowStarted < 5000,
+  timedOut === null ? "(nothing thrown)" : `${timedOut.name} ${timedOut.message}`);
+
+
+/*
  * The one check that is not a stub.  `mod.scaffold` is served above the
  * kernel, but the frame still has to survive a real server, a real port and
  * the containment rule -- a stub cannot prove that.  A Windows-only taskkill
@@ -420,6 +492,36 @@ if (!CAN_SPAWN_SHELL) {
       JSON.stringify(readdirSync(realSandbox)) === JSON.stringify(["Probe"]) &&
         JSON.stringify(readdirSync(join(realSandbox, "Probe")).sort()) === JSON.stringify(["README.md", "mod.json"]),
       JSON.stringify(readdirSync(realSandbox)));
+
+    /*
+     * F2 end to end: the second attempt is the one the menu used to be unable
+     * to finish.  Without `overwrite` the same folder is refused; with it the
+     * same frame repairs the package.
+     */
+    let refusedAgain = null;
+    try {
+      await newMod.createMod({ endpoint, dir: target.dir, modName: target.modName, template: "minimal" });
+    } catch (err) {
+      refusedAgain = err;
+    }
+    check("a second run at the same folder is refused by default",
+      newMod.needsOverwrite(refusedAgain),
+      refusedAgain === null ? "(nothing thrown)" : String(refusedAgain.message));
+
+    let replaced = null;
+    let overwriteError = null;
+    try {
+      replaced = await newMod.createMod({
+        endpoint, dir: target.dir, modName: target.modName, template: "minimal", overwrite: true,
+      });
+    } catch (err) {
+      overwriteError = err;
+    }
+    check("and an agreed overwrite repairs it over a live endpoint",
+      replaced !== null && replaced.modRoot === join(realSandbox, "Probe") &&
+        existsSync(join(realSandbox, "Probe", "mod.json")) &&
+        existsSync(join(realSandbox, "Probe", "README.md")),
+      overwriteError === null ? JSON.stringify(replaced) : String(overwriteError.message));
   } catch (err) {
     check("a live endpoint scaffolds the minimal mod onto disk", false, String((err && err.message) || err));
     check("and the sandbox holds exactly that mod", false, "the run above failed");

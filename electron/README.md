@@ -108,9 +108,21 @@ endpoint the window is already talking to — `electron/main.js` never imports
 `shell/mods/`, because a packaged app keeps the shell outside `app.asar`. The
 four labels are `shell/mods/scaffold.js`'s `nameZh` verbatim, and
 `shell/mods/selftest.mjs` fails if the two lists drift apart. `mod.*` stays
-bounded by the mods root, so a folder outside it is refused by name
-(`EOUTSIDE`) and the menu reports that rather than guessing. After a successful
-create the new mod is expanded in the current workspace: the window navigates to
+bounded by the mods root, so the menu asks the containment question *before* it
+writes: the save dialog can name any folder, and a folder outside the mods root
+is not relayed as a raw `EOUTSIDE` — the menu asks whether to put the same name
+under the root instead (`newmod.confine()`). A retry after a half-written
+package is possible too: when `scaffoldMod` refuses a non-empty target, the menu
+offers to replace those files and the second frame carries `overwrite: true`
+(`shell/main.mjs` forwards the flag; without it the shortcut could never repair
+its own leftovers). The POST has a deadline (`newmod.createMod({timeoutMs})`, a
+`Promise.race`, so a fetch that ignores the abort signal fails too): a kernel
+that does not answer becomes an error the menu can show, where it used to leave
+the item with no dialog and no message at all. Remembering the folder is
+separate from creating the package: a failed settings write is a note inside
+the success box, not "新建模组失败" over a package already on disk. After a
+successful create the new mod is expanded in the current workspace: the window
+navigates to
 `<endpoint>/?mod=<encoded package root>` — the page sets the mod card's
 directory, runs `mod.open` and switches to the mod view, the same boot path a
 hand-typed `?mod=` takes (`newmod.openModUrl()` builds the address; the page's
@@ -118,7 +130,11 @@ hand-typed `?mod=` takes (`newmod.openModUrl()` builds the address; the page's
 first (`window.__infantgodFlushBoard()` over `executeJavaScript`), so navigating
 loses nothing; a bare `reload()` used to reopen the board with the mod card's
 `dir` still empty. When the folder is outside the workspace the menu offers to
-make the mod's parent the workspace instead.
+make the mod's parent the workspace instead. A `?mod=` that cannot be opened
+(deleted, unreadable, refused) is not a dead kernel: the page finishes booting,
+keeps the status at `kernel ready`, and writes `cannot open <dir>: …` to the
+log strip — only a kernel that stops answering becomes `kernel not reachable`
+and starts the reconnect path.
 
 There is no `Edit` menu: the board's canvas has no clipboard model of its own,
 and the roles Electron would add (`cut`/`copy`/`paste`) apply to the focused

@@ -913,7 +913,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 669 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 678 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
