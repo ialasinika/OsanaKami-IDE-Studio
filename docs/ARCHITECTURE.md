@@ -418,8 +418,10 @@ point at, the demo
 packages' listing and
 byte-identical copy (openable only where it was copied), `config.get`/`config.set`
 keeping a real API key off the wire, the wiki-trap lint (`D019`–`D022`) and the
-localisation lock lint (`D023`), with the shipped corpus pinned at zero false
-positives (652 checks) |
+localisation lock lint (`D023`), the package-side answers the docs verbs give
+when a root is passed (`stats` package block, per-type `packageCount`, define /
+node / file hits and their text) while the no-root shapes stay what they were,
+with the shipped corpus pinned at zero false positives (665 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, and the settings store and its two verbs (86 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

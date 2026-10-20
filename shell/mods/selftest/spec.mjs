@@ -1224,6 +1224,72 @@ section("schema constraints, line ids and addressable addresses (G6, G7, G9)");
       corpusLocks.length === 0, JSON.stringify(corpusLocks.map((d) => d.message)));
   }
 
+/* ------------------------------------------------------------------ */
+/* G18: the docs verbs, pointed at one package                         */
+/* ------------------------------------------------------------------ */
+
+section("the docs verbs, pointed at a package");
+
+{
+  const root = join(specTemp("infantgod-docs-"), "DocsMod");
+  specWrite(join(root, "mod.json"), JSON.stringify({
+    name: "DocsMod",
+    version: "1.0.0",
+    gameVersion: "1.0",
+    loadOrder: 50,
+    author: "selftest",
+    description: "selftest fixture: the docs card reads this package too",
+  }, null, 2) + "\n");
+  specWrite(join(root, "Defines", "SpellEvent", "ZzDocsSpell.json"),
+    JSON.stringify({ techName: "ZzDocsSpell" }, null, 2) + "\n");
+  specWrite(join(root, "Defines", "SpellEvent", "ZzDocsSpellTwo.json"),
+    JSON.stringify({ techName: "ZzDocsSpellTwo" }, null, 2) + "\n");
+  specWrite(join(root, "Yarn", "Story.yarn"),
+    "title: ZzDocsNode\n---\nA node the docs card should find.\n===\n");
+
+  /*
+   * Every verb keeps its old shape when no root is given: the docs card is the
+   * only caller that passes one, and a card that is not pointed at a package
+   * must not start reporting counts that do not exist.
+   */
+  check("stats without a root keeps the shape it had",
+    !("package" in specMods.stats({})), JSON.stringify(Object.keys(specMods.stats({}))));
+  const withRoot = specMods.stats({ root });
+  check("stats with a root adds the package it read",
+    withRoot.package && withRoot.package.root === root && withRoot.package.name === "DocsMod",
+    JSON.stringify(withRoot.package));
+  check("the package summary counts what is on disk",
+    withRoot.package.summary.defines === 2 && withRoot.package.types.SpellEvent === 2,
+    JSON.stringify(withRoot.package.summary));
+
+  const plainTypes = specMods.types({});
+  check("types without a root gains no packageCount",
+    plainTypes.every((t) => !("packageCount" in t)),
+    JSON.stringify(plainTypes.filter((t) => "packageCount" in t).map((t) => t.type)));
+  const spell = specMods.types({ root }).find((t) => t.type === "SpellEvent");
+  check("types with a root says how many this package declares",
+    spell && spell.packageCount === 2, JSON.stringify(spell));
+
+  check("search finds a define this package declares",
+    specMods.search({ query: "ZzDocs", root, limit: 20 })
+      .some((h) => h.kind === "define" && h.name === "ZzDocsSpell"),
+    JSON.stringify(specMods.search({ query: "ZzDocs", root, limit: 20 }).slice(0, 4)));
+  check("search still answers from the game knowledge base first",
+    specMods.search({ query: "Love", root, limit: 5 })[0].name === "Love",
+    JSON.stringify(specMods.search({ query: "Love", root, limit: 5 })[0]));
+  check("search without a root never lists the package",
+    specMods.search({ query: "ZzDocs", limit: 20 }).every((h) => h.kind !== "define"));
+
+  const doc = specMods.docFor({ kind: "define", name: "ZzDocsSpell", root });
+  check("docFor reads the define the package declares",
+    doc.includes("type: SpellEvent") && doc.includes("ZzDocsSpell") && doc.includes('"techName"'),
+    doc.slice(0, 90));
+  check("docFor names the yarn file that holds the node",
+    specMods.docFor({ kind: "node", name: "ZzDocsNode", root }).includes("Yarn/Story.yarn"));
+  check("a name the package does not have is not invented",
+    specMods.docFor({ kind: "define", name: "ZzNoSuchDefine", root }) === "");
+}
+
 section("no state leaks between runs");
 for (const dir of specTemps) rmSync(dir, { recursive: true, force: true });
 check("every fixture this run created was removed",

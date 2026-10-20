@@ -10,6 +10,8 @@
 
 冒烟轮（2026-10-20 晚，第五轮之后）：把两个浏览器冒烟真正跑起来——此前"Edge 155 headless 坏"是误判，死因是 harness 拼 wrapper 时的页内脚本语法错误（Python 非 raw 字符串里的换行），修好后 `browser_smoke.py` 65/65、`input_smoke.py` 44/44 在本机真实 headless Edge 上全绿。冒烟抓到五处真实缺陷并已修：相对路径 `open README.md` 因把相对名当绝对路径与 workspace 根比较而被拒（新纯模块 `shell/web/openpath.mjs`，套件 1 条）；像素卡在 G52 改为居中取景后，冒烟仍按"画布左上即图像左上"点击，卡现在发布 `data-pan-x`/`data-pan-y`/`data-zoom`、冒烟按像素中心点击而不是在 Python 里重抄取景规则；示例包 `Audio_Lantern_Hum.json` 手写 `EventReference` 触发自己的 D019 两条（示例改为只写能诚实写的字段，`EditorNote` 说明引用必须来自游戏导出）；`D011` 行状态以路径开头、RGB 精灵按 G20 存回 RGB 两条断言过期；`audio`/`help` 已注册却不在 board 卡种表与冒烟清单里（面板点不开、冒烟点不到）。文档同轮更正：卡种数按实际注册数（十五种）与冒烟检查数（65 + 44）改齐。
 
+第六轮（2026-10-20 晚）：用户按队列点名 18/44/34/49/内核硬化，按此顺序逐项独立提交。G18 本轮关闭：`mod.stats`/`mod.types`/`mod.search`/`mod.docFor` 接受可选包根、docs 卡新增包根输入与 `read this package`，没给 root 时所有返回形状不变（`selftest/spec.mjs` 11 条）。G44/G34/G49 与 port 硬化按队列随后处理。
+
 
 ## 已关闭（历轮累计，均有代码证据）
 
@@ -61,6 +63,7 @@
 | G10 wiki 陷阱提示 | 第五轮：`validate.js` 新增 D019（手写 `EventReference`，warning，路径指向 `#eventReference`，说明值必须由 Unity/FMOD 产生）、D020（Yarn 里调用 `GetTopic()`/`WasVisited()`，每个调用文件一条，跳过散文与注释）、D021（脚手架画布 256×144 与 `initialTransform: -7.2`）、D022（全零 GUID warning、8-4-4-4-12 或非法形状 info）；`selftest/traps.mjs` 逐条钉住（D019 三条 + 完整 `{Guid,Path}` 不误报、D020 三条、GUID 形状） |
 | G37 KB 生成器两条自伤路径 | 第五轮：`tools/gen_knowledge.mjs` 的 `outOverwriteRefusal()`：`--out` 指向的已有文件如果带文档/命令签名（facts-only 没有的数据）默认拒绝覆盖并 exit 2，`--force` 才允许；`selftest/knowledge-facts.mjs` 造一份富 KB 当靶子。显式 `schema-dir`/`defines-dir` 失效时 `knowledge-build.js` 在错误上带 `explicit` 标记，文案说明"回退被显式设置关闭" |
 | G19 残余：watch 只盯 editor 卡 | 第四轮：`watch.mjs` 新增 `watchTarget()`（带 `path` 且带 `reload()` 的 handle 才入轮询，按规范斜杠取路径）与 `watchStateOf()`（getter 和方法两种读法归一）；`main.mjs` 的 `watchedPaths()`/`applyFileChange()`/`groupKnown()` 改为按这套接口收卡。story/pixel/rig 卡补 `reload()`/`onFileChanged()`/`onFileGone()`（rig 另补 `path` getter、沿用 `revision()`/`dirty()` 方法）；干净卡自动重读、脏卡只提示，`selftest/main.mjs` 钉住两种读法与"无 reload 的卡不进轮询" |
+| G18 docs 卡看不到本包定义 | 第五轮后：`mod.stats`/`mod.types`/`mod.search`/`mod.docFor` 都接受可选 `root`——`stats` 多回 `package {root, name, summary, types}`，`types` 每型多 `packageCount`（KB 不认识的类型也列出），`search` 在 KB 命中之后追加该包的 `define`/`node`/`file` 命中，`docFor` 能返回包内定义原文、节点所在的 Yarn 文件或整份文件文本；不带 root 时形状与以前完全一样。docs 卡新增包根输入与 `read this package`，列表显示包名/各类型数量、搜索覆盖包内容（`selftest/spec.mjs` 11 条钉住有无 root 两种形状） |
 
 ## 仍然成立（本轮逐条核实）
 
@@ -72,11 +75,9 @@
 
 第五轮把 B 区六条全部关掉，证据在上表：G2 音频试听（`audio` 卡）、G14 mod 层读语义（`readtext.js`）、G15 帮助入口（`help` 卡）、G20 像素格式（`pixelpng.mjs` 读写）、G38 示例包 `file` 列 + `D023` lock 校验 + 脚手架真实 lock、G51-b 内核只读根（`--read-root`）。
 
-### C. 浏览器层：功能都在，路不通（G16/G17/G19 已于第四轮关闭）
+### C. 浏览器层：功能都在，路不通（G16/G17/G18/G19 已关闭）
 
-| 条目 | 当日证据（2026-10-20 第四轮复核，行号已重钉） |
-| --- | --- |
-| G18 docs 卡看不到本包定义 | `card-docs.mjs:34,56,78,91`：`mod.docFor`/`mod.search`/`mod.stats`/`mod.types` 仍全部不带 root，卡片仍无包路径输入 |
+第五轮后 C 区清空：G16/G17/G19 在第四轮关闭，G18 的 docs 卡按包根读本包定义也在本轮关掉（见上表）。浏览器层剩下的都是上游 port 硬化那类底层问题，不再是"路不通"。
 
 ### D. 全流程断点与产品
 
@@ -97,6 +98,6 @@
 
 第一批：
 
-1. **G18 docs 卡带 root + G44 残余 `gameModsInfo` 动词**：同一层，`mod.search`/`docFor`/`stats`/`types` 加包路径参数，顺手给"KB/游戏目录从哪来"一个查询动词。
+1. **G44 残余 `gameModsInfo` 动词**：把"KB/游戏目录从哪来"变成可查询的动词（启动日志与 `knowledgeState()` 已在，缺一个入口）。G18 已在本轮关闭。
 
 第二替补：**G34** Electron 新建模组失败路径；**G49** agent 界面（依赖 G44 关闭 + 先定形态）。**G9 残余**（Addressables 窗口里登记了哪些 address）无本地数据源，等游戏侧暴露清单。上游 0.4.2 的 port 层硬化（junction 逃逸、revision 0 二义、原子写）仍建议作为并行技术轨。

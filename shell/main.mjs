@@ -628,8 +628,10 @@ function optionalString(params, name) {
  * five with a side effect.
  */
 const MOD_METHODS = {
-  "mod.stats": (_params, mods) => mods.stats(),
-  "mod.types": (_params, mods) => mods.types(),
+  // G18: the docs card points these four at a package; the table forwards
+  // `root` so the card's call reaches the facade it was written for.
+  "mod.stats": (params, mods) => mods.stats({ root: optionalString(params, "root") ?? undefined }),
+  "mod.types": (params, mods) => mods.types({ root: optionalString(params, "root") ?? undefined }),
   "mod.templates": (_params, mods) => mods.templates(),
   "mod.characters": (_params, mods) => mods.characters(),
 
@@ -708,10 +710,12 @@ const MOD_METHODS = {
   "mod.search": (params, mods) => mods.search({
     query: typeof params.query === "string" ? params.query : "",
     limit: typeof params.limit === "number" ? params.limit : undefined,
+    root: optionalString(params, "root") ?? undefined,
   }),
   "mod.docFor": (params, mods) => mods.docFor({
     kind: needParam(params, "kind"),
     name: needParam(params, "name"),
+    root: optionalString(params, "root") ?? undefined,
   }),
   "mod.suggest": (params, mods) => mods.suggest({
     prefix: typeof params.prefix === "string" ? params.prefix : "",

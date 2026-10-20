@@ -69,11 +69,19 @@ opens the audio card and plays it, because a `.wav`'s bytes are the finding
 
 ### `docs` — the knowledge base
 
-Persisted field: `query`.
+Persisted fields: `query`, `root`.
 
 An empty query lists the knowledge-base counts and the 51 definition types;
 typing searches commands, functions, variables, nodes and defines; clicking a
 result renders its documentation. `window` reloads the counts.
+
+A package root in the path field (`Mods/MyMod`, or `read this package`) points
+the same card at the mod being edited: the list gains the package's name, its
+define counts per type and the per-type `packageCount`, and search adds that
+package's defines, Yarn nodes, tables and sprites after the knowledge-base hits.
+Following one shows the definition file itself, or the Yarn file that holds a
+node. This is a read-only view over the package -- nothing is validated and
+nothing is written -- so it answers while the file is still dirty (G18).
 
 ## Commands
 
@@ -107,8 +115,8 @@ write files or wait on one.
 
 | verb | params | returns |
 | --- | --- | --- |
-| `mod.stats` | — | `{yarnFiles, nodes, commands, functions, variables, schemas, baselineDefines, locales, lineIds, …}` |
-| `mod.types` | — | `[{type, count, required[], properties[], hasSchema, support?}]` (`support` is the wiki matrix entry, G4) |
+| `mod.stats` | `root?` | `{yarnFiles, nodes, commands, functions, variables, schemas, baselineDefines, locales, lineIds, …}`; with a package root it also carries `package: {root, name, summary, types}` (G18) |
+| `mod.types` | `root?` | `[{type, count, required[], properties[], hasSchema, support?, packageCount?}]` (`support` is the wiki matrix entry, G4; `packageCount` appears only with a root, G18) |
 | `mod.templates` | — | `[{id, title, titleEn, description, descriptionEn, files[]}]` |
 | `mod.characters` | — | `[{techName, nameKey, colour, …}]` |
 | `mod.open` | `dir` | `{root, manifest, defines[], yarnFiles[], csvFiles[], sprites[], summary, diagnostics}` |
@@ -124,8 +132,8 @@ write files or wait on one.
 | `mod.followGameLog` | `path?`, `modName?`, `durationMs?`, `intervalMs?`, `bytes?` | `{path, found, tried, samples, offset, size, stoppedBecause, bytes, totals, lines}` — **async**, polls and returns only appended bytes; `stoppedBecause` is `duration` or `gone` (G12) |
 | `mod.examples` | — | `{root, source, present, packages[{name, dir, hasManifest}], default}` — what ships beside the editor |
 | `mod.example` | `name?` | `{installed, name, dir, modRoot, file, files, source, message}` — **async**, copies a demo package into the mods folder |
-| `mod.search` | `query`, `limit?` | `[{kind, name, score, detail}]` |
-| `mod.docFor` | `kind`, `name` | markdown string |
+| `mod.search` | `query`, `limit?`, `root?` | `[{kind, name, score, detail}]`; with a root, `define`, `node` and `file` hits from that package follow the knowledge-base hits (G18) |
+| `mod.docFor` | `kind`, `name`, `root?` | markdown string; with a root, the package's own `define` (file text), `node` (which Yarn file holds it) and `file` (`file`) entries answer first (G18) |
 | `mod.suggest` | `prefix`, `context?` | `[{label, kind, detail, insertText, documentation}]` |
 | `mod.complete` | `text`, `caret`, `limit?` | `{context, items[{label, kind, detail, insertText, documentation, sortText, replace}], isIncomplete}` |
 | `mod.hover` | `text`, `caret` | `{range, kind, name, contents[{kind, value}]}` or `null` |
@@ -882,7 +890,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 652 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 665 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

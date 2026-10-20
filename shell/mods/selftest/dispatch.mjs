@@ -57,6 +57,35 @@ export async function frame(id, method, params) {
   const notified = await dispatch({ jsonrpc: "2.0", method: "mod.stats", params: {} }, kernel, languages, mods);
   check("a notification is not answered", notified === null, JSON.stringify(notified));
 
+  /*
+   * G18: the docs card points `stats`, `types`, `search` and `docFor` at a
+   * package by passing `root` in the frame.  The facade learned the parameter
+   * first; if this table drops it, the card silently falls back to the knowledge
+   * base and every test that calls the facade directly stays green.
+   */
+  const seamDocsRoot = mkdtempSync(join(tmpdir(), "infantgod-docs-seam-"));
+  try {
+    const pkg = join(seamDocsRoot, "DocsSeam");
+    mkdirSync(join(pkg, "Defines", "SpellEvent"), { recursive: true });
+    writeFileSync(join(pkg, "mod.json"), JSON.stringify({ name: "DocsSeam" }, null, 2) + "\n");
+    writeFileSync(join(pkg, "Defines", "SpellEvent", "ZzSeam.json"),
+      JSON.stringify({ techName: "ZzSeam" }, null, 2) + "\n");
+    const seamMods = createMods({ modsRoot: seamDocsRoot });
+    const pointed = await dispatch({ jsonrpc: "2.0", id: 900, method: "mod.stats", params: { root: "DocsSeam" } },
+      kernel, languages, seamMods);
+    check("the seams carries the package root the card passes",
+      pointed.result !== undefined && pointed.result.package !== undefined
+        && pointed.result.package.name === "DocsSeam",
+      JSON.stringify(pointed.result && pointed.result.package).slice(0, 120));
+    const plain = await dispatch({ jsonrpc: "2.0", id: 901, method: "mod.stats", params: {} },
+      kernel, languages, seamMods);
+    check("and a frame without a root keeps the knowledge-base shape",
+      plain.result !== undefined && !("package" in plain.result),
+      JSON.stringify(Object.keys(plain.result || {})).slice(0, 120));
+  } finally {
+    rmSync(seamDocsRoot, { recursive: true, force: true });
+  }
+
   check("no mod.* frame reached the kernel", kernelCalls === 0, String(kernelCalls));
 
   /*

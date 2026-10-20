@@ -569,13 +569,24 @@ function createMods(options) {
     return view;
   }
 
-  function stats() {
+  /**
+   * G18: the package side of the documentation verbs.  `scanMod` already reads
+   * mod.json, the techName of every Defines/ file and every Yarn node title, so
+   * the docs card can answer "what does *this* package declare" without running
+   * a full validation on every keystroke.  An empty root keeps the old shape.
+   */
+  function packageSide(rootArg) {
+    if (rootArg == null || String(rootArg).trim() === '') return null;
+    return scanMod(resolveArg(rootArg, 'root'));
+  }
+
+  function stats(params) {
     const base = knowledge().stats || {};
     // G15: the help card quotes the same support matrix the validator runs on
     // (M013 reads an unsupported type, M014 a partial one) and renders the wiki
     // URL the matrix was read from.  Both live in one file -- support.json --
     // so the card cannot drift from the checks by re-typing them.
-    return Object.assign({}, base, {
+    const out = Object.assign({}, base, {
       support: {
         wiki: supportCore.wiki(),
         levels: supportCore.levels(),
@@ -583,9 +594,21 @@ function createMods(options) {
         types: supportCore.table()
       }
     });
+    const side = packageSide(params && params.root);
+    if (side) {
+      const byType = {};
+      for (const d of side.defines) byType[d.type] = (byType[d.type] || 0) + 1;
+      out.package = {
+        root: side.root,
+        name: side.manifest && side.manifest.name != null ? String(side.manifest.name) : '',
+        summary: side.summary,
+        types: byType
+      };
+    }
+    return out;
   }
 
-  function types() {
+  function types(params) {
     const kb = knowledge();
     const schemas = kb.schemas && typeof kb.schemas === 'object' ? kb.schemas : {};
     const baseline = kb.baseline && typeof kb.baseline === 'object' ? kb.baseline : {};
@@ -594,13 +617,20 @@ function createMods(options) {
     for (const t of Object.keys(baseline)) if (!seen.has(t)) { seen.add(t); names.push(t); }
     for (const t of Object.keys(schemas)) if (!seen.has(t)) { seen.add(t); names.push(t); }
     names.sort();
-    return names.map((type) => {
+    // G18: with a package root every type also says how many definitions *this*
+    // package has, and a type the package declares but a slim knowledge base does
+    // not know is still listed -- saying "this package has 3, the KB does not
+    // know the type" is more useful than hiding it.
+    const side = packageSide(params && params.root);
+    const packageCounts = {};
+    if (side) for (const d of side.defines) packageCounts[d.type] = (packageCounts[d.type] || 0) + 1;
+    const out = names.map((type) => {
       const schema = schemas[type] && typeof schemas[type] === 'object' ? schemas[type] : null;
       const props = schema && schema.properties && typeof schema.properties === 'object'
         ? Object.keys(schema.properties).sort()
         : [];
       const list = Array.isArray(baseline[type]) ? baseline[type] : [];
-      return {
+      const item = {
         type: type,
         count: list.length,
         required: schema && Array.isArray(schema.required) ? schema.required.slice() : [],
@@ -609,7 +639,24 @@ function createMods(options) {
         // G4：wiki 的支持矩阵。类型选择器/新建文件用它标灰，校验用它报 M013/M014。
         support: supportCore.forType(type)
       };
+      if (side) item.packageCount = packageCounts[type] || 0;
+      return item;
     });
+    if (side) {
+      for (const type of Object.keys(packageCounts).sort()) {
+        if (seen.has(type)) continue;
+        out.push({
+          type: type,
+          count: 0,
+          required: [],
+          properties: [],
+          hasSchema: false,
+          support: supportCore.forType(type),
+          packageCount: packageCounts[type]
+        });
+      }
+    }
+    return out;
   }
 
   /** 知识库里的角色；没有 localization.characters 就是 []。 */
@@ -633,16 +680,96 @@ function createMods(options) {
     return cache.index;
   }
 
+  /**
+   * G18: searchable entries that live in the opened package rather than the game
+   * knowledge base.  Nothing is validated here; the card only needs names to show.
+   */
+  function packageHits(side, query) {
+    const q = String(query == null ? '' : query).trim().toLowerCase();
+    const match = (text) => q === '' || String(text == null ? '' : text).toLowerCase().includes(q);
+    const out = [];
+    for (const d of side.defines) {
+      const name = d.techName || path.basename(d.file).replace(/\.json$/i, '');
+      if (!match(name) && !match(d.type) && !match(d.file)) continue;
+      out.push({ kind: 'define', name: name, detail: (d.type || 'define') + ' \u00b7 ' + d.file });
+    }
+    for (const title of side.nodeTitles) {
+      if (!match(title)) continue;
+      out.push({ kind: 'node', name: title, detail: 'yarn node in this package' });
+    }
+    for (const rel of side.yarnFiles) {
+      if (!match(rel)) continue;
+      out.push({ kind: 'file', name: rel, detail: 'yarn file in this package' });
+    }
+    for (const rel of side.csvFiles) {
+      if (!match(rel)) continue;
+      out.push({ kind: 'file', name: rel, detail: 'localisation table in this package' });
+    }
+    for (const rel of side.sprites) {
+      if (!match(rel)) continue;
+      out.push({ kind: 'file', name: rel, detail: 'sprite in this package' });
+    }
+    return out;
+  }
+
   function search(params) {
     const p = params && typeof params === 'object' ? params : {};
     const sopts = {};
     if (p.limit != null) sopts.limit = Number(p.limit);
     if (Array.isArray(p.kinds)) sopts.kinds = p.kinds;
-    return searchCore.search(index(), p.query, sopts) || [];
+    const hits = searchCore.search(index(), p.query, sopts) || [];
+    const side = packageSide(p.root);
+    if (!side) return hits;
+    const limit = Number.isFinite(sopts.limit) && sopts.limit > 0 ? Math.floor(sopts.limit) : 80;
+    const seen = new Set(hits.map((h) => h.kind + '\u0000' + h.name));
+    for (const hit of packageHits(side, p.query)) {
+      if (hits.length >= limit) break;
+      const key = hit.kind + '\u0000' + hit.name;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hits.push(hit);
+    }
+    return hits;
+  }
+
+  /** G18: the text of one package-side entry, for the docs card's `pre`. */
+  function packageDoc(side, kind, name) {
+    const wanted = String(name == null ? '' : name);
+    if (kind === 'define') {
+      const found = side.defines.find((d) =>
+        d.techName === wanted || path.basename(d.file) === wanted || d.file === wanted);
+      if (!found) return null;
+      const r = readText(path.join(side.root, found.file));
+      return 'type: ' + (found.type || '?') + '\nfile: ' + found.file + '\n\n' +
+        (r.ok ? r.text : 'cannot read: ' + r.error);
+    }
+    if (kind === 'node') {
+      if (!side.nodeTitles.includes(wanted)) return null;
+      const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp('^title:\\s*' + escaped + '\\s*$', 'm');
+      for (const rel of side.yarnFiles) {
+        const r = readText(path.join(side.root, rel));
+        if (r.ok && pattern.test(r.text)) return 'node: ' + wanted + '\nfile: ' + rel + '\n';
+      }
+      return 'node: ' + wanted + '\nfile: (not found in this package)\n';
+    }
+    if (kind === 'file') {
+      const known = new Set([].concat(side.yarnFiles, side.csvFiles, side.sprites,
+        side.defines.map((d) => d.file)));
+      if (!known.has(wanted)) return null;
+      const r = readText(path.join(side.root, wanted));
+      return 'file: ' + wanted + '\n\n' + (r.ok ? r.text : 'cannot read: ' + r.error);
+    }
+    return null;
   }
 
   function docFor(params) {
     const p = params && typeof params === 'object' ? params : {};
+    const side = packageSide(p.root);
+    if (side) {
+      const own = packageDoc(side, p.kind, p.name);
+      if (own != null) return own;
+    }
     const doc = searchCore.docFor(index(), p.kind, p.name);
     return doc == null ? '' : String(doc);
   }

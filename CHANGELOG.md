@@ -16,6 +16,36 @@ stands in this tree.
 
 ## Unreleased
 
+### The docs card can read the package it belongs to
+
+`mod.stats`, `mod.types`, `mod.search` and `mod.docFor` answered only from the
+game's knowledge base, so a define type or a Yarn node that the package in front
+of the author ships — the thing actually being written — could not be looked up,
+and the docs card had no way to say which package to look in.  All four take an
+optional package root now.  `stats` adds a `package` block (resolved root, name,
+the same summary the mod card shows, counts per type); `types` adds
+`packageCount` to each type and appends the types that exist only in the
+package; `search` adds `define`, `node` and `file` hits after the
+knowledge-base ones; `docFor` answers a package define, Yarn node or file from
+the package's own bytes.  Without a root every reply keeps the shape it had, so
+existing RPC clients and the card's default view do not change.
+
+The docs card grew a package-root box and a `read this package` button, and the
+root is stored in the board card (`root`), so reopening the card points at the
+same package.  The result is a package block above the type matrix: name, the
+defines/yarn/csv/sprites counts, one row per type with `N here`, and the
+knowledge-base rows keep saying where their counts come from.
+
+The suite pins both shapes: eleven checks in `selftest/spec.mjs` against a
+synthetic package (resolved root and name, summary counts, `packageCount`,
+define/node/file hits, knowledge-base hits still first, and the no-root replies
+unchanged).  Cutting the package half out of `stats` fails the first of them;
+two more checks in `selftest/dispatch.mjs` carry the same
+root through the shell's `mod.*` table and confirm that a frame without one
+keeps the knowledge-base shape; without that forwarding the card's call would
+reach the facade empty-handed while every facade test stayed green.  Suites:
+mods 665, web 320.
+
 ### The smoke suite runs here, and the defects it found are fixed
 
 The two browser smokes were never actually run on this machine: a note in
