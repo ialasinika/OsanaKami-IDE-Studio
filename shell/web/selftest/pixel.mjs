@@ -23,6 +23,13 @@ import {
   setPixelAt,
 } from "../pixelpng.mjs";
 import {
+  centrePan,
+  framedPan,
+  insideView,
+  visible,
+  zoomAt,
+} from "../pixelview.mjs";
+import {
   applyMatrix,
   bezierValue,
   easeFraction,
@@ -449,4 +456,78 @@ test("spine pose: an attachment timeline switches what the slot shows", () => {
   assert.equal(slotAttachmentName(rig, null, 0, 0), "idle");
   assert.equal(slotAttachmentName(rig, animation, 0, 0.2), "idle");
   assert.equal(slotAttachmentName(rig, animation, 0, 0.7), "attack");
+});
+
+/* ------------------------------------------------------------------ */
+/* the pixel card's framing, before there is a canvas to frame         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Two of the browser bugs in `docs/gaps2.md` were about where the image lands,
+ * not about its pixels.  A card opened while another tab was in front measured
+ * its surface as 0x0, kept that measurement and never re-measured (G52); and a
+ * zoom held the viewport centre, so a 32x32 sprite that started at the canvas
+ * corner was scrolled out of sight by one press of + (G53).  The card now asks
+ * `pixelview.mjs` for the numbers, and these checks are that arithmetic under
+ * Node: the browser half is `tools/input_smoke.py`'s job.
+ */
+
+test("pixel view: the module imports nothing, reads no clock and touches no DOM", () => {
+  const code = readFileSync(new URL("../pixelview.mjs", import.meta.url), "utf8");
+  assert.equal(/^\s*import\b/m.test(code), false, "no imports");
+  assert.equal(/\bwindow\b|\bdocument\b|\blocalStorage\b/.test(code), false, "no DOM");
+  assert.equal(/Math\.random|Date\.now|new Date\(/.test(code), false, "no clock, no randomness");
+});
+
+test("pixel view: a card that measured 0x0 is centred once its surface is laid out", () => {
+  /* A hidden card's measurement is not a frame: it must not become a pan that
+     is then kept forever (G52). */
+  const hidden = framedPan(0, 0, 32, 32, 1, -999, -999, false);
+  assert.deepEqual(hidden, { panX: -999, panY: -999 }, "no layout means no framing decision");
+  assert.equal(visible(0, 0, 32, 32, 1, hidden.panX, hidden.panY), false, "a 0x0 surface shows nothing");
+  /* `shown()` then measures 640x480, and the same card is centred in it.  The
+     expected numbers are worked out here, not read back from the module. */
+  const shown = framedPan(640, 480, 32, 32, 1, hidden.panX, hidden.panY, false);
+  assert.deepEqual(shown, { panX: (640 - 32) / 2, panY: (480 - 32) / 2 });
+  assert.equal(visible(640, 480, 32, 32, 1, shown.panX, shown.panY), true);
+  assert.equal(insideView(640, 480, 32, 32, 1, shown.panX, shown.panY), true,
+    "the whole image is on screen, not merely some of it");
+});
+
+test("pixel view: a 32x32 image at 1x, 2x and 8x with the centre pan is on screen", () => {
+  for (const zoom of [1, 2, 8]) {
+    const pan = centrePan(640, 480, 32, 32, zoom);
+    assert.equal(visible(640, 480, 32, 32, zoom, pan.panX, pan.panY), true, `${zoom}x intersects the viewport`);
+    assert.equal(insideView(640, 480, 32, 32, zoom, pan.panX, pan.panY), true, `${zoom}x is wholly inside`);
+  }
+  /* "Visible" and "wholly inside" are different questions: half a sprite over
+     the top-left corner is on screen and still not inside. */
+  assert.equal(visible(640, 480, 32, 32, 1, -16, -16), true, "half a sprite is still on screen");
+  assert.equal(insideView(640, 480, 32, 32, 1, -16, -16), false, "and not wholly inside");
+});
+
+test("pixel view: a wheel zoom keeps the pixel under the cursor where it was", () => {
+  const pan = { panX: 300, panY: 200 };
+  const anchor = { x: 420, y: 260 };
+  const fromZoom = 2;
+  const toZoom = 4;
+  /* The image point under the cursor before the zoom... */
+  const before = { x: (anchor.x - pan.panX) / fromZoom, y: (anchor.y - pan.panY) / fromZoom };
+  const zoomed = zoomAt(pan.panX, pan.panY, fromZoom, toZoom, anchor.x, anchor.y);
+  assert.deepEqual(zoomed, { panX: 180, panY: 140 });
+  /* ...is still under the cursor after it. */
+  const after = { x: (anchor.x - zoomed.panX) / toZoom, y: (anchor.y - zoomed.panY) / toZoom };
+  assert.ok(Math.abs(after.x - before.x) <= 1e-9 && Math.abs(after.y - before.y) <= 1e-9,
+    `the image point moved from (${before.x}, ${before.y}) to (${after.x}, ${after.y})`);
+  /* Zooming back out on the same anchor returns the pan it started from. */
+  assert.deepEqual(zoomAt(zoomed.panX, zoomed.panY, toZoom, fromZoom, anchor.x, anchor.y), pan);
+});
+
+test("pixel view: a pan the person made is not re-centred by shown()", () => {
+  for (const [viewW, viewH] of [[0, 0], [640, 480], [1280, 720]]) {
+    assert.deepEqual(framedPan(viewW, viewH, 32, 32, 1, 10, 20, true), { panX: 10, panY: 20 },
+      `shown at ${viewW}x${viewH} keeps the person's pan`);
+  }
+  /* Without the flag, the same call centres: the flag is the whole difference. */
+  assert.deepEqual(framedPan(640, 480, 32, 32, 1, 10, 20, false), centrePan(640, 480, 32, 32, 1));
 });

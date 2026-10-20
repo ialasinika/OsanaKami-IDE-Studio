@@ -479,6 +479,10 @@ body.is-mod .card[data-kind="problems"] {
 .card-body-runner,
 .card-body-files { padding: 0; }
 .card-body-project { padding: 0; }
+/* Six control rows plus three sections can be taller than the card.  Scrolling
+   the body is the last resort behind folding a section; without it a short
+   window clipped the lower rows and a small screen could not reach them (G54). */
+.card-body-mod { overflow-y: auto; }
 .card-body-note { padding: 0; background: #1a1d22; }
 .card-body-sheet { padding: 0; background: #1a1d22; }
 .card-body-story { padding: 0; background: #1a1d22; }
@@ -1534,6 +1538,17 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
   flex: 1 1 auto;
 }
 
+/* A folded section keeps its heading and gives its height back to the lists
+   under it.  This is the whole point on a short window: fold mod.json and
+   Defines, and Yarn gets the room (G54). */
+.mod-section.is-collapsed {
+  flex: 0 0 auto;
+}
+
+.mod-section.is-collapsed .mod-rows {
+  display: none;
+}
+
 /*
  * Only the Yarn list scrolls.  The manifest and the define list are short and
  * content-sized, so they must not be shrunk by it: with `flex: 1 1 auto` on all
@@ -1553,17 +1568,52 @@ body.motion .card { transition: box-shadow 90ms linear, border-color 90ms linear
 
 .mod-yarn {
   flex: 1 1 auto;
-  min-height: 0;
+  /* Never squeezed below a heading and a couple of rows: with `min-height: 0`
+     a short window could shrink the section to nothing and put its heading and
+     rows under the card's clipped edge (G54). */
+  min-height: 54px;
 }
 
 .mod-section-title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex: 0 0 auto;
-  padding: 4px 8px;
+  padding: 4px 8px 4px 4px;
   border-top: 1px solid var(--line-soft);
   color: var(--fg-dim);
   font: 10px/1.4 var(--ui-font);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* The fold caret.  It is a real button so Enter and Space work; both its
+   events stop at the button, so pressing it never trips the heading's own
+   open-file target (G54). */
+.mod-section-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--fg-faint);
+  font: 10px/1 var(--mono-font);
+  cursor: pointer;
+}
+
+.mod-section-toggle:hover {
+  color: var(--accent);
+  background: var(--card-hi);
+}
+
+.mod-section-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .mod-rows {

@@ -43,11 +43,14 @@ export {
   indentSelection,
   isYarnPath,
   lineColumn,
+  lineStartOffset,
   markHits,
   matchesFilter,
   normaliseTokenKind,
   parseCommandLine,
   parseZoomArgument,
+  pointerKey,
+  pointerOffset,
   projectRows,
   projectSummary,
   replaceAllMatches,
@@ -119,7 +122,10 @@ export {
   groupDefines,
   modHeadline,
   modPath,
+  modSectionCollapsed,
+  setModSectionCollapsed,
 } from "./cards/card-mod.mjs";
+export { diagLine, diagTarget } from "./cards/card-problems.mjs";
 
 import { renderDocs } from "./cards/card-docs.mjs";
 import { renderEditor } from "./cards/card-editor.mjs";

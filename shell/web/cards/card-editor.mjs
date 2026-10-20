@@ -15,6 +15,9 @@ import {
   indentAfterEnter,
   indentSelection,
   isYarnPath,
+  lineColumn,
+  lineStartOffset,
+  pointerOffset,
   replaceAllMatches,
   replaceMatchAt,
   stepCompletion,
@@ -155,6 +158,10 @@ export function renderEditor(card, ctx) {
     // without the layer must not be asked on every keystroke for the rest of
     // the session; completion is simply off.
     langOff: false,
+    // Whether `area` holds a file that was read successfully.  A card is made
+    // before its read answers, so this is what tells `reveal()` there is text
+    // to stand on.
+    loaded: false,
   };
 
   const shell = cardShell(card, body);
@@ -730,6 +737,7 @@ export function renderEditor(card, ctx) {
     }
     state.path = path;
     card.file = path;
+    state.loaded = false;
     // The strips belong to the file that was open: a new one starts with
     // nothing known, and a non-Yarn file never asks.
     hideComplete();
@@ -755,6 +763,7 @@ export function renderEditor(card, ctx) {
       state.chunked = result.chunked === true;
       state.bom = result.bom === true;
       state.dirty = false;
+      state.loaded = true;
       const parts = ["loaded", state.chunked ? "in frames" : (result.eol || "lf")];
       if (Number.isFinite(result.size)) {
         parts.push(`${result.size} bytes`);
@@ -773,6 +782,48 @@ export function renderEditor(card, ctx) {
       app.log("error", `file.read ${path}: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * Stand on a place inside the text: caret there, that line in view.
+   *
+   * `line` is 1-based and wins over `pointer` when both are given; `pointer` is
+   * the part of a diagnostic's path after its `#` (`voiceOverFiles[0]`), and
+   * only its final key is looked up.  Before the file arrives there is nothing
+   * to stand on, and a place that is not in the text is a no-op rather than a
+   * jump to an arbitrary offset -- the caller is told which of the two
+   * happened by the return value.
+   */
+  function reveal(options = {}) {
+    if (!state.loaded) {
+      return false;
+    }
+    const text = area.value;
+    let at = -1;
+    if (Number.isInteger(options.line) && options.line > 0) {
+      at = lineStartOffset(text, options.line);
+    } else if (typeof options.pointer === "string" && options.pointer !== "") {
+      at = pointerOffset(text, options.pointer);
+    }
+    if (at < 0) {
+      return false;
+    }
+    area.focus();
+    area.setSelectionRange(at, at);
+    /*
+     * The textarea lays the text out one line box per line, so the line's share
+     * of the scrollable height is the offset to ask for.  The line is measured
+     * from the offset that was just chosen -- a pointer lands mid-line, and the
+     * scroll still belongs to the whole line.  `syncScroll` mirrors the same
+     * number into the <pre>.  A hidden card has no height to scroll; that is
+     * the view's problem (a tile that is not showing), not the place's.
+     */
+    const { line } = lineColumn(text, at);
+    const lines = text === "" ? 1 : text.split("\n").length;
+    const scrollable = Math.max(0, area.scrollHeight - area.clientHeight);
+    area.scrollTop = lines <= 1 ? 0 : Math.round(((line - 1) / (lines - 1)) * scrollable);
+    syncScroll();
+    return true;
   }
 
   /**
@@ -953,7 +1004,19 @@ export function renderEditor(card, ctx) {
   });
 
   if (state.path !== "") {
-    load(state.path, { confirmDiscard: false });
+    /* A card can be made *at* a place: `openFile(path, {line, pointer})` keeps
+       the place on the card fields, and the reveal waits for the text to
+       arrive -- standing on a line before the read answers has nothing to
+       stand on. */
+    const pending = {
+      line: Number.isInteger(card.line) ? card.line : undefined,
+      pointer: typeof card.pointer === "string" ? card.pointer : undefined,
+    };
+    load(state.path, { confirmDiscard: false }).then((loaded) => {
+      if (loaded) {
+        reveal(pending);
+      }
+    });
   } else {
     repaint();
     renderStatus();
@@ -967,6 +1030,13 @@ export function renderEditor(card, ctx) {
       load,
       focus() {
         area.focus();
+      },
+      /**
+       * Stand on a `{line, pointer}` place (see the inner `reveal`); false when
+       * the file has not loaded yet or the place is not in this text.
+       */
+      reveal(options = {}) {
+        return reveal(options);
       },
       get path() {
         return state.path;

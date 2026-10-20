@@ -91,6 +91,37 @@ export function diagWhere(diagnostic) {
   return hash < 0 ? "" : raw.slice(hash + 1);
 }
 
+/*
+ * Which of the mod card's three sections is folded away (G54).
+ *
+ * The answer is a field on the *card document*, not on the DOM node, because a
+ * tile re-renders the card whenever the window is resized and on every board
+ * change: a fold kept only in the element would spring open right when the
+ * window got small -- the one moment a person folds a section.  Missing state
+ * means "open", so a board saved before this field existed looks unchanged.
+ * Both helpers are pure; the DOM side is `section()`'s collapsible option.
+ */
+export function modSectionCollapsed(card, key) {
+  const map = card !== null && typeof card === "object" ? card.collapsed : null;
+  return map !== null && typeof map === "object" && map[key] === true;
+}
+
+/** Record one section's folded state on the card document. */
+export function setModSectionCollapsed(card, key, collapsed) {
+  if (card === null || typeof card !== "object") {
+    return;
+  }
+  const map = card.collapsed !== null && typeof card.collapsed === "object"
+    ? { ...card.collapsed }
+    : {};
+  if (collapsed === true) {
+    map[key] = true;
+  } else {
+    delete map[key];
+  }
+  card.collapsed = map;
+}
+
 export function renderMod(card, ctx) {
   const { client, app } = ctx;
 
@@ -235,9 +266,21 @@ export function renderMod(card, ctx) {
 
   const headline = h("div", "mod-headline");
   const counts = h("div", "mod-counts");
-  const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"));
-  const definesSection = section("mod-defines", "Defines", undefined, () => openSectionFile("defines"));
-  const yarnSection = section("mod-yarn", "Yarn", undefined, () => openSectionFile("yarn"));
+  // One fold state per section, read from the card so a re-render keeps it, and
+  // written back without an undo step: folding is a view of the card, not an
+  // edit to the package.  The board is still marked unsaved so the fold
+  // survives a reload -- the same treatment `card.dir` gets.
+  const sectionOptions = (key) => ({
+    collapsible: true,
+    collapsed: modSectionCollapsed(card, key),
+    onToggle(collapsed) {
+      setModSectionCollapsed(card, key, collapsed);
+      app.boardTouched(true, { record: false });
+    },
+  });
+  const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"), sectionOptions("manifest"));
+  const definesSection = section("mod-defines", "Defines", undefined, () => openSectionFile("defines"), sectionOptions("defines"));
+  const yarnSection = section("mod-yarn", "Yarn", undefined, () => openSectionFile("yarn"), sectionOptions("yarn"));
   const status = makeStatus();
 
   /** What the last successful `mod.open` returned, or null before the first. */
@@ -673,6 +716,17 @@ export function renderMod(card, ctx) {
     status.textContent = `${s.files ?? 0} files · ${counts2.error} errors · ${counts2.warning} warnings · ${counts2.info} infos`;
     app.log(counts2.error === 0 ? "info" : "warn",
       `${dir}: ${counts2.error} errors, ${counts2.warning} warnings, ${counts2.info} infos`);
+    // A clean validate needs no second window; one with findings opens the
+    // problems panel for the same package, which is where the rows are
+    // clickable (G17).  `report.root` is the root the validator actually read,
+    // so a name relative to the mods root still points the panel at the file
+    // the diagnostic names.
+    if (counts2.error > 0 || counts2.warning > 0) {
+      const fixRoot = typeof report.root === "string" && report.root !== "" ? report.root : dir;
+      if (typeof app.openProblemsCard === "function") {
+        app.openProblemsCard(fixRoot);
+      }
+    }
   }
 
   openButton.addEventListener("click", () => openMod());

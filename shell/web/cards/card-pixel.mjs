@@ -5,6 +5,7 @@
  * why the card layer is split the way it is.
  */
 import { blankImage, decodePng, encodePng, pixelAt, setPixelAt } from "../pixelpng.mjs";
+import { framedPan, zoomAt } from "../pixelview.mjs";
 import { cardShell, h, makeStatus } from "./dom.mjs";
 
 /** Tools a pixel card offers; the current one is held in `state.tool`. */
@@ -105,6 +106,13 @@ export function renderPixel(card, ctx) {
     zoom: PIXEL_ZOOM_MIN,
     panX: 0,
     panY: 0,
+    /*
+     * True once the person has moved the picture themselves -- a hand or middle
+     * button drag, or a wheel zoom.  Until then the framing follows the surface,
+     * which is how a card opened in the background is centred when it first
+     * becomes visible; after it, `shown()` and every repaint keep their pan.
+     */
+    panTouched: false,
     pointer: null,
     pending: null,
     history: [],
@@ -272,8 +280,22 @@ export function renderPixel(card, ctx) {
       return;
     }
     const view = surface.getBoundingClientRect ? surface.getBoundingClientRect() : { width: 0, height: 0 };
-    const width = Math.max(1, Math.floor(view.width || 0));
-    const height = Math.max(1, Math.floor(view.height || 0));
+    const viewWidth = Math.max(0, Math.floor(view.width || 0));
+    const viewHeight = Math.max(0, Math.floor(view.height || 0));
+    /*
+     * Framing happens here, not in the caller: every path that puts pixels on
+     * the canvas -- the first paint, the next frame's repaint, `shown()`, an
+     * undo -- measures the surface first, so an un-panned image is centred on
+     * whatever the surface really is and a pan the person made is left alone.
+     * The raw 0x0 measurement is not a frame worth centring into; it means the
+     * card is not laid out yet.
+     */
+    const framed = framedPan(viewWidth, viewHeight, image.width, image.height, state.zoom,
+      state.panX, state.panY, state.panTouched);
+    state.panX = framed.panX;
+    state.panY = framed.panY;
+    const width = Math.max(1, viewWidth);
+    const height = Math.max(1, viewHeight);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
@@ -350,6 +372,27 @@ export function renderPixel(card, ctx) {
     paintCanvas();
     updateLabel();
     updateStatus();
+  }
+
+  /**
+   * Re-measure the surface and repaint.  The card is assembled while it may be
+   * detached or behind another card, and `paintCanvas` can only measure the
+   * rect the browser gives it: a 0x0 measurement leaves the bitmap 1x1 and the
+   * image invisible until something forces a repaint (`G52` in
+   * `docs/gaps2.md`).
+   *
+   * The app calls this when the card comes to the front -- a tab switch, a
+   * selection, a focus -- because only then does the surface have a size.
+   * Safe to call at any time and repeatedly, with or without an image; it
+   * returns false and does nothing until an image is loaded.  An un-panned
+   * image is centred on the measured size; a pan the person made is kept.
+   */
+  function shown() {
+    if (state.image === null || context === null) {
+      return false;
+    }
+    paintCanvas();
+    return true;
   }
 
   function renderStatus(message) {
@@ -567,9 +610,12 @@ export function renderPixel(card, ctx) {
     const rect = typeof canvas.getBoundingClientRect === "function"
       ? canvas.getBoundingClientRect()
       : { left: 0, top: 0 };
+    // The origin is drawn rounded (`paintCanvas`), so it is read rounded here:
+    // a click at an edge must paint the pixel that is under the cursor on
+    // screen, not the one half a pixel to its left.
     return {
-      x: Math.floor(((event.clientX || 0) - (rect.left || 0) - state.panX) / state.zoom),
-      y: Math.floor(((event.clientY || 0) - (rect.top || 0) - state.panY) / state.zoom),
+      x: Math.floor(((event.clientX || 0) - (rect.left || 0) - Math.round(state.panX)) / state.zoom),
+      y: Math.floor(((event.clientY || 0) - (rect.top || 0) - Math.round(state.panY)) / state.zoom),
     };
   }
 
@@ -602,8 +648,14 @@ export function renderPixel(card, ctx) {
   }
 
   function panBy(dx, dy) {
+    if (dx === 0 && dy === 0) {
+      return;
+    }
     state.panX += dx;
     state.panY += dy;
+    // A drag is the person taking the framing: from here on no repaint, and no
+    // `shown()` when the tab comes back, re-centres the image under them.
+    state.panTouched = true;
     paintCanvas();
   }
 
@@ -748,7 +800,19 @@ export function renderPixel(card, ctx) {
 
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
-    setZoom(state.zoom * (event.deltaY < 0 ? 2 : 0.5));
+    const rect = typeof canvas.getBoundingClientRect === "function"
+      ? canvas.getBoundingClientRect()
+      : { left: 0, top: 0 };
+    /*
+     * Anchor the wheel on the pixel under the cursor, not on the middle of the
+     * canvas: at 8x a picture can sit in one corner, and zooming from the centre
+     * throws it out of view.  The pointer's canvas coordinates are the anchor,
+     * and the zoom counts as the person's own framing from here on.
+     */
+    setZoom(state.zoom * (event.deltaY < 0 ? 2 : 0.5), {
+      x: (event.clientX || 0) - (rect.left || 0),
+      y: (event.clientY || 0) - (rect.top || 0),
+    }, true);
   });
 
   /* The canvas keeps its own history keystrokes: without this, Ctrl+Z over a
@@ -780,19 +844,39 @@ export function renderPixel(card, ctx) {
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
-  function setZoom(wanted) {
+  /**
+   * Set the zoom, anchored on `anchor` in canvas CSS pixels.  The default
+   * anchor is the image's centre, so the +/- buttons keep the picture where it
+   * was in the viewport; the wheel passes the cursor point instead, so the
+   * pixel under the pointer stays under the pointer.
+   *
+   * `userFramed` marks the zoom as the person's own framing: until they zoom or
+   * pan, an un-panned image is re-centred whenever the surface is measured.
+   */
+  function setZoom(wanted, anchor = null, userFramed = false) {
     const next = Math.max(PIXEL_ZOOM_MIN, Math.min(PIXEL_ZOOM_MAX, Math.floor(Number(wanted) || PIXEL_ZOOM_MIN)));
     if (next === state.zoom) {
       return;
     }
     const rect = typeof canvas.getBoundingClientRect === "function"
       ? canvas.getBoundingClientRect()
-      : { width: 0, height: 0 };
-    const at = { x: (rect.width || 0) / 2, y: (rect.height || 0) / 2 };
-    const before = { x: (at.x - state.panX) / state.zoom, y: (at.y - state.panY) / state.zoom };
+      : { width: 0, height: 0, left: 0, top: 0 };
+    let at = anchor;
+    if (at === null) {
+      at = state.image === null
+        ? { x: (rect.width || 0) / 2, y: (rect.height || 0) / 2 }
+        : {
+          x: state.panX + state.image.width * state.zoom / 2,
+          y: state.panY + state.image.height * state.zoom / 2,
+        };
+    }
+    const framed = zoomAt(state.panX, state.panY, state.zoom, next, at.x, at.y);
     state.zoom = next;
-    state.panX = Math.round(at.x - before.x * next);
-    state.panY = Math.round(at.y - before.y * next);
+    state.panX = Math.round(framed.panX);
+    state.panY = Math.round(framed.panY);
+    if (userFramed) {
+      state.panTouched = true;
+    }
     paintCanvas();
     updateLabel();
     updateStatus();
@@ -813,6 +897,9 @@ export function renderPixel(card, ctx) {
     state.image = blankImage(width, height, [0, 0, 0, 0]);
     state.origin = origin;
     state.baseRevision = null;
+    // A new image is a new framing: the next paint centres it again, even if
+    // the person had panned the picture that was there before.
+    state.panTouched = false;
     resetHistory();
   }
 
@@ -857,6 +944,8 @@ export function renderPixel(card, ctx) {
         try {
           state.image = decodePng(bytes);
           state.origin = "file";
+          // A loaded image is framed afresh: the first paint centres it.
+          state.panTouched = false;
           resetHistory();
           writeToBoard();
           paint();
@@ -996,11 +1085,12 @@ export function renderPixel(card, ctx) {
 
   /*
    * The first paint above runs while the card is still being assembled, so the
-   * surface can measure a detached 0x0 rect and the bitmap would stay 1x1 until
-   * the person happened to interact with it.  Nothing re-measures after layout,
-   * so one repaint is scheduled for the next frame -- where the environment has
-   * frames at all (the probe has none, and does not need one; it paints again
-   * through the same `paintCanvas` once it lays the surface out).
+   * surface can measure a detached 0x0 rect and the bitmap would stay 1x1.  A
+   * repaint is scheduled for the next frame, which helps when the card is
+   * already laid out by then.  It is not enough on its own: a card created
+   * behind another card is still hidden on that frame and measures 0x0 again,
+   * so nothing re-measures when it finally comes to the front -- that is the
+   * app's `handle.shown()` call on the tab/selection path.
    */
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => paint());
@@ -1017,6 +1107,10 @@ export function renderPixel(card, ctx) {
       save,
       load,
       newImage,
+      // Re-measures the surface and repaints once an image is loaded: call it
+      // when this card comes to the front (tab switch, selection, focus), when
+      // the layout finally exists.  Returns false while there is no image.
+      shown,
       canUndo() {
         return state.index >= 0;
       },

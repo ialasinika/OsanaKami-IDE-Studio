@@ -22,10 +22,12 @@ import {
   lineColumn,
   markHits,
   matchesFilter,
+  modSectionCollapsed,
   normaliseTokenKind,
   replaceAllMatches,
   replaceMatchAt,
   segmentsText,
+  setModSectionCollapsed,
   stepCompletion,
 } from "../cards.mjs";
 import {
@@ -372,4 +374,36 @@ test("files: the filter box understands globs and substrings", () => {
   assert.equal(matchesFilter("core/src/app.c", "src/*.c"), false);
   assert.equal(matchesFilter("core/src/app.c", "core/src/*.c"), true);
   assert.equal(matchesFilter("anything", ""), true);
+});
+
+test("mod: a folded section is remembered on the card, not in the DOM", () => {
+  // G54: the mod card folds mod.json / Defines / Yarn so a short window can
+  // reach the lower sections.  The state has to survive a re-render, so it is a
+  // field on the card document -- a missing field means "open", which is what a
+  // board saved before this existed has.
+  const card = { id: "c1" };
+  assert.equal(modSectionCollapsed(card, "manifest"), false);
+  assert.equal(modSectionCollapsed(card, "yarn"), false);
+
+  setModSectionCollapsed(card, "manifest", true);
+  assert.equal(modSectionCollapsed(card, "manifest"), true);
+  assert.deepEqual(card.collapsed, { manifest: true });
+
+  setModSectionCollapsed(card, "yarn", true);
+  assert.deepEqual(card.collapsed, { manifest: true, yarn: true });
+
+  // Opening one section must not open the others.
+  setModSectionCollapsed(card, "manifest", false);
+  assert.equal(modSectionCollapsed(card, "manifest"), false);
+  assert.equal(modSectionCollapsed(card, "yarn"), true);
+  assert.deepEqual(card.collapsed, { yarn: true });
+
+  // Malformed or absent state opens the section rather than throwing.
+  assert.equal(modSectionCollapsed({}, "defines"), false);
+  assert.equal(modSectionCollapsed({ collapsed: null }, "defines"), false);
+  assert.equal(modSectionCollapsed({ collapsed: "nope" }, "defines"), false);
+  assert.equal(modSectionCollapsed(null, "defines"), false);
+  setModSectionCollapsed(null, "defines", true);
+  setModSectionCollapsed({ collapsed: "nope" }, "defines", true);
+  assert.deepEqual(card.collapsed, { yarn: true }, "folding one card must not leak into another");
 });

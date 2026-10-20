@@ -118,6 +118,52 @@ export function lineColumn(text, offset) {
   return { line, column: at - lastBreak };
 }
 
+/** Offset of the first character of a 1-based line, or -1 past the last line. */
+export function lineStartOffset(text, line) {
+  const source = typeof text === "string" ? text : "";
+  const wanted = Number.isInteger(line) ? line : 0;
+  if (wanted < 1) {
+    return -1;
+  }
+  let at = 0;
+  for (let current = 1; current < wanted; current += 1) {
+    const next = source.indexOf("\n", at);
+    if (next < 0) {
+      return -1;
+    }
+    at = next + 1;
+  }
+  return at;
+}
+
+/** The last key of a JSON pointer path: `a.b[0].c` -> `c`, `list[0]` -> `list`. */
+export function pointerKey(pointer) {
+  const source = typeof pointer === "string" ? pointer.trim() : "";
+  if (source === "") {
+    return "";
+  }
+  return source.split(".").pop().replace(/\[[^\]]*\]\s*$/, "");
+}
+
+/**
+ * Offset of the `"key"` a JSON pointer names inside `text`, or -1.
+ *
+ * The pointer is `defines/foo#spineAssetPath`'s tail -- possibly with array
+ * indexes (`voiceOverFiles[0]`) -- and the JSON in the text quotes the key, so
+ * the quoted form is what is searched for.  A key that appears elsewhere (a
+ * reference, another object) is not distinguishable from the one the
+ * diagnostic means; the first quoted occurrence is still where the reader has
+ * to look, and no offset at all is worse than an approximate one.
+ */
+export function pointerOffset(text, pointer) {
+  const source = typeof text === "string" ? text : "";
+  const key = pointerKey(pointer);
+  if (key === "") {
+    return -1;
+  }
+  return source.indexOf(`"${key}"`);
+}
+
 /* ------------------------------------------------------------------ */
 /* file listing                                                        */
 /* ------------------------------------------------------------------ */

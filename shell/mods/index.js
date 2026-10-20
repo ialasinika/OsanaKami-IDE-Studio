@@ -1306,6 +1306,9 @@ function createMods(options) {
       gameMods: { dir: gameModsDir, readable: isDir(gameModsDir) }
     });
     return {
+      // 解析后的绝对包根：诊断的 path 是相对它写的，调用方（问题卡片）要用它
+      // 拼出能交给 file.read 的绝对路径，不能再拿用户输入的那一段相对名去拼。
+      root: root,
       ok: !!result.ok,
       knowledge: result.knowledge === 'present' ? 'present' : 'missing',
       manifest: result.manifest,

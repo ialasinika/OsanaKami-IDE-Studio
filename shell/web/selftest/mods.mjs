@@ -7,6 +7,11 @@ import {
   readFileSync,
 } from "node:fs";
 import {
+  diagLine,
+  diagTarget,
+  lineStartOffset,
+  pointerKey,
+  pointerOffset,
   storyAcceptSuggestion,
   storyEditableText,
   storySuggestions,
@@ -220,4 +225,68 @@ test("story card: taking a suggestion writes the name and puts the caret after i
   assert.deepEqual(storyAcceptSuggestion(command, 5, "AddAchievement"),
     { text: "<<AddAchievement", caret: 16 });
   assert.deepEqual(storyAcceptSuggestion(command, 5, ""), { text: "<<Add", caret: 5 });
+});
+
+/* ------------------------------------------------------------------ */
+/* a diagnostic row's destination                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * G51: `mod.validate` writes every diagnostic path relative to the package
+ * root, and the problems card only holds the text the user typed (`Lantern`).
+ * Building a path out of that text is what made the row open
+ * `Lantern/Defines/...` against the workspace instead of the package the mod
+ * layer had actually validated.  The mapping below is the whole fix's arithmetic
+ * and it is pure, so it is checked here rather than through a DOM.
+ */
+
+test("a D011 row opens the package's own file, with the pointer kept, not the path text", () => {
+  const report = {
+    path: "Defines/Character/Warden.json#spineAssetPath",
+    severity: "error",
+    code: "D011",
+    message: "no atlas",
+  };
+  const target = diagTarget("/mods/Lantern", report);
+  assert.equal(target.path, "/mods/Lantern/Defines/Character/Warden.json");
+  assert.equal(target.pointer, "spineAssetPath");
+  assert.equal(target.line, undefined, "the diagnostic names no line");
+  assert.equal(target.path.includes("#"), false, "a filesystem path never carries the pointer");
+});
+
+test("a diagnostic with a line points at that line, and an absolute path stays absolute", () => {
+  assert.equal(diagTarget("Mods/Lantern", { path: "Yarn/A.yarn", line: 12 }).line, 12);
+  assert.equal(diagTarget("Mods/Lantern", { path: "Yarn/A.yarn", line: 12 }).pointer, "");
+  assert.equal(diagTarget("/mods/Lantern", { path: "/elsewhere/A.json#b" }).path,
+    "/elsewhere/A.json", "an absolute diagnostic path is not joined twice");
+  assert.equal(diagTarget("Mods/Lantern", { path: "Yarn/A.yarn" }).line, undefined);
+  assert.equal(diagLine({ line: 7 }), 7);
+  assert.equal(diagLine({ line: 0 }), undefined, "line numbers are 1-based");
+  assert.equal(diagLine({ line: 2.5 }), undefined);
+  assert.equal(diagLine(null), undefined);
+});
+
+test("the editor's scroll arithmetic: a line starts after exactly that many breaks", () => {
+  const text = "one\ntwo\nthree";
+  assert.equal(lineStartOffset(text, 1), 0);
+  assert.equal(lineStartOffset(text, 2), 4);
+  assert.equal(lineStartOffset(text, 3), 8);
+  assert.equal(lineStartOffset(text, 4), -1, "past the last line there is nowhere to stand");
+  assert.equal(lineStartOffset(text, 0), -1);
+  assert.equal(lineStartOffset("", 1), 0, "an empty file still has its first line");
+  assert.equal(lineStartOffset("one\n", 2), 4, "a trailing newline opens one empty line");
+  assert.equal(lineStartOffset(null, 1), 0);
+});
+
+test("a pointer names the JSON key it ends in, and the text's quoted key is found", () => {
+  assert.equal(pointerKey("spineAssetPath"), "spineAssetPath");
+  assert.equal(pointerKey("voiceOverFiles[0]"), "voiceOverFiles");
+  assert.equal(pointerKey("a.b[0]"), "b");
+  assert.equal(pointerKey(""), "");
+  const text = '{\n  "spineAssetPath": "Spine/Warden_Rig.json",\n  "techName": "Warden"\n}\n';
+  assert.equal(pointerOffset(text, "spineAssetPath"), text.indexOf('"spineAssetPath"'));
+  assert.equal(pointerOffset(text, "spineAssetPath") > 0, true);
+  assert.equal(pointerOffset(text, ""), -1);
+  assert.equal(pointerOffset(text, "notThere"), -1);
+  assert.equal(pointerOffset(null, "spineAssetPath"), -1);
 });

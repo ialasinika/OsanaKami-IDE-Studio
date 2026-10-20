@@ -1307,9 +1307,8 @@ async function main() {
         const inPress = await inkAt(sprite, 6, 2);
         const far = await inkAt(sprite, 12, 12);
         d006Ok = rows > 0 && d006Rows > 0 && declaredIn !== "" && named !== ""
-          && spriteLabel === modName + "/" + named && spriteLabel !== declaredIn
-          && spriteLabel.indexOf(modName + "/") === 0 && /[.]png$/.test(spriteLabel)
-          && /[.]json$/.test(declaredIn);
+          && spriteLabel.indexOf(modName + "/" + named) >= 0 && spriteLabel !== declaredIn
+          && /[.]png$/.test(spriteLabel) && /[.]json$/.test(declaredIn);
         sizeOk = size === "96x96" && drew !== "" && inPress === drew && far === "transparent";
         d006Line = "pixel-d006: rows=" + rows + " d006=" + d006Rows
           + " declared=" + (declaredIn !== "") + " named=" + JSON.stringify(named)
@@ -1321,6 +1320,67 @@ async function main() {
       }
     }
     say(d006Line);
+
+    /* 5a. the PROBLEMS card's D011 row: it names a file that *is* on disk, and
+       its path carries a JSON pointer (`Defines/Character/Warden.json#spineAssetPath`,
+       which is line 7 of a 13-line file).  The row has to open the editor on the
+       resolved package's own file and stand on that key -- the whole click
+       chain, not just a card whose file is deliberately missing (D006).  The
+       card hands `openFile` the absolute root `mod.validate` answered; the app
+       turns that into a workspace-relative document name, so the label carries
+       `Mods/Lantern/...` -- the `Lantern` in the card's input would not. */
+    let d011Ok = false;
+    let d011Line = "pixel-d011: no D011 row";
+    const isD011 = (row) => textOf(row, ".mod-row-name").indexOf("D011") === 0;
+    const d011Row = () => {
+      const host = problemsCard();
+      return host === null ? null : rowsOf(host).find(isD011) || null;
+    };
+    const editorsNow = () => cardsNow().filter((node) => node.dataset.kind === "editor");
+    const caretLineOf = (area) => (area === null
+      ? 0 : area.value.slice(0, area.selectionStart).split("\n").length);
+    try {
+      await waitUntil(() => d011Row() !== null, 120, 250);
+      const d011 = d011Row();
+      if (d011 === null) {
+        const host = problemsCard();
+        d011Line = "pixel-d011: no D011 row in " + JSON.stringify(modName)
+          + " -- " + JSON.stringify(host === null ? "no problems card" : statusOf(host));
+      } else {
+        const rows = rowsOf(problemsCard()).length;
+        const d011Rows = rowsOf(problemsCard()).filter(isD011).length;
+        const before = editorsNow().map((node) => textOf(node, ".card-label"));
+        d011.click();
+        await waitUntil(
+          () => editorsNow().some((node) => before.indexOf(textOf(node, ".card-label")) < 0),
+          80, 250);
+        const opened = editorsNow().find((node) => before.indexOf(textOf(node, ".card-label")) < 0) || null;
+        const area = opened === null ? null : find(opened, "textarea.ed-input");
+        await waitUntil(() => area !== null && area.value.indexOf("Warden_Rig") >= 0, 80, 250);
+        await waitUntil(() => caretLineOf(area) === 7, 40, 250);
+        const label = opened === null ? "" : textOf(opened, ".card-label");
+        const text = area === null ? "" : area.value;
+        const status = opened === null ? "" : statusOf(opened);
+        const resolved = label.indexOf("Mods/" + modName + "/Defines/Character/Warden.json") >= 0;
+        const contains = text.indexOf("Warden_Rig") >= 0;
+        const pointer = text.indexOf('"spineAssetPath"') >= 0;
+        const line = caretLineOf(area);
+        d011Ok = opened !== null && rows > 0 && d011Rows > 0 && resolved
+          && label.indexOf(modName + "/Defines/Character/Warden.json") >= 0
+          && label !== modName + "/Defines/Character/Warden.json"
+          && contains && pointer && line === 7 && status.indexOf("loaded") === 0;
+        d011Line = "pixel-d011: " + JSON.stringify({
+          rows: rows, d011: d011Rows, opened: opened !== null, label: label,
+          resolved: resolved, contains: contains, pointer: pointer, line: line,
+          status: status,
+        });
+      }
+    } catch (error) {
+      d011Line = "pixel-d011: " + JSON.stringify({
+        opened: false, why: String(error && error.message ? error.message : error),
+      });
+    }
+    say(d011Line);
 
     /* 5b. the 8-bit RGB sprite the example package ships.  The pixel card reads
        colour type 2 and the save writes the file back as RGBA -- that is the
@@ -1402,7 +1462,8 @@ async function main() {
     const left = added.filter((id) => cardsNow().some((node) => node.dataset.cardId === id)).length;
     const others = pixelsNow().map((node) => textOf(node, ".card-label")).sort().join(",");
     say("pixel-cards: added=" + added.length + " left=" + left + " others=" + JSON.stringify(others));
-    pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk && rgbOk && left === 0;
+    pixelOk = pencilOk && eraserOk && fillOk && undoOk && redoOk && d006Ok && sizeOk
+      && d011Ok && rgbOk && left === 0;
     say("phase: pixel t=" + elapsed() + "ms");
   } catch (error) {
     pixelOk = false;
@@ -1632,6 +1693,7 @@ PIXEL_RES = (
              r' sprite="([^"]*)" json="([^"]*)" size="([^"]*)"'
              r'(?: zoom=\d+ box=[0-9x]+)? drew="([^"]*)"'
              r' press="([^"]*)" far="([^"]*)"'),
+    ("d011", r'pixel-d011: (\{.*\})'),
     ("cards", r'pixel-cards: added=(\d+) left=(\d+) others="([^"]*)"'),
 )
 
@@ -2314,7 +2376,8 @@ def main(argv=None) -> int:
     d006 = pixel.get("d006")
     sprite_ok = (bool(d006) and int(d006[0]) > 0 and int(d006[1]) > 0
                  and d006[2] == "true" and d006[3] != ""
-                 and d006[4] == f"{MOD_NAME}/{d006[3]}"
+                 and d006[4].endswith(f"{MOD_NAME}/{d006[3]}")
+                 and (d006[4].startswith("/") or d006[4][1:2] == ":")
                  and d006[4] != d006[5] and d006[4].lower().endswith(".png")
                  and d006[5].lower().endswith(".json"))
     results.check("a D006 row opens the pixel card for the sprite it named, not the define JSON",
@@ -2328,6 +2391,35 @@ def main(argv=None) -> int:
                   size_ok,
                   f"size={d006[6]} drew={d006[7]} press={d006[8]} far={d006[9]}"
                   if d006 else pixel_detail("d006"))
+
+    # The D011 row: its file is on disk and its path names a JSON pointer, so
+    # the row has to open the resolved package's file and stand on that key.
+    # Unlike D006, nothing here is missing -- the click chain itself is the
+    # subject, from the card's input text through `mod.validate`'s root to the
+    # editor's caret on line 7 (`"spineAssetPath"`, the diagnostic's pointer).
+    # The app keeps documents workspace-relative, so the label proves the root
+    # by carrying `Mods/Lantern/...`; the bare `Lantern/...` input would not.
+    d011 = pixel.get("d011")
+    d011_report = {}
+    if d011 is not None:
+        try:
+            d011_report = json.loads(d011[0])
+        except ValueError:
+            d011_report = {}
+    results.check("a D011 row opens the editor on the JSON that declares it, at the pointer",
+                  bool(d011_report) and d011_report.get("opened") is True
+                  and d011_report.get("resolved") is True
+                  and d011_report.get("contains") is True
+                  and d011_report.get("pointer") is True
+                  and d011_report.get("line") == 7
+                  and str(d011_report.get("status", "")).startswith("loaded")
+                  and str(d011_report.get("label", "")).endswith(
+                      f"{MOD_NAME}/Defines/Character/Warden.json"),
+                  f"rows={d011_report.get('rows')} d011={d011_report.get('d011')} "
+                  f"label={d011_report.get('label')!r} resolved={d011_report.get('resolved')} "
+                  f"contains={d011_report.get('contains')} pointer={d011_report.get('pointer')} "
+                  f"line={d011_report.get('line')} status={d011_report.get('status')!r}"
+                  if d011_report else pixel_detail("d011"))
 
     # And the cards this half opened are gone again; the sprite card was never
     # saved, so no file was created for it either.

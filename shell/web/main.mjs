@@ -852,6 +852,7 @@ function createApp() {
     // was still `display: none` from the previous arrangement, and focus() on a
     // hidden element does nothing -- the keyboard stayed on the old card.
     renderAll();
+    notifyShown(id);
     focusCardNode(id);
     return true;
   }
@@ -1281,6 +1282,7 @@ function createApp() {
     }
     renderCards();
     renderHud();
+    notifyShown(id);
     return true;
   }
 
@@ -1431,18 +1433,87 @@ function createApp() {
     return true;
   }
 
+  /**
+   * Whether the kernel will read this path at all.
+   *
+   * A path reaches `openFile` in either form: workspace-relative (the command
+   * line, a link from the docs, the mod card's package name) and absolute (a
+   * card that knows the resolved root from a kernel reply, such as the problems
+   * panel).  The kernel reads both, but only while the file lands inside the
+   * workspace -- outside it refuses with "path escapes the workspace", which an
+   * editor card would show as a load failure.  Keeping the form the caller used
+   * is deliberate: a diagnostic row's absolute path is also the proof the row
+   * used the package root `mod.validate` answered, and the label reading the
+   * resolved path is what the smoke test checks (G51).  This guard is only the
+   * outside-the-workspace sentence.
+   */
+  function isInsideWorkspace(path) {
+    const clean = path.replace(/\\/g, "/");
+    const root = String(workspace && workspace.root ? workspace.root : "")
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+    if (root === "") {
+      // No workspace yet: a relative name means whatever the kernel will make
+      // of it, and an absolute one is by definition outside it.
+      return !/^([A-Za-z]:\/|\/)/.test(clean);
+    }
+    const folded = clean.toLowerCase();
+    const foldedRoot = root.toLowerCase();
+    return folded === foldedRoot || folded.startsWith(`${foldedRoot}/`);
+  }
+
+  /**
+   * Tell a card it has just become visible.
+   *
+   * Some cards can only measure themselves while they are actually laid out: a
+   * pixel card's canvas reports 0x0 while its card sits behind another tab, and
+   * a deferred repaint does not fix that because the card is still hidden
+   * (G52).  The tile is the one place that knows a card crossed into view, so
+   * it calls the card's optional `shown()` right after the render that did it.
+   */
+  function notifyShown(id) {
+    const entry = mounted.get(id);
+    if (entry !== undefined && entry.handle && typeof entry.handle.shown === "function") {
+      entry.handle.shown();
+    }
+  }
+
   function openFile(path, options = {}) {
     if (typeof path !== "string" || path.trim() === "") {
-      log("warn", "open: give a workspace-relative path");
+      log("warn", "open: give a path inside the workspace");
       return null;
     }
     const wanted = path.trim().replace(/\\/g, "/");
+    if (!isInsideWorkspace(wanted)) {
+      // G51-b: the kernel refuses every path outside the workspace, so name the
+      // reason here instead of letting an editor card fail with a kernel error.
+      // Opening a real game's Mods folder (outside the workspace by default)
+      // still needs a product decision; this is the honest interim sentence.
+      log("warn", `open: ${path.trim()} is outside the workspace, and the editor only reads files under it`);
+      return null;
+    }
     // A rig has a card of its own: the editor would show bytes it cannot read.
     if (/\.(skel\.bytes|atlas\.txt)$/i.test(wanted)) {
       return openRigCard(wanted);
     }
+    // Where to put the caret when the file opens (G16): a diagnostic row knows
+    // its line, a define pointer knows its JSON path.  They are card fields
+    // rather than a scroll after the fact, so a re-render keeps them.
+    const target = {};
+    if (Number.isInteger(options.line) && options.line > 0) {
+      target.line = options.line;
+    }
+    if (typeof options.pointer === "string" && options.pointer !== "") {
+      target.pointer = options.pointer;
+    }
     for (const entry of mounted.values()) {
       if (entry.handle.kind === "editor" && entry.handle.hasPath && entry.handle.hasPath(wanted)) {
+        // The file is already open: reveal the caret's target in that card
+        // rather than opening a second one, so clicking two diagnostics of the
+        // same file leaves one editor.
+        if (typeof entry.handle.reveal === "function") {
+          entry.handle.reveal(target);
+        }
         focusCard(entry.card.id);
         centreOn(entry.card);
         return entry.card;
@@ -1452,6 +1523,36 @@ function createApp() {
     const size = { w: 680, h: 460 };
     return addCard("editor", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
       file: wanted,
+      ...target,
+    }, size);
+  }
+
+  /**
+   * Show the problems panel for `root`, creating one when the board has none.
+   *
+   * The mod card calls this after `validate` finds something to fix, so the
+   * list of findings appears where the person already is (G17).  There is one
+   * panel per package: an existing card showing the same root is brought
+   * forward instead of a second copy being stacked on it.
+   */
+  function openProblemsCard(root, options = {}) {
+    const wanted = typeof root === "string" ? root.trim().replace(/\\/g, "/") : "";
+    if (wanted === "") {
+      log("warn", "problems: give a mod directory");
+      return null;
+    }
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind === "problems" && typeof entry.handle.root === "function" &&
+          entry.handle.root() === wanted) {
+        focusCard(entry.card.id);
+        centreOn(entry.card);
+        return entry.card;
+      }
+    }
+    const centre = options.at || centreWorld();
+    const size = { w: 640, h: 380 };
+    return addCard("problems", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), {
+      root: wanted,
     }, size);
   }
 
@@ -1753,6 +1854,7 @@ function createApp() {
     openPixelCard,
     openRigCard,
     openSettingsCard,
+    openProblemsCard,
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
     // selected card first: a handle that answers `true` took the step itself

@@ -397,6 +397,36 @@ section("the modsRoot allowlist");
     nestedErr === null && nested !== null && relative !== null &&
       nested.root === relative.root,
     nestedErr ? nestedErr.message : JSON.stringify(nested && nested.root));
+
+  /*
+   * G51：`mod.validate` 的诊断 path 是**相对包根**写的，而问题卡片手里只有
+   * 用户输入的那一段（`Lantern`）。响应必须交回解析后的绝对包根，卡片才能
+   * 拼出 `file.read` 认得的路径；否则它拼出的是相对 workspace 的
+   * `Lantern/Defines/...`，文件明明在 `examples/Mods/Lantern` 里也读不到。
+   *
+   * `guardBase` 在系统临时目录里，而本进程的 cwd 是仓库根：相对名 `Rooted`
+   * 只有按 modsRoot 解析才落在包上，所以「cwd 不同」这一半也被这条覆盖。
+   */
+  const rooted = join(guardBase, "Rooted");
+  specWrite(join(rooted, "mod.json"), JSON.stringify({
+    name: "Rooted", version: "1.0.0", gameVersion: "1.0", loadOrder: 61,
+    author: "selftest", description: "selftest fixture: the resolved package root",
+  }, null, 2) + "\n");
+  specWrite(join(rooted, "Defines", "Attr", "ZzRootAttr.json"),
+    JSON.stringify({ techName: "ZzRootAttr" }, null, 2) + "\n");
+
+  const absoluteReport = guarded.validatePackage({ root: resolve(rooted) });
+  check("validatePackage answers the absolute package root it resolved",
+    absoluteReport.root === resolve(rooted) &&
+      existsSync(join(absoluteReport.root, "mod.json")) &&
+      existsSync(join(absoluteReport.root, "Defines", "Attr", "ZzRootAttr.json")),
+    JSON.stringify(absoluteReport.root));
+
+  const relativeReport = guarded.validatePackage({ root: "Rooted" });
+  check("a relative root resolves against modsRoot, not the cwd",
+    relativeReport.root === resolve(rooted) &&
+      existsSync(join(relativeReport.root, "mod.json")),
+    relativeReport.root + " (cwd is " + resolve(".") + ")");
 }
 
 /* G3：techName 撞名。游戏对重复的 (类型, TechName) 只保留先加载的那一份，

@@ -7,6 +7,31 @@
 import { diagCounts, diagFile, diagWhere, modPath } from "./card-mod.mjs";
 import { button, cardShell, fillRows, h, makeStatus } from "./dom.mjs";
 
+/** The 1-based line a diagnostic points at, or `undefined` when it names none. */
+export function diagLine(diagnostic) {
+  const line = diagnostic?.line;
+  return Number.isInteger(line) && line > 0 ? line : undefined;
+}
+
+/**
+ * Where a diagnostic row should open: `{path, line, pointer}`.
+ *
+ * `root` is the *resolved* package root `mod.validate` answered, not the text
+ * the user typed.  The diagnostic's `path` is `Rel/File.json#json/pointer`;
+ * the file half is joined onto the root so `file.read` receives a path it can
+ * resolve, and the pointer half is passed through untouched -- `#` is not part
+ * of a filesystem name, and the editor needs the pointer to find the key
+ * inside the JSON.  `line` is only set when the diagnostic carries one.
+ */
+export function diagTarget(root, diagnostic) {
+  const file = diagFile(diagnostic);
+  return {
+    path: file === "" ? "" : modPath(root, file),
+    line: diagLine(diagnostic),
+    pointer: diagWhere(diagnostic),
+  };
+}
+
 export function renderProblems(card, ctx) {
   const { client, app } = ctx;
 
@@ -37,12 +62,14 @@ export function renderProblems(card, ctx) {
     fillRows(list, sorted.map((diagnostic) => {
       const where = diagWhere(diagnostic);
       const target = diagFile(diagnostic);
+      const open = diagTarget(root, diagnostic);
       const row = {
         label: `${diagnostic?.code ?? "?"} ${diagnostic?.message ?? ""}`,
         meta: where === "" ? target : `${target} ${where}`,
         title: diagnostic?.message ?? "",
         severity: diagnostic?.severity ?? "info",
-        onClick: target === "" ? undefined : () => app.openFile(modPath(root, target)),
+        onClick: open.path === "" ? undefined
+          : () => app.openFile(open.path, { line: open.line, pointer: open.pointer }),
       };
       /*
        * D006 is the one diagnostic whose *subject* is another file: the JSON is
@@ -58,7 +85,7 @@ export function renderProblems(card, ctx) {
           row.extra = {
             label: target === "" ? "declaring file" : `declared in ${target}`,
             title: `open ${target}, the file that declares this sprite`,
-            onClick: () => app.openFile(modPath(root, target)),
+            onClick: () => app.openFile(open.path, { line: open.line, pointer: open.pointer }),
           };
         }
       }
@@ -85,7 +112,13 @@ export function renderProblems(card, ctx) {
     }
     card.root = root;
     shell.label.textContent = root;
-    paint(report.diagnostics, root);
+    /* The response's `root` is the package path the mod layer resolved -- which
+       is what every diagnostic path is relative to.  The text in the input may
+       be a name the mod layer resolved against its own mods root (`Lantern`),
+       so it cannot be used to build a path the kernel will read.  A shell older
+       than the field still works: fall back to the input. */
+    const resolved = typeof report.root === "string" && report.root !== "" ? report.root : root;
+    paint(report.diagnostics, resolved);
     const counts = diagCounts(report.diagnostics);
     status.textContent = `${report.summary?.files ?? 0} files checked`;
     app.log(counts.error === 0 ? "info" : "warn",

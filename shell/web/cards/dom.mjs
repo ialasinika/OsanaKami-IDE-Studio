@@ -128,20 +128,29 @@ export function button(label, title, onClick) {
 }
 
 /**
- * A collapsible-looking section: a heading plus clickable rows.  Every row is
- * `{label, meta, onClick, severity}`; a row without `onClick` is inert text,
- * `empty: true` marks the one placeholder row of a section with nothing in it,
- * and `severity` tints the row with the shared `.sev-*` colours.  `extra` is one
- * more control on the row -- `{label, onClick, title}` -- for a row whose
- * second target would otherwise be unreachable (a D006 sprite row points at
- * two files: the image that is missing and the JSON that asks for it).
+ * A section: a heading plus rows.  Every row is `{label, meta, onClick,
+ * severity}`; a row without `onClick` is inert text, `empty: true` marks the one
+ * placeholder row of a section with nothing in it, and `severity` tints the row
+ * with the shared `.sev-*` colours.  `extra` is one more control on the row --
+ * `{label, onClick, title}` -- for a row whose second target would otherwise be
+ * unreachable (a D006 sprite row points at two files: the image that is missing
+ * and the JSON that asks for it).
  *
  * `onClick` makes the *title* a target too, which is how the mod card's three
  * section headings open the file they head.  It is a keyboard-reachable div and
  * not a <button>: the stylesheet draws the heading as an inert label, and a
  * button element would paint its own chrome over it.
+ *
+ * `options.collapsible` adds the one control the heading was missing: a caret
+ * that folds the rows away and leaves only the heading.  The caller owns the
+ * state (`options.collapsed`, `options.onToggle`) rather than this function,
+ * because a card is re-rendered from its document on every tile resize -- a fold
+ * kept only in the DOM would spring open exactly when the window got smaller,
+ * which is when a person folds it.  The caret is a real button and both its
+ * events stop there, so pressing it never trips the heading's own open-file
+ * target.
  */
-export function section(className, title, count, onClick) {
+export function section(className, title, count, onClick, options = {}) {
   const label = count === undefined ? title : `${title} (${count})`;
   const head = h("div", "mod-section-title", {
     text: label,
@@ -161,7 +170,36 @@ export function section(className, title, count, onClick) {
     });
   }
   const rows = h("div", "mod-rows");
-  return { el: h("div", `mod-section ${className}`, { children: [head, rows] }), rows };
+  const el = h("div", `mod-section ${className}`, { children: [head, rows] });
+  if (options.collapsible === true) {
+    const toggle = h("button", "mod-section-toggle", {
+      attrs: {
+        type: "button",
+        "aria-expanded": "true",
+        title: `show or hide the ${title} rows`,
+      },
+      text: "\u25be",
+    });
+    const apply = (collapsed) => {
+      el.classList.toggle("is-collapsed", collapsed === true);
+      toggle.setAttribute("aria-expanded", collapsed === true ? "false" : "true");
+      toggle.textContent = collapsed === true ? "\u25b8" : "\u25be";
+    };
+    apply(options.collapsed === true);
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const next = !el.classList.contains("is-collapsed");
+      apply(next);
+      if (typeof options.onToggle === "function") {
+        options.onToggle(next);
+      }
+    });
+    toggle.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+    });
+    head.prepend(toggle);
+  }
+  return { el, rows };
 }
 
 export function fillRows(container, rows) {
