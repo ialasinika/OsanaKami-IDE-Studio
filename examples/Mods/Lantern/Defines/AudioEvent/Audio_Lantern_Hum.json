@@ -1,12 +1,6 @@
 {
-  "EditorNote": "The hum the lantern makes, written for this example.",
+  "EditorNote": "The hum the lantern makes, written for this example. The event reference itself is copied from the game's own export: Unity/FMOD serialises it as { Guid:{Data1..4}, Path }, and a hand-written JSON object does not point at a real FMOD event, so this file leaves that field out on purpose and the validator's D019 explains why when a package does write one.",
   "id": "lantern-hum",
   "techName": "Audio_Lantern_Hum",
-  "TechName": "Audio_Lantern_Hum",
-  "eventReference": {
-    "Path": "Audio/Lantern_Hum.wav"
-  },
-  "EventReference": {
-    "Path": "Audio/Lantern_Hum.wav"
-  }
+  "TechName": "Audio_Lantern_Hum"
 }

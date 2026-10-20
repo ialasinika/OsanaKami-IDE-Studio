@@ -27,6 +27,7 @@
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { isAudioPath } from "./audioinfo.mjs";
+import { isInsideWorkspace as pathIsInsideWorkspace } from "./openpath.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE } from "./board.mjs";
 import { createHistory } from "./history.mjs";
 import { classicLayout, classicNeighbourAfterClose, classicTabLabel } from "./classic.mjs";
@@ -1448,21 +1449,12 @@ function createApp() {
    * is deliberate: a diagnostic row's absolute path is also the proof the row
    * used the package root `mod.validate` answered, and the label reading the
    * resolved path is what the smoke test checks (G51).  This guard is only the
-   * outside-the-workspace sentence.
+   * outside-the-workspace sentence; `openpath.mjs` holds the rule and its tests,
+   * because a relative name is inside by construction and getting that wrong
+   * closed every relative `open` in the window.
    */
   function isInsideWorkspace(path) {
-    const clean = path.replace(/\\/g, "/");
-    const root = String(workspace && workspace.root ? workspace.root : "")
-      .replace(/\\/g, "/")
-      .replace(/\/+$/, "");
-    if (root === "") {
-      // No workspace yet: a relative name means whatever the kernel will make
-      // of it, and an absolute one is by definition outside it.
-      return !/^([A-Za-z]:\/|\/)/.test(clean);
-    }
-    const folded = clean.toLowerCase();
-    const foldedRoot = root.toLowerCase();
-    return folded === foldedRoot || folded.startsWith(`${foldedRoot}/`);
+    return pathIsInsideWorkspace(path, workspace && workspace.root);
   }
 
   /**

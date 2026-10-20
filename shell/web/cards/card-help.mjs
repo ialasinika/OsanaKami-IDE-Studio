@@ -143,7 +143,7 @@ export function renderHelp(card, ctx) {
   load();
 
   return {
-    el: shell,
+    el: shell.el,
     handle: {
       kind: "help",
       focus() {},

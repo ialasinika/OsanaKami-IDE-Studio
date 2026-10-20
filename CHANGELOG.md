@@ -16,6 +16,51 @@ stands in this tree.
 
 ## Unreleased
 
+### The smoke suite runs here, and the defects it found are fixed
+
+The two browser smokes were never actually run on this machine: a note in
+`## v0.1.2-beta` said Edge could not be driven headless, so `tools/input_smoke.py`
+was parse-checked instead.  That was wrong.  `msedge.exe --headless=new
+--dump-dom` works, and the reason the harness sat at `pending` was its own page
+script: the wrapper is built from a Python string that was not raw, so a newline
+inside the injected JavaScript ended the statement and the page threw a
+`SyntaxError` before it ever called back.  The wrapper now builds cleanly, and a
+page-script error fails the run instead of timing out.
+
+With the harness alive it found five real defects, all corrected:
+
+- **A relative open was refused.**  `open README.md` compared the caller's
+  relative name against the absolute workspace root and called it outside, so
+  every relative open in the window closed while the pure suites stayed green.
+  The rule now lives in `shell/web/openpath.mjs` (`isAbsolutePath`,
+  `isInsideWorkspace`): a relative name is the kernel's to resolve and is inside
+  by construction, an absolute path has to land under the root, and the choice
+  is unit-tested rather than inferred from a probe.
+- **The pixel card's framing moved and the smoke still aimed at the old one.**
+  Since an unpanned image is centred, the corner is no longer the origin; the
+  card now publishes where the image sits in its own pixels
+  (`data-pan-x`/`data-pan-y`/`data-zoom`), and the smoke aims at pixel middles
+  using those numbers instead of re-deriving the framing rule in Python.
+- **The example hand-wrote an `EventReference`.**  Unity/FMOD serialises it as
+  `{ Guid:{Data1..4}, Path }`; the example wrote `{ Path }`, which `D019` exists
+  to flag.  The example stops at the fields it can honestly write and says in
+  its `EditorNote` that the reference comes from the game's export.
+- **Two assertions had outlived their behaviour.**  The `D011` row's status now
+  leads with the file's path, and the RGB sprite is saved back as RGB (`G20`),
+  so the checks say "loaded" is a word in the line and that the saved copy keeps
+  colour type 2.
+- **`audio` and `help` could not be opened from the palette or listed as
+  tabs.**  Both were registered but missing from the board's kind list and the
+  views/smoke lists; with them added the docs also stop saying sixteen kinds
+  when fifteen are registered.
+
+Suites: mods 652/652, web 320/320, langs 91/91, ai 86/86 (one skipped),
+`browser_smoke.py` 65/65, `input_smoke.py` 44/44 -- and the last two now run
+here, in a real headless Edge, on the repository's own example mod.  Each new
+check was red-proved by one-line sabotage and restored byte for byte: reverting
+`isInsideWorkspace` to its string comparison fails the openpath test (319/320),
+and publishing a zero pan from the pixel card fails four smoke checks (40/44).
+
 ### A lock has to name the text it was taken from
 
 The `lock` column in a localisation table is not decoration. Measured on the

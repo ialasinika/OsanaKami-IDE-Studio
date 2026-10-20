@@ -37,7 +37,7 @@
  */
 export const CARD_KINDS = [
   "editor", "runner", "note", "files", "project", "sheet", "story", "pixel",
-  "rig", "mod", "problems", "docs", "settings",
+  "rig", "mod", "problems", "docs", "settings", "help", "audio",
 ];
 
 export const BOARD_VERSION = 1;

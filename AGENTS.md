@@ -183,7 +183,7 @@ Rules of thumb:
 | `core/port/` | the only OS-aware layer (`sys_win32.c`, `proc_win32.c`) |
 | `core/tests/` | `test_json.c`, `test_blob.c` |
 | `shell/main.mjs` | CLI (`rpc`, `serve`, `validate`, `export`, `install`, `log`), HTTP/stdio endpoints, `MOD_METHODS` |
-| `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (thirteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
+| `shell/web/` | the browser UI: `main.mjs`, `cards.mjs` (the barrel), `cards/` (fifteen kinds, one module per family), `board.mjs`, `views.mjs`, `classic.mjs`, `modview.mjs`, `watch.mjs`, `openpath.mjs`, `history.mjs`, `rpc.mjs`, `selftest.mjs`, `README.md` |
 | `shell/mods/` | the game layer: schema validation and its `D` codes, Yarn diagnosis, the `#line:` id cross-check, scaffolding, search, zip export (`zip.js`), install into the game (`gamepath.js` also finds the folder and reads/follows `Player.log`); `selftest.mjs` is the entry over `selftest/` (`game.mjs` is the install/log group) |
 | `shell/ai/` | the AI layer (config, provider, tools); `selftest.mjs` is the entry over `selftest/` and runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |

@@ -1,4 +1,4 @@
-# 缺口清单（2026-10-20 第五轮：A/B 两区清账）
+# 缺口清单（2026-10-20 第五轮：A/B 两区清账；冒烟轮已并入）
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
@@ -6,7 +6,10 @@
 
 第四轮（2026-10-20，起点快照 `0c74d9b`，代码提交 `c416b01`）：`docs/gaps2.md` 是浏览器会话实测出来的三条（问题卡路径、像素卡后台打开、缩放锚点），复核全部成立；同一轮把 C 区排队的 G16/G17 一起关掉，并补了用户在整理文档时现场报的 G54（窄窗口 mod 卡分区收不起来）。问题卡改用 `mod.validate` 回传的解析后包根打开真实文件、编辑器新增可存活重渲染的 `reveal` 位置；像素卡在标签前移到可见时按测量到的画布重新取景，平移保留人的手势、缩放锚在光标下的像素；mod 卡分区可折叠且折叠状态记在卡文档上。**G51 的另一半（mods 根在 workspace 之外时内核拒绝读）不是 bug 而是内核 containment 的产品决策，单列为 G51-b 留在 B 区；G19 的 watch 残余在同一轮末尾关掉。**
 
-第五轮（2026-10-20，起点快照 `66d3fb0`/`b37a47c`）：用户要求"解决 A 和 B"，A 区是校验与知识库的可信度、B 区是文件/文本/像素。B 区全清：录音能在窗口里试听（新的 `audio` 卡，`file.read_bytes` 的字节交给播放器，一张录音一张卡）；mod 层的文本读语义与内核同一套规则（`shell/mods/readtext.js`，套件从 `core/include/wksp.h` 解析上限防漂移）；已提交 KB 的乱码清零（文档 evidence 区按 ICU 码点逐条核对，生成器重跑，守卫测试）；`examples/Mods/Lantern` 的 `file` 列改为包相对路径，`lock` 由 `storycsv` 写入时重算；像素读写接受知识库声明的全部 PNG 色型/位深/隔行并在能证明时按原格式写回（`pixelpng.mjs`）；帮助卡把 wiki 链接、51 类型支持矩阵和命令列表渲染进窗口（`help` 卡，第十六种）。G51-b 内核侧关闭：`--read-root` 让 workspace 之外的 Mods 目录成为显式只读根。A 区见下表：G8 的脚手架×校验交叉测试、G10 的 FMOD 引用/`GetTopic` 陷阱 lint、G37 的两条生成器自伤路径各补一条守卫。
+第五轮（2026-10-20，起点快照 `66d3fb0`/`b37a47c`）：用户要求"解决 A 和 B"，A 区是校验与知识库的可信度、B 区是文件/文本/像素。B 区全清：录音能在窗口里试听（新的 `audio` 卡，`file.read_bytes` 的字节交给播放器，一张录音一张卡）；mod 层的文本读语义与内核同一套规则（`shell/mods/readtext.js`，套件从 `core/include/wksp.h` 解析上限防漂移）；已提交 KB 的乱码清零（文档 evidence 区按 ICU 码点逐条核对，生成器重跑，守卫测试）；`examples/Mods/Lantern` 的 `file` 列改为包相对路径，`lock` 由 `storycsv` 写入时重算；像素读写接受知识库声明的全部 PNG 色型/位深/隔行并在能证明时按原格式写回（`pixelpng.mjs`）；帮助卡把 wiki 链接、51 类型支持矩阵和命令列表渲染进窗口（`help` 卡，第十五种）。G51-b 内核侧关闭：`--read-root` 让 workspace 之外的 Mods 目录成为显式只读根。A 区见下表：G8 的脚手架×校验交叉测试、G10 的 FMOD 引用/`GetTopic` 陷阱 lint、G37 的两条生成器自伤路径各补一条守卫。
+
+冒烟轮（2026-10-20 晚，第五轮之后）：把两个浏览器冒烟真正跑起来——此前"Edge 155 headless 坏"是误判，死因是 harness 拼 wrapper 时的页内脚本语法错误（Python 非 raw 字符串里的换行），修好后 `browser_smoke.py` 65/65、`input_smoke.py` 44/44 在本机真实 headless Edge 上全绿。冒烟抓到五处真实缺陷并已修：相对路径 `open README.md` 因把相对名当绝对路径与 workspace 根比较而被拒（新纯模块 `shell/web/openpath.mjs`，套件 1 条）；像素卡在 G52 改为居中取景后，冒烟仍按"画布左上即图像左上"点击，卡现在发布 `data-pan-x`/`data-pan-y`/`data-zoom`、冒烟按像素中心点击而不是在 Python 里重抄取景规则；示例包 `Audio_Lantern_Hum.json` 手写 `EventReference` 触发自己的 D019 两条（示例改为只写能诚实写的字段，`EditorNote` 说明引用必须来自游戏导出）；`D011` 行状态以路径开头、RGB 精灵按 G20 存回 RGB 两条断言过期；`audio`/`help` 已注册却不在 board 卡种表与冒烟清单里（面板点不开、冒烟点不到）。文档同轮更正：卡种数按实际注册数（十五种）与冒烟检查数（65 + 44）改齐。
+
 
 ## 已关闭（历轮累计，均有代码证据）
 
@@ -81,7 +84,7 @@
 | --- | --- |
 | G44 残余：KB/游戏目录来源无动词 | 启动日志报 KB 状态、`config.get`/`config.set` 在（`main.mjs:790,794`），但 `gameModsInfo` 仍无动词暴露（`main.mjs` 仅 `:452` 一处内部使用 knowledgeState） |
 | G34 新建模组失败路径 | `electron/newmod.js` 仍无 `overwrite` 命中（旧档 F1–F5 未见修复） |
-| G49 agent 界面 | `cards/` 十六种卡仍未注册 agent；`shell/ai` 仍只是地基（provider/config/tools） |
+| G49 agent 界面 | `cards/` 十五种卡仍未注册 agent；`shell/ai` 仍只是地基（provider/config/tools） |
 
 ### 已决策关闭
 

@@ -22,6 +22,10 @@ import {
   wireChoiceStrip,
 } from "../main.mjs";
 import {
+  isAbsolutePath,
+  isInsideWorkspace,
+} from "../openpath.mjs";
+import {
   WATCH_GONE,
   WATCH_OK,
   WATCH_RELOAD,
@@ -629,4 +633,38 @@ test("watch: any card with a file and a reload joins, whatever its kind", () => 
   // keeps the group unknown so the next poll asks again.
   assert.deepEqual(watchStateOf({ revision: Number.NaN, dirty: "yes" }), { revision: null, dirty: false });
   assert.equal(watchTarget({ path: "yarn/a.yarn", hasPath: () => true, get reload() { return "not a hook"; } }), null);
+});
+
+test("openpath: a relative open is inside, an absolute one only under the root", () => {
+  const root = "C:\\work\\Mods\\MyMod";
+
+  // The bug this pins: a relative name is resolved by the kernel against its
+  // own workspace, so `open README.md` is inside by construction.  It used to
+  // be compared against the absolute root as a string and refused, which closed
+  // every relative open in the window while the pure suites stayed green.
+  assert.equal(isAbsolutePath("README.md"), false);
+  assert.equal(isAbsolutePath("./README.md"), false);
+  assert.equal(isAbsolutePath("Yarn/Mod.yarn"), false);
+  assert.equal(isInsideWorkspace("README.md", root), true);
+  assert.equal(isInsideWorkspace("./sprites/a.png", root), true);
+
+  // An absolute path has to land under the root, in either separator spelling
+  // and in either case (the kernel folds case on Windows).
+  assert.equal(isAbsolutePath("C:\\work\\Mods\\MyMod\\mod.json"), true);
+  assert.equal(isAbsolutePath("C:/work/Mods/MyMod/mod.json"), true);
+  assert.equal(isInsideWorkspace("C:\\work\\Mods\\MyMod\\mod.json", root), true);
+  assert.equal(isInsideWorkspace("c:/work/mods/mymod/Yarn/a.yarn", root), true);
+  assert.equal(isInsideWorkspace(root + "\\", root), true);
+
+  // Outside is outside: a sibling with the root as a prefix, another drive and
+  // a UNC share all read as someone else's file.
+  assert.equal(isInsideWorkspace("C:\\work\\Mods\\MyMod2\\mod.json", root), false);
+  assert.equal(isInsideWorkspace("D:\\Mods\\MyMod\\mod.json", root), false);
+  assert.equal(isInsideWorkspace("\\\\fileserver\\share\\Mods\\a.yarn", root), false);
+
+  // Before the workspace reply arrives there is no root to compare an absolute
+  // path against; a relative name is still left to the kernel.
+  assert.equal(isInsideWorkspace("README.md", null), true);
+  assert.equal(isInsideWorkspace("C:\\Mods\\MyMod\\mod.json", null), false);
+  assert.equal(isInsideWorkspace("", root), true);
 });

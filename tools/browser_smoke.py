@@ -1329,6 +1329,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
     "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings",
+    "help", "audio",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1350,6 +1351,8 @@ CARD_COMMANDS = (
     "problems",
     "docs",
     "settings",
+    "help",
+    "open tone.wav",
 )
 
 #: The close facts the card page prints after the reachability walk: the three
@@ -2266,6 +2269,16 @@ def _cards_workspace(sandbox: Path) -> None:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
         )
     )
+    # A one-second 8-bit mono WAV: the audio card mounts from the bytes the
+    # kernel returns, and a real header is what makes it a recording rather
+    # than a file with an audio extension.
+    samples = 8000
+    wav = (
+        b"RIFF" + struct.pack("<I", 36 + samples) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 8000, 1, 8)
+        + b"data" + struct.pack("<I", samples) + bytes([128]) * samples
+    )
+    (sandbox / "tone.wav").write_bytes(wav)
     # The rig card reads three files beside each other: the skeleton, its
     # atlas, and the page image the atlas names.
     rig, atlas = _spine_rig()

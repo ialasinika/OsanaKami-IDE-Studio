@@ -1045,19 +1045,22 @@ async function main() {
       .map((node) => node.dataset.cardId + "@" + node.style.transform).sort().join(" | ");
     const zoomOf = (node) => Math.max(1,
       Number(textOf(node, '[data-role="pixel-zoom"]').replace(/[^0-9]/g, "")) || 8);
-    /* The card's own arithmetic: a pointer at the centre of image pixel (x, y) is
-       `zoom` canvas pixels from the canvas' corner, less the pan.  Nothing is
-       panned here, and the click has to follow the card's mapping (not the bitmap,
-       which is 1:1 with the box today) or it would edit a pixel the card
-       disagrees about.  A client coordinate is an integer and the canvas' corner
-       is not, so aim at the pixel's first column and row: rounding a centre
-       crossed into the next pixel whenever the zoom was 1. */
+    /* The card's own arithmetic: a pointer at the middle of image pixel (x, y)
+       is `zoom` canvas pixels from the canvas' corner, past the pan.  The pan is
+       the card's published `data-pan-x`/`data-pan-y` (an unpanned image is
+       centred, not pinned to the corner, so it is not zero), and the click has to
+       follow the same mapping the card reads or it would edit a pixel the card
+       disagrees about.  Aiming at the middle keeps the floor in the card's own
+       mapping from spilling into the next pixel at any zoom. */
     const pointAt = (node, x, y) => {
-      const rect = find(node, '[data-role="pixel-canvas"]').getBoundingClientRect();
-      const zoom = zoomOf(node);
+      const canvas = find(node, '[data-role="pixel-canvas"]');
+      const rect = canvas.getBoundingClientRect();
+      const panX = Number(canvas.dataset.panX || 0);
+      const panY = Number(canvas.dataset.panY || 0);
+      const zoom = Number(canvas.dataset.zoom || 0) || zoomOf(node);
       return {
-        clientX: Math.ceil(rect.left + x * zoom),
-        clientY: Math.ceil(rect.top + y * zoom),
+        clientX: rect.left + panX + (x + 0.5) * zoom,
+        clientY: rect.top + panY + (y + 0.5) * zoom,
       };
     };
     const pointer = (node, target, type, x, y, buttons) => {
@@ -1338,7 +1341,7 @@ async function main() {
     };
     const editorsNow = () => cardsNow().filter((node) => node.dataset.kind === "editor");
     const caretLineOf = (area) => (area === null
-      ? 0 : area.value.slice(0, area.selectionStart).split("\n").length);
+      ? 0 : area.value.slice(0, area.selectionStart).split("\\n").length);
     try {
       await waitUntil(() => d011Row() !== null, 120, 250);
       const d011 = d011Row();
@@ -2412,7 +2415,9 @@ def main(argv=None) -> int:
                   and d011_report.get("contains") is True
                   and d011_report.get("pointer") is True
                   and d011_report.get("line") == 7
-                  and str(d011_report.get("status", "")).startswith("loaded")
+                  # The editor now leads its status line with the file's path, so
+                  # "loaded" is a word in the line rather than its first word.
+                  and "loaded" in str(d011_report.get("status", ""))
                   and str(d011_report.get("label", "")).endswith(
                       f"{MOD_NAME}/Defines/Character/Warden.json"),
                   f"rows={d011_report.get('rows')} d011={d011_report.get('d011')} "
@@ -2488,11 +2493,12 @@ def main(argv=None) -> int:
                   f"crlf={real.get('crlf')} whole-file-cap={STORY_WHOLE_CAP} (no game install)")
 
     # The example's other sprite shape: 8-bit RGB, opened by the pixel card and
-    # saved.  The card reads colour type 2 and writes colour type 6 back, so the
-    # copy under build/ comes out RGBA -- G20's "saving an RGB sprite rewrites its
-    # bytes", still open, is pinned here rather than described.  The package's own
-    # sprite is not the file that was written, and the pixel the card read is
-    # compared with the pixel in both files, so what this asserts is about bytes.
+    # saved.  The card reads colour type 2 and writes colour type 2 back -- G20
+    # made the writer re-emit the format it read whenever it can prove that is
+    # lossless, so the copy under build/ stays RGB (colour type 2, no alpha)
+    # rather than being widened to RGBA.  The package's own sprite is not the file
+    # that was written, and the pixel the card read is compared with the pixel in
+    # both files, so what this asserts is about bytes.
     rgb_line = parse_rgb(body)
     rgb_shipped = png_header(RGB_SPRITE_SRC)
     rgb_saved = png_header(RGB_SPRITE)
@@ -2510,7 +2516,7 @@ def main(argv=None) -> int:
               and re.search(r"32\s*[x×]\s*32", rgb_status) is not None
               and str(rgb_line.get("saved", "")) not in ("", "not saving", "nothing to save")
               and rgb_ink is not None and rgb_line.get("ink") == rgb_line.get("after")
-              and rgb_shipped == (32, 32, 8, 2) and rgb_saved == (32, 32, 8, 6)
+              and rgb_shipped == (32, 32, 8, 2) and rgb_saved == (32, 32, 8, 2)
               and rgb_pixels is not None and rgb_pixels[0] == rgb_pixels[1]
               and rgb_pixels[0] == rgb_ink)
     if rgb_fixture:
@@ -2520,7 +2526,7 @@ def main(argv=None) -> int:
                       f"{rgb_saved} pixel(16,16) source={rgb_pixels[0] if rgb_pixels else None} "
                       f"saved={rgb_pixels[1] if rgb_pixels else None} card-ink={rgb_line.get('ink')!r} "
                       f"card-loaded={rgb_status!r} saved-status={rgb_line.get('saved')!r}")
-    results.check("the pixel card reads the example's 8-bit RGB sprite and saves it back as RGBA",
+    results.check("the pixel card reads the example's 8-bit RGB sprite and saves it back in the format it read",
                   rgb_ok, rgb_detail)
 
     # The example story's tag surface, and what the tools make of it.  `#state:`

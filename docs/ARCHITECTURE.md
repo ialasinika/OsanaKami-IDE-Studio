@@ -310,7 +310,7 @@ The browser side, `shell/web/`, is module-per-concern:
 | `board.mjs` | the board model: cards, links, serialise | OsanaKami IDE Studio stops being OsanaKami IDE Studio; both views have nothing to project |
 | `history.mjs` | the undo ring: document snapshots, coalescing, redo branch | `Ctrl+Z` stops existing; every edit still lands, nothing is remembered |
 | `watch.mjs` | what a card should do when its file moves under it, and which cards ask | a file rewritten outside the app stays silently stale under an open card |
-| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the sixteen kinds | no card has anything to draw with |
+| `cards.mjs` | the barrel over `cards/`: re-exports the public names and registers the fifteen kinds | no card has anything to draw with |
 | `cards/` | one module per card family, plus the shared `dom.mjs`, `registry.mjs`, `blob.mjs`, `text.mjs`, `sheet.mjs` and `story.mjs` | `cards.mjs` has nothing to re-export, so no card has a renderer |
 | `rpc.mjs` | the client side of the kernel protocol | the views render as an empty document |
 | `classic.mjs` | the same cards arranged as a code area, a tab strip and a sidebar (pure; the pixels are in `main.mjs`) | the app has no tiling to open in -- `DEFAULT_VIEW` would name a view nobody draws |
@@ -321,14 +321,16 @@ The browser side, `shell/web/`, is module-per-concern:
 | `pixelpng.mjs` | a PNG reader and writer that carries its own inflate, CRC-32 and Adler-32, and reads the two shapes this game's art is (pure) | a `.png` could only travel as base64 and nothing could show or change a pixel |
 | `pixelview.mjs` | the pixel card's framing arithmetic: where the image sits on a measured surface, what a wheel does under the cursor, and the zoom range (pure) | the card would have to keep zoom and pan consistent inside its own paint, and no test could pin the arithmetic without a DOM |
 | `audioinfo.mjs` | what the window knows about a recording before playing it: which extensions are audio, the media type, a size and a clock read as a person reads them, and the data URL for bytes it already holds (pure) | the audio card would decide media types and durations in the DOM, where no test reaches, and two cards would eventually disagree about `.oga` |
+| `openpath.mjs` | whether the kernel will read a path the window is about to open: relative names are the kernel's to resolve, absolute ones have to sit under the reported workspace root (pure) | the rule becomes an inline string comparison in `main.mjs`, and the relative-open regression it pins stays green in every pure suite |
 | `views.mjs` | what each mode is called, which one draws a tile, and which one a window opens in (pure) | the two tiles cannot agree on what a mode is named, and the HUD's switch has nothing to build its buttons from |
 | `main.mjs` | the only file that knows about the whole app | `index.html` has nothing to boot |
 | `selftest.mjs` | the entry: imports `selftest/` in order and prints the tally (`node shell/web/selftest.mjs`, no DOM, no network) | nothing; it is only a test |
 | `selftest/` | one module per section of the suite (harness, fixtures, rpc, board, cards, project, http, sheet, main, views, story, translation, mods, pixel, spine) | the suite is one 5,900-line file again |
 
 `board.mjs`, `history.mjs`, `watch.mjs`, `classic.mjs`, `modview.mjs`,
-`views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs`, `pixelpng.mjs` and
-`pixelview.mjs` are deliberately UI-free — no `document`, no `window`, no timer — so the same objects
+`views.mjs`, `story.mjs`, `storycsv.mjs`, `ysls.mjs`, `pixelpng.mjs`,
+`pixelview.mjs`, `audioinfo.mjs` and `openpath.mjs` are deliberately UI-free —
+no `document`, no `window`, no timer — so the same objects
 are used by the browser and by `selftest.mjs` under Node. `watch.mjs` decides; the polling
 that feeds it lives in `main.mjs`, which is why the decision table can be pinned
 without a browser, a kernel or a clock. `classic.mjs` and `modview.mjs` are the
@@ -391,12 +393,12 @@ its tile first shows it, a mod card section folding and remembering the
 fold on the card document, and the watch accepting any card that names a file
 and can reload it -- through getters or methods -- while a card holding a folder
 or a query stays out of the poll
-(319 checks), no DOM |
+(320 checks), no DOM |
 | — | `python tools/browser_smoke.py` | the window renders: HUD, workspace root, the board's first cards, the command bar; a cold boot lands on the mod tile; `?mod=` opens the package the File menu just wrote; the mod card's three headings open their files; a page's own save is not logged as another writer while a real external write still is; a wrong relative name fails visibly and the right one opens; every card kind is reachable as a tab in both tiles and any opened card can be focused; a tab closes by `x`, a middle click and `Ctrl+W`, closing a clean card is undone with `Ctrl+Z`, and closing a dirty card asks with three answers; the Yarn card opens a completion menu on `<<` and accepts a row with Enter, moving the caret closes that menu instead of leaving it stale, Enter after a silent caret move inserts nothing, and the line under the cursor explains itself; the rig card poses a bone through its inspector, saves it over the rig file, and the file read back carries the typed angle, while a clean card refuses a second save; the settings card is one of the
 kinds the tab strip has to reach in both tiles, the mod card creates a Goods
 define through its own picker and imports a PNG that reads back byte for byte
-(61 checks) |
-| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D011` row opening the file it names (and a `D006` row explaining the file it cannot find), and a window checked to open on the mod tile (46 checks) |
+(65 checks) |
+| — | `python tools/input_smoke.py` | the board's input really is wired up: a double-click adds a card, Ctrl+Z takes it back, Ctrl+Shift+Z puts it back, who owns a wheel -- a wheel over a card's own contents is left to the card, and no view pans or zooms -- the editor card's Tab, Shift+Tab, Enter, Ctrl+F, next-hit, replace-all, Escape and undo stack behave, a file written out of band and then edited over and deleted is reloaded, warned about or reported, and the classic view is measured as drawn -- the tile and the tab click that moves the code area -- and the editor's gutter is read back one number per line and toggled off and on by a real click, and the mod view's entry points are exercised in the same window: the repository's own example mod, an RGB sprite read back through the pixel card, the story card's tag surface, the 4.5 MB table this run builds, a `D011` row opening the file it names (and a `D006` row explaining the file it cannot find), and a window checked to open on the mod tile (44 checks) |
 
 | — | `node shell/mods/selftest.mjs` | the mod layer without a browser: discovery order (setting, environment, the platform's Steam defaults, the named no-knowledge state) and `describeDiscovery`, scaffolding, package validation and every `D`/`M`/`E` code, the Yarn parser's diagnostics, the tag sources, the knowledge base's resolution order and the derivation into the user directory when no file ships, the knowledge generator's `--check` and `--diff`, a facts-only knowledge base keeping the sprite and reference fields the checker looks at (down to a `validatePackage` run on one), the language service's position and completion cores, creating one file from a
 schema for all 51 definition types (each validating clean), importing a file

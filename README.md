@@ -176,9 +176,9 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers sixteen kinds from `shell/web/cards/` — one module per card
+The shell registers fifteen kinds from `shell/web/cards/` — one module per card
 family — through the barrel `shell/web/cards.mjs`, which re-exports the public
-names and makes the sixteen calls: `editor`, `runner`, `note`, `files`,
+names and makes the fifteen calls: `editor`, `runner`, `note`, `files`,
 `project` and `sheet`, then `story`, `pixel`, `rig`, `audio`, `mod`, `problems`,
 `docs`, `settings` and `help`, `sheet` being a structured-data grid
 (typed cells, rows, columns, TSV export) that exists to prove nothing downstream
@@ -274,7 +274,7 @@ Run the checks:
 mingw32-make -f Makefile check       # kernel alone: 13 passed, 0 failed, 3 skipped
 mingw32-make -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 skipped
 mingw32-make -f Makefile probe       # every bug in docs/BUGS.md: all ok
-mingw32-make -f Makefile smoke       # the window, headless: 5 + 26 checks, 0 failed
+mingw32-make -f Makefile smoke       # the window, headless: 65 + 44 checks, 0 failed
 mingw32-make -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 mingw32-make -f Makefile sign-check   # the installer-signing wiring, against a stand-in for signtool
 mingw32-make -f Makefile ci           # what the GitHub test job runs: test, a fixture installer, a workflow audit
@@ -292,13 +292,13 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 61 checks; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 46 checks
+python tools/browser_smoke.py                        # renders the real window; 65 checks; SKIP (exit 0) with no browser
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 319/319 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 320/320 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 652/652 checks passed
 ```
 
@@ -319,7 +319,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 61 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 65 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -513,7 +513,7 @@ shell/                  the front end and the endpoints
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
-                        (the barrel), cards/ (sixteen kinds, one family per
+                        (the barrel), cards/ (fifteen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
                         classic.mjs, modview.mjs, main.mjs, story.mjs,
                         storycsv.mjs, ysls.mjs, pixelpng.mjs, pixelview.mjs,

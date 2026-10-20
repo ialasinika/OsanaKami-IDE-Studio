@@ -319,6 +319,13 @@ export function renderPixel(card, ctx) {
     context.clearRect(0, 0, canvas.width, canvas.height);
     const originX = Math.round(state.panX);
     const originY = Math.round(state.panY);
+    // Where the image sits, in the canvas' own pixels: the click mapping below
+    // uses the same two numbers, so a test that aims at image pixel (x, y) can
+    // read them here instead of re-deriving the framing rule (which changed when
+    // an unpanned image started being centred instead of pinned to the corner).
+    canvas.dataset.panX = String(originX);
+    canvas.dataset.panY = String(originY);
+    canvas.dataset.zoom = String(state.zoom);
     context.setTransform(state.zoom, 0, 0, state.zoom, originX, originY);
     if (typeof context.imageSmoothingEnabled === "boolean") {
       context.imageSmoothingEnabled = false;
