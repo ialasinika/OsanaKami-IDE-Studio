@@ -16,6 +16,38 @@ stands in this tree.
 
 ## Unreleased
 
+### The kernel cannot be talked out of its workspace, and a write publishes a file
+
+Three promises the kernel has been making to its callers were only true as far
+as the text of a path could take them. They are true as far as the filesystem
+can take them now.
+
+A relative path that stays inside the workspace lexically stayed inside as far
+as `sde_port_path_within()` was concerned -- but a junction (`mklink /J`) planted
+inside the workspace made the same relative path point anywhere. The check now
+resolves the real name of the nearest existing ancestor and appends the parts
+that do not exist yet, so a reparse point cannot carry a read, a write, or even
+"the file I am about to create" out of the root. The lexical check still runs
+first, so an obviously outside path costs nothing.
+
+A write used to open the target and truncate it, which meant a reader could
+observe a half-written file and a failed write could leave the file damaged.
+`sde_port_write_file()` now writes a sibling `.sde-write-<pid>-<n>` and publishes
+it with one `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`: a reader sees the old
+bytes or the new ones, and a failure leaves the old file whole and removes the
+sibling.
+
+A file the kernel could not read used to be indistinguishable from a missing one
+in `file.stat`: both came back as `revision: 0`. `file.stat` now also answers
+`readable`, and the write verbs refuse with `cannot read file for revision`
+instead of truncating a file whose base they cannot prove.
+
+`core/tests/test_blob.c` runs all three against its own scratch directory: a
+junction over a secret file the jail must not reach, a handle opened for writes
+and not reads, and a file id read before and after a write (184 checks). The
+platform boundary section of `docs/ARCHITECTURE.md` states the three promises
+as the contract a fork has to keep.
+
 ### The window has a seat for an agent
 
 The AI layer shipped with a provider, a key kept out of every log, and two

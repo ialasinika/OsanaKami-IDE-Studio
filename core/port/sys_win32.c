@@ -387,32 +387,21 @@ static char *lower_dup(const char *s)
     return c;
 }
 
-int sde_port_path_within(const char *root, const char *p)
+/* Does `pa` name `ra` itself, or something below it?  Both are absolute. */
+static int within_pair(const char *ra, const char *pa)
 {
-    char *ra;
-    char *pa;
-    char *rl;
-    char *pl;
+    char  *rl;
+    char  *pl;
     size_t rlen;
     int    yes = 0;
 
-    ra = sde_port_path_abs(root);
-    pa = sde_port_path_abs(p);
-    if (ra == NULL || pa == NULL) {
-        free(ra);
-        free(pa);
-        return 0;
-    }
     rl = lower_dup(ra);
     pl = lower_dup(pa);
-    free(ra);
-    free(pa);
     if (rl == NULL || pl == NULL) {
         free(rl);
         free(pl);
         return 0;
     }
-
     rlen = strlen(rl);
     while (rlen > 1 && rl[rlen - 1] == '/') {
         rl[--rlen] = '\0';
@@ -425,6 +414,144 @@ int sde_port_path_within(const char *root, const char *p)
     }
     free(rl);
     free(pl);
+    return yes;
+}
+
+/* The "\\?\" prefixes Windows puts on a resolved name, removed the way a
+ * client would write the same path. */
+static char *strip_win_prefix(const char *resolved)
+{
+    size_t len;
+
+    if (strncmp(resolved, "\\\\?\\UNC\\", 8) == 0) {
+        len = strlen(resolved + 8);
+        {
+            char *out = (char *) malloc(len + 3);
+            if (out == NULL) {
+                return NULL;
+            }
+            out[0] = '\\';
+            out[1] = '\\';
+            memcpy(out + 2, resolved + 8, len + 1);
+            return out;
+        }
+    }
+    if (strncmp(resolved, "\\\\?\\", 4) == 0) {
+        return sde_port_strdup(resolved + 4);
+    }
+    return sde_port_strdup(resolved);
+}
+
+/*
+ * What the filesystem actually resolves `abs` to, with the not-yet-existing
+ * tail kept lexically.  A string comparison against the workspace root cannot
+ * see a junction or a symbolic link: `<root>/link/secret.txt` starts with
+ * the root's name while the bytes live somewhere else.  Containment therefore has
+ * to compare the names Windows itself reports.
+ *
+ * The nearest existing ancestor is opened with FILE_FLAG_BACKUP_SEMANTICS
+ * (which is how a directory gets a handle), and GetFinalPathNameByHandleA
+ * returns the resolved name with the "\\?\" prefix, which is stripped before
+ * normalising.  Returns NULL when nothing along the path can be opened; the
+ * caller then falls back to the lexical answer rather than failing the
+ * resolution of a workspace that does not exist yet.
+ */
+static char *real_path_of(const char *abs)
+{
+    char  *probe;
+    char  *suffix = NULL;
+    char  *found = NULL;
+    size_t len;
+
+    probe = sde_port_strdup(abs);
+    if (probe == NULL) {
+        return NULL;
+    }
+    for (;;) {
+        HANDLE h;
+        char   resolved[4096];
+        DWORD  n;
+
+        h = CreateFileA(probe, 0,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            n = GetFinalPathNameByHandleA(h, resolved,
+                                          (DWORD) sizeof(resolved),
+                                          FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+            (void) CloseHandle(h);
+            if (n > 0 && (size_t) n < sizeof(resolved)) {
+                char *base = strip_win_prefix(resolved);
+                char *whole = NULL;
+
+                if (base != NULL) {
+                    whole = (suffix == NULL) ? sde_port_strdup(base)
+                                             : sde_port_path_join(base, suffix);
+                    free(base);
+                }
+                found = (whole == NULL) ? NULL : sde_port_path_norm(whole);
+                free(whole);
+            }
+            break;
+        }
+
+        /* Not there: drop the last component onto `suffix` and try the parent. */
+        len = strlen(probe);
+        while (len > 0 && !is_sep(probe[len - 1])) {
+            len--;
+        }
+        if (len == 0) {
+            break;
+        }
+        {
+            char  *component = sde_port_strdup(probe + len);
+            char  *next = NULL;
+
+            probe[len - 1] = '\0';
+            if (component != NULL) {
+                next = (suffix == NULL) ? component
+                                        : sde_port_path_join(component, suffix);
+            }
+            free(suffix);
+            suffix = (next == NULL) ? NULL : next;
+            if (next == NULL) {
+                free(component);
+                break;
+            }
+        }
+    }
+    free(probe);
+    free(suffix);
+    return found;
+}
+
+int sde_port_path_within(const char *root, const char *p)
+{
+    char *ra;
+    char *pa;
+    char *real_r;
+    char *real_p;
+    int   yes;
+
+    ra = sde_port_path_abs(root);
+    pa = sde_port_path_abs(p);
+    if (ra == NULL || pa == NULL) {
+        free(ra);
+        free(pa);
+        return 0;
+    }
+    yes = within_pair(ra, pa);
+    if (yes) {
+        real_r = real_path_of(ra);
+        real_p = real_path_of(pa);
+        if (real_r != NULL && real_p != NULL) {
+            yes = within_pair(real_r, real_p);
+        }
+        free(real_r);
+        free(real_p);
+    }
+    free(ra);
+    free(pa);
     return yes;
 }
 
@@ -617,11 +744,33 @@ int sde_port_mkdirs(const char *path, char *err, size_t errcap)
     return 0;
 }
 
+/*
+ * A name next to `path` for the bytes to land in before they are published.
+ * Keeping it in the same directory is what makes MoveFileExA a rename rather
+ * than a copy, and the process id plus a counter keep two writers in one
+ * directory apart.
+ */
+static char *write_temp_name(const char *path)
+{
+    static volatile LONG counter = 0;
+    unsigned long n = (unsigned long) InterlockedIncrement(&counter);
+    size_t len = strlen(path);
+    char  *out = (char *) malloc(len + 40);
+
+    if (out == NULL) {
+        return NULL;
+    }
+    sprintf(out, "%s.sde-%lu-%lu", path,
+            (unsigned long) GetCurrentProcessId(), n);
+    return out;
+}
+
 int sde_port_write_file(const char *path, const char *data, size_t len,
                         char *err, size_t errcap)
 {
     FILE  *f;
     char  *parent;
+    char  *tmp;
     size_t total;
     const char *slash;
 
@@ -641,21 +790,45 @@ int sde_port_write_file(const char *path, const char *data, size_t len,
         free(parent);
     }
 
-    f = fopen(path, "wb");
+    /*
+     * Write the bytes to a sibling and rename it over the target.  A write
+     * that dies halfway must leave the old file whole: `fopen(path, "wb")`
+     * truncates first and turns a crash -- or a full disk -- into a lost file.
+     * The rename is the only step that changes what other readers see, so the
+     * target is either the old bytes or the new ones, never a prefix of either.
+     */
+    tmp = write_temp_name(path);
+    if (tmp == NULL) {
+        set_err(err, errcap, "out of memory writing", path);
+        return -1;
+    }
+    f = fopen(tmp, "wb");
     if (f == NULL) {
+        free(tmp);
         set_err(err, errcap, "cannot open for writing", path);
         return -1;
     }
     total = (len == 0) ? 0 : fwrite(data, 1, len, f);
     if (total != len) {
         fclose(f);
+        (void) DeleteFileA(tmp);
+        free(tmp);
         set_err(err, errcap, "short write on", path);
         return -1;
     }
     if (fclose(f) != 0) {
+        (void) DeleteFileA(tmp);
+        free(tmp);
         set_err(err, errcap, "cannot flush", path);
         return -1;
     }
+    if (MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING) == 0) {
+        (void) DeleteFileA(tmp);
+        free(tmp);
+        set_err(err, errcap, "cannot replace", path);
+        return -1;
+    }
+    free(tmp);
     return 0;
 }
 

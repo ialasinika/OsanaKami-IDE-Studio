@@ -87,7 +87,7 @@ test("agent: built handlers reach the handle and the bridge, and say so when eit
       call: async (verb, params) => {
         calls.push([verb, params]);
         return {
-          root: "C:/games/Mods/Lantern",
+          root: "games/Mods/Lantern",
           ok: false,
           diagnostics: [
             { severity: "error", code: "D006", message: "sprite missing", path: "A" },
@@ -116,7 +116,7 @@ test("agent: built handlers reach the handle and the bridge, and say so when eit
   assert.equal(calls[0][0], "mod.validate");
   assert.deepEqual(calls[0][1], { root: "Mods/Lantern" });
   assert.deepEqual(answer.counts, { error: 1, warning: 0, info: 1 });
-  assert.equal(answer.root, "C:/games/Mods/Lantern");
+  assert.equal(answer.root, "games/Mods/Lantern");
   assert.equal(answer.diagnostics.length, 2);
 
   // A bridge that is not there is a tool failure the loop can report, not a

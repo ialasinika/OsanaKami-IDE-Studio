@@ -54,6 +54,7 @@
  */
 #ifdef SDE_PLATFORM_WIN32
 #  include <direct.h>
+#  include <windows.h>
 #  define scr_rmdir(p) _rmdir(p)
 #else
 #  include <unistd.h>
@@ -1461,6 +1462,211 @@ static void test_rpc_surface(void)
     sde_app_free(&app);
 }
 
+#ifdef SDE_PLATFORM_WIN32
+/*
+ * A junction made with mklink /J, which needs no administrator rights.  cmd
+ * wants backslashes; the port uses forward slashes everywhere else.
+ */
+static int make_junction(const char *link, const char *target)
+{
+    char   command[500];
+    char   link_win[220];
+    char   target_win[220];
+    size_t i;
+
+    if (strlen(link) >= sizeof(link_win)
+        || strlen(target) >= sizeof(target_win)) {
+        return 0;
+    }
+    for (i = 0; link[i] != '\0'; i++) {
+        link_win[i] = (link[i] == '/') ? '\\' : link[i];
+    }
+    link_win[i] = '\0';
+    for (i = 0; target[i] != '\0'; i++) {
+        target_win[i] = (target[i] == '/') ? '\\' : target[i];
+    }
+    target_win[i] = '\0';
+    snprintf(command, sizeof(command), "cmd /c mklink /J \"%s\" \"%s\" >NUL 2>NUL",
+             link_win, target_win);
+    return (system(command) == 0) ? 1 : 0;
+}
+
+/* The file id of a name: a rename gives a new one, truncating in place does not. */
+static int file_id_of(const char *path, unsigned long *high, unsigned long *low)
+{
+    BY_HANDLE_FILE_INFORMATION info;
+    HANDLE h;
+
+    h = CreateFileA(path, 0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    if (!GetFileInformationByHandle(h, &info)) {
+        (void) CloseHandle(h);
+        return 0;
+    }
+    (void) CloseHandle(h);
+    *high = (unsigned long) info.nFileIndexHigh;
+    *low = (unsigned long) info.nFileIndexLow;
+    return 1;
+}
+
+/* True when the directory holds no half-written sibling of write_file(). */
+static int no_write_litter(const char *dir)
+{
+    char    err[200];
+    sde_vec ents;
+    size_t  i;
+    int     clean = 1;
+
+    sde_vec_init(&ents);
+    err[0] = '\0';
+    if (sde_port_list_dir(dir, &ents, err, sizeof(err)) == 0) {
+        for (i = 0; i < ents.count; i++) {
+            sde_dirent *d = (sde_dirent *) sde_vec_at(&ents, i);
+            if (strstr(d->name, ".sde-") != NULL) {
+                clean = 0;
+            }
+        }
+    }
+    for (i = 0; i < ents.count; i++) {
+        sde_port_dirent_free((sde_dirent *) sde_vec_at(&ents, i));
+    }
+    sde_vec_free(&ents);
+    return clean;
+}
+
+static void test_port_hardening(void)
+{
+    char          err[256];
+    char         *abs = NULL;
+    sde_app       app;
+    sde_buf       buf;
+    HANDLE        lock;
+    unsigned long before_high = 0;
+    unsigned long before_low = 0;
+    unsigned long after_high = 0;
+    unsigned long after_low = 0;
+    int           rc;
+
+    printf("\n== the port layer resolves links and publishes writes atomically ==\n");
+
+    /* --- a junction inside the root that points outside it ---------------- */
+    rm_rf("build/test-blob-jail");
+    rm_rf("build/test-blob-outside");
+    err[0] = '\0';
+    ok(sde_port_mkdirs("build/test-blob-jail", err, sizeof(err)) == 0
+       && sde_port_mkdirs("build/test-blob-outside", err, sizeof(err)) == 0,
+       "the junction fixture directories exist");
+    ok(sde_port_write_file("build/test-blob-outside/secret.txt", "outside\n",
+                           8u, err, sizeof(err)) == 0,
+       "...and the file the jail must not reach");
+    ok(make_junction("build/test-blob-jail/link", "build/test-blob-outside"),
+       "a junction inside the jail points outside it");
+    ok(!sde_port_path_within("build/test-blob-jail",
+                             "build/test-blob-jail/link/secret.txt"),
+       "a junction cannot carry a path out of the root");
+    ok(sde_port_path_within("build/test-blob-jail",
+                            "build/test-blob-jail/plain.txt"),
+       "...while a plain name below the root is still inside");
+
+    err[0] = '\0';
+    ok(sde_app_init(&app, "build/test-blob-jail", NULL, NULL, NULL, err,
+                    sizeof(err)) == 0,
+       "an app rooted at the jail");
+    err[0] = '\0';
+    ok(sde_wksp_resolve(&app, "link/secret.txt", &abs, err, sizeof(err)) != 0
+       && mentions(err, "escapes"),
+       "the write door refuses the junction as an escape");
+    free(abs);
+    abs = NULL;
+    err[0] = '\0';
+    ok(sde_wksp_resolve_read(&app, "link/secret.txt", &abs, NULL, err,
+                             sizeof(err)) != 0,
+       "and the read door refuses it too");
+    free(abs);
+    abs = NULL;
+    sde_app_free(&app);
+    ok(scr_rmdir("build/test-blob-jail/link") == 0,
+       "the junction comes off without touching what it pointed at");
+    ok(sde_port_file_exists("build/test-blob-outside/secret.txt"),
+       "the outside file is still there");
+    rm_rf("build/test-blob-jail");
+    rm_rf("build/test-blob-outside");
+
+    /* --- a file that exists but cannot be read ---------------------------- */
+    rm_rf("build/test-blob-lock");
+    err[0] = '\0';
+    ok(sde_port_mkdirs("build/test-blob-lock", err, sizeof(err)) == 0,
+       "a directory for the locked file");
+    ok(sde_port_write_file("build/test-blob-lock/locked.txt", "old", 3u, err,
+                           sizeof(err)) == 0,
+       "a file with known bytes");
+    err[0] = '\0';
+    ok(sde_app_init(&app, "build/test-blob-lock", NULL, NULL, NULL, err,
+                    sizeof(err)) == 0,
+       "an app over it");
+    lock = CreateFileA("build/test-blob-lock/locked.txt", GENERIC_WRITE,
+                       FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL, NULL);
+    ok(lock != INVALID_HANDLE_VALUE,
+       "a handle that allows writes but not reads");
+    {
+        sde_json *facts = sde_wksp_stat(&app, "locked.txt", err, sizeof(err));
+
+        ok(facts != NULL, "the facts of a file that cannot be read");
+        if (facts != NULL) {
+            ok(sde_json_geti(facts, "revision", -1) == 0,
+               "...report revision 0");
+            ok(sde_json_getb(facts, "readable", 1) == 0,
+               "...and say so, so that 0 still means 'absent' and nothing else");
+            sde_json_free(facts);
+        }
+    }
+    err[0] = '\0';
+    rc = sde_wksp_write(&app, "locked.txt", "new", 3u, 0, 0, NULL, NULL, err,
+                        sizeof(err));
+    ok(rc == SDE_WKSP_FAIL && mentions(err, "cannot read file for revision"),
+       "a write refuses a file it cannot read instead of treating it as absent");
+    (void) CloseHandle(lock);
+    sde_buf_init(&buf);
+    (void) sde_port_read_file("build/test-blob-lock/locked.txt", &buf, NULL, 0);
+    ok(buf.len == 3u && buf.data != NULL
+       && strncmp(buf.data, "old", 3) == 0,
+       "and the old bytes are untouched");
+    sde_buf_free(&buf);
+
+    /* --- a write publishes a new file, it does not truncate the old one --- */
+    err[0] = '\0';
+    ok(sde_port_write_file("build/test-blob-lock/atomic.txt", "old", 3u, err,
+                           sizeof(err)) == 0,
+       "a file to be written over");
+    ok(file_id_of("build/test-blob-lock/atomic.txt", &before_high,
+                  &before_low),
+       "its file id can be read");
+    err[0] = '\0';
+    ok(sde_wksp_write(&app, "atomic.txt", "new", 3u, 0, 0, NULL, NULL, err,
+                      sizeof(err)) == SDE_WKSP_OK,
+       "the write succeeds");
+    ok(file_id_of("build/test-blob-lock/atomic.txt", &after_high, &after_low)
+       && (after_high != before_high || after_low != before_low),
+       "the write published a new file instead of truncating the old one");
+    sde_buf_init(&buf);
+    (void) sde_port_read_file("build/test-blob-lock/atomic.txt", &buf, NULL, 0);
+    ok(buf.len == 3u && buf.data != NULL
+       && strncmp(buf.data, "new", 3) == 0,
+       "and it holds the new bytes");
+    sde_buf_free(&buf);
+    ok(no_write_litter("build/test-blob-lock"),
+       "no half-written sibling is left behind");
+
+    sde_app_free(&app);
+    rm_rf("build/test-blob-lock");
+}
+#endif
+
 int main(void)
 {
     char    err[256];
@@ -1498,6 +1704,9 @@ int main(void)
     sde_app_free(&app);
     test_shutdown_cleanup();
     test_rpc_surface();
+#ifdef SDE_PLATFORM_WIN32
+    test_port_hardening();
+#endif
 
     /* No litter, on the failing path too. */
     rm_rf(READ_ROOT);

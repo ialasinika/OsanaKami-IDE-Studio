@@ -128,12 +128,19 @@ sde_json *sde_wksp_read_bytes(const sde_app *app, const char *rel,
                               char *err, size_t errcap);
 
 /*
- * {"path","exists","dir","size","mtime","revision"} -- facts about a file
- * without its text, for a client that wants to notice a change made behind its
- * back.  `revision` is the hash `sde_wksp_read()` would report, and 0 when
- * there is nothing to hash (absent, a directory, or larger than the read cap):
- * a caller must read 0 as "cannot compare", not as "empty", because a file that
+ * {"path","exists","dir","size","mtime","revision","readable"} -- facts about
+ * a file without its text, for a client that wants to notice a change made
+ * behind its back.  `revision` is the hash `sde_wksp_read()` would report, and
+ * 0 when there is nothing to hash: the file is absent, it is a directory, or
+ * its bytes could not be read.  `readable` is false only in that last case (and
+ * when the file is past the read cap), so an existing file with revision 0 and
+ * `readable: false` is "present but not comparable", never "missing".  A caller
+ * must still read a bare 0 as "cannot compare", not as "empty": a file that
  * exists and is empty hashes to a real revision.
+ *
+ * The write verbs apply the same rule in the stricter direction: a file that
+ * exists but cannot be read is refused with SDE_WKSP_FAIL before anything is
+ * truncated, because the write guard cannot prove the base revision is current.
  *
  * A file holding a NUL byte is hashed like any other.  It was once reported as
  * "no revision to compare" -- on the argument that the number had to be the one

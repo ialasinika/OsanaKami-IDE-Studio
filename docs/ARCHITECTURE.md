@@ -161,6 +161,29 @@ a fork can swap the implementation without recompiling its callers. Paths
 crossing that API always use `/` as the separator; the Win32 implementation
 accepts both on input and normalises internally.
 
+Two of those functions carry the kernel's containment and its write promise,
+and the Win32 implementation has to earn both:
+
+- **Containment follows the real path.** `sde_port_path_within()` resolves the
+  final name of the nearest existing ancestor and appends the components that do
+  not exist yet, so a junction (a reparse point, `mklink /J`) planted inside the
+  workspace cannot carry a relative path out of it -- not even for a file that
+  is about to be created below it. The lexical check runs first, so a path that
+  is obviously outside costs nothing; a path that looks inside then costs two
+  final-path lookups (root and target), not a walk of the tree.
+- **A publish is a rename, never a truncation.** `sde_port_write_file()` writes a
+  sibling `.sde-write-<pid>-<n>` file and replaces the target with one
+  `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`. A reader either sees the old
+  bytes or the new ones, and a failed write leaves the old file whole; the
+  half-written sibling is removed on the way out.
+
+The same honesty applies to revisions: a file that exists but cannot be read
+(a share mode that admits writes and not reads, or a directory in place of one)
+is never reported as revision 0 "for free". `file.stat` answers
+`{"revision": 0, "readable": false}` for it, and the write verbs refuse with
+`cannot read file for revision` instead of truncating a file whose base they
+cannot prove.
+
 `core/include/infantgod_cfg.h` must be included **first, before any system header**,
 and raises two Win32 macros that the kernel depends on:
 
@@ -391,7 +414,7 @@ The Makefile's verification targets, in the order `make test` runs them:
 | `ci` | `make ci` | what the GitHub `test` job runs, locally: the whole `test` target, then `tools/ci_installer.py` builds and installs a two-file fixture installer, then `tools/ci_audit.py` audits `.github/workflows/ci.yml` offline (four jobs, every action pinned, read-only permissions). The `test` and `smoke` jobs also run on the GitHub runner for every push to `main` |
 | `smoke` | `python tools/browser_smoke.py` then `tools/input_smoke.py` | the real window: rendered DOM; real double-clicks, keys and wheels; a file rewritten by a real child process while a card holds it; and the editor card's `Tab`, `Shift+Tab`, `Enter`, `Ctrl+F`, next-hit, replace-all, `Esc` and undo stack |
 | `$(JSONTEST)` | `core/tests/test_json.c`, built against `json.o`/`buf.o`/`vec.o` | the JSON codec everything else trusts |
-| `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, against its own scratch directory under `build/` (130 checks) |
+| `$(BLOBTEST)` | `core/tests/test_blob.c`, built against every object except `main.o` | the blob layer through `sde_rpc_handle()`: base64 on the wire, offsets, limits, sessions, the 1 MiB chunk cap, idle close, the temporary file and the atomic publish, and the port layer's half of the same promises -- a junction cannot carry a relative path out of the workspace, a write onto a file it cannot read is refused instead of truncating it, and a write publishes a new file rather than editing the old one -- against its own scratch directory under `build/` (184 checks) |
 | — | `node langs/selftest.mjs` | the descriptor and tokenizer checks (91), no kernel, no browser |
 | — | `node shell/web/selftest.mjs` | the protocol plumbing, board model, undo ring, watch decision table, the classic and mod views' roles and tiles, which view a window opens in and which ones the switch offers, every card kind's tab in both views, the tab-close neighbour rule, the close question and what each answer means, the Yarn card's completion menu and hover line, token spans and the editor's indent/find/replace arithmetic, the Yarn story parser against every line shape the mod uses, the translation tables' quoting, BOM (kept byte for byte, non-UTF-8 refused), line endings, derived `lock` and row states, the 4 MiB refusal answered by a session on all three cards that show a file (editor, story, table), a translation cell written back through `setColumn` with its `lock` refreshed and a row created for a line the table did not have, and the command schema's order, filtering and signatures, and the PNG reader and writer's five row filters, block shapes, refusals and byte-exact round trip, the Spine binary reader's layout and refusals, the pose, frame and edit-model arithmetic, the writer's byte identity on the rig the suite owns, the settings card's
 kind and the boot view and poll interval a preferences file can ask for, the

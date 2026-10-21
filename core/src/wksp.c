@@ -73,12 +73,24 @@ unsigned long sde_rev_of(const char *data, size_t len)
     return sde_rev_final(sde_rev_update(SDE_REV_SEED, data, len));
 }
 
-/* A file that does not exist has a well-defined revision of 0. */
-static unsigned long rev_of_file(const char *path, char *err, size_t errcap)
+/*
+ * A file that does not exist has a well-defined revision of 0.  A file that
+ * exists but cannot be read is *not* that file: returning 0 for both let a
+ * write guard treat "I could not read it" as "there is nothing to guard", and
+ * a client that echoed revision 0 back got a missing-file answer for a file
+ * that was there.  Zero now means one thing only -- absent -- and this helper
+ * refuses to report a revision it could not take.
+ *
+ * Returns 0 on success (with *out set, 0 when the file is absent) and -1 when
+ * the file exists but its bytes could not be read.
+ */
+static int rev_of_file(const char *path, unsigned long *out, char *err,
+                       size_t errcap)
 {
     sde_buf       buf;
     unsigned long rev;
 
+    *out = 0;
     if (!sde_port_file_exists(path)) {
         return 0;
     }
@@ -86,11 +98,12 @@ static unsigned long rev_of_file(const char *path, char *err, size_t errcap)
     if (sde_port_read_file(path, &buf, err, errcap) != 0) {
         set_err(err, errcap, "cannot read file for revision");
         sde_buf_free(&buf);
-        return 0;
+        return -1;
     }
     rev = sde_rev_of(buf.data, buf.len);
     sde_buf_free(&buf);
-    return rev;
+    *out = rev;
+    return 0;
 }
 
 /* ====================================================================== */
@@ -715,6 +728,7 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
     sde_json     *out;
     int           is_dir;
     int           exists;
+    int           readable = 1;
     long          size = 0;
     unsigned long rev = 0;
 
@@ -731,11 +745,12 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
         /*
          * The revision has to be the number a read verb hands out for the same
          * bytes, or a client comparing a held revision with this one could miss
-         * a change.  Only the cap is left as a reason to report none: a file
-         * past it cannot be read at all, so there is nothing to compare
-         * against.  A NUL byte used to be a second reason -- and it stopped
-         * being one when `file.read_bytes` started handing out the same number
-         * for that file, which is the file an image editor holds.
+         * a change.  Two things can leave it at 0 for a file that exists -- a
+         * file past the cap, which no verb can read, and a read that fails --
+         * and `readable` says so, so that 0 on its own keeps meaning "absent".
+         * A NUL byte used to be a third reason; it stopped being one when
+         * `file.read_bytes` started handing out the same number for that file,
+         * which is the file an image editor holds.
          */
         if (size <= (long) SDE_WKSP_MAX_READ) {
             if (size == 0) {
@@ -747,9 +762,13 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
                 if (sde_port_read_file(abs, &buf, NULL, 0) == 0
                     && buf.data != NULL) {
                     rev = sde_rev_of(buf.data, buf.len);
+                } else {
+                    readable = 0;
                 }
                 sde_buf_free(&buf);
             }
+        } else {
+            readable = 0;
         }
     }
 
@@ -766,6 +785,7 @@ sde_json *sde_wksp_stat(const sde_app *app, const char *rel, char *err, size_t e
     sde_json_set(out, "mtime",
                  sde_json_int(exists ? sde_port_file_mtime(abs) : -1));
     sde_json_set(out, "revision", sde_json_rev(rev));
+    sde_json_set(out, "readable", sde_json_bool(readable));
 
     free(abs);
     return out;
@@ -829,7 +849,10 @@ static int begin_write(const sde_app *app, const char *rel, int has_base,
         return SDE_WKSP_FAIL;
     }
 
-    cur = rev_of_file(abs, err, errcap);
+    if (rev_of_file(abs, &cur, err, errcap) != 0) {
+        free(abs);
+        return SDE_WKSP_FAIL;
+    }
     *out_cur = cur;
     if (has_base && base != cur) {
         /* Someone else got there first.  Refusing is the whole point. */
