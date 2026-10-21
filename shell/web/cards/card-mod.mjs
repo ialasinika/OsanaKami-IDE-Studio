@@ -102,7 +102,7 @@ export function diagWhere(diagnostic) {
  * folded, and the explicit `false` in the card document means "this person opened
  * it" -- without that, an opened section would spring shut on the next re-render.
  */
-const MOD_SECTIONS_FOLDED = Object.freeze(["create", "import", "export", "install", "log"]);
+const MOD_SECTIONS_FOLDED = Object.freeze(["create", "import", "export", "install", "log", "history"]);
 
 /*
  * Which of the mod card's sections is folded away (G54).
@@ -372,6 +372,27 @@ export function renderMod(card, ctx) {
   tr.text(logSection.name, "mod.section.log");
   logSection.rows.append(logControls);
 
+  /*
+   * G61: the package's own versions.  The store lives beside the editor (not in
+   * the package), one store per package path; the card only ever asks the host
+   * to save, list and bring a version back.  Restoring saves the current state
+   * first, so "bring back" is never a one-way door.
+   */
+  const historySection = section("mod-history", "", undefined, undefined, sectionOptions("history"));
+  tr.text(historySection.name, "mod.section.history");
+  const versionNote = h("div", "settings-note mod-version-note");
+  const versionMessage = h("input", "ed-input mod-version-message", { attrs: { type: "text" } });
+  tr.placeholder(versionMessage, "mod.version.message");
+  const versionSave = button("", "save the current state as one version", () => saveVersion());
+  tr.text(versionSave, "mod.version.save");
+  versionSave.addEventListener("keydown", (event) => event.stopPropagation());
+  const versionRows = h("div", "mod-rows mod-version-rows");
+  historySection.rows.append(
+    h("div", "mod-controls mod-version-controls", { children: [versionMessage, versionSave] }),
+    versionNote,
+    versionRows
+  );
+
   const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"), sectionOptions("manifest"));
   const definesSection = section("mod-defines", "Defines", undefined, () => openSectionFile("defines"), sectionOptions("defines"));
   const yarnSection = section("mod-yarn", "Yarn", undefined, () => openSectionFile("yarn"), sectionOptions("yarn"));
@@ -391,6 +412,7 @@ export function renderMod(card, ctx) {
       exportSection.el,
       installSection.el,
       logSection.el,
+      historySection.el,
       modJsonSection.el,
       definesSection.el,
       yarnSection.el,
@@ -750,6 +772,123 @@ export function renderMod(card, ctx) {
     }
   }
 
+  /** Read the store: available? how many versions? the last few commits. */
+  async function loadVersions() {
+    const dir = dirInput.value.trim();
+    versionRows.textContent = "";
+    versionNote.textContent = "";
+    if (dir === "") {
+      return;
+    }
+    let state;
+    try {
+      state = await client.call("vcs.status", { dir });
+    } catch (err) {
+      versionNote.textContent = t("mod.version.unavailable");
+      return;
+    }
+    if (state === null || typeof state !== "object" || state.ok === false) {
+      versionNote.textContent = state && state.reason === "unavailable"
+        ? t("mod.version.unavailable")
+        : t("mod.version.failed", { error: String((state && state.error) || "the store did not answer") });
+      return;
+    }
+    let log;
+    try {
+      log = await client.call("vcs.log", { dir, limit: 6 });
+    } catch (err) {
+      log = null;
+    }
+    const commits = log && Array.isArray(log.commits) ? log.commits : [];
+    versionNote.textContent = commits.length === 0
+      ? (Array.isArray(state.entries) && state.entries.length > 0
+        ? t("mod.version.none")
+        : t("mod.version.count", { count: 0 }))
+      : t("mod.version.count", { count: commits.length });
+    if (commits.length === 0) {
+      fillRows(versionRows, [{ label: t("mod.version.none"), empty: true }]);
+      return;
+    }
+    fillRows(versionRows, commits.map((commit) => ({
+      label: commit.message === "" ? commit.oid : commit.message,
+      meta: String(commit.oid).slice(0, 12),
+      title: commit.message,
+      extra: {
+        label: t("mod.version.restore"),
+        title: "bring the package back to this version",
+        onClick: () => restoreVersion(commit.oid),
+      },
+    })));
+  }
+
+  /** Commit everything the package holds now as one version. */
+  async function saveVersion() {
+    const dir = dirInput.value.trim();
+    if (dir === "" || opened === null) {
+      status.textContent = "open a package first: a version belongs to a package";
+      return;
+    }
+    status.textContent = t("mod.version.save") + "…";
+    let answer;
+    try {
+      answer = await client.call("vcs.save", { dir, message: versionMessage.value.trim() });
+    } catch (err) {
+      status.textContent = t("mod.version.failed", { error: err.message });
+      app.log("warn", `cannot save a version of ${dir}: ${err.message}`);
+      return;
+    }
+    if (answer === null || typeof answer !== "object" || answer.ok === false) {
+      const reason = answer && (answer.error || answer.reason) ? String(answer.error || answer.reason) : "the store did not answer";
+      status.textContent = t("mod.version.failed", { error: reason });
+      app.log("warn", `cannot save a version of ${dir}: ${reason}`);
+      return;
+    }
+    if (answer.committed === true) {
+      status.textContent = t("mod.version.saved", { oid: String(answer.oid ?? "").slice(0, 12) });
+      app.log("info", `saved a version of ${dir}: ${answer.oid}`);
+      versionMessage.value = "";
+    } else {
+      status.textContent = t("mod.version.clean");
+    }
+    await loadVersions();
+  }
+
+  /**
+   * Put the package back at a committed version.  The current state is saved
+   * first (with a message naming the version being restored), so the person can
+   * go back to where they were even though `reset --hard` moves the branch.
+   */
+  async function restoreVersion(oid) {
+    const dir = dirInput.value.trim();
+    if (dir === "" || opened === null || typeof oid !== "string") {
+      return;
+    }
+    status.textContent = t("mod.version.restore") + "…";
+    try {
+      await client.call("vcs.save", { dir, message: `before restoring ${oid}` });
+    } catch (err) {
+      /* Saving a safety copy is best effort; the restore is what was asked for. */
+    }
+    let answer;
+    try {
+      answer = await client.call("vcs.restore", { dir, oid });
+    } catch (err) {
+      status.textContent = t("mod.version.restoreFailed", { error: err.message });
+      app.log("warn", `cannot restore ${dir} to ${oid}: ${err.message}`);
+      return;
+    }
+    if (answer === null || typeof answer !== "object" || answer.ok === false) {
+      const reason = answer && (answer.error || answer.reason) ? String(answer.error || answer.reason) : "the store did not answer";
+      status.textContent = t("mod.version.restoreFailed", { error: reason });
+      app.log("warn", `cannot restore ${dir} to ${oid}: ${reason}`);
+      return;
+    }
+    app.log("info", `restored ${dir} to ${oid}`);
+    await loadVersions();
+    await openMod();
+    status.textContent = t("mod.version.restored", { oid: oid.slice(0, 12) });
+  }
+
   async function openMod() {
     const dir = dirInput.value.trim();
     if (dir === "") {
@@ -840,6 +979,7 @@ export function renderMod(card, ctx) {
       app.log("info", `opened ${root}`);
       rememberRecent(root);
     }
+    await loadVersions();
     app.boardTouched(true);
   }
 

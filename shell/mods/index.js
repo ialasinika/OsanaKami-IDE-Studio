@@ -291,6 +291,7 @@ function firstLineOf(abs) {
  * @param {string} [options.bundledKnowledgePath] 打包在本模块旁的知识库（测试/打包用）
  * @param {string} [options.userDir]      用户数据目录（派生知识库写这里；缺省见 defaultUserDir）
  * @param {object} [options.env]          环境变量表（测试注入用；缺省 process.env）
+ * @param {object} [options.history]      包历史的执行者（shell/mods/versioning.js）；给了它，打开/新建包时自动建库
  * @param {string} [options.modsRoot]      可选白名单根：所有 dir/root 参数必须落在里面
  * @param {string} [options.gameModsDir]   游戏 Mods 目录（基线 schema/定义来源）
  */
@@ -325,6 +326,80 @@ function createMods(options) {
   };
   /** 游戏 Mods 目录；null = 本机没找到（「没找到」本身也是要报出来的状态）。 */
   const gameModsDir = gameMods.dir;
+
+  /**
+   * 包历史（G61）：store 在 IDE 安装目录，不在包内。没有 history 的执行者
+   * （库测试、无窗口场景）时它保持 null，打开包不产生任何副作用。
+   */
+  const history = opts.history && typeof opts.history === 'object' ? opts.history : null;
+
+  /** 历史动词的参数里，包目录可以相对 modsRoot（和 mod.open 的 dir 同一规则）。 */
+  function historyDir(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    if (typeof p.dir !== 'string' || p.dir.trim() === '') throw new Error('a package directory is required');
+    return resolveArg(p.dir.trim(), 'dir');
+  }
+
+  /** 历史动词的统一外壳：没有执行者时是状态，不是异常。 */
+  function withHistory(kind, params) {
+    if (!history || typeof history[kind] !== 'function') return { ok: false, reason: 'unavailable' };
+    try {
+      return history[kind](historyDir(params), params && params.message, params && params.oid, params && params.limit);
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
+
+  /*
+   * 四个窗口动词（G61）：历史是否可用、存一版、列出版本、回到某一版。
+   * `withHistory` 把参数摆平成 adapter 的签名；缺执行者时回 unavailable，
+   * 卡片据此显示「没有版本存储」而不是报错。
+   */
+  function historyStatus(params) {
+    if (!history || typeof history.status !== 'function') return { ok: false, reason: 'unavailable' };
+    try {
+      return history.status(historyDir(params));
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
+
+  function historySave(params) {
+    if (!history || typeof history.save !== 'function') return { ok: false, reason: 'unavailable' };
+    try {
+      return history.save(historyDir(params), params && params.message);
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
+
+  function historyLog(params) {
+    if (!history || typeof history.log !== 'function') return { ok: false, reason: 'unavailable' };
+    try {
+      return history.log(historyDir(params), params && params.limit);
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
+
+  function historyRestore(params) {
+    if (!history || typeof history.reset !== 'function') return { ok: false, reason: 'unavailable' };
+    try {
+      return history.reset(historyDir(params), params && params.oid);
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
+
+  /** 打开/新建包时把它的历史建好；失败是状态而不是异常（二进制可能没装）。 */
+  function ensureHistory(packageRoot) {
+    if (!history || typeof history.ensure !== 'function') return null;
+    try {
+      return history.ensure(packageRoot);
+    } catch (error) {
+      return { ok: false, reason: 'error', error: error && error.message ? error.message : String(error) };
+    }
+  }
 
   /** 所有按 root 缓存的派生状态；openMod 换根时整块清掉。 */
   const cache = {
@@ -996,7 +1071,8 @@ function createMods(options) {
       csvFiles: info.csvFiles,
       sprites: info.sprites,
       summary: info.summary,
-      diagnostics: info.diagnostics
+      diagnostics: info.diagnostics,
+      history: ensureHistory(root)
     };
   }
 
@@ -1500,7 +1576,7 @@ function createMods(options) {
         '这个文件只作样例，游戏不会消费它。');
     }
     invalidateForRoot(); // 目录树变了，按 root 的缓存一律作废
-    return { modRoot: r.modRoot, created: r.created, warnings: r.warnings };
+    return { modRoot: r.modRoot, created: r.created, warnings: r.warnings, history: ensureHistory(r.modRoot) };
   }
 
   /* ---------------- 按类型新建文件（G50） ---------------- */
@@ -2496,6 +2572,10 @@ function createMods(options) {
     importFile: importFileInto,
     importZip: importZipPackage,
     exportPackage: exportPackage,
+    historyStatus: historyStatus,
+    historySave: historySave,
+    historyLog: historyLog,
+    historyRestore: historyRestore,
     installGame: installPackage,
     gameLog: gameLog,
     followGameLog: followGameLog,

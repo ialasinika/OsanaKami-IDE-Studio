@@ -35,6 +35,10 @@
         "to": "infantgod.exe"
       },
       {
+        "from": "build-iaqs/iaqs.exe",
+        "to": "iaqs.exe"
+      },
+      {
         "from": "shell",
         "to": "shell",
         "filter": [

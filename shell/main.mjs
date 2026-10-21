@@ -448,6 +448,20 @@ function failure(id, code, name, message, data) {
  * without it, so a missing or broken layer disables the `mod.*` verbs instead
  * of refusing to boot.  The kernel is never consulted for any of them.
  */
+/**
+ * Where the editor itself lives.  The package history sits under
+ * `<this>/history` -- the install folder when packaged, the checkout root in
+ * development -- because a package is shared and its history is not.
+ *
+ * Electron passes INFANTGOD_INSTALL_DIR: inside the wrapper `resourcesPath` is
+ * the `resources/` folder, while the install folder is its parent.
+ */
+function resolveInstallDir(options = {}) {
+  const explicit = options.installDir ?? process.env.INFANTGOD_INSTALL_DIR;
+  if (typeof explicit === "string" && explicit !== "") return path.resolve(explicit);
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+}
+
 async function loadMods(options, log = () => {}) {
   try {
     const mod = await import(pathToFileURL(path.join(MODS_DIR, "index.js")).href);
@@ -456,7 +470,16 @@ async function loadMods(options, log = () => {}) {
       log("mod layer: index.js exports no createMods(); mod verbs are unavailable");
       return null;
     }
-    const mods = factory({ modsRoot: options.modsRoot ?? options.workspace, userDir: options.userDir });
+    const versioningPath = path.join(MODS_DIR, "versioning.js");
+    const versioning = await import(pathToFileURL(versioningPath).href);
+    const history = typeof versioning.createHistory === "function"
+      ? versioning.createHistory({ installDir: resolveInstallDir(options) })
+      : null;
+    const mods = factory({
+      modsRoot: options.modsRoot ?? options.workspace,
+      userDir: options.userDir,
+      history,
+    });
     // Say which knowledge base is in use: the bundled one, a previously derived
     // one in the user data dir, or one derived just now from the game's files.
     // A missing base is a degraded state, not a crash -- validatePackage names it.
@@ -761,6 +784,13 @@ const MOD_METHODS = {
   // G55: the picker on the mod card lists the packages the game already has,
   // so opening one is a choice rather than a path typed from memory.
   "mod.packages": (params, mods) => mods.packages({ dir: optionalString(params, "dir") }),
+  "vcs.status": (params, mods) => mods.historyStatus({ dir: optionalString(params, "dir") }),
+  "vcs.save": (params, mods) =>
+    mods.historySave({ dir: optionalString(params, "dir"), message: optionalString(params, "message") }),
+  "vcs.log": (params, mods) =>
+    mods.historyLog({ dir: optionalString(params, "dir"), limit: params && params.limit }),
+  "vcs.restore": (params, mods) =>
+    mods.historyRestore({ dir: optionalString(params, "dir"), oid: optionalString(params, "oid") }),
   "mod.templates": (_params, mods) => mods.templates(),
   "mod.characters": (_params, mods) => mods.characters(),
 
@@ -924,10 +954,15 @@ export async function dispatch(frame, kernel, languages, mods = null, settings =
       })));
     }
 
-    if (method.startsWith("mod.")) {
+    /*
+     * `vcs.*` is the package history (G61).  It rides on the mod layer because
+     * the history adapter and the package root bound come from it, so both
+     * prefixes share one table and one "not loaded" answer.
+     */
+    if (method.startsWith("mod.") || method.startsWith("vcs.")) {
       if (mods === null) {
         return answer(() => failure(id, -32601, "METHOD_NOT_FOUND",
-          "the mod layer is not loaded; `mod.*` is unavailable in this checkout"));
+          "the mod layer is not loaded; `mod.*` and `vcs.*` are unavailable in this checkout"));
       }
       const handler = MOD_METHODS[method];
       if (handler === undefined) {

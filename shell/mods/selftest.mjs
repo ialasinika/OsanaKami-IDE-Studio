@@ -43,6 +43,7 @@ await import("./selftest/newfile.mjs");
 await import("./selftest/importfile.mjs");
 await import("./selftest/export.mjs");
 await import("./selftest/importzip.mjs");
+await import("./selftest/history.mjs");
 await import("./selftest/cli.mjs");
 await import("./selftest/game.mjs");
 await import("./selftest/demos.mjs");

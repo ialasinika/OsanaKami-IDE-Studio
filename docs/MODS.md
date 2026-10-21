@@ -802,6 +802,41 @@ package with validation errors **is** imported: a zip is transport, and the answ
 carries the same report the card shows (`errors`, `warnings`, `infos`, and the
 first diagnostics), so the window is where they get fixed.
 
+### The package's own history
+
+The editor keeps a version store for every package it opens, because the one
+thing a mod author cannot get back from the game is the state that used to
+work. The store is the project's fork of `iaqs` (`iaqs/` in this repository):
+a local, linear, content-addressed history with a small command surface.
+
+- **Where it lives.** `<the editor's install folder>/history/<package name>-<hash
+  of the package path>`. It is deliberately *not* inside the package: a package
+  is shared through zips and copied into the game's `Mods` folder, and its
+  history belongs to this machine. Moving the package to another path starts a
+  new store instead of merging two authors' timelines. The same folder is used
+  by the packaged app (its own install folder) and by the source tree (`history/`
+  at the repository root, ignored by git).
+- **The store and the tree are two paths.** The fork's command line takes
+  `--repo` (where `.iaqs/` lives) and `--worktree` (the package being versioned);
+  without `--worktree` the two are the same directory. That split is what lets
+  the database sit beside the app while `git`-style `status` still reads the
+  package's files.
+- **When it is created.** The first `mod.open` or `mod.scaffold` for a package
+  creates the store and records the package path in it; nothing else is
+  automatic and nothing is written into the package.
+- **What the window can do.** `vcs.status` (is a store available, what changed),
+  `vcs.save` (one version per call), `vcs.log` (the last few versions) and
+  `vcs.restore` (bring a version back). The mod card's "Its versions" section
+  is folded by default; saving takes an optional message, and restoring a
+  version saves the current state first, so the restore is reversible. All four
+  answer `{ok: false, reason: "unavailable"}` when the binary is not built
+  (`tools/build-iaqs.ps1`), which the card shows as a state, not an error.
+- **No password, no encryption.** The fork deleted the encryption layer: the
+  ChaCha20-Poly1305 page cipher, the HMAC/PBKDF2 key derivation, the keyring and
+  the wrapped-key MANIFEST are gone with their tests, pages and WAL records are
+  plaintext with their checksums, and a store written by the old password format
+  is refused by name. `iaqs/README.md` lists the deltas and the 233-test suite.
+
 ### The last mile: into the game
 
 Unpacking by hand was still the one step the editor could not do, and it is the
@@ -957,7 +992,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 706 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 729 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project

@@ -16,6 +16,31 @@ stands in this tree.
 
 ## Unreleased
 
+### A package's history sits beside the app, not inside the package
+
+The window can now keep versions of the package it has open, and the store is
+deliberately outside the package: `<the editor's install folder>/history/<package
+name>-<hash of the package path>`. A package travels as a zip and is copied into
+the game's `Mods` folder; its history belongs to this machine, not to the folder
+someone unpacked. Opening or creating a package creates the store and records the
+package path in it; nothing else is automatic and nothing is written inside the
+package.
+
+The engine is the fork of `iaqs` in `iaqs/`, whose command line grew a
+`--worktree` split for this: `--repo` names the database, `--worktree` names the
+tree it versions. Without `--worktree` the two are the same directory, so a plain
+checkout keeps working. The shell adapter is `shell/mods/versioning.js`; the mod
+card's "Its versions" section (folded by default) saves a version with an
+optional message, lists the last ten, and restores one -- saving the current
+state first, so a restore is reversible. Every answer carries the store path, and
+a missing binary is reported as the state `unavailable`, not as an error.
+
+Two seats prove it: the command construction and parsing against an injected
+spawn, and a real round trip against `build-iaqs/iaqs.exe` when it is built
+(create, edit, status, commit, log, restore) -- skipped, not faked, without it.
+The restore path also writes the package's files back through the same temporary
+file the kernel publishes.
+
 ### The version store moves in, and asks for no password
 
 `iaqs` -- the single-user history store the editor will hand a mod package to --
@@ -27,21 +52,25 @@ is a feature.
 
 The password cost a step and protected nothing here: the store lives in one
 package folder, on one disk, read by the person who wrote it. It introduced its
-own failure mode (a lost key means an unreadable history). So the MANIFEST grew a
-plaintext mode (`kdf_type = kKdfNone`), pages and WAL records are stored as
-plaintext with their CRC-32C checksums intact, and `Database::create(dir, "")` /
-`Database::open(dir, "")` is the only mode the command line creates or accepts.
-`passwd`, `rekey`, `--password-stdin`, `IAQS_PASSWORD`, the prompts and the
-weak-password ladder are gone from the surface and from the usage text; opening
-a plaintext store with a password is an error, not a silent no-op.
+own failure mode (a lost key means an unreadable history). So the MANIFEST is a
+44-byte plaintext header (format version 2), pages and WAL records are stored
+with their CRC-32C checksums intact, and `Database::create(dir, page_size)` /
+`Database::open(dir)` are the only entry points there are. `passwd`, `rekey`,
+`--password-stdin`, `IAQS_PASSWORD`, the prompts, the weak-password ladder and
+the "wrong password" exit code are gone from the surface and from the usage
+text; a store written by the old password format is refused by name instead of
+half-read.
 
-Encryption is not deleted. The wrapped-key format and the crypto modules still
-compile, `change_password` and `rekey_data` refuse a plaintext database by name,
-and the upstream suite still exercises the encrypted mode directly.
-`tests/unit/test_plain_store.cpp` pins the new mode: a store created without a
-password reads back, its page bodies are plaintext on disk, it refuses a
-supplied password, it refuses to change or rotate a key it does not have, and an
-encrypted database still opens beside it. The suite is 254 tests.
+Encryption is gone from the fork, not bypassed: the ChaCha20-Poly1305 page
+cipher, HMAC/PBKDF2 key derivation, the keyring and the wrapped-key MANIFEST are
+deleted with their tests. The crypto directory keeps only CRC-32C, SHA-256 and
+the system RNG that object ids and checksums need. The MANIFEST is a small
+plaintext header with a checksum and format version 2, and a store written by
+the old version is refused by that version instead of half-read.
+`tests/unit/test_plain_store.cpp` pins what remains: a store is created and read
+without a password argument, pages are plaintext on disk, the MANIFEST is 44
+bytes, and a passphrase is refused because the database no longer has one. The
+suite is 233 tests.
 
 The consequence is worth saying plainly: a package's history is as readable as
 its CSV tables are. That is the same sharing model the package already had -- a

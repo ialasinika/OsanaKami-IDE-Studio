@@ -260,6 +260,17 @@ a NUL byte, and every text read in `shell/mods/` goes through it. The suite
 parses `SDE_WKSP_MAX_READ` out of `core/include/wksp.h` and fails if the two
 numbers stop agreeing (G14).
 
+A package's history is the one thing the shell keeps that the kernel never
+sees. `shell/mods/versioning.js` drives the fork of `iaqs` in `iaqs/` as a child
+process: the store lives under the editor's install folder
+(`history/<name>-<hash of the package path>`, created on the first `mod.open` or
+`mod.scaffold`), never inside the package. The fork's `--repo` names the
+database and `--worktree` the package, so the two can be in different places; a
+missing binary is the state `unavailable` instead of an error, and the mod
+card's folded "Its versions" section is the only caller of `vcs.status`,
+`vcs.save`, `vcs.log` and `vcs.restore`.
+
+
 A recording is the case where the two read verbs disagree on purpose: the audio
 card (G2) asks for `file.read_bytes` because the bytes are the point, and hands
 the player a data URL rather than a URL — the shell's HTTP front end serves the
@@ -462,7 +473,8 @@ the places discovery tried, the knowledge state and its source), and unpacking a
 a byte is written, path names normalized and bounded, duplicate names refused,
 the staged swap-in and the post-import report), the row
 wording kept as pure data, with the shipped corpus pinned at zero false
-positives and the `ai.*` frames the agent card asks (706 checks) |
+positives the package history adapter (store path, the `--worktree` split, `status`/`save`/`log`/`restore` parsing, and a real round trip against the built fork when `build-iaqs/iaqs.exe` exists), and the `ai.*` frames the agent card asks (729 checks) |
+| — | `powershell -File tools/build-iaqs.ps1 -Strip -Tests` | the version store itself: the plaintext MANIFEST and its version refusal, page and slot CRCs, WAL replay and truncated tails, segment merging, pager generations, and the worktree/database split (233 checks; builds only with `cmake` and MinGW on `PATH`) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, the settings store and its two verbs, and the card-tool bridge into the tool registry (93 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

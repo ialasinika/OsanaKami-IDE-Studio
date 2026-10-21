@@ -1,4 +1,4 @@
-# 缺口清单（2026-10-21 第十轮：G59 已关；第五~九轮并入）
+# 缺口清单（2026-10-21 第十一轮：G61/G62 已关；第五~十轮并入）
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
@@ -18,6 +18,7 @@
 
 
 第十轮（2026-10-21，作者之间的最后一段路）：用户要求“导入支持导入 zip”。`shell/mods/zip.js` 的读侧补上（EOCD 扫描、单盘校验、zip64/多盘/加密/数据描述符拒绝、store/deflate 之外的压缩方法拒绝、逐 entry 的 size/inflate/CRC 校验、名称 UTF-8 旗标→严格 UTF-8→GBK→latin1 解码、`safeEntryName` 拒绝反斜杠外的空名/NUL/绝对路径/盘符/`..`/归一后重名，上限 20000 entry / 64 MiB 单文件 / 512 MiB 总量）；`shell/mods/index.js` 的 `importZipPackage` 支持两种包形（导出产物的单一顶层目录被剥掉；根上直接有 `mod.json` 时按其名落目录），先读完整包再在目标旁建树、`.<folder>.importing-<stamp>` 暂存后换入，已有目录需 overwrite 且整目录替换（旧文件不残留），导入后跑一次 `validatePackage` 把报告一并回传——与 export 不同，有校验错误的包**照样导入**（zip 是运输，窗口才是修的地方）。接口：`mod.importZip` 动词、CLI `unpack FILE.zip [--dir DIR] [--name NAME] [--overwrite] [--json]`、mod 卡 import 区的“unpack a zip”一行（六条 i18n 键）。测试：`shell/mods/selftest/importzip.mjs` 21 条（往返、字节级、坏 CRC/截断、两种布局、无 `mod.json`、路径逃逸/重名/绝对路径、覆盖替换、报告回传、dispatch 帧、CLI），mods 706/706。
+第十一轮（2026-10-21，包版本历史）：用户说“我们这个事实上是需要改的，改成更加适合我们的样子，比如我们不需要密码功能”，并指定历史放 IDE 安装目录、加载/新建包时自动建库。fork 从 `vendor/iaqs` 迁到第一方 `iaqs/`（不再是外来字节，README 重写为 fork 自己的差异说明，上游 README 与机器路径脚本不随树携带）；`iaqs` 删掉整层加密：ChaCha20-Poly1305 页加密、HMAC/PBKDF2 派生、keyring、wrapped-key MANIFEST 及对应测试删除，MANIFEST 变为 44 字节明文头（格式版本 2，旧密码格式按名字拒绝），密码/`passwd`/`rekey`/`--password-stdin`/默认口令阶梯从 CLI 与 i18n 消失；新增 `--repo`（库）与 `--worktree`（被版本化的树）分离，`Repo::init/open` 接受两路径。shell 侧新增 `shell/mods/versioning.js`：库在 `<安装目录>/history/<包名>-<路径哈希>`、`mod.open`/`mod.scaffold` 自动建库并把包路径记在库内、命令构造带 `--worktree`，`vcs.status/save/log/restore` 四个动词（缺二进制时如实回 `unavailable`）与 mod 卡默认折叠的“Its versions”分区（保存带消息、恢复前先保存当前状态）。验证：fork 套件 233/233（`tools/build-iaqs.ps1 -Strip -Tests`），CLI 全链路 smoke（init/status/add/commit/log/restore，MANIFEST 44 字节），`grep` 证明 `chacha|pbkdf2|hmac|keyring|rekey|passwd` 在 `iaqs/src`、`iaqs/tests` 无残留；shell 侧 `selftest/history.mjs` 单测 + 真二进制往返（未构建时 skip）、`selftest/dispatch.mjs` 转发帧、mods 729/729；`python tools/path_guard.py --strict` 356 文件 0 error。
 
 ## 已关闭（历轮累计，均有代码证据）
 
@@ -78,6 +79,8 @@
 | G57 诊断只给代码，不给下一步 | 第九轮：`shell/web/diagnostic-hints.mjs` 的 `hintFor(code)`（`hint.<CODE>` 键，未知码返回空串，不编造建议）；problems 卡每行状态下方追加提示并随语言切换；`selftest/i18n.mjs` 钉住 38 个 code 都有两语言提示 |
 | G58 首次运行是空板子 | 第九轮：新 `start` 卡（三步引导 + 打开/校验/新建按钮 + "不再显示"）注册进 `cards.mjs`；`shell/web/main.mjs` 在 `onboarded` 为假且板子上没有 start 卡时 `openStartCard()`，`start` 命令与设置卡按钮可再唤出，`onboarded()` 写回 `preferences.json`；`selftest/cards.mjs` 钉注册、`selftest/i18n.mjs` 钉文案键 |
 | G59 只能导入单个文件，收到 zip 只能手工解开 | 第十轮：`zip.js` 读侧（EOCD/单盘/zip64/加密/数据描述符/压缩方法/entry size/inflate/CRC 全查，名称 UTF-8→GBK→latin1 解码，`safeEntryName` 拒绝空名/NUL/绝对路径/盘符/`..`/归一重名，上限 20000×64 MiB×512 MiB）；`importZipPackage` 两种包形、目标旁建树后暂存换入、已有目录需 overwrite 且整替换、导入后回传 `validatePackage` 报告；CLI `unpack`；mod 卡 import 区一行；`selftest/importzip.mjs` 21 条（mods 706/706） |
+| G61 包没有版本历史，改坏了只能重来 | 第十一轮：fork 的 `iaqs/`（明文存储、`--repo`/`--worktree` 两路径）+ `shell/mods/versioning.js`（库在 `<安装目录>/history/<包名>-<路径哈希>`，`mod.open`/`mod.scaffold` 自动建库，状态/保存/日志/恢复四个操作，缺二进制回 `unavailable`）+ `vcs.*` 四个转发动词 + mod 卡折叠的“Its versions”分区（保存可带消息、恢复前先保存当前状态）；`selftest/history.mjs` 单测（含 `--worktree` 参数与库路径规则）与真二进制往返（建库/改文件/status/commit/log/restore，未构建时 skip）、`selftest/dispatch.mjs` 转发帧（mods 729/729） |
+| G62 版本库带着本项目不需要的密码与加密 | 第十一轮：`iaqs/` 删除加密层（`chacha20poly1305`/`hmac`/`keys` 与对应测试删除，`crypto/` 只留 SHA-256/SHA-1/CRC-32C/RNG），MANIFEST 改为 44 字节明文头（格式版本 2），旧密码格式按名字拒绝，密码面（`passwd`/`rekey`/`--password-stdin`/`IAQS_PASSWORD`/默认口令/交互提示/退出码 4）全部移除；存储检查保留（页/槽 CRC、WAL 重放与截断、段合并、MANIFEST 往返与损坏、pager 代际、超页拒绝），套件 233/233；`grep` 无加密符号残留 |
 
 ## 仍然成立（本轮逐条核实）
 

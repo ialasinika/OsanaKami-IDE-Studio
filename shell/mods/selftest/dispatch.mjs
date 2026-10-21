@@ -118,6 +118,47 @@ export async function frame(id, method, params) {
     rmSync(seamDocsRoot, { recursive: true, force: true });
   }
 
+  /*
+   * G61: the version verbs are window-only; the history executor is injected, so
+   * this frame proves the table forwards the package directory (and the message
+   * or oid) rather than that a machine has a store.  Without the injection the
+   * verbs must still answer "unavailable", not throw.
+   */
+  const seamCalls = [];
+  const seamHistory = {
+    ensure: (dir) => { seamCalls.push(["ensure", dir]); return { ok: true, store: "store", created: true }; },
+    status: (dir) => { seamCalls.push(["status", dir]); return { ok: true, entries: [] }; },
+    save: (dir, message) => { seamCalls.push(["save", dir, message]); return { ok: true, committed: true, oid: "0123456789ab" }; },
+    log: (dir, limit) => { seamCalls.push(["log", dir, limit]); return { ok: true, commits: [{ oid: "0123456789ab", message: "one" }] }; },
+    reset: (dir, oid) => { seamCalls.push(["reset", dir, oid]); return { ok: true, oid }; },
+  };
+  const historyMods = createMods({ modsRoot: seamDocsRoot, history: seamHistory });
+  const vcsSave = await dispatch({ jsonrpc: "2.0", id: 910, method: "vcs.save", params: { dir: "DocsSeam", message: "first" } },
+    kernel, languages, historyMods);
+  check("vcs.save forwards the package and the message to the store",
+    vcsSave.error === undefined
+      && vcsSave.result !== undefined && vcsSave.result.committed === true
+      && seamCalls.some((call) => call[0] === "save" && call[1].endsWith("DocsSeam") && call[2] === "first"),
+    JSON.stringify({ result: vcsSave.result, calls: seamCalls }));
+  const vcsLog = await dispatch({ jsonrpc: "2.0", id: 911, method: "vcs.log", params: { dir: "DocsSeam", limit: 3 } },
+    kernel, languages, historyMods);
+  check("vcs.log forwards the limit and answers with commits",
+    vcsLog.result !== undefined && vcsLog.result.commits.length === 1
+      && seamCalls.some((call) => call[0] === "log" && call[2] === 3),
+    JSON.stringify({ result: vcsLog.result, calls: seamCalls }));
+  const vcsRestore = await dispatch({ jsonrpc: "2.0", id: 912, method: "vcs.restore", params: { dir: "DocsSeam", oid: "fedcba987654" } },
+    kernel, languages, historyMods);
+  check("vcs.restore forwards the version to bring back",
+    vcsRestore.result !== undefined && vcsRestore.result.ok === true
+      && seamCalls.some((call) => call[0] === "reset" && call[2] === "fedcba987654"),
+    JSON.stringify({ result: vcsRestore.result, calls: seamCalls }));
+  const vcsUnavailable = await dispatch({ jsonrpc: "2.0", id: 913, method: "vcs.status", params: { dir: "DocsSeam" } },
+    kernel, languages, mods);
+  check("without a store the verbs answer unavailable, not an error",
+    vcsUnavailable.error === undefined && vcsUnavailable.result !== undefined
+      && vcsUnavailable.result.reason === "unavailable",
+    JSON.stringify(vcsUnavailable));
+
   check("no mod.* frame reached the kernel", kernelCalls === 0, String(kernelCalls));
 
   /*

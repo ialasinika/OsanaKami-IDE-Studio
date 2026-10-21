@@ -187,7 +187,17 @@ function startShell({ workspace, modsRoot }) {
 
     const proc = spawn(process.execPath, args, {
       cwd: APP_ROOT,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        // The shell keeps package history in `<install>/history`; inside the
+        // wrapper `APP_ROOT` is `resources/`, so name the folder above it.
+        INFANTGOD_INSTALL_DIR: APP_ROOT === process.resourcesPath ? path.dirname(APP_ROOT) : APP_ROOT,
+        // The version store ships as an extra resource (`resources/iaqs.exe`);
+        // in a source checkout the fork lives at `build-iaqs/iaqs.exe` and the
+        // shell finds it on its own.
+        ...(APP_ROOT === process.resourcesPath ? { INFANTGOD_IAQS: path.join(APP_ROOT, "iaqs.exe") } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });

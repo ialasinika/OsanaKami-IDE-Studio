@@ -19,7 +19,7 @@ if (!HAVE_CORPUS) {
   const opened = mods.openMod({ dir: join(MODS_DIR, "MyMod") });
   check("openMod returns the documented members",
     JSON.stringify(Object.keys(opened).sort()) ===
-    JSON.stringify(["csvFiles", "defines", "diagnostics", "manifest", "root", "sprites", "summary", "yarnFiles"]),
+    JSON.stringify(["csvFiles", "defines", "diagnostics", "history", "manifest", "root", "sprites", "summary", "yarnFiles"]),
     JSON.stringify(Object.keys(opened)));
   check("manifest is the real mod.json",
     opened.manifest.name === "MyMod" && opened.manifest.loadOrder === 0,

@@ -9,9 +9,13 @@
 #
 # build-iaqs/ is the version store's CMake tree and test temp (tools/build-iaqs.ps1):
 # objects, CMake caches and iaqs.exe, none of which are source.
+#
+# history/ is where this checkout keeps package history when it runs from the
+# source tree: each package has one opaque iaqs store, not source.
 # ---------------------------------------------------------------------------
 build/
 build-iaqs/
+history/
 
 # ---------------------------------------------------------------------------
 # workspace-local state (the board document lives at <root>/.infantgod/board.json)
