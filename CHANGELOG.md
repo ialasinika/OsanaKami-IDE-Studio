@@ -14,7 +14,7 @@ retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  Th
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
-## Unreleased
+## v0.1.3-beta — 2026-10-21
 
 ### The installer asks where the app goes and what it puts on the desktop
 

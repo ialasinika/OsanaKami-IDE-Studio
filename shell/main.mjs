@@ -50,7 +50,7 @@ const WEB_DIR = path.join(SHELL_DIR, "web");
 const LANGS_DIR = path.join(ROOT, "langs");
 const MODS_DIR = path.join(SHELL_DIR, "mods");
 
-const SHELL_VERSION = "0.1.2-beta";
+const SHELL_VERSION = "0.1.3-beta";
 const DEFAULT_KERNEL = process.platform === "win32"
   ? path.join(ROOT, "build", "infantgod.exe")
   : path.join(ROOT, "build", "infantgod");
