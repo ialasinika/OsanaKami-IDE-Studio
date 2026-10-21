@@ -16,6 +16,30 @@ stands in this tree.
 
 ## Unreleased
 
+### The installer asks where the app goes and what it puts on the desktop
+
+Two things the installer decided for the user are now questions. The folder page
+was already there and stays: the install directory is chosen on it, and a folder
+holding someone else's files is still refused there before anything is written.
+What was not there is a way to say no to a shortcut, or yes to a desktop one --
+the installer always created the Start Menu shortcut and never a desktop one.
+
+A page after the folder page now carries two checkboxes, "Create a desktop
+shortcut" and "Add OsanaKami IDE Studio to the Start Menu". A fresh install
+starts with both ticked; a silent install, which never shows the page, uses that
+same default. An upgrade starts from the choice the previous install recorded in
+`HKCU\Software\OsanaKami IDE Studio` -- a tree installed before these options
+existed reads as "Start Menu yes, desktop no", which is what it did -- and
+unticking a box removes the shortcut that install had made. The uninstaller
+removes both shortcuts whether or not this run created them, alongside the
+manifest's files.
+
+`python tools/installer_smoke.py` gained the fifth promise: a silent install
+creates both shortcuts and the uninstaller removes both, while a refused install
+makes neither. Two single-line sabotages -- the fresh-install desktop default and
+the uninstaller's desktop delete -- each fail that promise, and the script puts
+the file back byte for byte.
+
 ### The kernel cannot be talked out of its workspace, and a write publishes a file
 
 Three promises the kernel has been making to its callers were only true as far

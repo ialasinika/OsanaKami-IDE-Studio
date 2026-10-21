@@ -18,6 +18,10 @@
 
 Unicode true
 !include "MUI2.nsh"
+; nsDialogs draws the shortcut page; LogicLib keeps its callbacks reading as
+; conditions rather than as label arithmetic.
+!include "nsDialogs.nsh"
+!include "LogicLib.nsh"
 
 ; --------------------------------------------------------------------------
 ; Inputs (overridable with -D on the makensis command line)
@@ -119,6 +123,16 @@ VIAddVersionKey "LegalCopyright" "${APP_PUBLISHER}"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Run ${APP_NAME}"
 
+; The shortcut choices live in variables, not in the page's controls: a silent
+; install never shows the page, and the install section still has to know what to
+; create.  .onInit gives them their defaults; the page's leave callback overwrites
+; them with what the user ticked.
+Var ShortcutDialog
+Var ShortcutDesktopCheck
+Var ShortcutStartMenuCheck
+Var ShortcutDesktop
+Var ShortcutStartMenu
+
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${LICENCE_FILE}"
 ; A directory that already holds someone else's files is not ours to write into:
@@ -127,6 +141,10 @@ VIAddVersionKey "LegalCopyright" "${APP_PUBLISHER}"
 ; already there) passes; an empty or new directory passes.
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE CheckInstallDir
 !insertmacro MUI_PAGE_DIRECTORY
+; Where the app is reachable from is the user's choice, so it is asked on its own
+; page rather than assumed: both shortcuts are created only when ticked, and an
+; upgrade that unticks one removes the shortcut the previous install made.
+Page custom ShortcutPageCreate ShortcutPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
@@ -167,6 +185,48 @@ FunctionEnd
 ; the /D target.  Interactive installs run it twice, on the same directory.
 Function .onInit
   Call CheckInstallDir
+
+  ; Shortcut defaults.  A fresh install offers both.  An upgrade keeps whatever
+  ; the previous install recorded, so an unticked box stays unticked across
+  ; versions; a tree installed before these options existed had a Start Menu
+  ; shortcut and no desktop one, which is what a missing value reads as.
+  StrCpy $ShortcutDesktop "1"
+  StrCpy $ShortcutStartMenu "1"
+  IfFileExists "$INSTDIR\install-manifest.txt" 0 shortcut_defaults_ready
+    StrCpy $ShortcutDesktop "0"
+    ReadRegStr $0 HKCU "${APP_KEY}" "DesktopShortcut"
+    StrCmp $0 "" +2
+      StrCpy $ShortcutDesktop $0
+    ReadRegStr $0 HKCU "${APP_KEY}" "StartMenuShortcut"
+    StrCmp $0 "" +2
+      StrCpy $ShortcutStartMenu $0
+  shortcut_defaults_ready:
+FunctionEnd
+
+; The checkbox page.  MUI2 has no macro for "one page with two checkboxes", so
+; this is a plain nsDialogs page inserted between the directory and install
+; pages; MUI_HEADER_TEXT keeps its heading in step with the rest.
+Function ShortcutPageCreate
+  !insertmacro MUI_HEADER_TEXT "Choose shortcuts" "Choose where ${APP_NAME} should be easy to reach."
+  nsDialogs::Create 1018
+  Pop $ShortcutDialog
+  ${If} $ShortcutDialog == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateCheckBox} 0 0u 100% 12u "Create a &desktop shortcut"
+  Pop $ShortcutDesktopCheck
+  ${NSD_SetState} $ShortcutDesktopCheck $ShortcutDesktop
+  ${NSD_CreateCheckBox} 0 22u 100% 12u "Add ${APP_NAME} to the &Start Menu"
+  Pop $ShortcutStartMenuCheck
+  ${NSD_SetState} $ShortcutStartMenuCheck $ShortcutStartMenu
+  nsDialogs::Show
+FunctionEnd
+
+Function ShortcutPageLeave
+  ${NSD_GetState} $ShortcutDesktopCheck $0
+  StrCpy $ShortcutDesktop $0
+  ${NSD_GetState} $ShortcutStartMenuCheck $0
+  StrCpy $ShortcutStartMenu $0
 FunctionEnd
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -176,7 +236,8 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
 ; --------------------------------------------------------------------------
-; Install: lay down dist\win-unpacked verbatim, shortcut, Add/Remove entry
+; Install: lay down dist\win-unpacked verbatim, the chosen shortcuts, Add/Remove
+; entry
 ; --------------------------------------------------------------------------
 Section "!${APP_NAME}" SecInstall
   SectionIn RO
@@ -197,8 +258,24 @@ Section "!${APP_NAME}" SecInstall
   ; Embedded here, at build time -- no second makensis pass, no self-exec.
   WriteUninstaller "$INSTDIR\${UNINST_EXE}"
 
-  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  ; Shortcuts are opt-in, and the choice outlives the run: a shortcut the
+  ; previous install made is removed when its box is unticked this time.  Silent
+  ; installs use the .onInit defaults; the registry values let a later upgrade
+  ; show those same defaults back.
+  StrCmp $ShortcutStartMenu "1" shortcut_start_menu_create
+    Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+    RMDir "$SMPROGRAMS\${APP_NAME}"
+    Goto shortcut_start_menu_done
+  shortcut_start_menu_create:
+    CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+    CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  shortcut_start_menu_done:
+  StrCmp $ShortcutDesktop "1" shortcut_desktop_create
+    Delete "$DESKTOP\${APP_NAME}.lnk"
+    Goto shortcut_desktop_done
+  shortcut_desktop_create:
+    CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
+  shortcut_desktop_done:
 
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
@@ -212,6 +289,8 @@ Section "!${APP_NAME}" SecInstall
 
   WriteRegStr HKCU "${APP_KEY}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${APP_KEY}" "Version" "${APP_VERSION}"
+  WriteRegStr HKCU "${APP_KEY}" "DesktopShortcut" "$ShortcutDesktop"
+  WriteRegStr HKCU "${APP_KEY}" "StartMenuShortcut" "$ShortcutStartMenu"
 SectionEnd
 
 ; --------------------------------------------------------------------------
@@ -230,6 +309,9 @@ Section "Uninstall"
   SetShellVarContext current
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
+  ; The desktop shortcut is the same kind of thing as the Start Menu one: ours
+  ; by name, gone whether or not this install happened to create it.
+  Delete "$DESKTOP\${APP_NAME}.lnk"
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "${APP_KEY}"
   IfFileExists "$INSTDIR\install-manifest.txt" uninstall_files 0

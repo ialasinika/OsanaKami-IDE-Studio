@@ -12,11 +12,14 @@ from the payload walk) and removes only the files that list names, plus refuses 
 folder that holds someone else's files.
 
 This script compiles a tiny installer (a payload of two files, no signing and no
-payload audit: ``--dev --no-audit``) and checks the four promises, on the real
+payload audit: ``--dev --no-audit``) and checks the five promises, on the real
 Windows installer and the real uninstaller:
 
   install    a new folder gets the payload, the licence, the manifest, the
              uninstaller -- and an upgrade over the same folder succeeds;
+  shortcuts  a silent install (which never shows the checkbox page) creates the
+             desktop and Start Menu shortcuts from the page's defaults, and the
+             uninstaller removes both;
   uninstall  the payload, the licence, the manifest and the uninstaller go;
              a stranger's file at the top and in a subdirectory stay, and the
              folders that still hold them stay;
@@ -71,6 +74,19 @@ def wait_until(predicate, seconds: float = 20.0) -> bool:
             return True
         time.sleep(0.1)
     return predicate()
+
+
+def known_folder(name: str) -> Path:
+    """Ask Windows where a shell folder actually is (Desktop may be redirected)."""
+    done = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+         f"[Environment]::GetFolderPath('{name}')"],
+        capture_output=True, text=True, timeout=60,
+    )
+    found = done.stdout.strip()
+    if done.returncode != 0 or not found:
+        fail(f"could not read the {name} folder: {(done.stdout + done.stderr).strip()}")
+    return Path(found)
 
 
 def main() -> int:
@@ -138,6 +154,17 @@ def main() -> int:
         fail(f"upgrade over the same folder exited {code}")
 
     # ------------------------------------------------------------------
+    # the shortcut page's defaults, for an install that never shows the page
+    # ------------------------------------------------------------------
+    desktop = known_folder("Desktop")
+    programs = known_folder("Programs")
+    desktop_link = desktop / f"{app_name}.lnk"
+    start_menu_link = programs / app_name / f"{app_name}.lnk"
+    for label, link in (("desktop", desktop_link), ("Start Menu", start_menu_link)):
+        if not link.exists():
+            fail(f"a silent install (both boxes default on) left no {label} shortcut at {link}")
+
+    # ------------------------------------------------------------------
     # a stranger's files are not the uninstaller's to delete
     # ------------------------------------------------------------------
     # Keep a copy of the uninstaller before it deletes itself: the last check
@@ -149,6 +176,9 @@ def main() -> int:
     uninstall(installed)
     if not wait_until(lambda: not (installed / "install-manifest.txt").exists()):
         fail("uninstall did not remove install-manifest.txt")
+    for label, link in (("desktop", desktop_link), ("Start Menu", start_menu_link)):
+        if not wait_until(lambda: not link.exists()):
+            fail(f"uninstall left the {label} shortcut behind at {link}")
     survivors = sorted(str(p.relative_to(installed)).replace("\\", "/")
                        for p in installed.rglob("*") if p.is_file())
     if survivors != ["mine/keep.txt", "user-note.txt"]:
@@ -165,6 +195,9 @@ def main() -> int:
         fail(f"install into a folder holding a stranger's file exited {code}, expected 2 (Abort)")
     if (guarded / app_exe).exists():
         fail("refused install wrote the app anyway")
+    for label, link in (("desktop", desktop_link), ("Start Menu", start_menu_link)):
+        if link.exists():
+            fail(f"a refused install still made the {label} shortcut at {link}")
 
     # ------------------------------------------------------------------
     # an uninstaller without its manifest deletes nothing
@@ -181,8 +214,8 @@ def main() -> int:
 
     if not args.keep:
         shutil.rmtree(WORK)
-    print("installer-smoke: ok -- 4 promises held (install+upgrade, scoped uninstall, "
-          "foreign-folder guard, no-manifest no-delete)")
+    print("installer-smoke: ok -- 5 promises held (install+upgrade, shortcuts, "
+          "scoped uninstall, foreign-folder guard, no-manifest no-delete)")
     return 0
 
 

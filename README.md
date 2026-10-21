@@ -711,10 +711,14 @@ with `RMDir /r "$INSTDIR"`. A file you put in the folder stops that folder's
 removal instead of being deleted with it, and a folder that holds anything not
 the app's is refused before install (a silent install exits 2). A folder without
 the manifest is treated as not provably ours: the uninstaller removes its
-shortcuts and registry keys and nothing else. `python tools/installer_smoke.py`
-compiles a two-file installer and checks all four promises against the real
-Windows installer and uninstaller; `make test` runs it (`installer-check`) and
-skips cleanly on a machine without NSIS.
+shortcuts and registry keys and nothing else. The install directory is chosen on
+the installer's folder page; a page after it asks where the app should be easy to
+reach — a desktop shortcut and a Start Menu one, both ticked for a fresh install,
+both removable by unticking, and remembered across upgrades. The uninstaller
+removes both. `python tools/installer_smoke.py` compiles a two-file installer and
+checks all five promises against the real Windows installer and uninstaller (the
+fifth: a silent install makes both shortcuts and uninstall removes them); `make
+test` runs it (`installer-check`) and skips cleanly on a machine without NSIS.
 
 The installer can be signed, and signing is a step of the same script rather than a
 second toolchain: `node tools/make-installer.mjs --sign` signs the finished
