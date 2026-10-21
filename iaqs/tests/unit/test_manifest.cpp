@@ -1,9 +1,12 @@
 #include <array>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
 
 #include "core/util.h"
-#include "db/keys.h"
+#include "crypto/crc32c.h"
 #include "db/manifest.h"
 #include "harness.h"
 
@@ -13,48 +16,60 @@ using namespace iaqs::db;
 namespace {
 
 Manifest make_manifest() {
-  return Manifest::create_public(8192, 16ull * 1024 * 1024, 1000);
+  return Manifest::create(8192, 16ull * 1024 * 1024);
 }
 
 std::filesystem::path temp_manifest_path() {
   return std::filesystem::temp_directory_path() / "iaqs_test_manifest.bin";
 }
 
+// A format-1 manifest: same magic, format_version 1, and the old key-mode byte
+// at offset 40. This build has no code to read it and must say why.
+Bytes legacy_manifest_bytes() {
+  Bytes out(153, '\0');
+  std::memcpy(out.data(), "IAQSDB1", 8);
+  uint8_t* p = reinterpret_cast<uint8_t*>(out.data());
+  store_u32_le(p + 8, 1);
+  store_u32_le(p + 12, 8192);
+  store_u64_le(p + 16, 16ull * 1024 * 1024);
+  p[40] = 1;
+  return out;
+}
+
+void write_bytes(const std::filesystem::path& path, const Bytes& data) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out.write(data.data(), static_cast<std::streamsize>(data.size()));
+}
+
 }  // namespace
 
 IAQS_TEST(manifest, encode_decode_roundtrip) {
-  Manifest original = make_manifest();
-  Keyring::initialize(original, "correct horse battery staple");
+  const Manifest original = make_manifest();
   const Bytes encoded = original.encode();
   CHECK_EQ(encoded.size(), Manifest::kEncodedSize);
 
   Manifest decoded;
   CHECK(Manifest::decode(bytes_span(encoded), decoded));
+  CHECK_EQ(decoded.format_version, kManifestFormatVersion);
   CHECK_EQ(decoded.page_size, 8192u);
   CHECK_EQ(decoded.segment_max, original.segment_max);
-  CHECK_EQ(decoded.kdf_iters, 1000u);
   CHECK(decoded.db_uuid == original.db_uuid);
-  CHECK(decoded.kdf_salt == original.kdf_salt);
-  CHECK(decoded.wrapped_dek_ciphertext == original.wrapped_dek_ciphertext);
-  CHECK(decoded.verifier_tag == original.verifier_tag);
 }
 
 IAQS_TEST(manifest, file_roundtrip) {
-  Manifest original = make_manifest();
-  Keyring::initialize(original, "pw");
+  const Manifest original = make_manifest();
   const auto path = temp_manifest_path();
   std::filesystem::remove(path);
   save_manifest(path.string(), original);
   const Manifest loaded = load_manifest(path.string());
   CHECK(loaded.db_uuid == original.db_uuid);
-  Keyring ring;
-  CHECK(ring.unlock(loaded, "pw"));
+  CHECK_EQ(loaded.page_size, original.page_size);
+  CHECK_EQ(loaded.segment_max, original.segment_max);
   std::filesystem::remove(path);
 }
 
 IAQS_TEST(manifest, rejects_corruption) {
-  Manifest original = make_manifest();
-  Keyring::initialize(original, "pw");
+  const Manifest original = make_manifest();
   Bytes encoded = original.encode();
 
   Bytes bad_crc = encoded;
@@ -68,66 +83,46 @@ IAQS_TEST(manifest, rejects_corruption) {
   Bytes bad_magic = encoded;
   bad_magic[0] = 'X';
   CHECK(!Manifest::decode(bytes_span(bad_magic), decoded));
+
+  // Sizing that the pager can never honour is rejected even with a good CRC.
+  Bytes bad_page_size = encoded;
+  uint8_t* p = reinterpret_cast<uint8_t*>(bad_page_size.data());
+  store_u32_le(p + 12, 512);
+  store_u32_le(p + 40, crc32c(p, 40));
+  CHECK(!Manifest::decode(bytes_span(bad_page_size), decoded));
 }
 
-IAQS_TEST(manifest, random_fields_differ) {
-  Manifest a = make_manifest();
-  Manifest b = make_manifest();
+IAQS_TEST(manifest, random_identity_differs) {
+  const Manifest a = make_manifest();
+  const Manifest b = make_manifest();
   CHECK(!(a.db_uuid == b.db_uuid));
-  CHECK(!(a.kdf_salt == b.kdf_salt));
 }
 
-IAQS_TEST(keys, unlock_success_and_wrong_password) {
-  Manifest m = make_manifest();
-  Keyring::initialize(m, "s3cret");
-  {
-    Keyring ring;
-    CHECK(ring.unlock(m, "s3cret"));
-    CHECK(ring.unlocked());
-    CHECK(!(ring.keys().dek == Key32{}));
+IAQS_TEST(manifest, legacy_password_manifest_is_refused_by_name) {
+  const auto path = temp_manifest_path();
+  std::filesystem::remove(path);
+  write_bytes(path, legacy_manifest_bytes());
+  bool explained = false;
+  try {
+    load_manifest(path.string());
+  } catch (const std::runtime_error& error) {
+    explained = std::string(error.what()).find("password mode") != std::string::npos;
   }
-  Keyring wrong;
-  CHECK(!wrong.unlock(m, "wrong"));
-  CHECK(!wrong.unlocked());
+  CHECK(explained);
+  std::filesystem::remove(path);
 }
 
-IAQS_TEST(keys, subkeys_are_deterministic_and_distinct) {
-  Manifest m = make_manifest();
-  Keyring::initialize(m, "pw");
-  Keyring a;
-  Keyring b;
-  CHECK(a.unlock(m, "pw"));
-  CHECK(b.unlock(m, "pw"));
-  CHECK(a.keys().page_key == b.keys().page_key);
-  CHECK(a.keys().wal_key == b.keys().wal_key);
-  CHECK(a.keys().meta_key == b.keys().meta_key);
-  CHECK(!(a.keys().page_key == a.keys().wal_key));
-  CHECK(!(a.keys().page_key == a.keys().meta_key));
-  CHECK(!(a.keys().wal_key == a.keys().meta_key));
-}
-
-IAQS_TEST(keys, tampered_verifier_rejected) {
-  Manifest m = make_manifest();
-  Keyring::initialize(m, "pw");
-  m.verifier_tag[0] = static_cast<uint8_t>(m.verifier_tag[0] ^ 1);
-  Keyring ring;
-  CHECK(!ring.unlock(m, "pw"));
-}
-
-IAQS_TEST(keys, tampered_wrapped_dek_rejected) {
-  Manifest m = make_manifest();
-  Keyring::initialize(m, "pw");
-  m.wrapped_dek_ciphertext[5] = static_cast<uint8_t>(m.wrapped_dek_ciphertext[5] ^ 1);
-  Keyring ring;
-  CHECK(!ring.unlock(m, "pw"));
-}
-
-IAQS_TEST(keys, wipe_clears_state) {
-  Manifest m = make_manifest();
-  Keyring::initialize(m, "pw");
-  Keyring ring;
-  CHECK(ring.unlock(m, "pw"));
-  ring.wipe();
-  CHECK(!ring.unlocked());
-  CHECK(ring.keys().dek == Key32{});
+IAQS_TEST(manifest, unknown_manifest_is_refused) {
+  const auto path = temp_manifest_path();
+  std::filesystem::remove(path);
+  write_bytes(path, Bytes(Manifest::kEncodedSize, '\x5a'));
+  bool refused = false;
+  try {
+    load_manifest(path.string());
+  } catch (const std::runtime_error& error) {
+    refused = std::string(error.what()).find("corrupt or unsupported format") !=
+              std::string::npos;
+  }
+  CHECK(refused);
+  std::filesystem::remove(path);
 }

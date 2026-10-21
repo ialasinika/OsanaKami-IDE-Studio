@@ -1,13 +1,17 @@
 // The plaintext store this project creates: no password, checksummed pages,
-// and the upstream password-wrapped mode stays available beside it.
+// and a manifest that names the format instead of a key mode.
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
 
 #include "../harness.h"
 #include "db/database.h"
+#include "db/manifest.h"
 #include "db/row.h"
 #include "vcs/repo.h"
 
@@ -69,21 +73,36 @@ bool stored_somewhere(const std::string& dir, const std::string& needle) {
   return false;
 }
 
+// A format-1 manifest, which named a password-derived key mode. This build has
+// no such mode and must refuse the database instead of misreading it.
+void write_legacy_manifest(const std::string& dir) {
+  std::string bytes(153, '\0');
+  std::memcpy(bytes.data(), "IAQSDB1", 8);
+  uint8_t* p = reinterpret_cast<uint8_t*>(bytes.data());
+  store_u32_le(p + 8, 1);
+  store_u32_le(p + 12, 8192);
+  store_u64_le(p + 16, 16ull * 1024 * 1024);
+  p[40] = 1;
+  std::error_code ec;
+  fs::create_directories(fs::path(dir), ec);
+  std::ofstream out(fs::path(dir) / "MANIFEST", std::ios::binary | std::ios::trunc);
+  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
 }  // namespace
 
 IAQS_TEST(plain_store, round_trip_without_a_password) {
   TestDir dir("roundtrip");
   {
-    Database db = Database::create(dir.path(), "");
-    CHECK(db.encrypted() == false);
+    Database db = Database::create(dir.path());
+    CHECK_EQ(db.manifest().format_version, kManifestFormatVersion);
     db.create_table(notes_schema());
     Row row;
     row.values = {Value::integer(1), Value::text("plaintext-marker-4030")};
     db.insert_row("notes", row);
   }
   {
-    Database db = Database::open(dir.path(), "");
-    CHECK(db.encrypted() == false);
+    Database db = Database::open(dir.path());
     const auto rows = db.scan_rows("notes");
     CHECK(rows.size() == 1);
     CHECK(rows[0].second.values[1].bytes == "plaintext-marker-4030");
@@ -93,7 +112,7 @@ IAQS_TEST(plain_store, round_trip_without_a_password) {
 IAQS_TEST(plain_store, bodies_are_readable_on_disk) {
   TestDir dir("on-disk");
   {
-    Database db = Database::create(dir.path(), "");
+    Database db = Database::create(dir.path());
     db.create_table(notes_schema());
     Row row;
     row.values = {Value::integer(7), Value::text("visible-in-the-file-9182")};
@@ -103,39 +122,26 @@ IAQS_TEST(plain_store, bodies_are_readable_on_disk) {
   CHECK(stored_somewhere(dir.path(), "visible-in-the-file-9182"));
 }
 
-IAQS_TEST(plain_store, refuses_a_password_it_does_not_have) {
-  TestDir dir("no-password");
-  {
-    Database db = Database::create(dir.path(), "");
+IAQS_TEST(plain_store, refuses_a_manifest_that_names_a_removed_password_mode) {
+  TestDir dir("legacy");
+  write_legacy_manifest(dir.path());
+  bool explained = false;
+  try {
+    Database::open(dir.path());
+  } catch (const std::runtime_error& error) {
+    explained = std::string(error.what()).find("password mode") != std::string::npos;
   }
-  CHECK_THROW(Database::open(dir.path(), "something"), std::runtime_error);
-}
-
-IAQS_TEST(plain_store, password_operations_are_refused) {
-  TestDir dir("no-passwd-ops");
-  Database db = Database::create(dir.path(), "");
-  CHECK_THROW(db.change_password("new-password-1"), std::runtime_error);
-  CHECK_THROW(db.rekey_data(), std::runtime_error);
-}
-
-IAQS_TEST(plain_store, encrypted_mode_still_works_beside_it) {
-  TestDir dir("encrypted");
-  {
-    Database db = Database::create(dir.path(), "upstream-password-1");
-    CHECK(db.encrypted() == true);
-  }
-  CHECK_THROW(Database::open(dir.path(), ""), std::runtime_error);
-  CHECK_THROW(Database::open(dir.path(), "wrong-password"), std::runtime_error);
-  Database db = Database::open(dir.path(), "upstream-password-1");
-  CHECK(db.encrypted() == true);
+  CHECK(explained);
 }
 
 IAQS_TEST(plain_store, a_repository_initialises_without_a_password) {
   TestDir dir("repo");
   {
-    vcs::Repo repo = vcs::Repo::init(fs::path(dir.path()), "");
-    CHECK(repo.database().encrypted() == false);
+    vcs::Repo repo = vcs::Repo::init(fs::path(dir.path()));
+    CHECK_EQ(repo.database().manifest().format_version, kManifestFormatVersion);
+    repo.database().close();
   }
-  vcs::Repo reopened = vcs::Repo::open(fs::path(dir.path()), "");
-  CHECK(reopened.database().encrypted() == false);
+  vcs::Repo reopened = vcs::Repo::open(fs::path(dir.path()));
+  CHECK_EQ(reopened.database().manifest().format_version, kManifestFormatVersion);
+  reopened.database().close();
 }

@@ -100,10 +100,6 @@ struct ParsedArgs {
 };
 
 int open_error(const std::string& message) {
-  if (message.find("password") != std::string::npos) {
-    std::cerr << i18n::tr(Msg::ErrorPassword) << "\n";
-    return 4;
-  }
   std::cerr << "iaqs: " << message << "\n";
   return 1;
 }
@@ -192,16 +188,39 @@ ParsedArgs parse_args(const std::vector<std::string>& args,
   return out;
 }
 
+// The database and the tree it versions are two paths: --repo names the
+// database (where `.iaqs/` lives), --worktree names the tree. A plain
+// checkout passes neither and the two are the same directory.
+struct RepoLocation {
+  std::filesystem::path store;
+  std::filesystem::path worktree;
+};
+
+RepoLocation repo_location(const ParsedArgs& parsed) {
+  const fs::path store = vcs::Repo::find_root(
+      parsed.options.count("repo") ? path_arg(parsed.options.at("repo"))
+                                    : fs::current_path());
+  const fs::path worktree = parsed.options.count("worktree")
+                                ? path_arg(parsed.options.at("worktree"))
+                                : store;
+  return {store, worktree};
+}
+
 int cmd_init(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"lang", "repo"});
+  const ParsedArgs parsed = parse_args(args, {"lang", "repo", "worktree"});
   fs::path dir = fs::current_path();
   if (!parsed.positional.empty()) {
     const std::string& path = parsed.positional.back();
     const auto u8 = reinterpret_cast<const char8_t*>(path.data());
     dir = fs::path(std::u8string(u8, path.size()));
   }
+  const fs::path store =
+      parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : dir;
+  const fs::path worktree = parsed.options.count("worktree")
+                                ? path_arg(parsed.options.at("worktree"))
+                                : dir;
   try {
-    vcs::Repo repo = vcs::Repo::init(dir, std::string());
+    vcs::Repo repo = vcs::Repo::init(worktree, store);
     std::cout << i18n::tr(Msg::InitCreated, {fs_path_to_utf8(dir)}) << "\n";
     repo.database().close();
     return 0;
@@ -211,18 +230,16 @@ int cmd_init(const std::vector<std::string>& args) {
 }
 
 int cmd_add(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
-  const std::string repo_path = parsed.options.count("repo") ? parsed.options.at("repo") : "";
-  fs::path root;
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
+  RepoLocation loc{};
   try {
-    root = vcs::Repo::find_root(repo_path.empty() ? fs::current_path() : path_arg(repo_path));
+    loc = repo_location(parsed);
   } catch (const std::exception&) {
     std::cerr << i18n::tr(Msg::ErrorNotRepo) << "\n";
     return 1;
   }
-  const std::string password = std::string();
   try {
-    vcs::Repo repo = vcs::Repo::open(root, password);
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const bool all = parsed.options.count("A") || parsed.options.count("all");
     repo.add_paths(parsed.positional, all);
     repo.database().close();
@@ -233,11 +250,11 @@ int cmd_add(const std::vector<std::string>& args) {
 }
 
 int cmd_status(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     print_status(repo.status(), repo, parsed.options.count("porcelain") > 0);
     repo.database().close();
     return 0;
@@ -252,9 +269,9 @@ int cmd_commit(const std::vector<std::string>& args) {
   if (parsed.options.count("m")) message = parsed.options.at("m");
   if (parsed.options.count("message")) message = parsed.options.at("message");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const bool allow_empty = parsed.options.count("allow-empty") > 0;
     const bool amend = parsed.options.count("amend") > 0;
     const std::string oid = repo.commit(message, allow_empty, amend);
@@ -271,9 +288,9 @@ int cmd_log(const std::vector<std::string>& args) {
   size_t limit = 20;
   if (parsed.options.count("n")) limit = static_cast<size_t>(std::stoul(parsed.options.at("n")));
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const bool oneline = parsed.options.count("oneline") > 0;
     for (const auto& entry : repo.log(limit, parsed.options.count("all") > 0)) {
       const std::string first_line =
@@ -300,12 +317,12 @@ int cmd_log(const std::vector<std::string>& args) {
 }
 
 int cmd_show(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) return usage_error("show needs a revision");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string oid = repo.resolve(parsed.positional[0]);
     const vcs::Commit commit = repo.read_commit(oid);
     std::cout << "commit " << oid << "\n";
@@ -321,12 +338,12 @@ int cmd_show(const std::vector<std::string>& args) {
 }
 
 int cmd_cat_file(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) return usage_error("cat-file needs a revision");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     std::string object = repo.resolve(parsed.positional[0]);
     auto& store = repo.objects();
     if (parsed.positional.size() > 1) {
@@ -362,12 +379,12 @@ int cmd_cat_file(const std::vector<std::string>& args) {
 }
 
 int cmd_ls_tree(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   const std::string rev = parsed.positional.empty() ? "HEAD" : parsed.positional[0];
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string oid = repo.resolve(rev);
     std::string tree = oid;
     if (repo.objects().type_of(oid) == vcs::ObjType::Commit) tree = repo.read_commit(oid).tree;
@@ -382,11 +399,11 @@ int cmd_ls_tree(const std::vector<std::string>& args) {
 }
 
 int cmd_branch(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string head = repo.head_ref();
     if (parsed.positional.empty()) {
       const auto rows = repo.database().scan_rows("refs");
@@ -427,12 +444,12 @@ int cmd_branch(const std::vector<std::string>& args) {
 }
 
 int cmd_switch(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) return usage_error("switch needs a branch or revision");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string target = parsed.positional[0];
     // One code path for branches and revisions: checkout_commit refuses to
     // overwrite local changes unless --force, so switching can never silently
@@ -459,12 +476,12 @@ int cmd_switch(const std::vector<std::string>& args) {
 
 
 int cmd_merge(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) return usage_error("merge needs a branch or revision");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const vcs::Repo::MergeOutcome outcome = repo.merge(parsed.positional[0]);
     switch (outcome.kind) {
       case vcs::Repo::MergeOutcome::Kind::UpToDate:
@@ -494,11 +511,11 @@ int cmd_merge(const std::vector<std::string>& args) {
 }
 
 int cmd_info(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string head = repo.head_ref();
     const auto oid = repo.head_oid();
     std::cout << i18n::tr(Msg::RepoInfo, {fs_path_to_utf8(root)}) << "\n";
@@ -521,13 +538,13 @@ int cmd_info(const std::vector<std::string>& args) {
 }
 
 int cmd_gc(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   const bool dry_run = parsed.options.count("dry-run") || parsed.options.count("n") > 0;
   const bool full = parsed.options.count("full") > 0;
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     vcs::Repo::GcOptions options;
     options.dry_run = dry_run;
     options.full = full;
@@ -555,11 +572,11 @@ int cmd_gc(const std::vector<std::string>& args) {
 }
 
 int cmd_fsck(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const vcs::Repo::FsckReport report = repo.fsck();
     std::cout << i18n::tr(Msg::FsckChecked,
                           {std::to_string(report.objects),
@@ -586,13 +603,13 @@ int cmd_fsck(const std::vector<std::string>& args) {
 }
 
 int cmd_rm(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) return usage_error("rm needs at least one path");
   const bool cached = parsed.options.count("cached") > 0 || parsed.options.count("C") > 0;
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     repo.rm_paths(parsed.positional, cached);
     repo.database().close();
     return 0;
@@ -602,12 +619,12 @@ int cmd_rm(const std::vector<std::string>& args) {
 }
 
 int cmd_mv(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.size() != 2) return usage_error("mv needs <from> and <to>");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     repo.mv_path(parsed.positional[0], parsed.positional[1]);
     repo.database().close();
     return 0;
@@ -617,11 +634,11 @@ int cmd_mv(const std::vector<std::string>& args) {
 }
 
 int cmd_restore(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     // Restoring without paths reverts the whole tree; that is destructive, so it
     // requires an explicit --all (previously it silently reverted everything).
     if (parsed.positional.empty() && parsed.options.count("all") == 0) {
@@ -645,12 +662,12 @@ int cmd_restore(const std::vector<std::string>& args) {
 }
 
 int cmd_clean(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   const bool dry_run = parsed.options.count("dry-run") > 0 || parsed.options.count("n") > 0;
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const auto removed = repo.clean_untracked(dry_run);
     for (const auto& path : removed) std::cout << (dry_run ? "would remove " : "removed ") << path << "\n";
     std::cout << (dry_run ? "Would remove " : "Removed ") << removed.size()
@@ -690,9 +707,9 @@ int cmd_rev_parse(const std::vector<std::string>& args) {
   const ParsedArgs parsed = parse_args(filtered, {"repo", "lang"});
   const std::string rev = parsed.positional.empty() ? "HEAD" : parsed.positional[0];
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string oid = repo.resolve(rev);
     if (short_len > 0 && oid.size() > short_len) {
       std::cout << oid.substr(0, short_len) << "\n";
@@ -707,11 +724,11 @@ int cmd_rev_parse(const std::vector<std::string>& args) {
 }
 
 int cmd_checkpoint(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     repo.database().checkpoint();
     std::cout << i18n::tr(Msg::CheckpointDone) << "\n";
     repo.database().close();
@@ -780,9 +797,9 @@ int cmd_diff(const std::vector<std::string>& args) {
   const ParsedArgs parsed = parse_args(filtered, {"repo", "lang"});
   if (parsed.positional.size() > 2) return usage_error("diff takes at most two revisions");
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     std::map<std::string, Bytes> left;
     std::map<std::string, Bytes> right;
     if (parsed.positional.size() == 2) {
@@ -857,9 +874,9 @@ int cmd_diff(const std::vector<std::string>& args) {
 int cmd_tag(const std::vector<std::string>& args) {
   const ParsedArgs parsed = parse_args(args, {"repo", "lang", "m", "message"});
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     if (parsed.positional.empty()) {
       for (const auto& tag : repo.list_tags()) {
         std::cout << tag.name << " " << short_oid(tag.object);
@@ -892,12 +909,12 @@ int cmd_tag(const std::vector<std::string>& args) {
 }
 
 int cmd_reset(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   const bool hard = parsed.options.count("hard") > 0;
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     const std::string rev = parsed.positional.empty() ? std::string("HEAD")
                                                      : parsed.positional[0];
     if (!hard) {
@@ -922,9 +939,9 @@ int cmd_placeholder(const std::vector<std::string>& args) {
   const ParsedArgs parsed = parse_args(args, {"repo", "lang", "m", "message"});
   const std::string action = parsed.positional.empty() ? "list" : parsed.positional[0];
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     if (action == "list" || action == "ls") {
       const auto items = repo.list_placeholders();
       if (items.empty()) {
@@ -1009,9 +1026,9 @@ int cmd_export_git(const std::vector<std::string>& args) {
     return usage_error("export-git --format=pack requires --out <directory>");
   }
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     if (pack_format) {
       git::PackExportOptions options;
       options.identity.name = author.name;
@@ -1049,15 +1066,15 @@ int cmd_export_git(const std::vector<std::string>& args) {
 }
 
 int cmd_import_git(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   if (parsed.positional.empty()) {
     return usage_error("import-git requires a git directory");
   }
   const std::string source = parsed.positional.back();
   try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, std::string());
+    const RepoLocation loc = repo_location(parsed);
+    fs::path root = loc.store;
+    vcs::Repo repo = vcs::Repo::open(loc.worktree, loc.store);
     git::GitImportOptions options;
     options.force = parsed.options.count("force") != 0;
     const git::GitImportStats stats = git::import_git_dir(repo, path_arg(source), options);
@@ -1074,7 +1091,7 @@ int cmd_import_git(const std::vector<std::string>& args) {
 }
 
 int cmd_lang(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
+  const ParsedArgs parsed = parse_args(args, {"repo", "lang", "worktree"});
   const std::string action =
       parsed.positional.empty() ? "list" : parsed.positional[0];
   if (action == "list" || action == "ls") {
@@ -1196,7 +1213,8 @@ int run(int argc, char** argv) {
       // Global options may appear before the command; their values are not
       // commands even when they do not start with '-'.
       const bool takes_value =
-          arg == "--lang" || arg == "-lang" || arg == "-l" || arg == "--repo";
+          arg == "--lang" || arg == "-lang" || arg == "-l" || arg == "--repo" ||
+          arg == "--worktree";
       rest.push_back(arg);
       if (takes_value && i + 1 < args.size()) rest.push_back(args[++i]);
       continue;
@@ -1208,7 +1226,7 @@ int run(int argc, char** argv) {
     rest.push_back(arg);
   }
 
-  const ParsedArgs global = parse_args(rest, {"lang", "repo"});
+  const ParsedArgs global = parse_args(rest, {"lang", "repo", "worktree"});
   i18n::detect_language(find_language(global), "");
 
   if (command.empty() || command == "help" || command == "--help") {

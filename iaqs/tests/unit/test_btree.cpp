@@ -16,7 +16,6 @@
 
 #include "core/util.h"
 #include "crypto/rand.h"
-#include "db/keys.h"
 #include "db/page.h"
 #include "db/pager.h"
 #include "harness.h"
@@ -43,13 +42,6 @@ struct TmpBTreeDir {
   std::string dir = make_tmp_dir();
   ~TmpBTreeDir() { remove_tmp_dir(dir); }
 };
-
-Key32 test_key() {
-  Key32 key{};
-  key.fill(static_cast<uint8_t>(0x5A));
-  return key;
-}
-
 ByteSpan span(const std::string& bytes) {
   return ByteSpan(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
 }
@@ -151,11 +143,10 @@ std::size_t tree_height(Pager& pager, const PageRef& root) {
 
 IAQS_TEST(btree, empty_tree_find_scan_remove_and_persist) {
   TmpBTreeDir tmp;
-  const Key32 key = test_key();
   const std::string probe(FixedBTree::kKeySize, '\x01');
   PageRef root;
   {
-    Pager pager(tmp.dir, 8192, 8192ull * 64, key, 1);
+    Pager pager(tmp.dir, 8192, 8192ull * 64);
     FixedBTree tree = FixedBTree::create(pager);
     CHECK_EQ(page_type(pager, tree.root()), PageType::BTreeLeaf);
     CHECK(tree.root().page != 0u);
@@ -165,7 +156,7 @@ IAQS_TEST(btree, empty_tree_find_scan_remove_and_persist) {
     root = tree.root();
     pager.sync();
   }
-  Pager reopened(tmp.dir, 8192, 8192ull * 64, key, 1);
+  Pager reopened(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree(reopened, root);
   CHECK(!tree.find(span(probe)).has_value());
   CHECK(tree.scan().empty());
@@ -178,7 +169,7 @@ IAQS_TEST(btree, empty_tree_find_scan_remove_and_persist) {
 
 IAQS_TEST(btree, insert_find_scan_2000_random_keys) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 8192, 8192ull * 64, test_key(), 1);
+  Pager pager(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree = FixedBTree::create(pager);
   const std::vector<std::string> keys = random_keys(2000, 42);
   std::map<std::string, Rid, KeyLess> expected;
@@ -199,7 +190,7 @@ IAQS_TEST(btree, insert_find_scan_2000_random_keys) {
 
 IAQS_TEST(btree, overwrite_same_key_replaces_rid) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 8192, 8192ull * 64, test_key(), 1);
+  Pager pager(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree = FixedBTree::create(pager);
 
   const std::string key(FixedBTree::kKeySize, '\x33');
@@ -231,7 +222,7 @@ IAQS_TEST(btree, overwrite_same_key_replaces_rid) {
 
 IAQS_TEST(btree, remove_half_then_all_then_reinsert) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 8192, 8192ull * 64, test_key(), 1);
+  Pager pager(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree = FixedBTree::create(pager);
   const std::vector<std::string> keys = random_keys(2000, 99);
   std::map<std::string, Rid, KeyLess> present;
@@ -275,7 +266,7 @@ IAQS_TEST(btree, remove_half_then_all_then_reinsert) {
 
 IAQS_TEST(btree, ascending_then_descending_keys) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 1024, 1024ull * 512, test_key(), 2);
+  Pager pager(tmp.dir, 1024, 1024ull * 512);
   FixedBTree tree = FixedBTree::create(pager);
   std::map<std::string, Rid, KeyLess> expected;
 
@@ -304,7 +295,7 @@ IAQS_TEST(btree, ascending_then_descending_keys) {
 
 IAQS_TEST(btree, insert_5000_keys_reports_height_and_timing) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 1024, 1024ull * 512, test_key(), 2);
+  Pager pager(tmp.dir, 1024, 1024ull * 512);
   FixedBTree tree = FixedBTree::create(pager);
   const std::vector<std::string> keys = random_keys(5000, 7);
   std::map<std::string, Rid, KeyLess> expected;
@@ -352,7 +343,6 @@ IAQS_TEST(btree, insert_5000_keys_reports_height_and_timing) {
 
 IAQS_TEST(btree, reopen_pager_keeps_tree_usable) {
   TmpBTreeDir tmp;
-  const Key32 key = test_key();
   const std::vector<std::string> keys = random_keys(2000, 11);
   std::map<std::string, Rid, KeyLess> expected;
   for (std::size_t i = 0; i < keys.size(); ++i) {
@@ -361,14 +351,14 @@ IAQS_TEST(btree, reopen_pager_keeps_tree_usable) {
 
   PageRef root;
   {
-    Pager pager(tmp.dir, 8192, 8192ull * 64, key, 4);
+    Pager pager(tmp.dir, 8192, 8192ull * 64);
     FixedBTree tree = FixedBTree::create(pager);
     for (const auto& entry : expected) tree.insert(span(entry.first), entry.second);
     root = tree.root();
     pager.sync();
   }
   {
-    Pager pager(tmp.dir, 8192, 8192ull * 64, key, 4);
+    Pager pager(tmp.dir, 8192, 8192ull * 64);
     FixedBTree tree(pager, root);
     expect_find(tree, expected);
     expect_scan(tree, expected);
@@ -393,7 +383,7 @@ IAQS_TEST(btree, reopen_pager_keeps_tree_usable) {
     root = tree.root();
     pager.sync();
   }
-  Pager reopened(tmp.dir, 8192, 8192ull * 64, key, 4);
+  Pager reopened(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree(reopened, root);
   expect_find(tree, expected);
   expect_scan(tree, expected);
@@ -401,7 +391,7 @@ IAQS_TEST(btree, reopen_pager_keeps_tree_usable) {
 
 IAQS_TEST(btree, rejects_bad_key_lengths) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 8192, 8192ull * 64, test_key(), 0);
+  Pager pager(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree = FixedBTree::create(pager);
   const std::string short_key(FixedBTree::kKeySize - 1, 's');
   const std::string long_key(FixedBTree::kKeySize + 1, 'l');
@@ -426,7 +416,7 @@ IAQS_TEST(btree, rejects_bad_key_lengths) {
 
 IAQS_TEST(btree, rid_roundtrip_exact_fields) {
   TmpBTreeDir tmp;
-  Pager pager(tmp.dir, 8192, 8192ull * 64, test_key(), 0);
+  Pager pager(tmp.dir, 8192, 8192ull * 64);
   FixedBTree tree = FixedBTree::create(pager);
 
   Rid first;

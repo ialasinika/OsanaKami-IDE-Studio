@@ -1,4 +1,4 @@
-// Repository layer: a work tree over the encrypted object database.
+// Repository layer: a work tree over the object database.
 #pragma once
 
 #include <cstdint>
@@ -58,8 +58,14 @@ class Repo {
   // Walks upwards from `start` until a directory containing `.iaqs/` is found.
   static std::filesystem::path find_root(const std::filesystem::path& start);
 
-  static Repo init(const std::filesystem::path& workdir, std::string_view password);
-  static Repo open(const std::filesystem::path& workdir, std::string_view password);
+  static Repo init(const std::filesystem::path& workdir);
+  // The database lives under `store_root` (where `.iaqs/` is created);
+  // `workdir` is the tree whose files the versions describe.
+  static Repo init(const std::filesystem::path& workdir,
+                   const std::filesystem::path& store_root);
+  static Repo open(const std::filesystem::path& workdir);
+  static Repo open(const std::filesystem::path& workdir,
+                   const std::filesystem::path& store_root);
 
   Repo(Repo&&) = default;
   Repo& operator=(Repo&&) = default;
@@ -67,7 +73,8 @@ class Repo {
   Repo& operator=(const Repo&) = delete;
 
   const std::filesystem::path& workdir() const { return workdir_; }
-  std::filesystem::path iaqs_dir() const { return workdir_ / ".iaqs"; }
+  const std::filesystem::path& store_dir() const { return store_dir_; }
+  std::filesystem::path iaqs_dir() const { return store_dir_ / ".iaqs"; }
   db::Database& database() { return db_; }
   ObjectStore& objects() { return store_; }
 
@@ -153,9 +160,6 @@ class Repo {
   // work tree and index to match it (git reset --hard semantics).
   void reset_hard(std::string_view rev);
 
-  // Re-wraps the DEK under a new password; data stays readable.
-  void change_password(std::string_view new_password);
-
   // ------------------------------------------------------------- maintenance
   // All refs (heads and tags) as (name, oid) pairs.
   std::vector<std::pair<std::string, std::string>> list_refs();
@@ -220,7 +224,8 @@ class Repo {
   void set_default_config();
 
  private:
-  Repo(std::filesystem::path workdir, db::Database database, std::string_view password);
+  Repo(std::filesystem::path workdir, std::filesystem::path store_dir,
+       db::Database database);
 
   std::vector<IndexEntry> tracked_files();  // files on disk, ignored ones excluded
   Bytes read_blob(const std::string& oid);
@@ -237,9 +242,9 @@ class Repo {
   void replace_index(const std::vector<IndexEntry>& entries);
 
   std::filesystem::path workdir_;
+  std::filesystem::path store_dir_;
   db::Database db_;
   ObjectStore store_;
-  std::string password_;
 };
 
 // "2026-10-20 17:30 +0800" for a unix timestamp.

@@ -48,7 +48,7 @@ void commit_file(vcs::Repo& repo, const fs::path& root, const std::string& path,
 
 // Builds a divergent history: main changes a.txt, feature changes a.txt too.
 vcs::Repo diverged_repo(const fs::path& root) {
-  vcs::Repo repo = vcs::Repo::init(root, "audit-password-123");
+  vcs::Repo repo = vcs::Repo::init(root);
   commit_file(repo, root, "a.txt", "base\n", "base");
   const std::string base = *repo.head_oid();
   repo.database().begin();
@@ -122,7 +122,7 @@ IAQS_TEST(vcs_merge, conflict_region_covers_all_changes_of_a_side) {
 
 IAQS_TEST(vcs_repo, status_detects_same_size_edit_with_restored_mtime) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "audit-password-123");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "aaaa\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("first", false, false);
@@ -138,7 +138,7 @@ IAQS_TEST(vcs_repo, status_detects_same_size_edit_with_restored_mtime) {
 
 IAQS_TEST(vcs_repo, tag_names_are_validated) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "audit-password-123");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "hello\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("first", false, false);

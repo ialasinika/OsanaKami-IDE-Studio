@@ -1,4 +1,4 @@
-// Logical page format (plaintext, before compression/encryption).
+// Logical page format (plaintext, as stored inside a slot).
 #pragma once
 
 #include <cstddef>
@@ -12,9 +12,8 @@ namespace iaqs::db {
 inline constexpr uint32_t kDefaultPageSize = 8192;
 inline constexpr uint64_t kDefaultSegmentMax = 256ull * 1024 * 1024;
 
-// Physical slot envelope overhead: 16-byte header + 16-byte AEAD tag.
+// Physical slot overhead: the envelope header in front of the page.
 inline constexpr size_t kEnvelopeHeaderSize = 16;
-inline constexpr size_t kAeadTagSize = 16;
 
 enum class PageType : uint8_t {
   SegmentHeader = 0x01,
@@ -61,7 +60,7 @@ bool decode_page(ByteSpan plain, PageHeader& header, ByteSpan& body);
 
 // Maximum plaintext page size for a given physical slot size.
 inline size_t max_plain_page_size(uint32_t page_size) {
-  return page_size - kEnvelopeHeaderSize - kAeadTagSize;
+  return page_size - kEnvelopeHeaderSize;
 }
 
 }  // namespace iaqs::db

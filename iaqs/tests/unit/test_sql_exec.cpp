@@ -44,7 +44,7 @@ const char* kSchema =
 
 IAQS_TEST(sql_exec, create_insert_select) {
   TestDir dir("basic");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
 
   executor.execute(kSchema);
@@ -76,7 +76,7 @@ IAQS_TEST(sql_exec, create_insert_select) {
 
 IAQS_TEST(sql_exec, insert_with_column_list_and_omitted_columns) {
   TestDir dir("insert-cols");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
   executor.execute(kSchema);
 
@@ -100,7 +100,7 @@ IAQS_TEST(sql_exec, insert_with_column_list_and_omitted_columns) {
 
 IAQS_TEST(sql_exec, select_where_expressions) {
   TestDir dir("where");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute(
@@ -129,7 +129,7 @@ IAQS_TEST(sql_exec, select_where_expressions) {
 
 IAQS_TEST(sql_exec, update_and_delete) {
   TestDir dir("update-delete");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute(
@@ -164,7 +164,7 @@ IAQS_TEST(sql_exec, update_and_delete) {
 
 IAQS_TEST(sql_exec, multi_statement_script_is_atomic) {
   TestDir dir("script");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
 
   const auto last = executor.execute(
@@ -192,7 +192,7 @@ IAQS_TEST(sql_exec, multi_statement_script_is_atomic) {
 
 IAQS_TEST(sql_exec, type_and_name_errors) {
   TestDir dir("errors");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
 
   CHECK_THROW(executor.execute("CREATE TABLE bad (c WHATEVER);"),
@@ -215,7 +215,7 @@ IAQS_TEST(sql_exec, type_and_name_errors) {
 
 IAQS_TEST(sql_exec, empty_and_comment_only_scripts) {
   TestDir dir("empty");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   iaqs::sql::SqlExecutor executor(db);
   const auto empty = executor.execute("");
   CHECK(empty.columns.empty());

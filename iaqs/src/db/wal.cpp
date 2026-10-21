@@ -9,7 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include "crypto/chacha20poly1305.h"
 #include "crypto/crc32c.h"
 
 #ifdef _WIN32
@@ -24,19 +23,10 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// [u32 total_len][u32 crc32c] then lsn u64 || type u8 || ciphertext.
+// [u32 total_len][u32 crc32c] then lsn u64 || type u8 || payload.
 constexpr size_t kRecordPrefixSize = 8;
 constexpr size_t kRecordMetaSize = 9;  // u64 lsn + u8 type
-constexpr size_t kMinRecordSize =
-    kRecordPrefixSize + kRecordMetaSize + kAeadTagSize;
-
-// nonce = epoch u32 || wal_seg_id u32 || low32(lsn) u32.
-void build_nonce(uint32_t epoch, uint32_t wal_seg_id, uint64_t lsn,
-                 uint8_t nonce[12]) {
-  store_u32_le(nonce + 0, epoch);
-  store_u32_le(nonce + 4, wal_seg_id);
-  store_u32_le(nonce + 8, static_cast<uint32_t>(lsn & 0xffffffffull));
-}
+constexpr size_t kMinRecordSize = kRecordPrefixSize + kRecordMetaSize;
 
 fs::path path_from_utf8(const std::string& s) {
   return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()),
@@ -119,15 +109,10 @@ std::vector<std::string> list_segments(const std::string& dir) {
 // ---------------------------------------------------------------- WalWriter
 
 WalWriter::WalWriter(const std::string& dir, uint32_t wal_seg_id,
-                     Key32 wal_key, uint32_t epoch, uint64_t first_lsn,
-                     bool encrypted)
+                     uint64_t first_lsn)
     : dir_(dir),
       path_(join_path(dir, segment_name(wal_seg_id))),
-      wal_seg_id_(wal_seg_id),
-      wal_key_(wal_key),
-      epoch_(epoch),
-      next_lsn_(first_lsn),
-      encrypted_(encrypted) {
+      next_lsn_(first_lsn) {
   if (!dir_exists(dir_)) make_dirs(dir_);
   file_ = open_append(path_);
   if (file_ == nullptr) {
@@ -148,24 +133,11 @@ uint64_t WalWriter::append(WalRecordType type, ByteSpan payload) {
   }
   const uint64_t lsn = next_lsn_;
 
-  Bytes ciphertext;
-  if (encrypted_) {
-    uint8_t nonce[12];
-    build_nonce(epoch_, wal_seg_id_, lsn, nonce);
-    uint8_t aad[8];
-    store_u64_le(aad, lsn);
-    ciphertext = aead_seal(wal_key_.data(), nonce, payload,
-                           ByteSpan(aad, sizeof aad));
-  } else {
-    ciphertext.assign(reinterpret_cast<const char*>(payload.data()),
-                      payload.size());
-  }
-
-  if (ciphertext.size() > 0xffffffffull - kRecordMetaSize) {
+  if (payload.size() > 0xffffffffull - kRecordMetaSize) {
     throw std::runtime_error("wal: record too large: " + path_);
   }
   const uint32_t total_len =
-      static_cast<uint32_t>(kRecordMetaSize + ciphertext.size());
+      static_cast<uint32_t>(kRecordMetaSize + payload.size());
 
   Bytes record;
   record.reserve(kRecordPrefixSize + total_len);
@@ -173,9 +145,9 @@ uint64_t WalWriter::append(WalRecordType type, ByteSpan payload) {
   append_u32_le(record, 0);  // crc32c placeholder
   append_u64_le(record, lsn);
   record.push_back(static_cast<char>(type));
-  record.append(ciphertext);
+  record.append(reinterpret_cast<const char*>(payload.data()), payload.size());
 
-  // The CRC covers lsn || type || ciphertext (everything after the CRC).
+  // The CRC covers lsn || type || payload (everything after the CRC).
   const uint32_t crc = crc32c(ByteSpan(
       reinterpret_cast<const uint8_t*>(record.data()) + kRecordPrefixSize,
       total_len));
@@ -218,9 +190,7 @@ void WalWriter::sync() {
 // ---------------------------------------------------------------- WalReader
 
 std::vector<WalRecord> WalReader::read_all(const std::string& dir,
-                                           const Key32& wal_key,
-                                           uint32_t epoch, bool tolerate_tail,
-                                           bool encrypted) {
+                                           bool tolerate_tail) {
   std::vector<WalRecord> records;
   if (!dir_exists(dir)) return records;
 
@@ -233,8 +203,6 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
     const Bytes data = read_file(join_path(dir, name));
     const uint8_t* base = reinterpret_cast<const uint8_t*>(data.data());
     size_t pos = 0;
-    const size_t min_record =
-        encrypted ? kMinRecordSize : kRecordPrefixSize + kRecordMetaSize;
     try {
       while (true) {
       if (data.size() - pos < kRecordPrefixSize) break;
@@ -242,7 +210,7 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
       const uint32_t total_len = load_u32_le(p);
       // A truncated tail is not an error: stop this segment silently.
       if (data.size() - pos - kRecordPrefixSize < total_len) break;
-      if (kRecordPrefixSize + total_len < min_record) {
+      if (kRecordPrefixSize + total_len < kMinRecordSize) {
         throw std::runtime_error("wal: malformed record length in " + name);
       }
       const uint32_t stored_crc = load_u32_le(p + 4);
@@ -263,29 +231,15 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
                                    std::to_string(p[16]) + " in " + name);
       }
 
-      const ByteSpan ciphertext(
+      const ByteSpan payload(
           p + kRecordPrefixSize + kRecordMetaSize,
           total_len - kRecordMetaSize);
-      Bytes payload;
-      if (encrypted) {
-        uint8_t nonce[12];
-        build_nonce(epoch, seg, lsn, nonce);
-        uint8_t aad[8];
-        store_u64_le(aad, lsn);
-        if (!aead_open(wal_key.data(), nonce, ciphertext,
-                       ByteSpan(aad, sizeof aad), payload)) {
-          throw std::runtime_error("wal: authentication failed in " + name +
-                                   " at byte " + std::to_string(pos));
-        }
-      } else {
-        payload.assign(reinterpret_cast<const char*>(ciphertext.data()),
-                       ciphertext.size());
-      }
 
       WalRecord record;
       record.lsn = lsn;
       record.type = type;
-      record.payload = std::move(payload);
+      record.payload.assign(reinterpret_cast<const char*>(payload.data()),
+                            payload.size());
       records.push_back(std::move(record));
       pos += kRecordPrefixSize + total_len;
       }

@@ -154,7 +154,7 @@ void make_plain_old(vcs::Repo& repo, const std::string& oid, std::string_view pa
 
 IAQS_TEST(gc, repacks_history_as_deltas) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   auto make_content = [](int rev) {
     std::string text;
     for (int i = 0; i < 400; ++i) {
@@ -192,16 +192,15 @@ IAQS_TEST(gc, repacks_history_as_deltas) {
   CHECK_EQ(report.errors.size(), std::size_t{0});
 
   // A restart must still resolve delta chains.
-  const std::string password = "pw";
   repo.database().close();
-  vcs::Repo reopened = vcs::Repo::open(tmp.path, password);
+  vcs::Repo reopened = vcs::Repo::open(tmp.path);
   CHECK_EQ(file_content(reopened, "big.txt"), content);
   reopened.database().close();
 }
 
 IAQS_TEST(gc, dry_run_does_not_modify) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   std::string content;
   for (int i = 0; i < 50; ++i) content += "line " + std::to_string(i) + "\n";
   write_text(tmp.path / "a.txt", content);
@@ -235,7 +234,7 @@ IAQS_TEST(gc, dry_run_does_not_modify) {
 
 IAQS_TEST(gc, fsck_reports_missing_objects) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "hello\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("one", false, false);
@@ -258,7 +257,7 @@ IAQS_TEST(gc, fsck_reports_missing_objects) {
 // keep their exact base_oid and payload bytes (no re-encoding).
 IAQS_TEST(gc, incremental_keeps_existing_deltas) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   std::string content = big_content(0);
   write_text(tmp.path / "big.txt", content);
   repo.add_paths({"big.txt"}, false);
@@ -322,7 +321,7 @@ IAQS_TEST(gc, incremental_keeps_existing_deltas) {
 // not advance gc.last_ts, or the next real pass would skip the new object.
 IAQS_TEST(gc, incremental_dry_run_keeps_bookmark) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   std::string content = big_content(0);
   write_text(tmp.path / "big.txt", content);
   repo.add_paths({"big.txt"}, false);
@@ -386,7 +385,7 @@ IAQS_TEST(gc, incremental_dry_run_keeps_bookmark) {
 // last bookmark are reclaimed, older ones are left for a full repack.
 IAQS_TEST(gc, incremental_removes_only_candidates) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   std::string content = big_content(0);
   write_text(tmp.path / "big.txt", content);
   repo.add_paths({"big.txt"}, false);
@@ -422,7 +421,7 @@ IAQS_TEST(gc, incremental_removes_only_candidates) {
 // than the bookmark that the incremental pass deliberately skips.
 IAQS_TEST(gc, full_repack_reconsiders_old_objects) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   std::string content = big_content(0);
   write_text(tmp.path / "big.txt", content);
   repo.add_paths({"big.txt"}, false);

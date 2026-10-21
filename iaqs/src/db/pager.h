@@ -1,10 +1,10 @@
-// Page cache over encrypted segment files. Addresses are PageRefs
+// Page cache over plaintext segment files. Addresses are PageRefs
 // (segment, page, generation); every write bumps the generation. Dirty pages
-// are sealed and written on flush(); WAL integration is layered on top.
+// are framed into slots and written on flush(); WAL integration is layered on
+// top.
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <string>
 #include <utility>
@@ -12,7 +12,6 @@
 
 #include "core/util.h"
 #include "db/envelope.h"
-#include "db/keys.h"
 #include "db/page.h"
 #include "db/segment.h"
 
@@ -26,14 +25,12 @@ struct CachedPage {
 
 class Pager {
  public:
-  Pager(std::string dir, uint32_t page_size, uint64_t segment_max,
-        Key32 page_key, uint32_t epoch, bool encrypted = true);
+  Pager(std::string dir, uint32_t page_size, uint64_t segment_max);
 
   Pager(const Pager&) = delete;
   Pager& operator=(const Pager&) = delete;
 
   uint32_t page_size() const { return page_size_; }
-  uint32_t epoch() const { return epoch_; }
   uint32_t segment_max_pages() const { return segment_max_pages_; }
   size_t segment_count() const { return segments_.size(); }
   size_t cached_pages() const { return cache_.size(); }
@@ -61,17 +58,9 @@ class Pager {
   // pages themselves are flushed.
   std::vector<std::pair<PageRef, Bytes>> seal_dirty_pages() const;
 
-  // WAL redo: writes an already-sealed slot directly to storage and drops any
+  // WAL redo: writes an already-framed slot directly to storage and drops any
   // cached plaintext for that address.
   void redo_raw_slot(PageRef ref, ByteSpan slot);
-
-  // Re-encrypts every page of every segment with `new_key` (same epoch), then
-  // switches the pager to it. Pages already sealed under `new_key` (e.g. after
-  // a crash during an earlier rekey attempt) are detected and left untouched.
-  // `progress(done, total)` is called after every page so callers can report
-  // a percentage; it may be empty.
-  using RekeyProgress = std::function<void(uint64_t done, uint64_t total)>;
-  void rekey_pages(const Key32& new_key, const RekeyProgress& progress = {});
 
   // Latest reference for an address: the cached page if present, otherwise the
   // generation stored in the slot's envelope header.
@@ -112,9 +101,6 @@ class Pager {
   std::string dir_;
   uint32_t page_size_ = 0;
   uint64_t segment_max_ = 0;
-  Key32 page_key_{};
-  uint32_t epoch_ = 0;
-  bool encrypted_ = true;
   uint32_t segment_max_pages_ = 0;
   std::vector<SegmentFile> segments_;
   std::map<uint64_t, CachedPage> cache_;

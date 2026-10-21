@@ -45,7 +45,7 @@ bool index_has(vcs::Repo& repo, std::string_view path) {
 
 IAQS_TEST(vcs_worktree, mv_stages_rename) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "one\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("base", false, false);
@@ -63,7 +63,7 @@ IAQS_TEST(vcs_worktree, mv_stages_rename) {
 
 IAQS_TEST(vcs_worktree, restore_brings_back_head_content) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "original\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("base", false, false);
@@ -78,7 +78,7 @@ IAQS_TEST(vcs_worktree, restore_brings_back_head_content) {
 
 IAQS_TEST(vcs_worktree, rm_deletes_file_and_stages_deletion) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "one\n");
   write_text(tmp.path / "b.txt", "two\n");
   repo.add_paths({"a.txt", "b.txt"}, false);
@@ -101,7 +101,7 @@ IAQS_TEST(vcs_worktree, rm_deletes_file_and_stages_deletion) {
 
 IAQS_TEST(vcs_worktree, clean_removes_untracked) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "one\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("base", false, false);

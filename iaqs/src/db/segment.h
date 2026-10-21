@@ -1,6 +1,6 @@
 // A segment is a plain, fixed-slot file: seg-<6 digits>.dat. Slots are
-// encrypted page envelopes (see db/envelope.h). Page 0 of every segment is
-// its encrypted SegmentHeader page; data pages start at 1.
+// plaintext page envelopes (see db/envelope.h). Page 0 of every segment is
+// its SegmentHeader page; data pages start at 1.
 #pragma once
 
 #include <cstdint>

@@ -58,7 +58,7 @@ int64_t count_rows(db::Database& database, const std::string& table) {
 
 IAQS_TEST(vcs_streaming, write_stream_small_matches_object_id) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -78,7 +78,7 @@ IAQS_TEST(vcs_streaming, write_stream_small_matches_object_id) {
 
 IAQS_TEST(vcs_streaming, large_stream_uses_chunk_tree) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -107,7 +107,7 @@ IAQS_TEST(vcs_streaming, large_stream_uses_chunk_tree) {
 
 IAQS_TEST(vcs_streaming, identical_stream_is_deduped) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -132,7 +132,7 @@ IAQS_TEST(vcs_streaming, identical_stream_is_deduped) {
 
 IAQS_TEST(vcs_streaming, corrupt_chunk_is_rejected) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -154,7 +154,7 @@ IAQS_TEST(vcs_streaming, corrupt_chunk_is_rejected) {
 
 IAQS_TEST(vcs_streaming, chunk_index_is_rebuilt_when_missing) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   const std::string payload = binary_payload(120000, 777);
   std::string oid;
   {
@@ -188,7 +188,7 @@ IAQS_TEST(vcs_streaming, repo_checkout_streams_large_blob) {
   const std::string payload = binary_payload(120000, 999);
 
   {
-    vcs::Repo repo = vcs::Repo::init(root, "pw");
+    vcs::Repo repo = vcs::Repo::init(root);
     {
       std::ofstream out(root / "big.bin", std::ios::binary | std::ios::trunc);
       out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
@@ -199,7 +199,7 @@ IAQS_TEST(vcs_streaming, repo_checkout_streams_large_blob) {
 
   fs::remove(root / "big.bin");
   {
-    vcs::Repo repo = vcs::Repo::open(root, "pw");
+    vcs::Repo repo = vcs::Repo::open(root);
     CHECK(!repo.status().clean());
     repo.checkout_commit("HEAD", true);
     CHECK(repo.status().clean());

@@ -9,7 +9,6 @@
 
 #include "core/util.h"
 #include "crypto/rand.h"
-#include "db/keys.h"
 #include "db/page.h"
 #include "db/pager.h"
 #include "db/row.h"
@@ -37,13 +36,6 @@ struct TmpHeapDir {
   std::string dir = make_tmp_dir();
   ~TmpHeapDir() { remove_tmp_dir(dir); }
 };
-
-Key32 test_key() {
-  Key32 key{};
-  key.fill(static_cast<uint8_t>(0xFF));
-  return key;
-}
-
 TableSchema all_types_schema() {
   TableSchema schema;
   schema.name = "items";
@@ -176,7 +168,7 @@ IAQS_TEST(row, decode_rejects_corrupt_input) {
 
 IAQS_TEST(heap, insert_scan_and_get_single_page) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), /*epoch=*/1);
+  Pager pager(tmp.dir, 4096, 4096ull * 8);
   HeapTable table(pager, HeapTable::create(pager));
 
   const char* records[] = {"alpha", "beta", "gamma"};
@@ -196,7 +188,7 @@ IAQS_TEST(heap, insert_scan_and_get_single_page) {
 
 IAQS_TEST(heap, remove_is_tombstone_and_second_remove_is_false) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), 1);
+  Pager pager(tmp.dir, 4096, 4096ull * 8);
   HeapTable table(pager, HeapTable::create(pager));
 
   std::vector<Rid> rids;
@@ -219,7 +211,7 @@ IAQS_TEST(heap, remove_is_tombstone_and_second_remove_is_false) {
 
 IAQS_TEST(heap, many_rows_span_pages_in_insertion_order) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 1024, 1024ull * 128, test_key(), 1);
+  Pager pager(tmp.dir, 1024, 1024ull * 128);
   HeapTable table(pager, HeapTable::create(pager));
 
   std::set<uint32_t> pages;
@@ -241,11 +233,10 @@ IAQS_TEST(heap, many_rows_span_pages_in_insertion_order) {
 
 IAQS_TEST(heap, reopen_pager_keeps_rows_readable) {
   TmpHeapDir tmp;
-  const Key32 key = test_key();
   const std::vector<std::string> expected = {"first", "second", "third"};
   PageRef root;
   {
-    Pager pager(tmp.dir, 4096, 4096ull * 8, key, 3);
+    Pager pager(tmp.dir, 4096, 4096ull * 8);
     HeapTable table(pager, HeapTable::create(pager));
     for (const std::string& record : expected) {
       table.insert(bytes_span(std::string_view(record)));
@@ -253,7 +244,7 @@ IAQS_TEST(heap, reopen_pager_keeps_rows_readable) {
     root = table.root();
     pager.flush();
   }
-  Pager reopened(tmp.dir, 4096, 4096ull * 8, key, 3);
+  Pager reopened(tmp.dir, 4096, 4096ull * 8);
   HeapTable table(reopened, root);
   const std::vector<Rid> scanned = table.scan();
   CHECK_EQ(scanned.size(), expected.size());
@@ -264,7 +255,7 @@ IAQS_TEST(heap, reopen_pager_keeps_rows_readable) {
 
 IAQS_TEST(heap, get_rejects_out_of_range_slot) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), 1);
+  Pager pager(tmp.dir, 4096, 4096ull * 8);
   HeapTable table(pager, HeapTable::create(pager));
   const Rid rid = table.insert(bytes_span(std::string_view("only")));
   Rid out_of_range;
@@ -275,7 +266,7 @@ IAQS_TEST(heap, get_rejects_out_of_range_slot) {
 
 IAQS_TEST(heap, empty_record_roundtrips_and_is_removable) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), 1);
+  Pager pager(tmp.dir, 4096, 4096ull * 8);
   HeapTable table(pager, HeapTable::create(pager));
   const Rid empty = table.insert(ByteSpan{});
   CHECK_EQ(table.get(empty).size(), size_t{0});
@@ -287,7 +278,7 @@ IAQS_TEST(heap, empty_record_roundtrips_and_is_removable) {
 
 IAQS_TEST(heap, long_record_gets_its_own_page) {
   TmpHeapDir tmp;
-  Pager pager(tmp.dir, 1024, 1024ull * 128, test_key(), 1);
+  Pager pager(tmp.dir, 1024, 1024ull * 128);
   HeapTable table(pager, HeapTable::create(pager));
 
   for (int i = 0; i < 40; ++i) {
@@ -306,8 +297,8 @@ IAQS_TEST(heap, long_record_gets_its_own_page) {
   CHECK(same_page(after.ref, long_rid.ref));
   CHECK_EQ(table.scan().size(), size_t{42});
 
-  // One byte past the maximum record size is rejected.
-  const std::string too_large(961, 'X');
+  // One byte past the page capacity is rejected.
+  const std::string too_large(max_plain_page_size(1024), 'X');
   CHECK_THROW(table.insert(bytes_span(std::string_view(too_large))),
               std::runtime_error);
 }

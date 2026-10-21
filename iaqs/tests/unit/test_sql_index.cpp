@@ -137,7 +137,7 @@ IAQS_TEST(sql_index, key_encoding_is_order_preserving) {
 
 IAQS_TEST(sql_index, equality_lookup_uses_index_over_existing_rows) {
   TestDir dir("equality");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   insert_basic(executor);
@@ -176,7 +176,7 @@ IAQS_TEST(sql_index, equality_lookup_uses_index_over_existing_rows) {
 
 IAQS_TEST(sql_index, insert_update_delete_maintain_index) {
   TestDir dir("maintain");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute("CREATE INDEX idx_items_name ON items (name);");
@@ -214,7 +214,7 @@ IAQS_TEST(sql_index, insert_update_delete_maintain_index) {
 
 IAQS_TEST(sql_index, integer_equality_and_range_scan) {
   TestDir dir("integer-range");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   std::string sql = "INSERT INTO items (id, name) VALUES ";
@@ -264,7 +264,7 @@ IAQS_TEST(sql_index, integer_equality_and_range_scan) {
 
 IAQS_TEST(sql_index, text_equality_range_duplicates_and_long_values) {
   TestDir dir("text");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   // Two values longer than the 22-byte key prefix share one prefix; both must
@@ -297,7 +297,7 @@ IAQS_TEST(sql_index, text_equality_range_duplicates_and_long_values) {
 
 IAQS_TEST(sql_index, real_equality_and_range) {
   TestDir dir("real");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute(
@@ -329,7 +329,7 @@ IAQS_TEST(sql_index, real_equality_and_range) {
 
 IAQS_TEST(sql_index, null_values_are_not_indexed) {
   TestDir dir("null");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute("INSERT INTO items (id, name) VALUES (1, 'a'), (2, NULL), (3, 'b');");
@@ -355,7 +355,7 @@ IAQS_TEST(sql_index, null_values_are_not_indexed) {
 
 IAQS_TEST(sql_index, error_paths) {
   TestDir dir("errors");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
 
@@ -394,7 +394,7 @@ IAQS_TEST(sql_index, error_paths) {
 IAQS_TEST(sql_index, index_survives_reopen) {
   TestDir dir("persist");
   {
-    Database db = Database::create(dir.path(), "pw");
+    Database db = Database::create(dir.path());
     SqlExecutor executor(db);
     executor.execute(kSchema);
     insert_basic(executor);
@@ -402,7 +402,7 @@ IAQS_TEST(sql_index, index_survives_reopen) {
     db.close();
   }
 
-  Database db = Database::open(dir.path(), "pw");
+  Database db = Database::open(dir.path());
   CHECK(db.index_exists("idx_items_name"));
   const iaqs::db::IndexInfo* info = db.find_index("items", "NAME");
   CHECK(info != nullptr);
@@ -426,7 +426,7 @@ IAQS_TEST(sql_index, index_survives_reopen) {
 
 IAQS_TEST(sql_index, query_plan_selection_and_fallback) {
   TestDir dir("plan");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute(
@@ -479,7 +479,7 @@ IAQS_TEST(sql_index, query_plan_selection_and_fallback) {
 
 IAQS_TEST(sql_index, update_delete_where_use_index) {
   TestDir dir("dml");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   SqlExecutor executor(db);
   executor.execute(kSchema);
   executor.execute(
@@ -514,7 +514,7 @@ IAQS_TEST(sql_index, update_delete_where_use_index) {
 
 IAQS_TEST(sql_index, direct_database_api_and_drop_table) {
   TestDir dir("direct");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
 
   TableSchema schema;
   schema.name = "people";

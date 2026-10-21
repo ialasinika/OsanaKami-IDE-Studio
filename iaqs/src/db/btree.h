@@ -1,4 +1,4 @@
-// Persistent fixed-key-length B+ tree index built on the encrypted Pager.
+// Persistent fixed-key-length B+ tree index built on the Pager.
 //
 // Keys are always FixedBTree::kKeySize (32) raw bytes compared with memcmp
 // (unsigned byte order). Values are row ids: only the heap page address

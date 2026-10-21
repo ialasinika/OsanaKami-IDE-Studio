@@ -85,7 +85,7 @@ IAQS_TEST(import_git, imports_pack_tree_commit_and_ref) {
   const fs::path dest = dir.path / "iaqs";
   fs::create_directories(dest);
 
-  vcs::Repo repo = vcs::Repo::init(dest, "test-password-1");
+  vcs::Repo repo = vcs::Repo::init(dest);
   const git::GitImportStats stats = git::import_git_dir(repo, git_root, {});
   CHECK_EQ(stats.commits, 1u);
   CHECK_EQ(stats.trees, 1u);
@@ -112,7 +112,7 @@ IAQS_TEST(import_git, refuses_non_empty_repository_without_force) {
   const fs::path dest = dir.path / "iaqs";
   fs::create_directories(dest);
   {
-    vcs::Repo repo = vcs::Repo::init(dest, "test-password-1");
+    vcs::Repo repo = vcs::Repo::init(dest);
     (void)git::import_git_dir(repo, git_root, {});
     CHECK_THROW(git::import_git_dir(repo, git_root, {}), std::runtime_error);
     const git::GitImportStats forced = git::import_git_dir(repo, git_root, {.force = true});
@@ -127,7 +127,7 @@ IAQS_TEST(convert_git, export_then_import_roundtrip) {
   fs::create_directories(source);
   std::string committed;
   {
-    vcs::Repo repo = vcs::Repo::init(source, "test-password-1");
+    vcs::Repo repo = vcs::Repo::init(source);
     write_text(source / "docs" / "readme.txt", "round trip\n");
     repo.add_paths({}, true);
     committed = repo.commit("roundtrip commit", false, false);
@@ -137,7 +137,7 @@ IAQS_TEST(convert_git, export_then_import_roundtrip) {
 
   const fs::path out = dir.path / "git-export";
   {
-    vcs::Repo repo = vcs::Repo::open(source, "test-password-1");
+    vcs::Repo repo = vcs::Repo::open(source);
     git::PackExportOptions options;
     options.identity = {"Test User", "test@example.com"};
     options.out_dir = out;
@@ -163,7 +163,7 @@ IAQS_TEST(convert_git, export_then_import_roundtrip) {
   const fs::path dest = dir.path / "imported";
   fs::create_directories(dest);
   {
-    vcs::Repo repo = vcs::Repo::init(dest, "test-password-1");
+    vcs::Repo repo = vcs::Repo::init(dest);
     const git::GitImportStats stats = git::import_git_dir(repo, out, {});
     CHECK_EQ(stats.commits, 1u);
     CHECK_EQ(stats.tags, 1u);

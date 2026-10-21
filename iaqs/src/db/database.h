@@ -1,5 +1,5 @@
-// Encrypted relational database: MANIFEST + key ring + paged storage (segments,
-// page cache, WAL). This is the storage engine the version manager sits on.
+// Relational database: MANIFEST + paged storage (segments, page cache, WAL).
+// This is the storage engine the version manager sits on.
 #pragma once
 
 #include <cstdint>
@@ -14,7 +14,6 @@
 #include "core/util.h"
 #include "db/heap.h"
 #include "db/index.h"
-#include "db/keys.h"
 #include "db/manifest.h"
 #include "db/page.h"
 #include "db/pager.h"
@@ -47,9 +46,9 @@ struct TableInfo {
 // into the page files before returning.
 class Database {
  public:
-  static Database create(const std::string& dir, std::string_view password,
+  static Database create(const std::string& dir,
                          uint32_t page_size = kDefaultPageSize);
-  static Database open(const std::string& dir, std::string_view password);
+  static Database open(const std::string& dir);
 
   Database() = default;
   ~Database();
@@ -61,19 +60,8 @@ class Database {
   // Flushes dirty pages, fsyncs segments and rotates the WAL.
   void checkpoint();
 
-  // checkpoint() + wipes keys.
+  // checkpoint() + releases the pager and the cross-process lock.
   void close();
-
-  // Re-wraps the data encryption key under `new_password` (fresh salt and
-  // nonces); the encrypted pages and WAL stay byte-identical. The change is
-  // persisted immediately.
-  void change_password(std::string_view new_password);
-
-  // Replaces the data encryption key and re-encrypts every page in place.
-  // Crash-safe: the new DEK is first persisted in a wrapped sidecar file, and
-  // an interrupted rekey is resumed by the next open(). `progress(done, total)`
-  // reports re-encrypted pages and may be empty.
-  void rekey_data(const Pager::RekeyProgress& progress = {});
 
   // Explicit transactions (row/DDL helpers auto-commit when none is active).
   void begin();
@@ -112,14 +100,10 @@ class Database {
   Pager& pager() { return *pager_; }
   const Manifest& manifest() const { return manifest_; }
 
-  // False for the plaintext store this project creates (no password, no key).
-  bool encrypted() const { return encrypted_; }
-  uint32_t epoch() const { return epoch_; }
   uint32_t wal_generation() const { return wal_gen_; }
 
  private:
-  void initialize_common(const std::string& dir, Manifest manifest,
-                         DbKeys keys);
+  void initialize_common(const std::string& dir, Manifest manifest);
   void recover();
   void reset_wal_after_checkpoint();
   void delete_wal_files();
@@ -129,7 +113,7 @@ class Database {
   void ensure_wal_size_ok();
 
   // Concurrency: lock_ is held for the duration of a write transaction or an
-  // exclusive maintenance operation (checkpoint, password change, rekey).
+  // exclusive maintenance operation (checkpoint, WAL rotation).
   // acquire_write_lock() returns true when this call actually acquired it.
   bool acquire_write_lock(const std::string& dir = "");
   void release_write_lock(bool acquired);
@@ -141,18 +125,8 @@ class Database {
   bool index_insert_row(const TableInfo& info, const Row& row, Rid rid);
   bool index_delete_row(const TableInfo& info, const Row& row, Rid rid);
 
-  // rekey --data support.
-  std::string rekey_state_path() const;
-  void write_rekey_state(const Key32& dek);
-  Key32 read_rekey_state() const;
-  void finish_pending_rekey();
-
   std::string dir_;
   Manifest manifest_;
-  DbKeys keys_;
-  std::unique_ptr<Keyring> keyring_;
-  bool encrypted_ = false;
-  uint32_t epoch_ = 0;
   std::unique_ptr<Pager> pager_;
   // WAL writer for the active transaction only; null between transactions.
   std::unique_ptr<WalWriter> wal_;

@@ -32,15 +32,11 @@ bool parse_segment_name(const std::string& name, uint32_t& out) {
 
 }  // namespace
 
-Pager::Pager(std::string dir, uint32_t page_size, uint64_t segment_max,
-             Key32 page_key, uint32_t epoch, bool encrypted)
+Pager::Pager(std::string dir, uint32_t page_size, uint64_t segment_max)
     : dir_(std::move(dir)),
       page_size_(page_size),
-      segment_max_(segment_max),
-      page_key_(page_key),
-      epoch_(epoch),
-      encrypted_(encrypted) {
-  if (page_size_ <= kEnvelopeHeaderSize + kAeadTagSize + kPageHeaderSize) {
+      segment_max_(segment_max) {
+  if (page_size_ <= kEnvelopeHeaderSize + kPageHeaderSize) {
     throw std::runtime_error("Pager: page_size too small");
   }
   if (segment_max_ < 2ull * page_size_) segment_max_ = 2ull * page_size_;
@@ -100,12 +96,10 @@ size_t Pager::dirty_pages() const {
 void Pager::write_segment_header(SegmentFile& seg) {
   Bytes body;
   append_u32_le(body, seg.seg_id());
-  append_u32_le(body, epoch_);
   append_u32_le(body, page_size_);
   const Bytes plain = encode_page(PageType::SegmentHeader, 0, 1, bytes_span(body));
   const PageRef ref{seg.seg_id(), 0, 1};
-  const Bytes slot =
-      seal_page(page_key_, epoch_, ref, bytes_span(plain), page_size_, encrypted_);
+  const Bytes slot = seal_page(ref, bytes_span(plain), page_size_);
   seg.write_slot(0, bytes_span(slot));
 }
 
@@ -146,8 +140,7 @@ PageRef Pager::alloc_page(PageType type, uint16_t flags, ByteSpan body) {
   SegmentFile& seg = current_segment();
   const PageRef ref{seg.seg_id(), seg.page_count(), 1};
   const Bytes plain = encode_page(type, flags, ref.generation, body);
-  const Bytes slot =
-      seal_page(page_key_, epoch_, ref, bytes_span(plain), page_size_, encrypted_);
+  const Bytes slot = seal_page(ref, bytes_span(plain), page_size_);
   seg.write_slot(ref.page, bytes_span(slot));
   cache_[cache_key(ref.seg, ref.page)] = CachedPage{ref, plain, false};
   return ref;
@@ -172,9 +165,8 @@ const Bytes& Pager::read_page(PageRef ref) {
   if (info.generation != ref.generation) {
     throw std::runtime_error("Pager: stale page reference");
   }
-  Bytes plain = open_page(page_key_, epoch_,
-                          PageRef{ref.seg, ref.page, info.generation},
-                          bytes_span(slot), encrypted_);
+  Bytes plain = open_page(PageRef{ref.seg, ref.page, info.generation},
+                          bytes_span(slot));
   auto [inserted, ok] = cache_.emplace(k, CachedPage{ref, std::move(plain), false});
   (void)ok;
   return inserted->second.plain;
@@ -201,8 +193,7 @@ void Pager::flush() {
     (void)k;
     if (!entry.dirty) continue;
     SegmentFile& seg = segment(entry.ref.seg);
-    const Bytes slot = seal_page(page_key_, epoch_, entry.ref,
-                                 bytes_span(entry.plain), page_size_, encrypted_);
+    const Bytes slot = seal_page(entry.ref, bytes_span(entry.plain), page_size_);
     seg.write_slot(entry.ref.page, bytes_span(slot));
     entry.dirty = false;
   }
@@ -219,8 +210,7 @@ std::vector<std::pair<PageRef, Bytes>> Pager::seal_dirty_pages() const {
     (void)k;
     if (!entry.dirty) continue;
     sealed.emplace_back(entry.ref,
-                        seal_page(page_key_, epoch_, entry.ref,
-                                  bytes_span(entry.plain), page_size_, encrypted_));
+                        seal_page(entry.ref, bytes_span(entry.plain), page_size_));
   }
   return sealed;
 }
@@ -275,53 +265,6 @@ void Pager::rollback_write_txn() {
   }
   baseline_.clear();
   txn_active_ = false;
-}
-
-void Pager::rekey_pages(const Key32& new_key, const RekeyProgress& progress) {
-  if (!encrypted_) {
-    throw std::runtime_error("Pager: a plaintext database has no data key");
-  }
-  if (txn_active_) {
-    throw std::runtime_error("Pager: cannot rekey inside a transaction");
-  }
-  // All dirty plaintext must reach the segment files before we re-seal.
-  flush();
-  uint64_t total_pages = 0;
-  for (const auto& seg : segments_) total_pages += seg.page_count();
-  uint64_t done_pages = 0;
-  for (auto& seg : segments_) {
-    const uint32_t pages = seg.page_count();
-    for (uint32_t page_no = 0; page_no < pages; ++page_no) {
-      const Bytes slot = seg.read_slot(page_no);
-      EnvelopeInfo info;
-      if (!read_envelope_info(bytes_span(slot), info)) {
-        throw std::runtime_error("Pager: corrupt page envelope during rekey");
-      }
-      const PageRef ref{seg.seg_id(), page_no, info.generation};
-      Bytes plain;
-      bool already_rekeyed = false;
-      try {
-        plain = open_page(new_key, epoch_, ref, bytes_span(slot), encrypted_);
-        already_rekeyed = true;
-      } catch (const std::exception&) {
-        plain = open_page(page_key_, epoch_, ref, bytes_span(slot), encrypted_);
-      }
-      if (!already_rekeyed) {
-        const Bytes resealed = seal_page(new_key, epoch_, ref, bytes_span(plain),
-                                         page_size_, encrypted_);
-        seg.write_slot(page_no, bytes_span(resealed));
-      }
-      ++done_pages;
-      if (progress) progress(done_pages, total_pages);
-    }
-    seg.sync();
-  }
-  page_key_ = new_key;
-  for (auto& [k, entry] : cache_) {
-    (void)k;
-    entry.dirty = false;
-  }
-  baseline_.clear();
 }
 
 }  // namespace iaqs::db

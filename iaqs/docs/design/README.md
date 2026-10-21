@@ -36,8 +36,11 @@
 6. [05-quality.md](05-quality.md)：测试策略、失败注入、性能基准、验收清单、风险。
 7. [06-database.md](06-database.md)：自研关系数据库（页、分段文件、B+树、LOB、SQL、
    WAL、恢复、压缩）——「库」的实现设计。
-8. [07-encryption.md](07-encryption.md)：密钥派生、页/WAL 加密、密钥生命周期、rekey、
-   威胁模型。
+8. ~~07-encryption.md~~：本 fork 删除了加密层（无密码、MANIFEST v2、明文页/WAL），
+   该文档不再随树携带；00/04/05 中提到加密的段落描述的是上游设计。
+
+> 本目录是上游 iaqs 的设计文档，保留是为了对象模型与存储叙事；本 fork 的差异以
+> [`../../README.md`](../../README.md) 为准。
 
 ## 版本与兼容
 

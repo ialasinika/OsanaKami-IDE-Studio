@@ -45,7 +45,7 @@ std::string first_line(std::string_view message) {
 
 IAQS_TEST(vcs_repo, tag_lifecycle) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "one\n");
   repo.add_paths({"a.txt"}, false);
   const std::string commit_oid = repo.commit("base", false, false);
@@ -67,7 +67,7 @@ IAQS_TEST(vcs_repo, tag_lifecycle) {
 
 IAQS_TEST(vcs_repo, reset_hard_restores_tree_and_branch) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "one\n");
   repo.add_paths({"a.txt"}, false);
   const std::string first = repo.commit("c1", false, false);
@@ -89,7 +89,7 @@ IAQS_TEST(vcs_repo, reset_hard_restores_tree_and_branch) {
 
 IAQS_TEST(vcs_repo, merge_keeps_one_sided_additions) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "base.txt", "base\n");
   repo.add_paths({"base.txt"}, false);
   const std::string base = repo.commit("base", false, false);
@@ -114,32 +114,13 @@ IAQS_TEST(vcs_repo, merge_keeps_one_sided_additions) {
   repo.database().close();
 }
 
-IAQS_TEST(vcs_repo, change_password_reopens_with_new_password) {
-  TempDir tmp;
-  {
-    vcs::Repo repo = vcs::Repo::init(tmp.path, "first");
-    write_text(tmp.path / "a.txt", "content\n");
-    repo.add_paths({"a.txt"}, false);
-    repo.commit("only", false, false);
-    repo.change_password("second");
-    repo.database().close();
-  }
-  CHECK_THROW(vcs::Repo::open(tmp.path, "first"), std::runtime_error);
-  {
-    vcs::Repo repo = vcs::Repo::open(tmp.path, "second");
-    const std::string head = repo.peel(*repo.head_oid());
-    CHECK_EQ(first_line(repo.read_commit(head).message), std::string("only"));
-    repo.database().close();
-  }
-}
-
 // Regression: a path such as "../outside.txt" used to leave the worktree and
 // even delete files outside the repository through rm/restore.
 IAQS_TEST(vcs_repo, rejects_paths_outside_the_worktree) {
   TempDir tmp;
   const fs::path root = tmp.path / "repo";
   fs::create_directories(root);
-  vcs::Repo repo = vcs::Repo::init(root, "pw");
+  vcs::Repo repo = vcs::Repo::init(root);
   write_text(tmp.path / "outside.txt", "outside\n");
   write_text(root / "inside.txt", "inside\n");
 
@@ -159,12 +140,11 @@ IAQS_TEST(vcs_repo, rejects_paths_outside_the_worktree) {
   repo.database().close();
 }
 
-// Regression: staging the encrypted database files themselves used to be
-// possible; restoring an old .iaqs/MANIFEST after a rekey irrecoverably
-// breaks the repository.
+// Regression: staging the database files themselves used to be possible;
+// restoring an old .iaqs/MANIFEST under a live one breaks the repository.
 IAQS_TEST(vcs_repo, refuses_repository_internals) {
   TempDir tmp;
-  vcs::Repo repo = vcs::Repo::init(tmp.path, "pw");
+  vcs::Repo repo = vcs::Repo::init(tmp.path);
   write_text(tmp.path / "a.txt", "a\n");
   repo.add_paths({"a.txt"}, false);
   repo.commit("base", false, false);

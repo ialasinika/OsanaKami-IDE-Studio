@@ -74,30 +74,29 @@ Row make_row(int64_t id, const std::string& name, double score,
 
 }  // namespace
 
-IAQS_TEST(database, create_open_wrong_password) {
+IAQS_TEST(database, create_open_roundtrip) {
   TestDir dir("create");
   {
-    Database db = Database::create(dir.path(), "s3cret");
+    Database db = Database::create(dir.path());
     CHECK(!db.table_exists("people"));
     CHECK_EQ(db.wal_generation(), 1u);
     CHECK_EQ(db.manifest().page_size, 8192u);
   }
-  CHECK_THROW(Database::open(dir.path(), "wrong"), std::runtime_error);
-  Database db = Database::open(dir.path(), "s3cret");
+  Database db = Database::open(dir.path());
   CHECK_EQ(db.table_names().size(), 0u);
 }
 
 IAQS_TEST(database, missing_manifest_rejected) {
   TestDir dir("missing");
-  CHECK_THROW(Database::open(dir.path(), "pw"), std::runtime_error);
+  CHECK_THROW(Database::open(dir.path()), std::runtime_error);
   std::error_code ec;
   fs::create_directories(fs::path(dir.path()), ec);
-  CHECK_THROW(Database::open(dir.path(), "pw"), std::runtime_error);
+  CHECK_THROW(Database::open(dir.path()), std::runtime_error);
 }
 
 IAQS_TEST(database, create_table_rejects_bad_schema) {
   TestDir dir("schema");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   TableSchema empty;
   empty.name = "t";
   CHECK_THROW(db.create_table(empty), std::runtime_error);
@@ -116,7 +115,7 @@ IAQS_TEST(database, create_table_rejects_bad_schema) {
 IAQS_TEST(database, insert_scan_persist) {
   TestDir dir("persist");
   {
-    Database db = Database::create(dir.path(), "pw");
+    Database db = Database::create(dir.path());
     db.create_table(people_schema());
     CHECK(db.table_exists("people"));
     CHECK_THROW(db.create_table(people_schema()), std::runtime_error);
@@ -135,7 +134,7 @@ IAQS_TEST(database, insert_scan_persist) {
     CHECK_EQ(rows[0].second.values[4].bytes, std::string("hello"));
     CHECK(rows[1].second.values[4].type == ValueType::Null);
   }
-  Database db = Database::open(dir.path(), "pw");
+  Database db = Database::open(dir.path());
   CHECK_EQ(db.table_names().size(), 1u);
   CHECK(db.table_exists("people"));
   CHECK_EQ(db.scan_rows("people").size(), 3u);
@@ -144,7 +143,7 @@ IAQS_TEST(database, insert_scan_persist) {
 IAQS_TEST(database, update_and_delete) {
   TestDir dir("update");
   {
-    Database db = Database::create(dir.path(), "pw");
+    Database db = Database::create(dir.path());
     db.create_table(people_schema());
     const Rid rid = db.insert_row("people", make_row(7, "old", 0.5, "x", true));
     const Row fetched = db.get_row("people", rid);
@@ -164,13 +163,13 @@ IAQS_TEST(database, update_and_delete) {
     CHECK_EQ(db.scan_rows("people").size(), 0u);
     CHECK_THROW(db.delete_row("people", moved), std::runtime_error);
   }
-  Database db = Database::open(dir.path(), "pw");
+  Database db = Database::open(dir.path());
   CHECK_EQ(db.scan_rows("people").size(), 0u);
 }
 
 IAQS_TEST(database, rollback_discards_rows_and_catalog) {
   TestDir dir("rollback");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   db.create_table(people_schema());
 
   db.begin();
@@ -198,14 +197,14 @@ IAQS_TEST(database, wal_recovery_from_copied_directory) {
   TestDir live("wal-live");
   TestDir recovered("wal-copy");
   {
-    Database db = Database::create(live.path(), "pw");
+    Database db = Database::create(live.path());
     db.create_table(people_schema());
     // These auto-commit into the WAL; pages themselves are not flushed yet.
     db.insert_row("people", make_row(1, "alice", 1.5, "a", true));
     db.insert_row("people", make_row(2, "bob", 2.5, "b", false));
     copy_dir(live.path(), recovered.path());
   }
-  Database db = Database::open(recovered.path(), "pw");
+  Database db = Database::open(recovered.path());
   CHECK(db.table_exists("people"));
   const auto rows = db.scan_rows("people");
   CHECK_EQ(rows.size(), 2u);
@@ -217,21 +216,21 @@ IAQS_TEST(database, rolled_back_transaction_is_not_recovered) {
   TestDir live("wal-rollback-live");
   TestDir recovered("wal-rollback-copy");
   {
-    Database db = Database::create(live.path(), "pw");
+    Database db = Database::create(live.path());
     db.create_table(people_schema());
     db.begin();
     db.insert_row("people", make_row(1, "ghost", 0.0, "", false));
     db.rollback();
     copy_dir(live.path(), recovered.path());
   }
-  Database db = Database::open(recovered.path(), "pw");
+  Database db = Database::open(recovered.path());
   CHECK_EQ(db.scan_rows("people").size(), 0u);
 }
 
 IAQS_TEST(database, checkpoint_rotates_wal_and_keeps_data) {
   TestDir dir("checkpoint");
   {
-    Database db = Database::create(dir.path(), "pw");
+    Database db = Database::create(dir.path());
     db.create_table(people_schema());
     db.insert_row("people", make_row(1, "alice", 1.0, "", true));
     const uint32_t before = db.wal_generation();
@@ -241,13 +240,13 @@ IAQS_TEST(database, checkpoint_rotates_wal_and_keeps_data) {
     db.insert_row("people", make_row(2, "bob", 2.0, "", false));
     db.close();
   }
-  Database db = Database::open(dir.path(), "pw");
+  Database db = Database::open(dir.path());
   CHECK_EQ(db.scan_rows("people").size(), 2u);
 }
 
 IAQS_TEST(database, drop_table) {
   TestDir dir("drop");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   db.create_table(people_schema());
   db.insert_row("people", make_row(1, "alice", 1.0, "", false));
   db.drop_table("people");
@@ -257,13 +256,13 @@ IAQS_TEST(database, drop_table) {
   CHECK_EQ(db.table_names().size(), 0u);
   db.close();
 
-  Database reopened = Database::open(dir.path(), "pw");
+  Database reopened = Database::open(dir.path());
   CHECK_EQ(reopened.table_names().size(), 0u);
 }
 
 IAQS_TEST(database, row_shape_errors) {
   TestDir dir("row-shape");
-  Database db = Database::create(dir.path(), "pw");
+  Database db = Database::create(dir.path());
   db.create_table(people_schema());
 
   Row too_few;

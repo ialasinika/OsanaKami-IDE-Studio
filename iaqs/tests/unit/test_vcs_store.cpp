@@ -43,7 +43,7 @@ std::string pattern(size_t size) {
 
 IAQS_TEST(vcs_store, blob_roundtrip_and_dedupe) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -60,7 +60,7 @@ IAQS_TEST(vcs_store, blob_roundtrip_and_dedupe) {
 
 IAQS_TEST(vcs_store, compressible_blob_roundtrip) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -73,7 +73,7 @@ IAQS_TEST(vcs_store, compressible_blob_roundtrip) {
 
 IAQS_TEST(vcs_store, large_blob_is_chunked_and_roundtrips) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -85,7 +85,7 @@ IAQS_TEST(vcs_store, large_blob_is_chunked_and_roundtrips) {
 
 IAQS_TEST(vcs_store, tree_object_roundtrip) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 
@@ -100,7 +100,7 @@ IAQS_TEST(vcs_store, tree_object_roundtrip) {
 
 IAQS_TEST(vcs_store, missing_object_throws) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
   CHECK_THROW(store.read(std::string(64, '0')), std::runtime_error);
@@ -109,7 +109,7 @@ IAQS_TEST(vcs_store, missing_object_throws) {
 
 IAQS_TEST(vcs_store, truncated_read_is_rejected) {
   TempDir dir;
-  db::Database database = db::Database::create(dir.path.string(), "pw", 8192);
+  db::Database database = db::Database::create(dir.path.string(), 8192);
   vcs::ObjectStore store(database);
   store.ensure_schema();
 

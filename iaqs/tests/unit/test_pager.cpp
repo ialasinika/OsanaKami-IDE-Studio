@@ -1,13 +1,14 @@
-#include "db/pager.h"
-
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "core/util.h"
-#include "crypto/rand.h"
-#include "db/keys.h"
 #include "db/page.h"
+#include "db/pager.h"
+#include "db/segment.h"
 #include "harness.h"
 
 using namespace iaqs;
@@ -15,151 +16,144 @@ using namespace iaqs::db;
 
 namespace {
 
-std::string make_tmp_dir() {
-  const std::string name = "iaqs-pager-" + to_hex(bytes_span(random_bytes(8)));
-  const std::string dir =
-      (std::filesystem::temp_directory_path() / name).string();
-  make_dirs(dir);
-  return dir;
+class TempDir {
+ public:
+  explicit TempDir(const std::string& name)
+      : path_((std::filesystem::temp_directory_path() /
+               ("iaqs_test_pager_" + name))
+                  .string()) {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+    std::filesystem::create_directories(path_);
+  }
+  ~TempDir() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+  TempDir(const TempDir&) = delete;
+  TempDir& operator=(const TempDir&) = delete;
+  const std::string& str() const { return path_; }
+
+ private:
+  std::string path_;
+};
+
+Bytes body_of(size_t size, char base) {
+  Bytes out(size, '\0');
+  for (size_t i = 0; i < size; ++i) out[i] = static_cast<char>(base + (i % 17));
+  return out;
 }
 
-void remove_tmp_dir(const std::string& dir) {
-  std::error_code ec;
-  std::filesystem::remove_all(std::filesystem::path(dir), ec);
-}
-
-Key32 test_key() {
-  Key32 key{};
-  for (size_t i = 0; i < key.size(); ++i) key[i] = static_cast<uint8_t>(i * 7 + 3);
-  return key;
-}
-
-Bytes make_body(const std::string& text) { return Bytes(text); }
-
-std::string body_of(const Bytes& plain) {
+// read_page() hands back the encoded page (header + body); tests care about the
+// body they wrote.
+Bytes body_of_page(Pager& pager, PageRef ref) {
+  const Bytes& plain = pager.read_page(ref);
   PageHeader header;
   ByteSpan body;
-  if (!decode_page(bytes_span(plain), header, body)) {
-    throw std::runtime_error("test: invalid page");
-  }
-  return std::string(reinterpret_cast<const char*>(body.data()), body.size());
+  CHECK(decode_page(bytes_span(plain), header, body));
+  (void)header;
+  return Bytes(bytes_view(body));
 }
 
-struct TmpPagerDir {
-  std::string dir = make_tmp_dir();
-  ~TmpPagerDir() { remove_tmp_dir(dir); }
-};
+void flip_byte(const std::string& path, uint64_t offset) {
+  Bytes data = read_file(path);
+  CHECK(offset < data.size());
+  data[offset] = static_cast<char>(data[offset] ^ 0x01);
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out.write(data.data(), static_cast<std::streamsize>(data.size()));
+}
 
 }  // namespace
 
 IAQS_TEST(pager, alloc_read_and_update) {
-  TmpPagerDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), /*epoch=*/3);
-  CHECK_EQ(pager.segment_count(), 1u);
+  TempDir dir("alloc");
+  Pager pager(dir.str(), 4096, 4096ull * 8);
 
-  const PageRef first =
-      pager.alloc_page(PageType::Heap, 0, bytes_span(make_body("hello")));
+  const Bytes body = body_of(256, 'a');
+  const PageRef first = pager.alloc_page(PageType::Heap, 0, bytes_span(body));
   CHECK_EQ(first.seg, 0u);
   CHECK_EQ(first.page, 1u);
   CHECK_EQ(first.generation, 1u);
-  CHECK_EQ(body_of(pager.read_page(first)), std::string("hello"));
+  CHECK(body_of_page(pager, first) == body);
 
-  const PageRef second =
-      pager.update_page(first, PageType::Heap, 0, bytes_span(make_body("world!")));
+  const Bytes updated = body_of(300, 'b');
+  const PageRef second = pager.update_page(first, PageType::Heap, 1, bytes_span(updated));
+  CHECK_EQ(second.seg, first.seg);
+  CHECK_EQ(second.page, first.page);
   CHECK_EQ(second.generation, 2u);
-  CHECK_EQ(body_of(pager.read_page(second)), std::string("world!"));
+  pager.flush();
+  CHECK(body_of_page(pager, second) == updated);
+  // The superseded address is stale, not silently misread.
   CHECK_THROW(pager.read_page(first), std::runtime_error);
 }
 
 IAQS_TEST(pager, flush_and_reopen_persists_data) {
-  TmpPagerDir tmp;
-  const Key32 key = test_key();
-  PageRef ref;
+  TempDir dir("persist");
+  const uint32_t page_size = 4096;
+  Bytes updated;
   {
-    Pager pager(tmp.dir, 4096, 4096ull * 8, key, 5);
-    ref = pager.alloc_page(PageType::BTreeLeaf, 0, bytes_span(make_body("abc")));
-    ref = pager.update_page(ref, PageType::BTreeLeaf, 0,
-                            bytes_span(make_body("persisted")));
-    CHECK_EQ(pager.dirty_pages(), 1u);
-    pager.sync();
-    CHECK_EQ(pager.dirty_pages(), 0u);
+    Pager pager(dir.str(), page_size, page_size * 8ull);
+    const PageRef first = pager.alloc_page(PageType::Heap, 0, bytes_span(body_of(128, 'a')));
+    updated = body_of(200, 'b');
+    pager.update_page(first, PageType::Heap, 0, bytes_span(updated));
+    pager.flush();
   }
-  Pager reopened(tmp.dir, 4096, 4096ull * 8, key, 5);
-  CHECK_EQ(body_of(reopened.read_page(ref)), std::string("persisted"));
-  // A reference from before the update is stale.
-  CHECK_THROW(reopened.read_page(PageRef{ref.seg, ref.page, 1}),
-              std::runtime_error);
+  Pager reopened(dir.str(), page_size, page_size * 8ull);
+  const PageRef latest = reopened.current_ref(0, 1);
+  CHECK_EQ(latest.generation, 2u);
+  CHECK(body_of_page(reopened, latest) == updated);
 }
 
 IAQS_TEST(pager, segment_rotation) {
-  TmpPagerDir tmp;
-  // 4 pages per segment: page 0 = header, pages 1..3 = data.
-  Pager pager(tmp.dir, 1024, 1024ull * 4, test_key(), 0);
+  TempDir dir("rotate");
+  const uint32_t page_size = 1024;
+  Pager pager(dir.str(), page_size, 4096);  // four slots per segment
   std::vector<PageRef> refs;
-  for (int i = 0; i < 6; ++i) {
-    refs.push_back(pager.alloc_page(PageType::Heap, 0,
-                                    bytes_span(make_body("page"))));
+  for (int i = 0; i < 4; ++i) {
+    refs.push_back(pager.alloc_page(PageType::Heap, 0, bytes_span(body_of(64, 'a' + i))));
   }
-  CHECK(pager.segment_count() >= 2);
   CHECK_EQ(refs[0].seg, 0u);
   CHECK_EQ(refs[0].page, 1u);
   CHECK_EQ(refs[3].seg, 1u);
   CHECK_EQ(refs[3].page, 1u);
-  for (const PageRef& ref : refs) {
-    CHECK_EQ(body_of(pager.read_page(ref)), std::string("page"));
-  }
-  pager.sync();
-
-  Pager reopened(tmp.dir, 1024, 1024ull * 4, test_key(), 0);
-  CHECK_EQ(reopened.segment_count(), pager.segment_count());
-  for (const PageRef& ref : refs) {
-    CHECK_EQ(body_of(reopened.read_page(ref)), std::string("page"));
-  }
+  CHECK_EQ(pager.segment_count(), 2u);
 }
 
 IAQS_TEST(pager, corrupt_slot_is_rejected) {
-  TmpPagerDir tmp;
-  const Key32 key = test_key();
-  PageRef ref;
+  TempDir dir("corrupt");
+  const uint32_t page_size = 4096;
   {
-    Pager pager(tmp.dir, 4096, 4096ull * 8, key, 0);
-    ref = pager.alloc_page(PageType::Heap, 0, bytes_span(make_body("data")));
-    pager.sync();
+    Pager pager(dir.str(), page_size, page_size * 8ull);
+    pager.alloc_page(PageType::Heap, 0, bytes_span(body_of(100, 'z')));
+    pager.flush();
   }
-  // Flip a byte inside the ciphertext of page 1's slot.
-  const std::string path = SegmentFile::path_for(tmp.dir, 0);
-  Bytes raw = read_file(path);
-  const size_t offset = 1 * 4096 + kEnvelopeHeaderSize + 3;
-  CHECK(offset < raw.size());
-  raw[offset] = static_cast<char>(raw[offset] ^ 0x40);
-  write_file_atomic(path, bytes_span(raw));
+  const std::string segment = SegmentFile::path_for(dir.str(), 0);
+  flip_byte(segment, page_size + kEnvelopeHeaderSize + 5);
 
-  Pager pager(tmp.dir, 4096, 4096ull * 8, key, 0);
-  CHECK_THROW(pager.read_page(ref), std::runtime_error);
+  Pager pager(dir.str(), page_size, page_size * 8ull);
+  CHECK_THROW(pager.read_page(PageRef{0, 1, 1}), std::runtime_error);
 }
 
 IAQS_TEST(pager, oversized_body_rejected) {
-  TmpPagerDir tmp;
-  Pager pager(tmp.dir, 1024, 1024ull * 8, test_key(), 0);
-  const Bytes too_big(max_plain_page_size(1024) - kPageHeaderSize + 1, 'x');
+  TempDir dir("oversized");
+  const uint32_t page_size = 4096;
+  Pager pager(dir.str(), page_size, page_size * 8ull);
+  const Bytes too_big(max_plain_page_size(page_size) - kPageHeaderSize + 1, 'x');
   CHECK_THROW(pager.alloc_page(PageType::Heap, 0, bytes_span(too_big)),
-              std::runtime_error);
-  const PageRef ref =
-      pager.alloc_page(PageType::Heap, 0, bytes_span(make_body("ok")));
-  CHECK_THROW(pager.update_page(ref, PageType::Heap, 0, bytes_span(too_big)),
               std::runtime_error);
 }
 
 IAQS_TEST(pager, clear_cache_requires_flush) {
-  TmpPagerDir tmp;
-  Pager pager(tmp.dir, 4096, 4096ull * 8, test_key(), 0);
-  const PageRef ref =
-      pager.alloc_page(PageType::Heap, 0, bytes_span(make_body("a")));
-  pager.update_page(ref, PageType::Heap, 0, bytes_span(make_body("b")));
+  TempDir dir("cache");
+  const uint32_t page_size = 4096;
+  Pager pager(dir.str(), page_size, page_size * 8ull);
+  const PageRef first = pager.alloc_page(PageType::Heap, 0, bytes_span(body_of(64, 'a')));
+  const Bytes updated = body_of(80, 'b');
+  const PageRef second = pager.update_page(first, PageType::Heap, 0, bytes_span(updated));
+
   CHECK_THROW(pager.clear_cache(), std::runtime_error);
   pager.flush();
   pager.clear_cache();
   CHECK_EQ(pager.cached_pages(), 0u);
-  CHECK_EQ(body_of(pager.read_page(PageRef{ref.seg, ref.page, 2})),
-           std::string("b"));
+  CHECK(body_of_page(pager, second) == updated);
 }

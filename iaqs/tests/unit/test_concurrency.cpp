@@ -61,13 +61,13 @@ std::size_t count_rows(Database& db, const std::string& table) {
 // the other connection committed.
 IAQS_TEST(concurrency, two_connections_see_each_others_commits) {
   TestDir dir;
-  Database first = Database::create(dir.str(), "concurrency-pw-1", 1024);
+  Database first = Database::create(dir.str(), 1024);
   first.begin();
   first.create_table(counters_schema());
   first.insert_row("counters", counter_row(1, "first"));
   first.commit();
 
-  Database second = Database::open(dir.str(), "concurrency-pw-1");
+  Database second = Database::open(dir.str());
   CHECK_EQ(count_rows(first, "counters"), size_t{1});
   CHECK_EQ(count_rows(second, "counters"), size_t{1});
 
@@ -90,12 +90,12 @@ IAQS_TEST(concurrency, two_connections_see_each_others_commits) {
 // another connection (catalog refresh at begin, not only at open).
 IAQS_TEST(concurrency, catalog_changes_are_visible_to_other_connections) {
   TestDir dir;
-  Database first = Database::create(dir.str(), "concurrency-pw-2", 1024);
+  Database first = Database::create(dir.str(), 1024);
   first.begin();
   first.create_table(counters_schema());
   first.commit();
 
-  Database second = Database::open(dir.str(), "concurrency-pw-2");
+  Database second = Database::open(dir.str());
 
   first.begin();
   TableSchema extra;
@@ -123,12 +123,12 @@ IAQS_TEST(concurrency, catalog_changes_are_visible_to_other_connections) {
 // connection cannot start writing in the middle; it can after the commit.
 IAQS_TEST(concurrency, writer_lock_is_held_for_the_transaction) {
   TestDir dir;
-  Database first = Database::create(dir.str(), "concurrency-pw-3", 1024);
+  Database first = Database::create(dir.str(), 1024);
   first.begin();
   first.create_table(counters_schema());
   first.commit();
 
-  Database second = Database::open(dir.str(), "concurrency-pw-3");
+  Database second = Database::open(dir.str());
   first.begin();
   first.insert_row("counters", counter_row(1, "held"));
 
@@ -156,11 +156,11 @@ IAQS_TEST(concurrency, writer_lock_is_held_for_the_transaction) {
 // Interleaved short transactions from two connections both survive a reopen.
 IAQS_TEST(concurrency, interleaved_transactions_survive_reopen) {
   TestDir dir;
-  Database first = Database::create(dir.str(), "concurrency-pw-4", 1024);
+  Database first = Database::create(dir.str(), 1024);
   first.begin();
   first.create_table(counters_schema());
   first.commit();
-  Database second = Database::open(dir.str(), "concurrency-pw-4");
+  Database second = Database::open(dir.str());
 
   for (int i = 0; i < 6; ++i) {
     Database& db = (i % 2 == 0) ? first : second;
@@ -173,7 +173,7 @@ IAQS_TEST(concurrency, interleaved_transactions_survive_reopen) {
   first.close();
   second.close();
 
-  Database reopened = Database::open(dir.str(), "concurrency-pw-4");
+  Database reopened = Database::open(dir.str());
   reopened.begin();
   CHECK_EQ(count_rows(reopened, "counters"), size_t{6});
   reopened.commit();

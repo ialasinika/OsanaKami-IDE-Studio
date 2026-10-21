@@ -59,7 +59,7 @@ bool is_reparse_point(const fs::path& path) {
 #endif
 }
 
-// The .iaqs directory (at any depth) holds the encrypted database itself and
+// The .iaqs directory (at any depth) holds the database itself and
 // must never enter the index, a tree or the worktree materialisation.
 bool path_is_repo_internal(std::string_view path) {
   std::size_t start = 0;
@@ -325,16 +325,23 @@ fs::path Repo::find_root(const fs::path& start) {
   fail("not inside a repository (no .iaqs directory found)");
 }
 
-Repo::Repo(std::filesystem::path workdir, db::Database database,
-           std::string_view password)
-    : workdir_(std::move(workdir)), db_(std::move(database)), store_(db_),
-      password_(password) {}
+Repo::Repo(std::filesystem::path workdir, std::filesystem::path store_dir,
+           db::Database database)
+    : workdir_(std::move(workdir)),
+      store_dir_(std::move(store_dir)),
+      db_(std::move(database)),
+      store_(db_) {}
 
-Repo Repo::init(const fs::path& workdir, std::string_view password) {
+Repo Repo::init(const fs::path& workdir) {
+  return init(workdir, workdir);
+}
+
+Repo Repo::init(const fs::path& workdir, const fs::path& store_root) {
   fs::create_directories(workdir);
-  const fs::path iaqs = fs::absolute(workdir) / ".iaqs";
-  auto database = db::Database::create(u8(iaqs), password);
-  Repo repo(fs::absolute(workdir), std::move(database), password);
+  fs::create_directories(store_root);
+  const fs::path iaqs = fs::absolute(store_root) / ".iaqs";
+  auto database = db::Database::create(u8(iaqs));
+  Repo repo(fs::absolute(workdir), fs::absolute(store_root), std::move(database));
   repo.ensure_schema();
   repo.set_default_config();
   repo.database().begin();
@@ -348,11 +355,15 @@ Repo Repo::init(const fs::path& workdir, std::string_view password) {
   return repo;
 }
 
-Repo Repo::open(const fs::path& workdir, std::string_view password) {
-  const fs::path iaqs = fs::absolute(workdir) / ".iaqs";
+Repo Repo::open(const fs::path& workdir) {
+  return open(workdir, workdir);
+}
+
+Repo Repo::open(const fs::path& workdir, const fs::path& store_root) {
+  const fs::path iaqs = fs::absolute(store_root) / ".iaqs";
   if (!fs::exists(iaqs / "MANIFEST")) fail("no repository database at " + u8(iaqs));
-  auto database = db::Database::open(u8(iaqs), password);
-  Repo repo(fs::absolute(workdir), std::move(database), password);
+  auto database = db::Database::open(u8(iaqs));
+  Repo repo(fs::absolute(workdir), fs::absolute(store_root), std::move(database));
   repo.ensure_schema();
   return repo;
 }
@@ -1234,11 +1245,6 @@ void Repo::reset_hard(std::string_view rev) {
   db_.commit();
 }
 
-// ---------------------------------------------------------------- password
-void Repo::change_password(std::string_view new_password) {
-  db_.change_password(new_password);
-  password_ = std::string(new_password);
-}
 std::optional<std::string> Repo::meta_get(std::string_view key) {
   const auto rows = db_.scan_rows("meta");
   for (const auto& [rid, row] : rows) {

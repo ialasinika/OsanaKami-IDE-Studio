@@ -57,7 +57,7 @@ IAQS_TEST(export_git, writes_commits_blobs_tags_and_refs) {
 
   std::string second_commit;
   {
-    vcs::Repo repo = vcs::Repo::init(root, "pw");
+    vcs::Repo repo = vcs::Repo::init(root);
     write_text(root / "a.txt", "hello\n");
     write_text(root / "sub" / "b.txt", "world\n");
     repo.add_paths({}, true);
@@ -73,7 +73,7 @@ IAQS_TEST(export_git, writes_commits_blobs_tags_and_refs) {
     repo.database().close();
   }
 
-  vcs::Repo repo = vcs::Repo::open(root, "pw");
+  vcs::Repo repo = vcs::Repo::open(root);
   vcs::ExportGitOptions options;
   CHECK(vcs::parse_git_author("Test <test@example.com>", options.author));
   std::ostringstream stream;
