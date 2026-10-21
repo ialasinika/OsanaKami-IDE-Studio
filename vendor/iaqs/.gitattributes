@@ -1,0 +1,5 @@
+# Bytes in, bytes out. The repository root pins LF for this project's own
+# files; the vendored tree is somebody else's shipped bytes (a few are CRLF),
+# and a re-sync must diff and check out unchanged. -text turns the root filter
+# off for everything under vendor/iaqs/.
+* -text
