@@ -40,7 +40,7 @@
 #endif
 
 /* The kernel's own version, reported by `hello` and `infantgod version`. */
-#define SDE_VERSION "0.1.3-beta"
+#define SDE_VERSION "0.1.3-beta.2"
 #define SDE_PROTOCOL "infantgod/2"
 /* The same version as a number, which is what machines compare. */
 #define SDE_PROTOCOL_VERSION 2
