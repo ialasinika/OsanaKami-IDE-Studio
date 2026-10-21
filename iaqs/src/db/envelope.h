@@ -12,6 +12,10 @@ namespace iaqs::db {
 
 inline constexpr uint16_t kEnvelopeVersion = 1;
 
+// Set in the envelope flags when the slot holds plaintext instead of AEAD
+// ciphertext. The header CRC and the page's own CRC still guard the slot.
+inline constexpr uint16_t kEnvelopeFlagPlain = 0x0001;
+
 struct EnvelopeInfo {
   uint16_t version = 0;
   uint16_t flags = 0;
@@ -25,7 +29,8 @@ struct EnvelopeInfo {
 // The nonce/AAD bind seg/page/generation, so the slot cannot be moved or
 // replayed onto another slot. Remaining slot bytes are zero.
 Bytes seal_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
-                const PageRef& ref, ByteSpan plaintext, uint32_t page_size);
+                const PageRef& ref, ByteSpan plaintext, uint32_t page_size,
+                bool encrypted = true);
 
 // Parses and CRC-checks the envelope header. Returns false when malformed.
 bool read_envelope_info(ByteSpan slot, EnvelopeInfo& info);
@@ -35,6 +40,6 @@ bool read_envelope_info(ByteSpan slot, EnvelopeInfo& info);
 // std::runtime_error when the slot is malformed, the CRC fails, or AEAD
 // authentication fails.
 Bytes open_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
-                const PageRef& ref, ByteSpan slot);
+                const PageRef& ref, ByteSpan slot, bool encrypted = true);
 
 }  // namespace iaqs::db

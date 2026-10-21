@@ -223,6 +223,7 @@ rejected by `-std=c89 -pedantic -Werror`.
 | `langs/`, `shell/` | JavaScript ESM | zero npm dependencies |
 | `electron/` | JavaScript (CommonJS) | Electron + electron-builder, dev only |
 | `tools/` | Python 3.12 | standard library only |
+| `iaqs/` | C++20 | none beyond the standard library; built by `tools/build-iaqs.ps1` |
 
 ### 8. Language intelligence is keyword colouring, and it lives in `langs/`
 

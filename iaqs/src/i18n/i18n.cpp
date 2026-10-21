@@ -18,7 +18,7 @@ namespace {
 
 // Keep the two tables in the same order as enum Msg (Count is the length).
 const char* kZh[] = {
-    "用法: iaqs <命令> [选项]\n命令: init add status commit log show cat-file ls-tree branch switch merge diff\n      tag reset passwd rekey info gc fsck rm mv restore clean rev-parse checkpoint\n      placeholder export-git import-git lang version help\n全局: --repo <路径> --lang <zh-CN|en> --password-stdin\n",
+    "用法: iaqs <命令> [选项]\n命令: init add status commit log show cat-file ls-tree branch switch merge diff\n      tag reset info gc fsck rm mv restore clean rev-parse checkpoint\n      placeholder export-git import-git lang version help\n全局: --repo <路径> --lang <zh-CN|en>\n",
     "iaqs 0.1.0 (格式版本 1)",
     "已创建仓库: {0}",
     "已经是一个 iaqs 仓库: {0}",
@@ -95,9 +95,9 @@ const char* kZh[] = {
 const char* kEn[] = {
     "Usage: iaqs <command> [options]\n"
     "Commands: init add status commit log show cat-file ls-tree branch switch merge diff\n"
-    "          tag reset passwd rekey info gc fsck rm mv restore clean rev-parse\n"
+    "          tag reset info gc fsck rm mv restore clean rev-parse\n"
     "          checkpoint placeholder export-git import-git lang version help\n"
-    "Global: --repo <path> --lang <zh-CN|en> --password-stdin\n",
+    "Global: --repo <path> --lang <zh-CN|en>\n",
     "iaqs 0.1.0 (format version 1)",
     "Initialized repository: {0}",
     "Already an iaqs repository: {0}",

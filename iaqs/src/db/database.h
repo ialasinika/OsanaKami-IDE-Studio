@@ -111,6 +111,9 @@ class Database {
 
   Pager& pager() { return *pager_; }
   const Manifest& manifest() const { return manifest_; }
+
+  // False for the plaintext store this project creates (no password, no key).
+  bool encrypted() const { return encrypted_; }
   uint32_t epoch() const { return epoch_; }
   uint32_t wal_generation() const { return wal_gen_; }
 
@@ -148,6 +151,7 @@ class Database {
   Manifest manifest_;
   DbKeys keys_;
   std::unique_ptr<Keyring> keyring_;
+  bool encrypted_ = false;
   uint32_t epoch_ = 0;
   std::unique_ptr<Pager> pager_;
   // WAL writer for the active transaction only; null between transactions.

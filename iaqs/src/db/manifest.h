@@ -12,6 +12,11 @@ namespace iaqs::db {
 
 inline constexpr uint32_t kManifestFormatVersion = 1;
 inline constexpr uint8_t kKdfPbkdf2HmacSha256 = 1;
+// This project's own repositories use `kKdfNone`: pages and the WAL are stored
+// as plaintext with their checksums intact, so there is no password to lose.
+// The password-wrapped format above stays for upstream compatibility and for
+// the database engine's own tests.
+inline constexpr uint8_t kKdfNone = 0;
 
 struct Manifest {
   static constexpr size_t kEncodedSize = 153;
@@ -37,6 +42,10 @@ struct Manifest {
   // caller still has to wrap the DEK via Keyring::initialize().
   static Manifest create_public(uint32_t page_size, uint64_t segment_max,
                                 uint32_t kdf_iters);
+
+  // Fresh manifest for a plaintext database: identity and sizing only, no
+  // salt, no iterations, no wrapped key.
+  static Manifest create_plain(uint32_t page_size, uint64_t segment_max);
 };
 
 Manifest load_manifest(const std::string& path);

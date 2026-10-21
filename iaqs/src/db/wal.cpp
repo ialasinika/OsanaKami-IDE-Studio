@@ -119,13 +119,15 @@ std::vector<std::string> list_segments(const std::string& dir) {
 // ---------------------------------------------------------------- WalWriter
 
 WalWriter::WalWriter(const std::string& dir, uint32_t wal_seg_id,
-                     Key32 wal_key, uint32_t epoch, uint64_t first_lsn)
+                     Key32 wal_key, uint32_t epoch, uint64_t first_lsn,
+                     bool encrypted)
     : dir_(dir),
       path_(join_path(dir, segment_name(wal_seg_id))),
       wal_seg_id_(wal_seg_id),
       wal_key_(wal_key),
       epoch_(epoch),
-      next_lsn_(first_lsn) {
+      next_lsn_(first_lsn),
+      encrypted_(encrypted) {
   if (!dir_exists(dir_)) make_dirs(dir_);
   file_ = open_append(path_);
   if (file_ == nullptr) {
@@ -146,12 +148,18 @@ uint64_t WalWriter::append(WalRecordType type, ByteSpan payload) {
   }
   const uint64_t lsn = next_lsn_;
 
-  uint8_t nonce[12];
-  build_nonce(epoch_, wal_seg_id_, lsn, nonce);
-  uint8_t aad[8];
-  store_u64_le(aad, lsn);
-  const Bytes ciphertext =
-      aead_seal(wal_key_.data(), nonce, payload, ByteSpan(aad, sizeof aad));
+  Bytes ciphertext;
+  if (encrypted_) {
+    uint8_t nonce[12];
+    build_nonce(epoch_, wal_seg_id_, lsn, nonce);
+    uint8_t aad[8];
+    store_u64_le(aad, lsn);
+    ciphertext = aead_seal(wal_key_.data(), nonce, payload,
+                           ByteSpan(aad, sizeof aad));
+  } else {
+    ciphertext.assign(reinterpret_cast<const char*>(payload.data()),
+                      payload.size());
+  }
 
   if (ciphertext.size() > 0xffffffffull - kRecordMetaSize) {
     throw std::runtime_error("wal: record too large: " + path_);
@@ -211,7 +219,8 @@ void WalWriter::sync() {
 
 std::vector<WalRecord> WalReader::read_all(const std::string& dir,
                                            const Key32& wal_key,
-                                           uint32_t epoch, bool tolerate_tail) {
+                                           uint32_t epoch, bool tolerate_tail,
+                                           bool encrypted) {
   std::vector<WalRecord> records;
   if (!dir_exists(dir)) return records;
 
@@ -224,6 +233,8 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
     const Bytes data = read_file(join_path(dir, name));
     const uint8_t* base = reinterpret_cast<const uint8_t*>(data.data());
     size_t pos = 0;
+    const size_t min_record =
+        encrypted ? kMinRecordSize : kRecordPrefixSize + kRecordMetaSize;
     try {
       while (true) {
       if (data.size() - pos < kRecordPrefixSize) break;
@@ -231,7 +242,7 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
       const uint32_t total_len = load_u32_le(p);
       // A truncated tail is not an error: stop this segment silently.
       if (data.size() - pos - kRecordPrefixSize < total_len) break;
-      if (kRecordPrefixSize + total_len < kMinRecordSize) {
+      if (kRecordPrefixSize + total_len < min_record) {
         throw std::runtime_error("wal: malformed record length in " + name);
       }
       const uint32_t stored_crc = load_u32_le(p + 4);
@@ -255,15 +266,20 @@ std::vector<WalRecord> WalReader::read_all(const std::string& dir,
       const ByteSpan ciphertext(
           p + kRecordPrefixSize + kRecordMetaSize,
           total_len - kRecordMetaSize);
-      uint8_t nonce[12];
-      build_nonce(epoch, seg, lsn, nonce);
-      uint8_t aad[8];
-      store_u64_le(aad, lsn);
       Bytes payload;
-      if (!aead_open(wal_key.data(), nonce, ciphertext,
-                     ByteSpan(aad, sizeof aad), payload)) {
-        throw std::runtime_error("wal: authentication failed in " + name +
-                                 " at byte " + std::to_string(pos));
+      if (encrypted) {
+        uint8_t nonce[12];
+        build_nonce(epoch, seg, lsn, nonce);
+        uint8_t aad[8];
+        store_u64_le(aad, lsn);
+        if (!aead_open(wal_key.data(), nonce, ciphertext,
+                       ByteSpan(aad, sizeof aad), payload)) {
+          throw std::runtime_error("wal: authentication failed in " + name +
+                                   " at byte " + std::to_string(pos));
+        }
+      } else {
+        payload.assign(reinterpret_cast<const char*>(ciphertext.data()),
+                       ciphertext.size());
       }
 
       WalRecord record;

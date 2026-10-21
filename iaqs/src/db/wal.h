@@ -33,7 +33,7 @@ class WalWriter {
   // Creates `dir` when missing and opens (or creates) the segment file for
   // append. Throws std::runtime_error on failure.
   WalWriter(const std::string& dir, uint32_t wal_seg_id, Key32 wal_key,
-            uint32_t epoch, uint64_t first_lsn);
+            uint32_t epoch, uint64_t first_lsn, bool encrypted = true);
   ~WalWriter();
 
   WalWriter(const WalWriter&) = delete;
@@ -58,6 +58,7 @@ class WalWriter {
   Key32 wal_key_{};
   uint32_t epoch_ = 0;
   uint64_t next_lsn_ = 0;
+  bool encrypted_ = true;
 };
 
 class WalReader {
@@ -72,7 +73,8 @@ class WalReader {
   // instead of making the database unopenable; strict readers keep the error.
   static std::vector<WalRecord> read_all(const std::string& dir,
                                          const Key32& wal_key, uint32_t epoch,
-                                         bool tolerate_tail = false);
+                                         bool tolerate_tail = false,
+                                         bool encrypted = true);
 };
 
 }  // namespace iaqs::db

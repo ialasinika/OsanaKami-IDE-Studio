@@ -46,6 +46,17 @@ Manifest Manifest::create_public(uint32_t page_size, uint64_t segment_max,
   return m;
 }
 
+Manifest Manifest::create_plain(uint32_t page_size, uint64_t segment_max) {
+  Manifest m;
+  m.page_size = page_size;
+  m.segment_max = segment_max;
+  m.kdf_type = kKdfNone;
+  m.kdf_iters = 0;
+  const Bytes uuid = random_bytes(m.db_uuid.size());
+  std::memcpy(m.db_uuid.data(), uuid.data(), m.db_uuid.size());
+  return m;
+}
+
 Bytes Manifest::encode() const {
   Bytes out(kEncodedSize, '\0');
   uint8_t* p = reinterpret_cast<uint8_t*>(out.data());
@@ -96,7 +107,9 @@ bool Manifest::decode(ByteSpan data, Manifest& out) {
               out.verifier_tag.size());
 
   if (out.format_version != kManifestFormatVersion) return false;
-  if (out.kdf_type != kKdfPbkdf2HmacSha256) return false;
+  if (out.kdf_type != kKdfNone && out.kdf_type != kKdfPbkdf2HmacSha256) {
+    return false;
+  }
   if (out.page_size < 1024 || out.page_size > 65536) return false;
   if (out.segment_max < out.page_size) return false;
   return true;

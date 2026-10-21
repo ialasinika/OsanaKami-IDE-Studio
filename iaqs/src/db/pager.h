@@ -27,7 +27,7 @@ struct CachedPage {
 class Pager {
  public:
   Pager(std::string dir, uint32_t page_size, uint64_t segment_max,
-        Key32 page_key, uint32_t epoch);
+        Key32 page_key, uint32_t epoch, bool encrypted = true);
 
   Pager(const Pager&) = delete;
   Pager& operator=(const Pager&) = delete;
@@ -114,6 +114,7 @@ class Pager {
   uint64_t segment_max_ = 0;
   Key32 page_key_{};
   uint32_t epoch_ = 0;
+  bool encrypted_ = true;
   uint32_t segment_max_pages_ = 0;
   std::vector<SegmentFile> segments_;
   std::map<uint64_t, CachedPage> cache_;

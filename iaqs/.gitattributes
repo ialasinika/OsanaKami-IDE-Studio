@@ -1,0 +1,5 @@
+# The version store began as the same author's project, so its bytes keep
+# their own conventions: a re-sync must diff and check out unchanged, and
+# the fork's C++ edits stay diffable against upstream sources.
+# -text turns the root's LF normalisation off for everything under iaqs/.
+* -text

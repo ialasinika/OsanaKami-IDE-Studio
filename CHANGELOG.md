@@ -16,6 +16,47 @@ stands in this tree.
 
 ## Unreleased
 
+### The version store moves in, and asks for no password
+
+`iaqs` -- the single-user history store the editor will hand a mod package to --
+used to sit in `vendor/iaqs` as a copy to be kept byte-identical to the same
+author's project. It is `iaqs/` now: a fork, edited like the rest of the tree
+and built by `tools/build-iaqs.ps1`. Upstream is still the same project, but the
+copy is ours to adapt, so the shell adapter no longer has to pretend the password
+is a feature.
+
+The password cost a step and protected nothing here: the store lives in one
+package folder, on one disk, read by the person who wrote it. It introduced its
+own failure mode (a lost key means an unreadable history). So the MANIFEST grew a
+plaintext mode (`kdf_type = kKdfNone`), pages and WAL records are stored as
+plaintext with their CRC-32C checksums intact, and `Database::create(dir, "")` /
+`Database::open(dir, "")` is the only mode the command line creates or accepts.
+`passwd`, `rekey`, `--password-stdin`, `IAQS_PASSWORD`, the prompts and the
+weak-password ladder are gone from the surface and from the usage text; opening
+a plaintext store with a password is an error, not a silent no-op.
+
+Encryption is not deleted. The wrapped-key format and the crypto modules still
+compile, `change_password` and `rekey_data` refuse a plaintext database by name,
+and the upstream suite still exercises the encrypted mode directly.
+`tests/unit/test_plain_store.cpp` pins the new mode: a store created without a
+password reads back, its page bodies are plaintext on disk, it refuses a
+supplied password, it refuses to change or rotate a key it does not have, and an
+encrypted database still opens beside it. The suite is 254 tests.
+
+The consequence is worth saying plainly: a package's history is as readable as
+its CSV tables are. That is the same sharing model the package already had -- a
+`.zip` exported from it carries the tables and yarn -- and `iaqs/README.md` says
+so where it lists the deltas.
+
+`tools/build-iaqs.ps1` now points the test run's `TEMP` inside `build-iaqs/`:
+this machine's file sandbox lets a child process write only under the workspace,
+and without it every temp-directory test failed with "cannot create directories:
+Permission denied". Upstream's own README and `scripts/build.ps1` are not carried
+in the fork -- they hardcode a machine path, build into a `build/` directory
+inside the source, and describe the password flow this fork removed.
+`iaqs/README.md` records the deltas and how a re-sync re-applies them, and
+`path-check` now covers the fork like any other source.
+
 ### The palette shows its colours again
 
 The pixel card's swatches were painted with `swatch.style = { backgroundColor:

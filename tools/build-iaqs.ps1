@@ -1,9 +1,9 @@
-# Builds the vendored version store (vendor/iaqs) into build-iaqs/.
+# Builds the project's version store (iaqs/) into build-iaqs/.
 #
 # The binary is never committed: build-iaqs/ is ignored, and the installer
 # payload picks the executable up from there.  cmake, g++ and mingw32-make must
 # be on PATH; on Windows that means putting MinGW-w64's bin first (see
-# AGENTS.md, and vendor/iaqs/README.md for why the generator is "MinGW
+# AGENTS.md, and iaqs/README.md for why the generator is "MinGW
 # Makefiles" rather than Ninja).
 
 param(
@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $root "vendor\iaqs"
+$source = Join-Path $root "iaqs"
 $build = Join-Path $root "build-iaqs"
 
 foreach ($tool in @("cmake", "g++", "mingw32-make")) {
@@ -43,8 +43,25 @@ try {
   Write-Host ("build ok: {0} ({1:N0} bytes)" -f $exe, $info.Length)
 
   if ($Tests) {
-    & (Join-Path $build "iaqs_tests.exe")
-    exit $LASTEXITCODE
+    # The harness creates random directories under TEMP. A child process under
+    # this machine's file sandbox may only write inside the workspace, so the
+    # run points TEMP at a scratch directory; without this, temp-dir tests fail
+    # with "cannot create directories: Permission denied".
+    $testTemp = Join-Path $build "test-temp"
+    New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+    $savedTemp = $env:TEMP
+    $savedTmp = $env:TMP
+    try {
+      $env:TEMP = $testTemp
+      $env:TMP = $testTemp
+      & (Join-Path $build "iaqs_tests.exe")
+      $code = $LASTEXITCODE
+    } finally {
+      $env:TEMP = $savedTemp
+      $env:TMP = $savedTmp
+      Remove-Item -Recurse -Force $testTemp -ErrorAction SilentlyContinue
+    }
+    exit $code
   }
 } finally {
   Pop-Location

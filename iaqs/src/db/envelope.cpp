@@ -38,7 +38,8 @@ void build_aad(uint16_t version, uint16_t flags, uint32_t seg, uint32_t page,
 }  // namespace
 
 Bytes seal_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
-                const PageRef& ref, ByteSpan plaintext, uint32_t page_size) {
+                const PageRef& ref, ByteSpan plaintext, uint32_t page_size,
+                bool encrypted) {
   if (page_size <= kEnvelopeHeaderSize + kAeadTagSize) {
     throw std::runtime_error("seal_page: page_size too small");
   }
@@ -46,13 +47,22 @@ Bytes seal_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
     throw std::runtime_error("seal_page: plaintext exceeds page capacity");
   }
 
-  uint8_t nonce[12];
-  build_nonce(epoch, ref.generation, ref.page, ref.seg, nonce);
-  uint8_t aad[16];
-  build_aad(kEnvelopeVersion, 0, ref.seg, ref.page, ref.generation, aad);
-
-  const Bytes sealed = aead_seal(page_key.data(), nonce, plaintext,
-                                 ByteSpan(aad, sizeof aad));
+  uint16_t flags = 0;
+  Bytes sealed;
+  if (encrypted) {
+    uint8_t nonce[12];
+    build_nonce(epoch, ref.generation, ref.page, ref.seg, nonce);
+    uint8_t aad[16];
+    build_aad(kEnvelopeVersion, 0, ref.seg, ref.page, ref.generation, aad);
+    sealed = aead_seal(page_key.data(), nonce, plaintext,
+                       ByteSpan(aad, sizeof aad));
+  } else {
+    // Plaintext slot: no key and no AEAD tag. The slot CRC above plus the
+    // page's own CRC remain the integrity check.
+    flags = kEnvelopeFlagPlain;
+    sealed.assign(reinterpret_cast<const char*>(plaintext.data()),
+                  plaintext.size());
+  }
   if (kEnvelopeHeaderSize + sealed.size() > page_size) {
     throw std::runtime_error("seal_page: sealed page exceeds slot");
   }
@@ -60,7 +70,7 @@ Bytes seal_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
   Bytes slot(page_size, '\0');
   uint8_t* p = reinterpret_cast<uint8_t*>(slot.data());
   store_u16_le(p + kOffVersion, kEnvelopeVersion);
-  store_u16_le(p + kOffFlags, 0);
+  store_u16_le(p + kOffFlags, flags);
   store_u32_le(p + kOffStoredLen, static_cast<uint32_t>(sealed.size()));
   store_u32_le(p + kOffGeneration, ref.generation);
   std::memcpy(p + kEnvelopeHeaderSize, sealed.data(), sealed.size());
@@ -78,8 +88,8 @@ bool read_envelope_info(ByteSpan slot, EnvelopeInfo& info) {
   info.generation = load_u32_le(p + kOffGeneration);
   const uint32_t stored_crc = load_u32_le(p + kOffSlotCrc);
   if (info.version != kEnvelopeVersion) return false;
-  if (stored_len > slot.size() - kEnvelopeHeaderSize ||
-      stored_len < kAeadTagSize) {
+  if (stored_len > slot.size() - kEnvelopeHeaderSize) return false;
+  if ((info.flags & kEnvelopeFlagPlain) == 0 && stored_len < kAeadTagSize) {
     return false;
   }
   const ByteSpan ciphertext(p + kEnvelopeHeaderSize, stored_len);
@@ -87,7 +97,7 @@ bool read_envelope_info(ByteSpan slot, EnvelopeInfo& info) {
 }
 
 Bytes open_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
-                const PageRef& ref, ByteSpan slot) {
+                const PageRef& ref, ByteSpan slot, bool encrypted) {
   EnvelopeInfo info;
   if (!read_envelope_info(slot, info)) {
     throw std::runtime_error("open_page: corrupt envelope header");
@@ -106,8 +116,16 @@ Bytes open_page(const std::array<uint8_t, 32>& page_key, uint32_t epoch,
   build_aad(info.version, info.flags, ref.seg, ref.page, info.generation, aad);
 
   Bytes plaintext;
-  if (!aead_open(page_key.data(), nonce, ciphertext, ByteSpan(aad, sizeof aad),
-                 plaintext)) {
+  const bool plain = (info.flags & kEnvelopeFlagPlain) != 0;
+  if (plain != !encrypted) {
+    throw std::runtime_error(
+        "open_page: slot encryption does not match the database");
+  }
+  if (plain) {
+    plaintext.assign(reinterpret_cast<const char*>(ciphertext.data()),
+                     ciphertext.size());
+  } else if (!aead_open(page_key.data(), nonce, ciphertext,
+                        ByteSpan(aad, sizeof aad), plaintext)) {
     throw std::runtime_error("open_page: authentication failed");
   }
   // The plaintext page header repeats the generation; mismatch means the slot

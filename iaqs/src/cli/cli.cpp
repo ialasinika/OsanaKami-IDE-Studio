@@ -40,21 +40,9 @@ using i18n::Msg;
 // string directly (that would use the ANSI code page on Windows).
 fs::path path_arg(const std::string& text) { return fs_path_from_utf8(text); }
 
-// Opening a repository without a password falls back to this documented default
-// (single-machine convenience; `iaqs passwd` replaces it).
-constexpr const char* kDefaultPassword = "12345678";
-
 int usage_error(const std::string& message) {
   std::cerr << i18n::tr(Msg::ErrorUsage, {message}) << "\n";
   return 2;
-}
-
-bool stdin_is_terminal() {
-#if defined(_WIN32)
-  return _isatty(_fileno(stdin)) != 0;
-#else
-  return isatty(0) != 0;
-#endif
 }
 
 bool stdout_is_terminal() {
@@ -105,133 +93,11 @@ std::string colorize_diff(std::string_view diff) {
   return out;
 }
 
-std::string read_line() {
-  std::string line;
-  if (!std::getline(std::cin, line)) line.clear();
-  return line;
-}
-
-std::string env_value(const char* name) {
-  const char* value = std::getenv(name);
-  return value != nullptr ? std::string(value) : std::string();
-}
-
-// Reads one line without echoing it (interactive password entry).
-std::string read_password_line() {
-#if defined(_WIN32)
-  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-  DWORD mode = 0;
-  const bool console = input != INVALID_HANDLE_VALUE && GetConsoleMode(input, &mode) != 0;
-  if (console) SetConsoleMode(input, mode & ~static_cast<DWORD>(ENABLE_ECHO_INPUT));
-  std::string line;
-  if (!std::getline(std::cin, line)) line.clear();
-  if (console) {
-    SetConsoleMode(input, mode);
-    std::cerr << "\n";
-  }
-  return line;
-#else
-  std::string line;
-  if (!std::getline(std::cin, line)) line.clear();
-  return line;
-#endif
-}
-
-// Password used to open an existing repository: --password-stdin, then
-// IAQS_PASSWORD, then an interactive prompt (default when non-interactive).
-// A custom password for a repository now works in an interactive terminal.
-std::string open_password(bool password_stdin, const std::string& prompt) {
-  if (password_stdin) {
-    std::string line;
-    if (!std::getline(std::cin, line)) line.clear();
-    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-    return line;
-  }
-  const std::string from_env = env_value("IAQS_PASSWORD");
-  if (!from_env.empty()) return from_env;
-  if (stdin_is_terminal()) {
-    std::cerr << prompt;
-    return read_password_line();
-  }
-  return std::string(kDefaultPassword);
-}
-
-bool is_simple_password(const std::string& password) {
-  if (password.size() < 8) return true;
-  static const char* const weak[] = {"123456",     "12345678",   "123456789",
-                                     "1234567890", "password",   "passwd",
-                                     "111111",     "000000",     "123123",
-                                     "abc123",     "qwerty",     "admin",
-                                     "root",       "iaqs"};
-  std::string lowered = to_lower_ascii(password);
-  for (const char* candidate : weak) {
-    if (lowered == candidate) return true;
-  }
-  return false;
-}
-
 struct ParsedArgs {
   std::vector<std::string> positional;
   std::map<std::string, std::string> options;
   std::vector<std::string> rest;
 };
-
-// Resolves the password to SET (init/passwd). Interactive runs enter it twice;
-// a simple password given non-interactively needs --allow-weak-password.
-// Returns false and prints a usage error when the input is rejected.
-bool resolve_new_password(const ParsedArgs& parsed, const std::string& option_name,
-                          std::string& out, bool allow_legacy_env = false) {
-  out.clear();
-  bool explicit_source = false;
-  if (parsed.options.count(option_name)) {
-    out = parsed.options.at(option_name);
-    explicit_source = true;
-  } else if (const std::string from_env = env_value("IAQS_NEW_PASSWORD"); !from_env.empty()) {
-    out = from_env;
-    explicit_source = true;
-  } else if (allow_legacy_env) {
-    // `iaqs init` keeps honouring IAQS_PASSWORD so scripted repository creation
-    // stays possible; `passwd` deliberately does not (it must not "change" a
-    // password to the same legacy value).
-    if (const std::string legacy = env_value("IAQS_PASSWORD"); !legacy.empty()) {
-      out = legacy;
-      explicit_source = true;
-    }
-  }
-
-  const bool interactive = stdin_is_terminal();
-  if (!explicit_source) {
-    if (interactive) {
-      std::cerr << i18n::tr(Msg::PromptNewPassword);
-      std::string first = read_line();
-      std::cerr << i18n::tr(Msg::PromptRepeatNewPassword);
-      std::string second = read_line();
-      if (first != second) {
-        usage_error(i18n::tr(Msg::PasswordsDoNotMatch));
-        return false;
-      }
-      out = first.empty() ? std::string(kDefaultPassword) : first;
-    } else {
-      out = kDefaultPassword;
-    }
-  }
-
-  if (out.empty()) {
-    usage_error(i18n::tr(Msg::ErrorEmptyPassword));
-    return false;
-  }
-
-  if (is_simple_password(out)) {
-    // A simple password typed interactively was already entered twice above;
-    // an explicitly supplied one (flag or environment) must opt in.
-    if (explicit_source && !parsed.options.count("allow-weak-password")) {
-      usage_error(i18n::tr(Msg::WeakPasswordNeedsFlag));
-      return false;
-    }
-    std::cerr << i18n::tr(Msg::WeakPasswordWarning) << "\n";
-  }
-  return true;
-}
 
 int open_error(const std::string& message) {
   if (message.find("password") != std::string::npos) {
@@ -327,20 +193,15 @@ ParsedArgs parse_args(const std::vector<std::string>& args,
 }
 
 int cmd_init(const std::vector<std::string>& args) {
-  const ParsedArgs parsed =
-      parse_args(args, {"lang", "repo", "new-password", "allow-weak-password"});
+  const ParsedArgs parsed = parse_args(args, {"lang", "repo"});
   fs::path dir = fs::current_path();
   if (!parsed.positional.empty()) {
     const std::string& path = parsed.positional.back();
     const auto u8 = reinterpret_cast<const char8_t*>(path.data());
     dir = fs::path(std::u8string(u8, path.size()));
   }
-  std::string password;
-  if (!resolve_new_password(parsed, "new-password", password, /*allow_legacy_env=*/true)) {
-    return 2;
-  }
   try {
-    vcs::Repo repo = vcs::Repo::init(dir, password);
+    vcs::Repo repo = vcs::Repo::init(dir, std::string());
     std::cout << i18n::tr(Msg::InitCreated, {fs_path_to_utf8(dir)}) << "\n";
     repo.database().close();
     return 0;
@@ -359,7 +220,7 @@ int cmd_add(const std::vector<std::string>& args) {
     std::cerr << i18n::tr(Msg::ErrorNotRepo) << "\n";
     return 1;
   }
-  const std::string password = open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword));
+  const std::string password = std::string();
   try {
     vcs::Repo repo = vcs::Repo::open(root, password);
     const bool all = parsed.options.count("A") || parsed.options.count("all");
@@ -376,7 +237,7 @@ int cmd_status(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     print_status(repo.status(), repo, parsed.options.count("porcelain") > 0);
     repo.database().close();
     return 0;
@@ -393,7 +254,7 @@ int cmd_commit(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const bool allow_empty = parsed.options.count("allow-empty") > 0;
     const bool amend = parsed.options.count("amend") > 0;
     const std::string oid = repo.commit(message, allow_empty, amend);
@@ -412,7 +273,7 @@ int cmd_log(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const bool oneline = parsed.options.count("oneline") > 0;
     for (const auto& entry : repo.log(limit, parsed.options.count("all") > 0)) {
       const std::string first_line =
@@ -444,7 +305,7 @@ int cmd_show(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string oid = repo.resolve(parsed.positional[0]);
     const vcs::Commit commit = repo.read_commit(oid);
     std::cout << "commit " << oid << "\n";
@@ -465,7 +326,7 @@ int cmd_cat_file(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     std::string object = repo.resolve(parsed.positional[0]);
     auto& store = repo.objects();
     if (parsed.positional.size() > 1) {
@@ -506,7 +367,7 @@ int cmd_ls_tree(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string oid = repo.resolve(rev);
     std::string tree = oid;
     if (repo.objects().type_of(oid) == vcs::ObjType::Commit) tree = repo.read_commit(oid).tree;
@@ -525,7 +386,7 @@ int cmd_branch(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string head = repo.head_ref();
     if (parsed.positional.empty()) {
       const auto rows = repo.database().scan_rows("refs");
@@ -571,7 +432,7 @@ int cmd_switch(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string target = parsed.positional[0];
     // One code path for branches and revisions: checkout_commit refuses to
     // overwrite local changes unless --force, so switching can never silently
@@ -603,7 +464,7 @@ int cmd_merge(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const vcs::Repo::MergeOutcome outcome = repo.merge(parsed.positional[0]);
     switch (outcome.kind) {
       case vcs::Repo::MergeOutcome::Kind::UpToDate:
@@ -637,7 +498,7 @@ int cmd_info(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string head = repo.head_ref();
     const auto oid = repo.head_oid();
     std::cout << i18n::tr(Msg::RepoInfo, {fs_path_to_utf8(root)}) << "\n";
@@ -666,7 +527,7 @@ int cmd_gc(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     vcs::Repo::GcOptions options;
     options.dry_run = dry_run;
     options.full = full;
@@ -698,7 +559,7 @@ int cmd_fsck(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const vcs::Repo::FsckReport report = repo.fsck();
     std::cout << i18n::tr(Msg::FsckChecked,
                           {std::to_string(report.objects),
@@ -731,7 +592,7 @@ int cmd_rm(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     repo.rm_paths(parsed.positional, cached);
     repo.database().close();
     return 0;
@@ -746,7 +607,7 @@ int cmd_mv(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     repo.mv_path(parsed.positional[0], parsed.positional[1]);
     repo.database().close();
     return 0;
@@ -760,7 +621,7 @@ int cmd_restore(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     // Restoring without paths reverts the whole tree; that is destructive, so it
     // requires an explicit --all (previously it silently reverted everything).
     if (parsed.positional.empty() && parsed.options.count("all") == 0) {
@@ -789,7 +650,7 @@ int cmd_clean(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const auto removed = repo.clean_untracked(dry_run);
     for (const auto& path : removed) std::cout << (dry_run ? "would remove " : "removed ") << path << "\n";
     std::cout << (dry_run ? "Would remove " : "Removed ") << removed.size()
@@ -831,7 +692,7 @@ int cmd_rev_parse(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string oid = repo.resolve(rev);
     if (short_len > 0 && oid.size() > short_len) {
       std::cout << oid.substr(0, short_len) << "\n";
@@ -850,7 +711,7 @@ int cmd_checkpoint(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     repo.database().checkpoint();
     std::cout << i18n::tr(Msg::CheckpointDone) << "\n";
     repo.database().close();
@@ -921,7 +782,7 @@ int cmd_diff(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     std::map<std::string, Bytes> left;
     std::map<std::string, Bytes> right;
     if (parsed.positional.size() == 2) {
@@ -998,7 +859,7 @@ int cmd_tag(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     if (parsed.positional.empty()) {
       for (const auto& tag : repo.list_tags()) {
         std::cout << tag.name << " " << short_oid(tag.object);
@@ -1036,7 +897,7 @@ int cmd_reset(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     const std::string rev = parsed.positional.empty() ? std::string("HEAD")
                                                      : parsed.positional[0];
     if (!hard) {
@@ -1057,64 +918,13 @@ int cmd_reset(const std::vector<std::string>& args) {
   }
 }
 
-int cmd_passwd(const std::vector<std::string>& args) {
-  const ParsedArgs parsed =
-      parse_args(args, {"repo", "lang", "new-password", "allow-weak-password"});
-  try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptCurrentPassword)));
-    std::string next_password;
-    if (!resolve_new_password(parsed, "new-password", next_password)) {
-      repo.database().close();
-      return 2;
-    }
-    repo.change_password(next_password);
-    repo.database().close();
-    std::cout << i18n::tr(Msg::PasswordChanged) << "\n";
-    return 0;
-  } catch (const std::exception& error) {
-    return open_error(error.what());
-  }
-}
-int cmd_rekey(const std::vector<std::string>& args) {
-  const ParsedArgs parsed = parse_args(args, {"repo", "lang"});
-  if (!parsed.options.count("data")) {
-    return usage_error("rekey currently requires --data");
-  }
-  try {
-    fs::path root = vcs::Repo::find_root(
-        parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptCurrentPassword)));
-    int last_percent = -1;
-    auto progress = [&last_percent](uint64_t done, uint64_t total) {
-      const int percent =
-          total == 0 ? 100 : static_cast<int>((done * 100) / total);
-      if (percent == last_percent) return;
-      last_percent = percent;
-      std::cerr << "\r"
-                << i18n::tr(Msg::RekeyProgress,
-                            {std::to_string(done), std::to_string(total),
-                             std::to_string(percent)})
-                << std::flush;
-    };
-    repo.database().rekey_data(progress);
-    if (last_percent >= 0) std::cerr << "\n";
-    repo.database().close();
-    std::cout << i18n::tr(Msg::RekeyDone) << "\n";
-    return 0;
-  } catch (const std::exception& error) {
-    return open_error(error.what());
-  }
-}
-
 int cmd_placeholder(const std::vector<std::string>& args) {
   const ParsedArgs parsed = parse_args(args, {"repo", "lang", "m", "message"});
   const std::string action = parsed.positional.empty() ? "list" : parsed.positional[0];
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     if (action == "list" || action == "ls") {
       const auto items = repo.list_placeholders();
       if (items.empty()) {
@@ -1201,7 +1011,7 @@ int cmd_export_git(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptCurrentPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     if (pack_format) {
       git::PackExportOptions options;
       options.identity.name = author.name;
@@ -1247,7 +1057,7 @@ int cmd_import_git(const std::vector<std::string>& args) {
   try {
     fs::path root = vcs::Repo::find_root(
         parsed.options.count("repo") ? path_arg(parsed.options.at("repo")) : fs::current_path());
-    vcs::Repo repo = vcs::Repo::open(root, open_password(parsed.options.count("password-stdin") > 0, i18n::tr(Msg::PromptCurrentPassword)));
+    vcs::Repo repo = vcs::Repo::open(root, std::string());
     git::GitImportOptions options;
     options.force = parsed.options.count("force") != 0;
     const git::GitImportStats stats = git::import_git_dir(repo, path_arg(source), options);
@@ -1350,8 +1160,6 @@ int dispatch(const std::string& command, const std::vector<std::string>& args) {
   if (command == "diff") return cmd_diff(args);
   if (command == "tag") return cmd_tag(args);
   if (command == "reset") return cmd_reset(args);
-  if (command == "passwd") return cmd_passwd(args);
-  if (command == "rekey") return cmd_rekey(args);
   if (command == "info") return cmd_info(args);
   if (command == "gc") return cmd_gc(args);
   if (command == "fsck") return cmd_fsck(args);
