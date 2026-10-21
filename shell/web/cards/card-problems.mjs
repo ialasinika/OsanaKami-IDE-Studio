@@ -5,7 +5,9 @@
  * why the card layer is split the way it is.
  */
 import { diagCounts, diagFile, diagWhere, modPath } from "./card-mod.mjs";
-import { button, cardShell, fillRows, h, makeStatus } from "./dom.mjs";
+import { button, cardShell, fillRows, h, makeStatus, makeTranslations } from "./dom.mjs";
+import { hintFor } from "../diagnostic-hints.mjs";
+import { t } from "../i18n.mjs";
 
 /** The 1-based line a diagnostic points at, or `undefined` when it names none. */
 export function diagLine(diagnostic) {
@@ -34,13 +36,16 @@ export function diagTarget(root, diagnostic) {
 
 export function renderProblems(card, ctx) {
   const { client, app } = ctx;
+  const tr = makeTranslations();
 
   const rootInput = h("input", "problems-root", {
-    attrs: { type: "text", spellcheck: "false", placeholder: "Mods/MyMod" },
+    attrs: { type: "text", spellcheck: "false" },
   });
+  tr.placeholder(rootInput, "problems.placeholder");
   rootInput.value = typeof card.root === "string" ? card.root : "";
 
-  const runButton = button("validate", "validate the package and its Yarn", () => run());
+  const runButton = button("", "validate the package and its Yarn", () => run());
+  tr.text(runButton, "problems.run");
   const controls = h("div", "mod-controls", { children: [rootInput, runButton] });
   const summaryEl = h("div", "mod-counts");
   const list = h("div", "mod-rows problems-rows");
@@ -54,7 +59,7 @@ export function renderProblems(card, ctx) {
 
   function paint(diagnostics, root) {
     const counts = diagCounts(diagnostics);
-    summaryEl.textContent = `${counts.error} errors · ${counts.warning} warnings · ${counts.info} infos`;
+    summaryEl.textContent = `${counts.error} ${t("problems.errors")} · ${counts.warning} ${t("problems.warnings")} · ${counts.info} ${t("problems.infos")}`;
     const order = { error: 0, warning: 1, info: 2 };
     const sorted = (Array.isArray(diagnostics) ? diagnostics : [])
       .slice()
@@ -68,6 +73,9 @@ export function renderProblems(card, ctx) {
         meta: where === "" ? target : `${target} ${where}`,
         title: diagnostic?.message ?? "",
         severity: diagnostic?.severity ?? "info",
+        // What a person can do about it, in one sentence (G57).  Unknown codes
+        // get no note rather than a generic "fix it".
+        note: hintFor(diagnostic?.code),
         onClick: open.path === "" ? undefined
           : () => app.openFile(open.path, { line: open.line, pointer: open.pointer }),
       };
@@ -92,17 +100,17 @@ export function renderProblems(card, ctx) {
       return row;
     }));
     if (sorted.length === 0) {
-      list.append(h("div", "mod-row mod-row-empty", { text: "nothing to report" }));
+      list.append(h("div", "mod-row mod-row-empty", { text: t("problems.nothing") }));
     }
   }
 
   async function run() {
     const root = rootInput.value.trim();
     if (root === "") {
-      status.textContent = "give a mod directory first";
+      status.textContent = t("problems.giveDir");
       return;
     }
-    status.textContent = "validating…";
+    status.textContent = t("problems.validating");
     let report;
     try {
       report = await client.call("mod.validate", { root });
@@ -135,7 +143,7 @@ export function renderProblems(card, ctx) {
   if (rootInput.value !== "") {
     run();
   } else {
-    status.textContent = "validate a mod directory, e.g. Mods/MyMod";
+    status.textContent = t("problems.initial");
   }
 
   return {
@@ -148,6 +156,12 @@ export function renderProblems(card, ctx) {
       run,
       root() {
         return rootInput.value.trim();
+      },
+      relabel() {
+        tr.relabel();
+        if (rootInput.value.trim() === "" && status.textContent === "") {
+          status.textContent = t("problems.initial");
+        }
       },
     },
     destroy() {},

@@ -6,6 +6,7 @@
  */
 import { KIND_REGISTRY, unknownCardPlaceholder } from "./registry.mjs";
 import { applyTokenSpans, markHits } from "./text.mjs";
+import { kindLabel, t } from "../i18n.mjs";
 
 /** Create an element with class names, text, attributes and children. */
 export function h(tag, className, options = {}) {
@@ -36,13 +37,13 @@ export function h(tag, className, options = {}) {
  */
 export function cardShell(card, body, options = {}) {
   const title = h("div", "card-title", { attrs: { "data-role": "card-title" } });
-  title.append(h("span", "card-kind", { text: card.kind }));
+  title.append(h("span", "card-kind", { text: kindLabel(card.kind) }));
   const label = h("span", "card-label", { attrs: { "data-role": "card-label" } });
   title.append(label);
   const tools = h("span", "card-tools", { attrs: { "data-role": "card-tools" } });
   title.append(tools);
 
-  const grip = h("div", "card-grip", { attrs: { "data-role": "grip", title: "drag to resize" } });
+  const grip = h("div", "card-grip", { attrs: { "data-role": "grip", title: t("card.resize") } });
   const el = h("div", `card card-${card.kind}`, {
     attrs: { "data-card-id": card.id },
     children: [title, body, grip],
@@ -151,14 +152,17 @@ export function button(label, title, onClick) {
  * target.
  */
 export function section(className, title, count, onClick, options = {}) {
-  const label = count === undefined ? title : `${title} (${count})`;
-  const head = h("div", "mod-section-title", {
-    text: label,
-    attrs: onClick
-      ? { role: "button", tabindex: "0", title: `open the ${title} file` }
-      : {},
-  });
+  // The title is its own element so a card can retitle it when the language
+  // changes (`relabel`, G56) without rebuilding the section.
+  const name = h("span", "mod-section-name", { text: title });
+  const head = h("div", "mod-section-title", { children: [name] });
+  if (count !== undefined) {
+    head.append(h("span", "mod-section-count", { text: ` (${count})` }));
+  }
   if (onClick) {
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.title = `open the ${title} file`;
     head.style.cursor = "pointer";
     head.addEventListener("click", onClick);
     head.addEventListener("keydown", (event) => {
@@ -176,7 +180,7 @@ export function section(className, title, count, onClick, options = {}) {
       attrs: {
         type: "button",
         "aria-expanded": "true",
-        title: `show or hide the ${title} rows`,
+        title: title === "" ? "show or hide this section" : `show or hide the ${title} rows`,
       },
       text: "\u25be",
     });
@@ -199,7 +203,7 @@ export function section(className, title, count, onClick, options = {}) {
     });
     head.prepend(toggle);
   }
-  return { el, rows };
+  return { el, rows, name };
 }
 
 export function fillRows(container, rows) {
@@ -215,6 +219,9 @@ export function fillRows(container, rows) {
     el.append(h("span", "mod-row-name", { text: row.label }));
     if (row.meta !== undefined && row.meta !== "") {
       el.append(h("span", "mod-row-meta", { text: row.meta }));
+    }
+    if (row.note !== undefined && row.note !== "") {
+      el.append(h("span", "mod-row-note", { text: row.note }));
     }
     if (row.extra) {
       const extra = h("span", "mod-row-extra", {
@@ -242,6 +249,57 @@ export function fillRows(container, rows) {
   }
   container.textContent = "";
   container.append(frag);
+}
+
+/**
+ * A card's translatable words, remembered so the language can change in place.
+ *
+ * A card that re-rendered on every language switch would drop whatever is not
+ * on the board document -- unsaved pixels, a half-typed translation -- so the
+ * switch rewrites text nodes instead.  Each setter records how to set it again
+ * and applies it once; `handle.relabel = tr.relabel` is all a card needs to do.
+ */
+export function makeTranslations() {
+  const entries = [];
+  function remember(apply) {
+    entries.push(apply);
+    apply();
+  }
+  return {
+    /**
+     * Replace a text-only node's words, or -- called with one argument -- just
+     * answer the words.  Cards build most labels from `h("...", {text: ...})`,
+     * where a node does not exist yet, so the same helper has to do both.
+     */
+    text(node, key, vars) {
+      if (key === undefined) {
+        return t(node, vars);
+      }
+      remember(() => { node.textContent = t(key, vars); });
+      return node;
+    },
+    /** Set the hover title of a control. */
+    title(node, key, vars) {
+      remember(() => { node.title = t(key, vars); });
+      return node;
+    },
+    /** Set any attribute from a message (placeholder, aria-label, ...). */
+    attr(node, name, key, vars) {
+      remember(() => { node.setAttribute(name, t(key, vars)); });
+      return node;
+    },
+    /** Set an input's placeholder from a message. */
+    placeholder(node, key, vars) {
+      remember(() => { node.placeholder = t(key, vars); });
+      return node;
+    },
+    /** Re-apply every remembered word; called after `setLocale()`. */
+    relabel() {
+      for (const apply of entries) {
+        apply();
+      }
+    },
+  };
 }
 
 /* -- kind: mod -- the package itself ---------------------------------- */

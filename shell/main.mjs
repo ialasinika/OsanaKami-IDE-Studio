@@ -758,6 +758,9 @@ const MOD_METHODS = {
   // G44: the sources behind every other answer -- the game folder discovery
   // picked and the knowledge base in effect -- as one read-only verb.
   "mod.sources": (_params, mods) => ({ knowledge: mods.knowledgeState(), game: mods.gameMods() }),
+  // G55: the picker on the mod card lists the packages the game already has,
+  // so opening one is a choice rather than a path typed from memory.
+  "mod.packages": (params, mods) => mods.packages({ dir: optionalString(params, "dir") }),
   "mod.templates": (_params, mods) => mods.templates(),
   "mod.characters": (_params, mods) => mods.characters(),
 

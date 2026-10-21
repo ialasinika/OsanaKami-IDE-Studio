@@ -176,11 +176,11 @@ registers a kind with a single call:
 registerCardKind({ kind: "waveform", render: (card, ctx) => { /* … */ } });
 ```
 
-The shell registers sixteen kinds from `shell/web/cards/` — one module per card
+The shell registers seventeen kinds from `shell/web/cards/` — one module per card
 family — through the barrel `shell/web/cards.mjs`, which re-exports the public
-names and makes the sixteen calls: `editor`, `runner`, `note`, `files`,
+names and makes the seventeen calls: `editor`, `runner`, `note`, `files`,
 `project` and `sheet`, then `story`, `pixel`, `rig`, `audio`, `mod`, `problems`,
-`docs`, `settings`, `help` and `agent`, `sheet` being a structured-data grid
+`docs`, `settings`, `help`, `agent` and `start`, `sheet` being a structured-data grid
 (typed cells, rows, columns, TSV export) that exists to prove nothing downstream
 assumes text, `project` being the workspace as one project: what the project
 contains, merged with what the document has open, `rig` being a skeleton and its
@@ -275,7 +275,7 @@ Run the checks:
 mingw32-make -f Makefile check       # kernel alone: 13 passed, 0 failed, 3 skipped
 mingw32-make -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 skipped
 mingw32-make -f Makefile probe       # every bug in docs/BUGS.md: all ok
-mingw32-make -f Makefile smoke       # the window, headless: 65 + 44 checks, 0 failed
+mingw32-make -f Makefile smoke       # the window, headless: 70 + 44 checks, 0 failed
 mingw32-make -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 mingw32-make -f Makefile sign-check   # the installer-signing wiring, against a stand-in for signtool
 mingw32-make -f Makefile ci           # what the GitHub test job runs: test, a fixture installer, a workflow audit
@@ -293,13 +293,13 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 68 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 70 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
-node shell/web/selftest.mjs                    # ok 324/324 (pure JS: no DOM)
+node shell/web/selftest.mjs                    # ok 329/329 (pure JS: no DOM)
 node shell/mods/selftest.mjs                   # 684/684 checks passed
 ```
 
@@ -320,7 +320,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 68 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 70 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those
@@ -331,7 +331,7 @@ overwritten, and that deleting the file under a card is reported with the text
 still in the card, that the editor's gutter holds one number per line and that a
 click on it hides it and another brings it back, that a window opens on the
 mod tile and that `mode classic` draws the
-tile it promises (`input_smoke.py`, 43
+tile it promises (`input_smoke.py`, 44
 checks). On a clone that
 has no
 document yet both install `examples/board.json` for the run and remove it again
@@ -514,7 +514,7 @@ shell/                  the front end and the endpoints
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
-                        (the barrel), cards/ (sixteen kinds, one family per
+                        (the barrel), cards/ (seventeen kinds, one family per
                         module), views.mjs, history.mjs, rpc.mjs, watch.mjs,
                         classic.mjs, modview.mjs, main.mjs, story.mjs,
                         storycsv.mjs, ysls.mjs, pixelpng.mjs, pixelview.mjs,

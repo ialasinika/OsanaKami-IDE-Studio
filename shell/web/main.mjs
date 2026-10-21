@@ -27,6 +27,7 @@
 
 import { createClient, isStaleRevision, staleCurrentRevision } from "./rpc.mjs";
 import { isAudioPath } from "./audioinfo.mjs";
+import { getLocale, kindLabel, normalizeLocale, setLocale, t } from "./i18n.mjs";
 import { isInsideWorkspace as pathIsInsideWorkspace } from "./openpath.mjs";
 import { BOARD_PATH, createBoard, DEFAULT_SIZE, MIN_SIZE } from "./board.mjs";
 import { createHistory } from "./history.mjs";
@@ -287,20 +288,31 @@ export const BOOT_VIEW = "mod";
  * The preferences a window may act on at boot, out of a `config.get` answer.
  *
  * The shell owns the file and validates it; this function only decides what the
- * *window* can honour without a restart: the view it opens in and how often the
- * cards poll.  Anything else the answer carries -- the AI provider, the
- * workspace, the file paths -- belongs to whoever asked the question, not to a
- * page paint.  An answer that is missing, partial or out of range falls back to
- * the constants this file was built with, so a corrupt preference file can
- * never leave a window with no view at all.
+ * *window* can honour without a restart: the view it opens in, how often the
+ * cards poll, and which language it speaks.  Anything else the answer carries --
+ * the AI provider, the workspace, the file paths -- belongs to whoever asked
+ * the question, not to a page paint.  An answer that is missing, partial or out
+ * of range falls back to the constants this file was built with, so a corrupt
+ * preference file can never leave a window with no view at all.
+ *
+ * `locale` is `"en"`, `"zh"`, or null for "follow the system": an empty stored
+ * value means nobody has picked one yet, and an old preferences file predates
+ * the setting entirely.
  *
  * Exported and pure so the fallback rules are testable without a browser.
  *
  * @param {unknown} answer  a `config.get` result, or null when the call failed
- * @returns {{bootView: string, watchPollMs: number}}
+ * @returns {{bootView: string, watchPollMs: number|null, locale: string|null,
+ *            onboarded: boolean, recentPackages: string[]}}
  */
 export function bootPreferencesFrom(answer) {
-  const fallback = { bootView: BOOT_VIEW, watchPollMs: null };
+  const fallback = {
+    bootView: BOOT_VIEW,
+    watchPollMs: null,
+    locale: null,
+    onboarded: false,
+    recentPackages: [],
+  };
   if (answer === null || typeof answer !== "object") {
     return fallback;
   }
@@ -315,7 +327,12 @@ export function bootPreferencesFrom(answer) {
     && prefs.watchPollMs >= WATCH_POLL_MIN && prefs.watchPollMs <= WATCH_POLL_MAX
     ? prefs.watchPollMs
     : null;
-  return { bootView: view, watchPollMs: poll };
+  const locale = prefs.locale === "en" || prefs.locale === "zh" ? prefs.locale : null;
+  const onboarded = prefs.onboarded === true;
+  const recentPackages = Array.isArray(prefs.recentPackages)
+    ? prefs.recentPackages.filter((entry) => typeof entry === "string" && entry.trim() !== "").slice(0, 8)
+    : [];
+  return { bootView: view, watchPollMs: poll, locale, onboarded, recentPackages };
 }
 
 /**
@@ -1899,6 +1916,74 @@ function createApp() {
   }
 
   /**
+   * The start card, if the board already has one (G58).
+   *
+   * One guide per board: reopening it from Settings should focus the copy the
+   * person already adjusted, not stack a second one behind it.
+   */
+  function startCard() {
+    for (const entry of mounted.values()) {
+      if (entry.handle.kind === "start") {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /** Put the start card on the board (G58). */
+  function openStartCard() {
+    const existing = startCard();
+    if (existing !== null) {
+      focusCard(existing.card.id);
+      centreOn(existing.card);
+      return existing.card;
+    }
+    const size = DEFAULT_SIZE.start;
+    const centre = centreWorld();
+    return addCard(
+      "start",
+      Math.round(centre.x - size.w / 2),
+      Math.round(centre.y - size.h / 2),
+      {},
+      size,
+    );
+  }
+
+  /**
+   * Point the mod card at `dir`, creating one when the board has none (G55).
+   *
+   * The `mod` command and the package picker both land here: one card per
+   * package is the whole rule, so a second call re-points the card that exists
+   * rather than opening a duplicate the problems panel would then disagree with.
+   */
+  function openModCard(dir) {
+    const wanted = typeof dir === "string" ? dir.trim() : "";
+    const existing = board.cards.find((card) => card.kind === "mod");
+    if (existing !== undefined) {
+      const entry = mounted.get(existing.id);
+      if (entry !== undefined && typeof entry.handle.setDir === "function") {
+        entry.handle.setDir(wanted);
+      }
+      revealCard(existing.id);
+      return existing;
+    }
+    const size = DEFAULT_SIZE.mod;
+    const centre = centreWorld();
+    return addCard("mod", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { dir: wanted }, size);
+  }
+
+  /**
+   * Remember that this person has met the start card (G58).
+   *
+   * A failure is not worth a warning: the card works for this window either way,
+   * and the next boot asking again is a smaller harm than a scary banner.
+   */
+  async function onboarded() {
+    await client.call("config.set", { prefs: { onboarded: true } }).catch(() => null);
+    log("info", "start card: this window will not open the guide by itself again");
+  }
+
+  /**
    * The agent card, if the board already has one.
    *
    * One seat is one conversation: focusing the card that is already there keeps
@@ -1944,6 +2029,52 @@ function createApp() {
     );
     log("info", "agent card added — read-only tools, the provider from settings");
     return card;
+  }
+
+  /**
+   * Which language this window speaks, out of the boot answer.
+   *
+   * An explicit stored choice wins.  An empty one -- a fresh install, or a
+   * preferences file written before the setting existed -- follows the machine,
+   * because a person whose desktop is Chinese should not have to find a setting
+   * to read the first screen.  The `navigator` guard keeps the function callable
+   * from the Node-side tests.
+   */
+  function resolveBootLocale(preference) {
+    if (preference === "en" || preference === "zh") {
+      return preference;
+    }
+    const tag = typeof navigator === "object" && navigator !== null ? navigator.language : "";
+    return normalizeLocale(tag);
+  }
+
+  /**
+   * Switch the interface language and remember it.
+   *
+   * `setLocale()` is what every card reads on its next render; the cards that
+   * already exist are asked to relabel in place rather than be rebuilt, so
+   * unsaved pixels or text survive the switch.  Persisting is best-effort: a
+   * shell that cannot write preferences still speaks this language until the
+   * window closes.
+   */
+  async function setUiLocale(tag) {
+    const locale = setLocale(tag);
+    const saved = await client.call("config.set", { prefs: { locale } }).catch(() => null);
+    if (saved === null) {
+      log("warn", "the language could not be saved; this window keeps it until it closes");
+    }
+    for (const entry of mounted.values()) {
+      const kindEl = entry.el.querySelector(".card-kind");
+      if (kindEl !== null) {
+        kindEl.textContent = kindLabel(entry.card.kind);
+      }
+      if (entry.handle !== null && entry.handle !== undefined && typeof entry.handle.relabel === "function") {
+        entry.handle.relabel();
+      }
+    }
+    renderTabs(currentLayout());
+    log("info", `interface language: ${locale}`);
+    return locale;
   }
 
   /**
@@ -2023,8 +2154,16 @@ function createApp() {
     openSettingsCard,
     openHelpCard,
     openAgentCard,
+    openStartCard,
+    openModCard,
+    onboarded,
+    closeCard,
     openProblemsCard,
     cardTools,
+    setLocale: setUiLocale,
+    locale() {
+      return getLocale();
+    },
     // The board's undo ring snapshots *documents*, and a pixel card's artwork
     // deliberately is not one -- the pixels are the file.  So undo asks the
     // selected card first: a handle that answers `true` took the step itself
@@ -2279,19 +2418,7 @@ function createApp() {
       case "mod": {
         // One mod at a time, like one project: a second `mod` re-points the
         // card you already have, and `docs`/`problems` follow it.
-        const dir = arg(0) === undefined ? "" : tokens.slice(1).join(" ");
-        const existing = board.cards.find((card) => card.kind === "mod");
-        if (existing !== undefined) {
-          const entry = mounted.get(existing.id);
-          if (entry !== undefined && typeof entry.handle.setDir === "function") {
-            entry.handle.setDir(dir);
-          }
-          revealCard(existing.id);
-          return;
-        }
-        const size = DEFAULT_SIZE.mod;
-        const centre = centreWorld();
-        addCard("mod", Math.round(centre.x - size.w / 2), Math.round(centre.y - size.h / 2), { dir }, size);
+        openModCard(arg(0) === undefined ? "" : tokens.slice(1).join(" "));
         return;
       }
       case "example": {
@@ -2425,6 +2552,11 @@ function createApp() {
       }
       case "redo": {
         cardRedoOrRing();
+        return;
+      }
+      case "start": {
+        // The guide is a card, so the command is the same call Settings uses.
+        openStartCard();
         return;
       }
       case "agent": {
@@ -3010,6 +3142,7 @@ function createApp() {
     // build) is not an error: the constants in this file are the fallback.
     const settings = await client.call("config.get", {}).catch(() => null);
     const bootPrefs = bootPreferencesFrom(settings);
+    setLocale(resolveBootLocale(bootPrefs.locale));
     if (bootPrefs.bootView !== viewMode) {
       viewMode = bootPrefs.bootView;
       paintView();
@@ -3099,6 +3232,12 @@ function createApp() {
     } catch (err) {
       const requested = requestedModFromSearch(typeof location === "undefined" ? "" : location.search);
       log("warn", `could not open ${requested}: ${err && err.message ? err.message : String(err)}`);
+    }
+    // G58: a first run has no idea where to start, so the guide is opened once.
+    // `prefs.onboarded` is the decision (the card's own button writes it), and a
+    // board that already carries a start card is a decision too.
+    if (!bootPrefs.onboarded && !board.cards.some((card) => card.kind === "start")) {
+      openStartCard();
     }
     // The cards exist now, so there is something to watch. A reconnect re-tests
     // the kernel (it may have been replaced by one without `file.stat`), but the

@@ -4,7 +4,8 @@
  * Part of `cards.mjs`, which re-exports this file; see that file's header for
  * why the card layer is split the way it is.
  */
-import { button, cardShell, fillRows, h, makeStatus, section } from "./dom.mjs";
+import { button, cardShell, fillRows, h, makeStatus, makeTranslations, section } from "./dom.mjs";
+import { t } from "../i18n.mjs";
 
 /** Count diagnostics by severity; anything unrecognised counts as info. */
 export function diagCounts(diagnostics) {
@@ -92,7 +93,19 @@ export function diagWhere(diagnostic) {
 }
 
 /*
- * Which of the mod card's three sections is folded away (G54).
+ * Which sections start folded away.
+ *
+ * The card grew six control rows, and at the default size they pushed the file
+ * lists out of the body: a person who only wanted to open and validate had to
+ * fold four sections by hand first.  Opening and checking are the two things the
+ * card is for, so they start open; everything that changes the package starts
+ * folded, and the explicit `false` in the card document means "this person opened
+ * it" -- without that, an opened section would spring shut on the next re-render.
+ */
+const MOD_SECTIONS_FOLDED = Object.freeze(["create", "import", "export", "install", "log"]);
+
+/*
+ * Which of the mod card's sections is folded away (G54).
  *
  * The answer is a field on the *card document*, not on the DOM node, because a
  * tile re-renders the card whenever the window is resized and on every board
@@ -103,7 +116,11 @@ export function diagWhere(diagnostic) {
  */
 export function modSectionCollapsed(card, key) {
   const map = card !== null && typeof card === "object" ? card.collapsed : null;
-  return map !== null && typeof map === "object" && map[key] === true;
+  if (map !== null && typeof map === "object") {
+    if (map[key] === true) return true;
+    if (map[key] === false) return false;
+  }
+  return MOD_SECTIONS_FOLDED.includes(key);
 }
 
 /** Record one section's folded state on the card document. */
@@ -114,16 +131,21 @@ export function setModSectionCollapsed(card, key, collapsed) {
   const map = card.collapsed !== null && typeof card.collapsed === "object"
     ? { ...card.collapsed }
     : {};
-  if (collapsed === true) {
-    map[key] = true;
-  } else {
+  // The default state is the absent key.  A section folded by default that is
+  // opened again must leave no trace (or a card saved after one toggle grows a
+  // line per section it never touched), and a section open by default that is
+  // folded records itself; anything equal to the default deletes the key.
+  if ((collapsed === true) === MOD_SECTIONS_FOLDED.includes(key)) {
     delete map[key];
+  } else {
+    map[key] = collapsed === true;
   }
   card.collapsed = map;
 }
 
 export function renderMod(card, ctx) {
   const { client, app } = ctx;
+  const tr = makeTranslations();
 
   const dirInput = h("input", "mod-dir", {
     attrs: {
@@ -133,15 +155,31 @@ export function renderMod(card, ctx) {
       // `mod.open` resolves a relative name: it joins the *mods root* (the
       // workspace itself under `serve`). The example has to be a name that
       // works, and the hint under it says how relative paths are read.
-      placeholder: "NewMod",
       title: "a name relative to the mods root, or an absolute path",
     },
   });
+  tr.placeholder(dirInput, "mod.placeholder.dir");
   dirInput.value = typeof card.dir === "string" ? card.dir : "";
 
-  const openButton = button("open", "read mod.json and list the package", () => openMod());
-  const validateButton = button("validate", "check every define and Yarn file", () => validate());
-  const controls = h("div", "mod-controls", { children: [dirInput, openButton, validateButton] });
+  /*
+   * The picker (G55): the game's Mods folder is already a list of packages the
+   * person can open, so the card offers it instead of asking for a path typed
+   * from memory.  A typed path still works and stays in the same row -- the
+   * picker is a shortcut, not the only way in.  `loadPackages` also folds in the
+   * recent openings the preferences file remembers, so the second launch is one
+   * click.
+   */
+  const pick = h("select", "mod-pick", { attrs: { title: "open a package the game already has" } });
+  const openButton = button("", "read mod.json and list the package", () => openMod());
+  tr.text(openButton, "mod.open");
+  const refreshButton = button("", "list the game's Mods folder again", () => loadPackages(true));
+  tr.text(refreshButton, "mod.refresh");
+  const pickControls = h("div", "mod-controls mod-pick-row", { children: [pick, refreshButton] });
+  const controls = h("div", "mod-controls", { children: [dirInput, openButton] });
+
+  const validateButton = button("", "check every define and Yarn file", () => validate());
+  tr.text(validateButton, "mod.validate");
+  const checkControls = h("div", "mod-controls", { children: [validateButton] });
 
   /*
    * Creating one file (G50) is the same verb the command line uses: pick a kind,
@@ -159,13 +197,14 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "Goods_Sword",
       title: "the new file's name -- for a define, the techName the file name has to equal",
     },
   });
-  const newButton = button("new", "write a new file from the game's own schema, then open it", () => {
+  tr.placeholder(newName, "mod.placeholder.newName");
+  const newButton = button("", "write a new file from the game's own schema, then open it", () => {
     createFile();
   });
+  tr.text(newButton, "mod.new");
   const newControls = h("div", "mod-controls mod-new", { children: [newType, newName, newButton] });
 
   /*
@@ -179,7 +218,6 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "<art>/icon.png",
       title: "the file to copy in -- absolute, or relative to the workspace",
     },
   });
@@ -187,13 +225,15 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "Sprites/icon.png (optional)",
       title: "where it lands inside the package; only needed when the name does not say",
     },
   });
-  const importButton = button("import", "copy a file into this package, byte for byte, then open it", () => {
+  tr.placeholder(importFrom, "mod.placeholder.importFrom");
+  tr.placeholder(importTo, "mod.placeholder.importTo");
+  const importButton = button("", "copy a file into this package, byte for byte, then open it", () => {
     importFile();
   });
+  tr.text(importButton, "mod.import");
   const importControls = h("div", "mod-controls mod-import", {
     children: [importFrom, importTo, importButton],
   });
@@ -212,11 +252,12 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "(optional) FolderName.zip",
       title: "where the zip goes -- relative to the mods root, or absolute; empty means <modsRoot>/<Name>.zip",
     },
   });
-  const exportButton = button("export zip", "write this package as a zip to hand to someone else", () => exportZip());
+  tr.placeholder(exportOut, "mod.placeholder.exportOut");
+  const exportButton = button("", "write this package as a zip to hand to someone else", () => exportZip());
+  tr.text(exportButton, "mod.export");
   const exportControls = h("div", "mod-controls mod-export", {
     children: [exportOut, exportButton],
   });
@@ -232,13 +273,14 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "(optional) the game's Mods folder",
       title: "where the game reads mods -- leave it empty to use the discovered folder",
     },
   });
-  const installButton = button("install into game", "copy this package into the game's Mods folder", () => {
+  tr.placeholder(installDir, "mod.placeholder.installDir");
+  const installButton = button("", "copy this package into the game's Mods folder", () => {
     installIntoGame();
   });
+  tr.text(installButton, "mod.install");
   const installControls = h("div", "mod-controls mod-install", {
     children: [installDir, installButton],
   });
@@ -253,13 +295,14 @@ export function renderMod(card, ctx) {
     attrs: {
       type: "text",
       spellcheck: "false",
-      placeholder: "(optional) ModName",
       title: "show the log lines that mention this name; empty uses the opened package",
     },
   });
-  const logButton = button("what the game said", "read the game's Player.log and show what it says about this mod", () => {
+  tr.placeholder(logName, "mod.placeholder.logName");
+  const logButton = button("", "read the game's Player.log and show what it says about this mod", () => {
     readGameLog();
   });
+  tr.text(logButton, "mod.log");
   const logControls = h("div", "mod-controls mod-log", {
     children: [logName, logButton],
   });
@@ -278,6 +321,34 @@ export function renderMod(card, ctx) {
       app.boardTouched(true, { record: false });
     },
   });
+  /*
+   * Open and check start expanded; the five sections that change something
+   * start folded (G55).  A person who opened the card to look at a package does
+   * not want four rows of export/install/log controls between them and the
+   * file lists, and the fold state is per card and survives a re-render.
+   */
+  const openSection = section("mod-open", "", undefined, undefined, sectionOptions("open"));
+  tr.text(openSection.name, "mod.section.open");
+  openSection.rows.append(pickControls, controls);
+  const checkSection = section("mod-check", "", undefined, undefined, sectionOptions("check"));
+  tr.text(checkSection.name, "mod.section.check");
+  checkSection.rows.append(checkControls);
+  const newSection = section("mod-create", "", undefined, undefined, sectionOptions("create"));
+  tr.text(newSection.name, "mod.section.create");
+  newSection.rows.append(newControls);
+  const importSection = section("mod-import", "", undefined, undefined, sectionOptions("import"));
+  tr.text(importSection.name, "mod.section.import");
+  importSection.rows.append(importControls);
+  const exportSection = section("mod-export", "", undefined, undefined, sectionOptions("export"));
+  tr.text(exportSection.name, "mod.section.export");
+  exportSection.rows.append(exportControls);
+  const installSection = section("mod-install", "", undefined, undefined, sectionOptions("install"));
+  tr.text(installSection.name, "mod.section.install");
+  installSection.rows.append(installControls);
+  const logSection = section("mod-log", "", undefined, undefined, sectionOptions("log"));
+  tr.text(logSection.name, "mod.section.log");
+  logSection.rows.append(logControls);
+
   const modJsonSection = section("mod-manifest", "mod.json", undefined, () => openSectionFile("mod.json"), sectionOptions("manifest"));
   const definesSection = section("mod-defines", "Defines", undefined, () => openSectionFile("defines"), sectionOptions("defines"));
   const yarnSection = section("mod-yarn", "Yarn", undefined, () => openSectionFile("yarn"), sectionOptions("yarn"));
@@ -287,7 +358,21 @@ export function renderMod(card, ctx) {
   let opened = null;
 
   const body = h("div", "card-body card-body-mod", {
-    children: [controls, newControls, importControls, exportControls, installControls, logControls, headline, counts, modJsonSection.el, definesSection.el, yarnSection.el, status],
+    children: [
+      openSection.el,
+      checkSection.el,
+      headline,
+      counts,
+      newSection.el,
+      importSection.el,
+      exportSection.el,
+      installSection.el,
+      logSection.el,
+      modJsonSection.el,
+      definesSection.el,
+      yarnSection.el,
+      status,
+    ],
   });
   const shell = cardShell(card, body);
   shell.label.textContent = dirInput.value === "" ? "(no dir)" : dirInput.value;
@@ -339,7 +424,7 @@ export function renderMod(card, ctx) {
 
   /** Fill a section, or its one placeholder row when there is nothing in it. */
   function fillOrEmpty(sectionEl, rows) {
-    fillRows(sectionEl.rows, rows.length === 0 ? [{ label: "（空）", empty: true }] : rows);
+    fillRows(sectionEl.rows, rows.length === 0 ? [{ label: t("mod.empty"), empty: true }] : rows);
   }
 
   /**
@@ -691,6 +776,7 @@ export function renderMod(card, ctx) {
     } else {
       status.textContent = `opened ${root}`;
       app.log("info", `opened ${root}`);
+      rememberRecent(root);
     }
     app.boardTouched(true);
   }
@@ -769,11 +855,108 @@ export function renderMod(card, ctx) {
     }
   });
 
+  /*
+   * The picker's list (G55): the game's Mods folder, then the packages this
+   * person opened before.  `recentPackages` lives in the preferences file (not
+   * on this card) so it survives closing the window; the list is capped at eight
+   * in the preference store, and a directory that appears twice appears once.
+   */
+  let recentDirs = [];
+
+  async function readRecents() {
+    try {
+      const answer = await client.call("config.get", {});
+      const prefs = answer !== null && typeof answer === "object" ? answer.prefs : null;
+      const list = prefs !== null && Array.isArray(prefs.recentPackages) ? prefs.recentPackages : [];
+      recentDirs = list.filter((entry) => typeof entry === "string" && entry !== "").slice(0, 8);
+    } catch {
+      recentDirs = [];
+    }
+    return recentDirs;
+  }
+
+  async function rememberRecent(dir) {
+    if (typeof dir !== "string" || dir.trim() === "") {
+      return;
+    }
+    const next = [dir, ...recentDirs.filter((entry) => entry !== dir)].slice(0, 8);
+    recentDirs = next;
+    try {
+      await client.call("config.set", { prefs: { recentPackages: next } });
+    } catch {
+      // Forgetting a recent opening is not worth failing an open that worked.
+    }
+  }
+
+  async function loadPackages(refresh) {
+    const previous = pick.value;
+    pick.textContent = "";
+    const placeholder = h("option", "", { text: t("mod.pick") });
+    placeholder.value = "";
+    pick.append(placeholder);
+    const add = (value, label) => {
+      const option = h("option", "", { text: label });
+      option.value = value;
+      pick.append(option);
+    };
+    let answer = null;
+    try {
+      answer = await client.call("mod.packages", {});
+    } catch {
+      answer = null;
+    }
+    const entries = answer !== null && Array.isArray(answer.packages) ? answer.packages : [];
+    const seen = new Set();
+    for (const entry of entries) {
+      if (entry === null || typeof entry !== "object" || typeof entry.dir !== "string" || entry.dir === "") {
+        continue;
+      }
+      if (seen.has(entry.dir)) {
+        continue;
+      }
+      seen.add(entry.dir);
+      const name = entry.manifest !== null && typeof entry.manifest === "object" && typeof entry.manifest.name === "string" && entry.manifest.name !== ""
+        ? entry.manifest.name
+        : entry.folder;
+      add(entry.dir, name === entry.folder ? name : `${name} (${entry.folder})`);
+    }
+    await readRecents();
+    for (const dir of recentDirs) {
+      if (seen.has(dir)) {
+        continue;
+      }
+      seen.add(dir);
+      add(dir, `\u21ba ${dir}`);
+    }
+    if (previous !== "" && seen.has(previous)) {
+      pick.value = previous;
+    }
+    if (refresh === true) {
+      if (entries.length === 0) {
+        status.textContent = t("mod.pickNone");
+      } else {
+        status.textContent = t("mod.pickFound", { count: String(entries.length) });
+      }
+    }
+  }
+
+  pick.addEventListener("change", () => {
+    if (pick.value === "") {
+      return;
+    }
+    dirInput.value = pick.value;
+    openMod();
+  });
+  pick.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  });
+
   loadTypes();
+  loadPackages(false);
 
   // An unopened card says how the input is read and shows each section's
   // placeholder: a blank rectangle gave no clue that `Mods/MyMod` was wrong.
-  counts.textContent = "relative paths resolve against the mods root; an absolute path also works";
+  counts.textContent = t("mod.pathNote");
   fillOrEmpty(modJsonSection, []);
   fillOrEmpty(definesSection, []);
   fillOrEmpty(yarnSection, []);
@@ -781,7 +964,7 @@ export function renderMod(card, ctx) {
   if (dirInput.value !== "") {
     openMod();
   } else {
-    status.textContent = "NewMod (relative to the mods root) or an absolute path, then Enter";
+    status.textContent = t("mod.initial");
   }
 
   return {
@@ -798,6 +981,18 @@ export function renderMod(card, ctx) {
       },
       root() {
         return dirInput.value.trim();
+      },
+      relabel() {
+        tr.relabel();
+        pick.options[0].textContent = t("mod.pick");
+        counts.textContent = t("mod.pathNote");
+        if (dirInput.value.trim() === "") {
+          status.textContent = t("mod.initial");
+        }
+      },
+      reveal() {
+        dirInput.focus();
+        return true;
       },
     },
     destroy() {},

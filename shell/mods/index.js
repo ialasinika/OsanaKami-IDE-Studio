@@ -2073,6 +2073,86 @@ function createMods(options) {
     };
   }
 
+  /** 一次最多列多少个包：一个被塞满的 Mods 目录也不该让卡顿住。 */
+  const PACKAGES_MAX = 200;
+
+  /** 读一个包的 mod.json 里那两行；读不到就是 null，不抛。 */
+  function manifestHead(packageDir) {
+    const file = path.join(packageDir, 'mod.json');
+    let text;
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile() || stat.size > 1024 * 1024) return null;
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      return {
+        name: typeof parsed.name === 'string' && parsed.name.trim() !== '' ? parsed.name.trim() : null,
+        version: typeof parsed.version === 'string' && parsed.version.trim() !== '' ? parsed.version.trim() : null
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 列出 Mods 目录里的包，给窗口的“选一个包”下拉用（G55）。
+   *
+   * params `{ dir? }`：缺省用发现到的游戏 Mods，给了目录就列它（仍然走
+   * `resolveArg`，所以越界的绝对路径照样被拒）。每个条目带 `dir`（可以
+   * 原样交给 `mod.open` 的路径）、`name`（mod.json 的 name 或目录名）和
+   * `manifest`（读不到就是 null，说明这个目录不像一个包）。
+   *
+   * 只有带 `mod.json` 的目录才算包：把 Mods 里随手放的文本文档也列出来，
+   * 只会让选择更难。列不出来不是错误——空 Mods 目录是正常状态。
+   */
+  function packages(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    let dir = gameModsDir;
+    let source = gameMods.source;
+    if (p.dir != null && String(p.dir).trim() !== '') {
+      dir = resolveArg(String(p.dir), 'dir');
+      source = 'given';
+    }
+    const answer = {
+      dir: dir,
+      source: source,
+      found: !!dir,
+      packages: [],
+      truncated: false
+    };
+    if (!dir) return answer;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      answer.error = 'could not list ' + dir + ': ' + String(e && e.code ? e.code : e);
+      return answer;
+    }
+    const names = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.')) continue;
+      const abs = path.join(dir, entry.name);
+      const manifest = manifestHead(abs);
+      if (manifest === null) continue;
+      names.push({ name: entry.name, abs: abs, manifest: manifest });
+    }
+    names.sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0));
+    answer.truncated = names.length > PACKAGES_MAX;
+    answer.packages = names.slice(0, PACKAGES_MAX).map((item) => ({
+      name: item.manifest.name || item.name,
+      folder: item.name,
+      dir: item.abs,
+      manifest: item.manifest
+    }));
+    return answer;
+  }
+
   /* ---------------- 游戏日志：Player.log（G12） ---------------- */
 
   /** 日志尾部字节数的上下界：别把一整份几百 MB 的日志读进内存。 */
@@ -2215,6 +2295,7 @@ function createMods(options) {
     knowledge: knowledge,
     knowledgeState: knowledgeState,
     gameMods: gameModsInfo,
+    packages: packages,
     stats: stats,
     types: types,
     characters: characters,

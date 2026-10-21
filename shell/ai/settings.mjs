@@ -9,11 +9,15 @@
  *     {
  *       "version": 1,
  *       "bootView": "mod",
- *       "watchPollMs": 1500
+ *       "watchPollMs": 1500,
+ *       "locale": "",
+ *       "recentPackages": [],
+ *       "onboarded": false
  *     }
  *
- * The file is deliberately small and boring: one enum, one bounded integer,
- * and a version number that is written by the store rather than by the caller.
+ * The file is deliberately small and boring: a few enums, one bounded integer,
+ * a bounded list of recent package paths, one boolean, and a version number
+ * that is written by the store rather than by the caller.
  * Anything unknown is reported as a warning, so a newer build that adds a key
  * degrades to "that key is ignored" instead of refusing to save, and anything
  * of the wrong type is an error, so a typo cannot quietly become a default.
@@ -46,10 +50,17 @@ export const PREFERENCES_VERSION = 1;
 export const DEFAULT_PREFERENCES = Object.freeze({
   version: PREFERENCES_VERSION,
   bootView: "mod",
-  watchPollMs: 1500
+  watchPollMs: 1500,
+  // Empty means "follow the system language": the window turns it into "en" or
+  // "zh" at boot, while an explicit value is what the settings picker writes.
+  locale: "",
+  recentPackages: Object.freeze([]),
+  onboarded: false
 });
 
 const BOOT_VIEWS = Object.freeze(["classic", "mod"]);
+const UI_LOCALES = Object.freeze(["en", "zh"]);
+const RECENT_PACKAGES_MAX = 8;
 const WATCH_POLL_MIN = 250;
 const WATCH_POLL_MAX = 60000;
 
@@ -131,6 +142,47 @@ export function normalizePreferences(raw) {
         continue;
       }
       preferences.watchPollMs = value;
+      continue;
+    }
+    if (key === "locale") {
+      if (typeof value !== "string" || (value !== "" && !UI_LOCALES.includes(value))) {
+        errors.push({ key, message: "locale must be empty, \"en\" or \"zh\"" });
+        continue;
+      }
+      preferences.locale = value;
+      continue;
+    }
+    if (key === "recentPackages") {
+      if (!Array.isArray(value)) {
+        errors.push({ key, message: "recentPackages must be an array of paths" });
+        continue;
+      }
+      if (value.length > RECENT_PACKAGES_MAX) {
+        errors.push({ key, message: "recentPackages holds at most " + RECENT_PACKAGES_MAX + " paths" });
+        continue;
+      }
+      const paths = [];
+      let bad = false;
+      for (const entry of value) {
+        if (typeof entry !== "string" || entry.trim() === "") {
+          bad = true;
+          break;
+        }
+        if (!paths.includes(entry)) paths.push(entry);
+      }
+      if (bad) {
+        errors.push({ key, message: "recentPackages entries must be non-empty strings" });
+        continue;
+      }
+      preferences.recentPackages = paths;
+      continue;
+    }
+    if (key === "onboarded") {
+      if (typeof value !== "boolean") {
+        errors.push({ key, message: "onboarded must be a boolean" });
+        continue;
+      }
+      preferences.onboarded = value;
       continue;
     }
     warnings.push({ key, message: "unknown preference ignored: " + key });

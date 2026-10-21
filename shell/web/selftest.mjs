@@ -44,6 +44,7 @@ await import("./selftest/story.mjs");
 await import("./selftest/translation.mjs");
 await import("./selftest/mods.mjs");
 await import("./selftest/pixel.mjs");
+await import("./selftest/i18n.mjs");
 await import("./selftest/spine.mjs");
 
 /* ------------------------------------------------------------------ */

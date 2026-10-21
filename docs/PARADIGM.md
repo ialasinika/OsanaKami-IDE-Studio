@@ -112,7 +112,7 @@ with:
 | `z` | numeric stacking order, defaults to 0 | the board model's load defaults |
 | any other field | stored **verbatim**, never interpreted | nothing |
 
-The shell ships sixteen kinds:
+The shell ships seventeen kinds:
 
 | kind | what it is | card fields it uses |
 | --- | --- | --- |
@@ -132,10 +132,11 @@ The shell ships sixteen kinds:
 | `settings` | the machine rather than the project: AI provider, the view a window opens in, poll interval | none |
 | `help` | the sources: the game's wiki link, the type-support matrix the checks use, and the command list | none |
 | `agent` | a conversation with the model, using only the read-only tools the open cards declare | `prompt` |
+| `start` | the guide a first run opens: where the game's Mods folder is, what to validate, and the one button that marks the guide as met | none |
 
 The board model does **not** interpret `kind`, and the kernel never sees it.
 `core/include/view.h` stores any document verbatim; `shell/web/board.mjs` states
-the schema, and `docs/VIEWS.md` states the seam: those sixteen kinds are
+the schema, and `docs/VIEWS.md` states the seam: those seventeen kinds are
 conventions the shell implements, and a fork that invents `timeline` or
 `waveform` changes the shell and nothing else. A card with an unknown kind still
 loads, still saves, and still renders — `renderCard` in `shell/web/cards.mjs`
@@ -220,7 +221,7 @@ palette that steals focus and it is not a menu; it is a place to type a verb.
   blurs it. `Tab` completes a command name. `ArrowUp` shows the last non-error
   log line as a hint. Typing a known verb shows its usage.
 - Verbs are `open`, `note`, `run`, `files`, `project`, `link`, `unlink`,
-  `focus`, `delete`, `save`, `help`, `agent`, `clear` (`KNOWN_COMMANDS` in
+  `focus`, `delete`, `save`, `help`, `agent`, `start`, `clear` (`KNOWN_COMMANDS` in
   `shell/web/main.mjs`).
 - `delete` with no argument acts on the **focused card**. That is the only
   place the command line reaches for the selection, and it is the intended

@@ -159,6 +159,7 @@ import { renderRig } from "./cards/card-rig.mjs";
 import { renderRunner } from "./cards/card-runner.mjs";
 import { renderSettings } from "./cards/card-settings.mjs";
 import { renderSheet } from "./cards/card-sheet.mjs";
+import { renderStart } from "./cards/card-start.mjs";
 import { renderStory } from "./cards/card-story.mjs";
 import { registerCardKind } from "./cards/registry.mjs";
 import { emptySheet, sheetSummary } from "./cards/sheet.mjs";
@@ -428,4 +429,14 @@ registerCardKind({
   describe: (card) => `agent ${card.prompt || "(one conversation)"}`,
   create: () => ({ prompt: "" }),
   render: renderAgent,
+});
+
+// G58: the start card.  It owns no file and no package: it is three steps that
+// point at the verbs which do own one.
+registerCardKind({
+  kind: "start",
+  title: "Start here",
+  describe: () => "the three steps that get a package into the game",
+  create: () => ({}),
+  render: renderStart,
 });

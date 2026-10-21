@@ -139,6 +139,7 @@ write files or wait on one.
 | `mod.hover` | `text`, `caret` | `{range, kind, name, contents[{kind, value}]}` or `null` |
 | `mod.localization` | `root` | `{locales: [{code, file, base, rows, bytes}], baseLanguage}` |
 | `mod.sources` | — | `{knowledge, game}` -- `knowledge` is `knowledgeState()` (`state`, `path`, `source`, `schemas`, errors) and `game` is `gameMods()` (`dir`, `source`, `found`, `tried[]`); read-only (G44) |
+| `mod.packages` | `dir?` | `{dir, source, found, packages: [{name, dir, version?}], errors[]}` -- the packages under the game's Mods folder (or `dir`), which is what the card's picker lists; a missing game folder is `found: false`, not an error (G55) |
 
 `mod.complete` and `mod.hover` take the **document being edited**, not a path:
 `text` is the buffer (saved or not) and `caret` is a 0-based UTF-16 offset into
@@ -942,7 +943,7 @@ next to the repository: it drives `examples/Mods/Lantern`, generates its own
 read, so the story card can only open it through a `file.blob*` session), and
 proves the D006 click-through on the example mod's missing sprite.
 
-Three of `input_smoke.py`'s 43 checks pin the example's own claims rather than the
+Three of `input_smoke.py`'s 44 checks pin the example's own claims rather than the
 UI's: the 8-bit RGB sprite is read as colour type 2 and written back as colour
 type 6 (G20); the whole tag surface reaches the story card while the tools judge
 exactly the three tag names they know; and the package's only findings are its

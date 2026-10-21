@@ -121,6 +121,7 @@ export const COMMAND_HELP = [
   "docs [query]             游戏知识库：136 指令 / 63 函数 / 678 变量 / 1221 节点",
   "settings                 AI provider, default view and poll interval",
   "agent [question]         the agent's seat: ask about the package with the cards' tools",
+  "start                    open the guide again",
   "link <from> <to> [label] connect two cards",
   "unlink <linkId>          remove a connection",
   "focus <id>               select and centre a card",

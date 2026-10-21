@@ -70,6 +70,22 @@ export async function frame(id, method, params) {
       typeof sourcesFrame.result.knowledge.schemas === "number",
     JSON.stringify(sourcesFrame).slice(0, 240));
 
+  /*
+   * G55: `mod.packages` is what the card's picker reads.  The same seam problem
+   * applies -- a verb added to the facade and forgotten in the method table is
+   * invisible to every facade test -- so the frame asserts the shape the card
+   * relies on, not a particular machine's game folder.
+   */
+  const packagesFrame = await frame(7, "mod.packages", {});
+  check("mod.packages answers with the folder it read and the packages under it",
+    packagesFrame.result !== undefined &&
+      typeof packagesFrame.result.found === "boolean" &&
+      Array.isArray(packagesFrame.result.packages) &&
+      packagesFrame.result.packages.every((item) =>
+        item !== null && typeof item === "object" &&
+        typeof item.name === "string" && typeof item.dir === "string"),
+    JSON.stringify(packagesFrame.result));
+
   const notified = await dispatch({ jsonrpc: "2.0", method: "mod.stats", params: {} }, kernel, languages, mods);
   check("a notification is not answered", notified === null, JSON.stringify(notified));
 

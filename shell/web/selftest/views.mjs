@@ -87,7 +87,7 @@ export const ALL_CARD_KINDS = knownCardKinds();
 test("G29: the kinds the tiles have to reach are the ones the board ships", () => {
   assert.deepEqual(
     [...CARD_KINDS].sort(),
-    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings", "help", "audio", "agent"].sort(),
+    ["editor", "runner", "note", "files", "project", "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings", "help", "audio", "agent", "start"].sort(),
     "the kinds this suite pins are the kinds the board can hold; a new one is added here knowingly",
   );
   for (const kind of CARD_KINDS) {
@@ -315,14 +315,38 @@ test("views: the window opens on the mod view, and the switch offers every view 
 
 test("settings: the boot view and the poll interval come from the file, with fallbacks", () => {
   // A window with no answer (an older shell, a trimmed build) is the constants.
-  assert.deepEqual(bootPreferencesFrom(null), { bootView: BOOT_VIEW, watchPollMs: null });
-  assert.deepEqual(bootPreferencesFrom({}), { bootView: BOOT_VIEW, watchPollMs: null });
-  assert.deepEqual(bootPreferencesFrom({ prefs: null }), { bootView: BOOT_VIEW, watchPollMs: null });
+  assert.deepEqual(bootPreferencesFrom(null), {
+    bootView: BOOT_VIEW,
+    watchPollMs: null,
+    locale: null,
+    onboarded: false,
+    recentPackages: [],
+  });
+  assert.deepEqual(bootPreferencesFrom({}), {
+    bootView: BOOT_VIEW,
+    watchPollMs: null,
+    locale: null,
+    onboarded: false,
+    recentPackages: [],
+  });
+  assert.deepEqual(bootPreferencesFrom({ prefs: null }), {
+    bootView: BOOT_VIEW,
+    watchPollMs: null,
+    locale: null,
+    onboarded: false,
+    recentPackages: [],
+  });
 
   // What the file says, when it says something a window can honour.
   assert.deepEqual(
     bootPreferencesFrom({ prefs: { bootView: "classic", watchPollMs: 750 } }),
-    { bootView: "classic", watchPollMs: 750 },
+    {
+      bootView: "classic",
+      watchPollMs: 750,
+      locale: null,
+      onboarded: false,
+      recentPackages: [],
+    },
     "the file names the view and the interval, and both travel",
   );
 

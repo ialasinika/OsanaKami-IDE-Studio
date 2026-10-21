@@ -949,15 +949,19 @@ pre{white-space:pre-wrap}
       const headline = await waitFor(() => textOf(".card-mod .mod-headline").trim());
       say("headline", headline || "");
       say("log_tail", (logText() || "").slice(-160));
-      say("log_could_not_open", logText().indexOf("cannot open") !== -1);
+      say("log_could_not_open", Boolean(await waitFor(() => logText().indexOf("cannot open") !== -1)));
       say("status", textOf(".card-mod [data-role=card-status]"));
       say("label", textOf(".card-mod [data-role=card-label]"));
       const dirInput = doc().querySelector(".card-mod .mod-dir");
       say("dir", dirInput === null ? "" : dirInput.value);
       say("rows", doc().querySelectorAll(".card-mod .mod-row").length);
       say("log_opened", logText().indexOf("opened ") !== -1);
-      /* D2: each heading is a target and opens the file it heads. */
-      const titles = Array.from(doc().querySelectorAll(".card-mod .mod-section-title"));
+      /* D2: each *file* heading is a target and opens the file it heads.  The
+       * card also has control sections (open/check/create/...), and their
+       * headings fold rather than open, so they are deliberately not counted. */
+      const titles = [".mod-manifest", ".mod-defines", ".mod-yarn"]
+        .map((name) => doc().querySelector(`.card-mod .mod-section${name} .mod-section-title`))
+        .filter((el) => el !== null);
       say("titles", titles.length);
       say("title_roles", titles.length > 0 && titles.every((el) => el.getAttribute("role") === "button"));
       const before = labels();
@@ -1119,6 +1123,19 @@ def _drive_wrapper(edge, args, profile: Path, url: str, label: str) -> dict:
     return _wrapper_facts(dom)
 
 
+def _pin_locale(profile: Path) -> None:
+    """Pin the window's language for a smoke stage.
+
+    The checks below match English labels, and a headless browser on a Chinese
+    Windows reports ``navigator.language`` as zh-CN, so the run states its locale
+    instead of inheriting the machine's.  The file is the one the settings card
+    writes: a flat object, read through ``createPreferenceStore``.
+    """
+    user_dir = profile / "user"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    (user_dir / "preferences.json").write_text('{"locale": "en"}\n', encoding="utf-8")
+
+
 def newmod_round_trip(edge, args) -> dict:
     """Scaffold a package in a sandbox, then drive the page the way the menu does.
 
@@ -1135,6 +1152,7 @@ def newmod_round_trip(edge, args) -> dict:
         MOD_WRAPPER.write_text(MOD_PAGE, encoding="utf-8")
         written = True
         port = free_port()
+        _pin_locale(profile)
         host = Host(
             port,
             [
@@ -1358,7 +1376,7 @@ CARD_WRAPPER = REPO_ROOT / "shell" / "web" / CARD_WRAPPER_NAME
 CARD_KINDS = (
     "editor", "runner", "note", "files", "project",
     "sheet", "story", "pixel", "rig", "mod", "problems", "docs", "settings",
-    "help", "audio", "agent",
+    "help", "audio", "agent", "start",
 )
 
 #: The tiles, in the order the round trip walks them (the window boots on mod).
@@ -1383,6 +1401,7 @@ CARD_COMMANDS = (
     "help",
     "open tone.wav",
     "agent",
+    "start",
 )
 
 #: The close facts the card page prints after the reachability walk: the three
@@ -2360,6 +2379,7 @@ def card_round_trip(edge, args) -> dict:
         CARD_WRAPPER.write_text(_card_page(), encoding="utf-8")
         written = True
         port = free_port()
+        _pin_locale(profile)
         host = Host(
             port,
             [

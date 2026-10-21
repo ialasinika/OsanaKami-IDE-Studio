@@ -14,6 +14,81 @@ retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  Th
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
+## Unreleased
+
+### Opening a package is a choice, not a path
+
+The mod card used to start with an empty text box and a button, and the only way
+into a package was to type a path nobody remembers. The box is still there for a
+path that lives in muscle memory, but it is no longer the only way in: a picker
+lists the packages under the game's Mods folder -- which is already a list of
+packages, and the shell now asks for it with `mod.packages` -- and the card also
+remembers the last handful it opened, so the second visit is one click. A folder
+that is not under the game directory is still typed, because the window cannot
+receive a dropped directory from a browser sandbox; the card says so rather than
+pretending to accept one.
+
+The picker is a view, not a second source of truth: choosing a package fills the
+same `dir` input `open` reads, so the rest of the card -- validate, new, import,
+export, install -- cannot disagree with what is on screen.
+
+### The mod card opens on the two steps that matter
+
+The card's seven control rows used to sit on top of each other, and the first
+useful thing (the file list) was below all of them; in a short window it was off
+the bottom of the card. Open and check now open expanded, and the five rows that
+change something -- create, import, export, install, log -- start folded, each
+with a header you can click. The fold is remembered on the card document, so a
+re-render or a reload does not spring it open, and the card body scrolls as a
+last resort rather than hiding rows it cannot fit.
+
+### The interface can speak Chinese, and remember it
+
+Every visible word now comes from a table with an English and a Chinese column:
+card headers, the buttons on the mod, problems, audio and start cards, the status
+lines those cards write, and the command names. The settings card has a language
+chooser (follow the system, English, 中文) and the choice is stored in
+`preferences.json`, so it survives the window. A tag the table cannot honour lands
+on English rather than failing to boot; a language change relabels the cards that
+are already open instead of asking for a reload.
+
+The catalog is in `shell/web/i18n.mjs` with no dependencies, and the suite pins
+the promises that matter: both locales name the same keys, a missing key falls
+back to English and then to the key itself, and every card kind has a name. File
+names, paths and diagnostic codes are not translated -- those are the game's
+words, not the interface's.
+
+The two smoke harnesses now state their language instead of inheriting the
+machine's: a headless browser on a Chinese Windows reports `zh-CN`, and the
+browser and input smoke checks match English labels and count words (`2
+errors`). Each run writes `locale: en` into its throwaway user directory
+first, which is where the settings card keeps the same choice.
+
+### Every diagnostic says how to fix it
+
+A list of codes tells a person what is wrong and leaves them there. The problems
+card now adds one sentence under each row: what to do about `D006`, where the
+`D011` reference has to come from, that `M013` is the wiki's silence and not a
+verdict. The sentences live in `shell/web/diagnostic-hints.mjs`, keyed by code and
+translated with everything else; an unknown code gets silence rather than
+invented advice, and the table is pinned by count so a code added to the
+validator without a hint is visible in the suite.
+
+### A first run opens a guide
+
+A new window used to open on an empty board and leave the person to find the
+`mod` command. It now opens the start card: three steps in the order they unblock
+each other -- open the folder the game reads mods from, validate what is in it,
+and create or import the first file -- with the buttons that do those things and
+a line that says the guide will not open by itself again. The button records that
+in `preferences.json`; `start` on the command line (and a button in Settings)
+brings it back. A board that already has a start card is itself a decision, so
+the guide is never added twice.
+
+Suites: mods 685/685 (+1), web 329/329 (+5), langs 91/91, ai 93/93 (one
+skipped). The browser smoke suites are not part of this count: both need a real
+headless browser, and this machine's is a separate run.
+
 ## v0.1.3-beta — 2026-10-21
 
 ### The installer asks where the app goes and what it puts on the desktop

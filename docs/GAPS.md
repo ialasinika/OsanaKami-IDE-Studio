@@ -1,4 +1,4 @@
-# 缺口清单（2026-10-20 第七轮：G18/G44/G34/G49 已关；第五轮 A/B 清账与冒烟轮并入）
+# 缺口清单（2026-10-21 第九轮：G55/G56/G57/G58 已关；第五~八轮并入）
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
@@ -13,6 +13,8 @@
 第六轮（2026-10-20 晚）：用户按队列点名 18/44/34/49/内核硬化，按此顺序逐项独立提交。G18 本轮关闭：`mod.stats`/`mod.types`/`mod.search`/`mod.docFor` 接受可选包根、docs 卡新增包根输入与 `read this package`，没给 root 时所有返回形状不变（`selftest/spec.mjs` 11 条）。G44 本轮也关闭：`mod.sources` 把"KB/游戏目录从哪来"从启动日志里的一句话变成一个只读动词（`knowledgeState()` + `gameMods()` 在一帧里返回），CLI `sources [--json]` 与设置卡两行渲染同一答案，缺游戏目录或缺 KB 都是可回答的状态（`found: false` / `state: "missing"` 带 tried 列表），只有 mod 层加载失败才 exit 2。G34/G49 与 port 硬化按队列随后处理。G34 也在本轮关闭：`electron/newmod.js` 把 0.1.0 审计的 F1–F5 全部落到可测的原语上——越界父目录先问"改到 Mods 根下"（`confine()`）、二次创建带 `overwrite`（`shell/main.mjs` 的 `mod.scaffold` 转发该旗标）、POST 有截止时间（`createMod({timeoutMs})`，忽略 signal 的 fetch 也会超时）、设置写失败只是成功框里的一句备注（不再把已写好的包报成整体失败）、`?mod=` 打不开时页面继续 boot 并记 `cannot open <dir>: …`（不再变成 "kernel not reachable" 与重连风暴）。
 第七轮（2026-10-20 深夜）：G49 关闭——卡种可在 `registerCardKind` 旁声明只读 `agent` 工具（`defineCardTool`，模型可见名 `card.<kind>.<verb>`；`shell/web/cards/agent-tools.mjs` 零 import，契约可在 Node 下钉住）。editor 提供 `card.editor.read`/`card.editor.reveal`，mod 与 problems 提供`diagnostics`（包根、计数、前 50 行），docs 提供 `lookup`/`search`（带 G18 的可选包根）。`shell/main.mjs` 新增四个只读动词 `ai.status`/`ai.tools`/`ai.chat`/`ai.invoke`；供应商与密钥留在 shell 进程，帧只带模型流量。新 `agent` 卡（第十六种）合并 shell 工具与已挂载卡的声明、最多六轮，`card.*` 本地路由回声明它的卡、其余走 `ai.invoke`，handler 抛错变成 `role:"tool"` 失败消息而不是断掉的回合。测试：`selftest/agent.mjs` 3 条、`selftest/dispatch.mjs` 6 条、`shell/ai/selftest/cards.mjs` 7 条，浏览器冒烟两视图可见；顺带修了 `aiInvoke` 把裸 `{name, arguments}` 交给 `invokeToolCall` 的帧形状错误。
 第八轮（2026-10-21）：内核 port 硬化关闭（用户队列最后一项）。`core/port/sys_win32.c` 的 `sde_port_path_within()` 在词法比较之后解析最近已存在祖先的真实名（`GetFinalPathNameByHandleA`）并拼回尚不存在的部分，所以 workspace 里的 junction/reparse point 不能把相对路径带出根，连"即将新建的文件"也不行；`sde_port_write_file()` 改为写同目录的 `.sde-write-<pid>-<n>` 再 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` 发布，读者只会看到旧字节或新字节，失败时旧文件完整、临时文件被删；`file.stat` 对存在但读不到的文件返回 `{revision: 0, readable: false}`，写动词遇到同一情形报 `cannot read file for revision`，而不是截断一个它无法证明 base 的文件。`core/tests/test_blob.c` 新增一组本机可复现的检查（`mklink /J` 夹带、只写不读的共享句柄、写后文件 id 改变且无临时文件残留），该目标现为 184 条；`docs/ARCHITECTURE.md` 的"platform boundary"段把三条承诺写成契约。
+
+第九轮（2026-10-21，体验优先）：用户判断"先修体验"，并点名四件事加一件自选；五件都落在窗口层，改的是路而不是能力。G55：mod 卡不再以空路径框开场——`mod.packages` 列出游戏 Mods 目录下的包（缺游戏目录是 `found: false` 而非错误），卡上有下拉框与"最近打开"（`preferences.json` 的 `recentPackages`，≤8），同时七个控制行分成可折叠分区，`open`/`check` 默认展开、五个改动行默认折叠。G56：界面中文化——`shell/web/i18n.mjs` 一张 en/zh 同键表（卡片标题、按钮、状态行、命令名），设置卡有语言选择（跟随系统 / English / 中文，写回 `locale`），切换时已开的卡原地重贴标签而不是要求重载；缺键回落英文再回落键名。G57：每条诊断下补一句"怎么修"（`shell/web/diagnostic-hints.mjs`，按 code 取、随语言翻译，未知 code 保持沉默，条数被套件钉住）。G58：首次运行开一张 `start` 引导卡（三步：打开游戏读的 Mods 目录、校验、创建或导入第一个文件），"不再显示"写回 `onboarded`，`start` 命令与设置卡的按钮可再唤出。
 
 
 ## 已关闭（历轮累计，均有代码证据）
@@ -69,6 +71,10 @@
 | G18 docs 卡看不到本包定义 | 第五轮后：`mod.stats`/`mod.types`/`mod.search`/`mod.docFor` 都接受可选 `root`——`stats` 多回 `package {root, name, summary, types}`，`types` 每型多 `packageCount`（KB 不认识的类型也列出），`search` 在 KB 命中之后追加该包的 `define`/`node`/`file` 命中，`docFor` 能返回包内定义原文、节点所在的 Yarn 文件或整份文件文本；不带 root 时形状与以前完全一样。docs 卡新增包根输入与 `read this package`，列表显示包名/各类型数量、搜索覆盖包内容（`selftest/spec.mjs` 11 条钉住有无 root 两种形状） |
 
 | G34 新建模组失败路径（旧档 F1–F5） | 第六轮：`electron/newmod.js` 新增 `writableRoot()`/`confine()`（越界父目录先问再改到 Mods 根下，不再把原始 `EOUTSIDE` 抛给用户）、`needsOverwrite()` 与 `createMod({overwrite})`（二次创建可修复自己写了一半的包，`shell/main.mjs` 的 `mod.scaffold` 转发旗标）、`createMod({timeoutMs})` 以 `Promise.race` 兜底（fetch 忽略 signal 也会以 `TimeoutError` 结束）；`electron/main.js` 把"记住文件夹"从创建里拆出（失败只记 log 与成功框备注），`?mod=` 打开失败由 `shell/web/main.mjs` 自己 catch 并 log（boot 继续、状态保持 ready）。验证：`selftest/dispatch.mjs` 7 条原语检查 + 2 条真实端点（二次被拒、`overwrite` 修复），`tools/browser_smoke.py` 新增 D5（缺目录的 `?mod=` 仍 `kernel ready` 且日志可见） |
+| G55 打开包必须先知道路径 | 第九轮：`mod.packages`（`shell/mods/index.js`，列出 game Mods 或显式 `dir` 下带 `mod.json` 的目录，缺目录 `found: false`，上限 200 并带 `truncated`）+ `MOD_METHODS` 转发 + `selftest/dispatch.mjs` 1 条帧形状检查；mod 卡下拉框（游戏包 + 最近打开，`preferences.json` 的 `recentPackages` ≤8）与七个可折叠分区（`open`/`check` 展开，`create`/`import`/`export`/`install`/`log` 折叠，状态记在卡文档） |
+| G56 界面全英文、无中文 | 第九轮：`shell/web/i18n.mjs`（零 import，`SUPPORTED_LOCALES=["en","zh"]`，同键表、`normalizeLocale`、`translate` 回落键名）+ `dom.mjs` 的 `makeTranslations()` 原地重贴；主要卡片（mod/problems/help/audio/agent/start/settings）与设置卡语言选择（跟随系统 / English / 中文，`config.set prefs.locale`）走同一张表；`selftest/i18n.mjs` 5 条（键对称、回落、切换、kind 名、hint 覆盖） |
+| G57 诊断只给代码，不给下一步 | 第九轮：`shell/web/diagnostic-hints.mjs` 的 `hintFor(code)`（`hint.<CODE>` 键，未知码返回空串，不编造建议）；problems 卡每行状态下方追加提示并随语言切换；`selftest/i18n.mjs` 钉住 38 个 code 都有两语言提示 |
+| G58 首次运行是空板子 | 第九轮：新 `start` 卡（三步引导 + 打开/校验/新建按钮 + "不再显示"）注册进 `cards.mjs`；`shell/web/main.mjs` 在 `onboarded` 为假且板子上没有 start 卡时 `openStartCard()`，`start` 命令与设置卡按钮可再唤出，`onboarded()` 写回 `preferences.json`；`selftest/cards.mjs` 钉注册、`selftest/i18n.mjs` 钉文案键 |
 
 ## 仍然成立（本轮逐条核实）
 
@@ -94,10 +100,12 @@
 - **G28/G32 名称**：保留 OsanaKami IDE Studio。裁定理由：产品的问题集合对这一款游戏是特异的，不需要为"改嫁其他游戏"预留距离；实测无混淆。
 - **G24 "0 网络"**：已决策不继承上游约束，`shell/ai` 已落地。
 
-## 建议队列（第八轮后，按"作者被卡住的频率 × 修复成本"排序）
+## 建议队列（第九轮后，按"作者被卡住的频率 × 修复成本"排序）
 
 第五轮（起点 `66d3fb0`/`b37a47c`）把 A 区（G5/G8/G10/G37）与 B 区（G2/G14/G15/G20/G38/G51-b）清空：录音可试听、mod 层读语义与内核同规则、帮助卡渲染 wiki 与类型矩阵、像素按原格式读写、示例包 `file` 列改包相对且 `D023` 按真实 lock 校验（脚手架也改写真实 lock）、内核显式只读根；校验器补上手写 `EventReference`/`GetTopic`/GUID/脚手架画布的陷阱 lint，生成器不再能用 `--out` 静默覆盖富 KB，脚手架模板有了"自己生成的包自己过校验"的交叉测试，已提交 KB 的乱码清零。第六轮关掉 G18（docs 卡按包根读本包定义）、G44（KB/游戏目录来源成为 `mod.sources` 动词）、G34（新建模组五条失败路径）；第七轮关掉 G49（卡声明自由 `agent` 工具 + `ai.*` 动词 + agent 卡）；第八轮关掉内核 port 硬化（junction 逃逸、`revision 0` 二义、原子写；`test_blob` 184 条）。
 
-第一批：无。用户点名的 18/44/34/49/内核硬化已全部关闭。
+第七轮关掉 G49（卡声明自由 `agent` 工具 + `ai.*` 动词 + agent 卡）；第八轮关掉内核 port 硬化；第九轮关掉用户体验五件（G55 打开包、G56 中文化、G57 诊断提示、G58 新手引导；同一轮还改掉了mod 卡控制行的堆叠与 `open`/`check` 的默认展开）。
+
+第一批：无。用户点名的 18/44/34/49/内核硬化已全部关闭；用户点名的体验五件也在第九轮关闭。
 
 其余：**G9 残余**（Addressables 窗口里登记了哪些 address）无本地数据源，等游戏侧暴露清单。上游 0.4.2 的 port 层硬化已转正为第八轮的逐条检查，不再单列。

@@ -1958,6 +1958,10 @@ def main(argv=None) -> int:
           f"{'' if backup.existed else ' (absent -- this run will create and remove it)'}")
     print("-" * 68)
     profile = Path(tempfile.mkdtemp(prefix="infantgod-input-smoke-"))
+    # Pin the window language: these checks match English labels and count
+    # words ("2 errors"), and a headless browser on a Chinese Windows reports
+    # navigator.language zh-CN.  The preferences file is the settings card's.
+    (profile / "preferences.json").write_text('{"locale": "en"}\n', encoding="utf-8")
     # The story half opens a translation table this run generates: 4.5 MB, past
     # the kernel's 4 MiB whole-file read, so the card can only open it by paging a
     # blob session.  It is written under build/ -- reachable because the kernel's

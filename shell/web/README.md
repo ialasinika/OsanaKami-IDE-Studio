@@ -12,7 +12,7 @@ board.mjs     the board document, viewport, selection and mutations
 history.mjs   the undo ring: document snapshots, coalescing, redo branch
 watch.mjs     what a card should do when the file moves under it (pure)
 openpath.mjs  whether the kernel will read a path the window is about to open (pure)
-cards.mjs     the barrel: re-exports cards/ and registers the sixteen kinds
+cards.mjs     the barrel: re-exports cards/ and registers the seventeen kinds
 cards/        one module per card family, plus the dom/registry/blob helpers
 classic.mjs   the same cards as a code area, tabs and a sidebar (pure)
 views.mjs     the views by name, and what the HUD says in each (pure)
@@ -98,6 +98,7 @@ one thing that will not wait to be noticed: it opens the strip by itself.
 | `settings` | the machine, not the project: AI provider, the view a window opens in, poll interval | none |
 | `help` | the sources: the wiki link, the type-support matrix and the command list | none |
 | `agent` | a conversation with the model, using only the read-only tools the open cards declare | `prompt` |
+| `start` | the guide: where the game's Mods folder is, what to validate and the button that says it has been read | none |
 
 A kind exists because it was registered, and registering is one call at the end
 of `cards.mjs`, the barrel:
@@ -201,6 +202,7 @@ save [force]             write .infantgod/board.json
 undo                     take back the last board edit (Ctrl+Z)
 redo                     put it back (Ctrl+Shift+Z or Ctrl+Y)
 help                     list the commands, and open the help card that quotes the sources
+start                    open the guide card again
 clear                    empty the log
 ```
 
