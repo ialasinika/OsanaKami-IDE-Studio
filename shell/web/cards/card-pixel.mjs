@@ -251,7 +251,11 @@ export function renderPixel(card, ctx) {
       const swatch = h("button", "pixel-swatch", {
         attrs: { type: "button", title: colour, "data-role": "pixel-swatch", "data-colour": colour },
       });
-      swatch.style = { backgroundColor: colour };
+      /* `style` is a live CSSStyleDeclaration, not a bag: assigning an object
+         to it stringifies to "[object Object]" and paints nothing, which is
+         how the palette spent a release looking grey (the click handler still
+         changed the ink, so only the display was wrong). */
+      swatch.style.backgroundColor = colour;
       if (colour.toLowerCase() === String(state.colour).toLowerCase()) {
         swatch.classList.add("is-on");
       }

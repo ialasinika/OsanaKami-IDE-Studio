@@ -14,6 +14,20 @@ retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  Th
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
+## Unreleased
+
+### The palette shows its colours again
+
+The pixel card's swatches were painted with `swatch.style = { backgroundColor:
+colour }`. `style` is a live `CSSStyleDeclaration`, not an object bag, so that
+assignment stringified to `"[object Object]"`, no background was ever set, and
+every swatch kept the button's own grey -- while clicking one still changed the
+ink, which is why the drawing checks never noticed. It is one assignment of
+`swatch.style.backgroundColor` now, and the browser smoke suite reads each
+swatch's computed colour against the `data-colour` it holds: putting the bug
+back makes it fail with "only 0 of 16 palette swatches show the colour they
+hold". The suite counts 71 checks after this one.
+
 ## v0.1.3-beta.2 — 2026-10-21
 
 ### A package can leave as a zip and come back as one

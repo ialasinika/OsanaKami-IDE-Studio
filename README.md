@@ -294,7 +294,7 @@ python tools/e2e.py --kernel build/infantgod.exe     # 19 passed, 0 failed, 3 sk
 python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
-python tools/browser_smoke.py                        # renders the real window; 70 checks; SKIP (exit 0) with no browser
+python tools/browser_smoke.py                        # renders the real window; 71 checks; SKIP (exit 0) with no browser
 python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
@@ -321,7 +321,7 @@ consumer**: `tools/seide_cli.py` runs its own eight checks against a scratch
 workspace with no shell code involved, and that is what keeps the frozen contract
 honest (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md#a-second-client)).
  `smoke` is separate because it needs a browser: it renders the board
-(`browser_smoke.py`, 70 checks) and then drives it by hand -- Ctrl+Z and
+(`browser_smoke.py`, 71 checks) and then drives it by hand -- Ctrl+Z and
 Ctrl+Shift+Z, a wheel over a card's own contents, and the editor card's own keys:
 Tab and Shift+Tab, Enter after an opener, Ctrl+F, the find bar's next-match
 button, replace-all, Escape, and that the textarea's own undo still holds those

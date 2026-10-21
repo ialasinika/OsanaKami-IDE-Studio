@@ -1589,6 +1589,38 @@ pre{white-space:pre-wrap}
         say("reach_" + view, "total=" + cards.length + " reachable=" + reachable);
       }
 
+      /* ---------------- the palette is painted, not just declared ------------- */
+      /* The swatches are `card.palette` rendered as buttons. What proves they are
+       * painted is the computed colour of each one against the colour it says it
+       * holds -- a background that never got set still leaves the data attribute
+       * right, and that is exactly the bug this caught: `style = { backgroundColor }`
+       * stringifies to "[object Object]", so the whole palette rendered grey while
+       * clicking a swatch still changed the ink. */
+      {
+        const pixelRoot = rootOf("pixel");
+        const swatchNodes = pixelRoot === null
+          ? []
+          : Array.from(pixelRoot.querySelectorAll('[data-role="pixel-swatch"]'));
+        let painted = 0;
+        const shown = [];
+        for (const swatch of swatchNodes) {
+          const wanted = String(swatch.dataset.colour || "").toLowerCase();
+          const computed = (win().getComputedStyle(swatch).backgroundColor || "").replace(/\s+/g, "");
+          const match = /^rgba?\((\d+),(\d+),(\d+)(?:,([0-9.]+))?\)$/.exec(computed);
+          if (match === null || !/^#[0-9a-f]{6}$/.test(wanted)) { continue; }
+          if (match[4] !== undefined && Number(match[4]) < 1) { continue; }
+          const hex = "#" + [1, 2, 3]
+            .map((index) => Number(match[index]).toString(16).padStart(2, "0"))
+            .join("");
+          if (hex === wanted) {
+            painted += 1;
+            if (!shown.includes(hex)) { shown.push(hex); }
+          }
+        }
+        say("palette", "painted=" + painted + " total=" + swatchNodes.length
+          + " distinct=" + shown.length);
+      }
+
       /* ---------------- the rig card writes back what it shows ---------------- */
       {
         const rigRoot = rootOf("rig");
@@ -2757,6 +2789,28 @@ def define_card_checks(facts: dict) -> list:
         )
         return f"closing is a document edit: Ctrl+Z gave card {parsed.get('id')} and its tab back"
 
+    def palette_swatches():
+        line = facts.get("palette", "")
+        require(line, "the wrapper page reported no 'palette' line for the pixel card")
+        parsed = _split_fact_line(line)
+        total = int(parsed.get("total", "0") or "0")
+        painted = int(parsed.get("painted", "0") or "0")
+        distinct = int(parsed.get("distinct", "0") or "0")
+        require(total >= 2, f"the pixel card drew no palette at all (facts {line!r})")
+        require(
+            painted == total,
+            f"only {painted} of {total} palette swatches show the colour they hold -- "
+            f"a swatch whose background never applied renders in the button's own grey "
+            f"(facts {line!r})",
+        )
+        require(
+            distinct >= 2,
+            f"the palette shows {distinct} distinct colour(s); a default palette has more, "
+            f"so the swatches are not painted from `data-colour` (facts {line!r})",
+        )
+        return f"{painted} swatches are painted in their own colours ({distinct} distinct)"
+
+    checks.append(("the pixel card paints its palette in the colours it holds", palette_swatches))
     checks.append(("G29: x closes the tab and the neighbour takes over", close_gesture("x_close")))
     checks.append(("G29: a middle click closes the tab like a browser tab", close_gesture("middle_close")))
     checks.append(("G29: Ctrl+W closes the active tab, not the window", close_gesture("ctrl_w")))
