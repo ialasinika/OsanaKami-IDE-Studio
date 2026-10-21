@@ -1,0 +1,10 @@
+build/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.lib
+*.exp
+iaqs.exe
+iaqs_tests.exe
+.iaqs/

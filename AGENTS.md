@@ -190,6 +190,7 @@ Rules of thumb:
 | `shell/ai/` | the AI layer (config, provider, tools); `selftest.mjs` is the entry over `selftest/` and runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |
 | `tools/` | build/protocol/smoke drivers, scaffolders, the installer builder and its checks: `make-installer.mjs`, `installer_smoke.py`, `sign_smoke.py`, and `ci_installer.py`/`ci_audit.py` for the workflow's test job |
+| `vendor/iaqs/` | the version store, copied verbatim from the same author's `iaqs` project (C++20, 0BSD, zero third-party code): history for one machine and one person in an encrypted store. Never edited here -- `VENDORED.md` there says why; `tools/build-iaqs.ps1` builds it into the ignored `build-iaqs/` |
 | `electron/` | the Windows wrapper: `main.js`, `newmod.js`, menus |
 | `.github/workflows/ci.yml` | the `test` job as a file: four jobs, every action pinned, signing gated on repository secrets; `make ci` runs the test job locally |
 | `docs/` | the argument: protocol, architecture, paradigm, mods, trim map, bugs, the open gap list (now round three) |

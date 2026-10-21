@@ -150,6 +150,12 @@ _SEVERITY_ORDER = {"error": 0, "note": 1}
 #: workspace state are not source, and ``git ls-files`` never lists them either.
 WALK_SKIP_DIRS = {".git", "build", "dist", "node_modules", ".infantgod"}
 
+#: Vendored projects are another tree kept byte-identical so it can be re-synced
+#: from its own home without a merge: their example paths are part of *their*
+#: documentation, and editing them here would turn every sync into a conflict.
+#: The version store lives in ``vendor/iaqs`` for exactly that reason.
+VENDOR_PREFIX = "vendor/"
+
 
 def walk_files() -> list[str]:
     """Every source file in the tree, for a source tarball with no ``.git``."""
@@ -159,6 +165,8 @@ def walk_files() -> list[str]:
             continue
         rel = path.relative_to(REPO_ROOT)
         if any(part in WALK_SKIP_DIRS for part in rel.parts):
+            continue
+        if rel.as_posix().startswith(VENDOR_PREFIX):
             continue
         names.append(rel.as_posix())
     return sorted(names)
@@ -181,6 +189,7 @@ def tracked_files() -> list[str]:
     except (OSError, subprocess.CalledProcessError):
         return walk_files()
     names = [name for name in out.decode("utf-8", "replace").split("\0") if name]
+    names = [name for name in names if not name.startswith(VENDOR_PREFIX)]
     # An unpacked copy sitting inside somebody else's checkout answers "nothing"
     # without failing -- every path in it is untracked there.  No files is not a
     # clean tree; it is an unanswered question, so ask the tree instead.

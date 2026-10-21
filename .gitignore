@@ -6,8 +6,12 @@
 
 # ---------------------------------------------------------------------------
 # build output (Makefile: BIN = build/infantgod.exe, OBJDIR = build/obj)
+#
+# build-iaqs/ is the vendored version store's CMake tree (tools/build-iaqs.ps1):
+# objects, CMake caches and iaqs.exe, none of which are source.
 # ---------------------------------------------------------------------------
 build/
+build-iaqs/
 
 # ---------------------------------------------------------------------------
 # workspace-local state (the board document lives at <root>/.infantgod/board.json)
