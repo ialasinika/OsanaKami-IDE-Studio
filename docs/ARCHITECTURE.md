@@ -458,9 +458,11 @@ localisation lock lint (`D023`), the package-side answers the docs verbs give
 when a root is passed (`stats` package block, per-type `packageCount`, define /
 node / file hits and their text) while the no-root shapes stay what they were,
 the sources report behind the settings card and `sources` (the game folder and
-the places discovery tried, the knowledge state and its source), and the row
+the places discovery tried, the knowledge state and its source), and unpacking an archive through the importer's own reader (inflate and CRC before
+a byte is written, path names normalized and bounded, duplicate names refused,
+the staged swap-in and the post-import report), the row
 wording kept as pure data, with the shipped corpus pinned at zero false
-positives and the `ai.*` frames the agent card asks (684 checks) |
+positives and the `ai.*` frames the agent card asks (706 checks) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, the settings store and its two verbs, and the card-tool bridge into the tool registry (93 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

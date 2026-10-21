@@ -51,6 +51,10 @@ Controls: a path field, `open`, `validate`. Shows `mod.json`, a file count
 line, the defines grouped by type, and every `.yarn` file. Clicking a row opens
 it in an editor card. `validate` reports counts to the log and hands the same
 diagnostics to a `problems` card, so the findings outlive the status line.
+The open section lists the packages already under the game's Mods folder (and
+the last eight opened, kept in preferences), so opening one is a choice rather
+than a typed path; the import section has two rows — bring one file in, and
+unpack a zip an author sent (G59).
 Each section folds from its title and the folded state is kept on the card, so
 a short window does not force a scroll past lists the person is not reading.
 
@@ -126,6 +130,7 @@ write files or wait on one.
 | `mod.scaffold` | `dir`, `modName`, `template?` | `{modRoot, created[], warnings[]}` — **async** |
 | `mod.newFile` | `dir`, `type`, `name`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics, support?}` — **async**, writes one file (`support` is the type's matrix entry, G4) |
 | `mod.importFile` | `dir`, `from`, `to?`, `name?`, `overwrite?` | `{path, file, kind, bytes, warnings, diagnostics}` — **async**, copies one file in |
+| `mod.importZip` | `from`, `dir?`, `name?`, `overwrite?` | `{root, dir, folder, name, files, bytes, replaced, errors, warnings, infos, knowledge, diagnostics}` — **async**, unpacks one zip into a package (G59) |
 | `mod.export` | `dir`, `out?`, `overwrite?` | `{name, out, file, bytes, files, uncompressedBytes, skipped[], warnings, infos, knowledge}` — **async**, writes one zip (G45) |
 | `mod.installGame` | `dir`, `overwrite?`, `gameModsDir?`, `gameDir?` | `{name, target, files, bytes, replaced, warnings, infos, knowledge, gameMods: {dir, source, found}}` — **async**, copies the package into the game's Mods folder (G11) |
 | `mod.gameLog` | `path?`, `modName?`, `bytes?` | `{path, found, tried, offset, size, mtime, bytes, totals, lines}` — the tail of `Player.log` and what in it matters; `error` (no throw) if the file vanished (G12) |
@@ -759,6 +764,44 @@ Three properties are deliberate, all in `shell/mods/zip.js`:
 The game's own managers never see this file, so nothing in the archive has to be
 rewritten after export — it is the package directory, byte for byte.
 
+### Taking a package from someone else
+
+The other end of the same wire: the zip a friend sends in chat is unpacked into a
+package the window can open, or the command line can:
+
+```sh
+node shell/main.mjs unpack ShipIt-1.0.zip
+node shell/main.mjs unpack ShipIt-1.0.zip --dir Mods --name ShipIt --overwrite --json
+```
+
+`unpack` is `mod.export`'s reverse and reads with `zip.js`'s second half. Two
+shapes are accepted: the export's single top folder (`ShipIt/mod.json`), which is
+stripped, and an archive whose root holds `mod.json` directly, which lands in a
+folder named by its manifest. The card's **unpack a zip** row calls the same verb.
+
+Nothing is written until the whole archive has been read and checked:
+
+- **Every name is normalized and bounded.** Backslashes become `/`; an empty name,
+  a NUL, an absolute path, a drive letter, a `.`/`..` segment, or two names that
+  normalize to the same file are refused by name, before any directory is made.
+  So are encrypted entries, data descriptors, zip64, multi-disk archives and
+  compression methods other than store/deflate.
+- **Every entry is checked against itself.** Uncompressed size must match the
+  header, the bytes must inflate, and the CRC-32 must match — a truncated
+  download fails as `does not inflate` or `fails its CRC check`, not as a corrupt
+  package that validates later. Limits: 20,000 entries, 64 MiB per file, 512 MiB
+  in total.
+- **Names are decoded the way Windows tools write them.** The UTF-8 flag wins;
+  without it the bytes are tried as strict UTF-8, then GBK (Chinese Windows
+  archivers), then latin1, so a name is never lost.
+
+The unpacked tree is built beside its target and swapped in, like `install`; an
+existing folder needs `--overwrite` (or `overwrite: true`) and is replaced
+wholesale, so a file from the previous copy does not survive. Unlike export, a
+package with validation errors **is** imported: a zip is transport, and the answer
+carries the same report the card shows (`errors`, `warnings`, `infos`, and the
+first diagnostics), so the window is where they get fixed.
+
 ### The last mile: into the game
 
 Unpacking by hand was still the one step the editor could not do, and it is the
@@ -914,7 +957,7 @@ when the pixel card saves it (G20).
 ## Testing
 
 ```sh
-node shell/mods/selftest.mjs                 # 684 checks, no kernel, no browser
+node shell/mods/selftest.mjs                 # 706 checks, no kernel, no browser
 node shell/mods/selftest.mjs --mods DIR      # with the game corpus
 python tools/input_smoke.py                  # a real browser, against examples/Mods
 make test                                    # the whole project
@@ -936,7 +979,14 @@ the corpus itself pinned as "one real orphan, no missing rows". The game group
 owns the copy into a game tree (staged swap, refused overwrite, blocked package:
 18 checks) and the log reader and follower (newest file, tail from a line
 boundary, appended bytes only, `gone` instead of a throw: 19 checks, with an
-injected clock so no check waits five seconds). `tools/input_smoke.py` no longer
+injected clock so no check waits five seconds). The export group pins the
+archive's determinism, byte-level round-trip and precheck gate; the import group
+does the same in reverse — a hand-flipped byte must fail inflate or the CRC, a
+package-at-root archive and one without `mod.json` are called out, `..`,
+absolute and normalizing-twin names are refused by name, a second import needs
+overwrite and replaces wholesale, the post-import report is handed back, and the
+command line and the dispatch table answer the same verb (21 checks).
+`tools/input_smoke.py` no longer
 touches `Mods`
 next to the repository: it drives `examples/Mods/Lantern`, generates its own
 4.5 MB translation table under `build/` (past the kernel's 4 MiB whole-file

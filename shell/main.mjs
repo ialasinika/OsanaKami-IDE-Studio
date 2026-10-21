@@ -810,6 +810,16 @@ const MOD_METHODS = {
     out: optionalString(params, "out") ?? undefined,
     overwrite: params.overwrite === true,
   }),
+  // G59: the reverse of export -- a zip someone sent is unpacked into the mods
+  // root as a package.  The archive is read defensively first (bounds, CRC,
+  // names); validation runs after unpacking and is reported, not enforced,
+  // because importing is transport.
+  "mod.importZip": (params, mods) => mods.importZip({
+    from: needParam(params, "from"),
+    dir: optionalString(params, "dir") ?? undefined,
+    name: optionalString(params, "name") ?? undefined,
+    overwrite: params.overwrite === true,
+  }),
   // G11: the same package, but straight into the game instead of a zip.  The
   // target is <gameMods>/<Name>; without `overwrite` an existing folder is
   // refused, and the copy is staged beside it and swapped in.
@@ -1614,6 +1624,78 @@ async function runExport(options) {
 }
 
 /* ------------------------------------------------------------------ */
+/* unpack (a zip someone sent)                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `unpack FILE.zip` is `export`'s reverse: the zip the game's authors pass
+ * around in chat groups comes back in as a package under the mods root, so it
+ * can be opened, checked and edited without leaving the terminal.
+ *
+ * The archive is read defensively (bounds, CRC, path names) and unpacked beside
+ * its target, then swapped in -- the same discipline as `install`.  Unlike
+ * export, a package with validation errors is still imported: this is transport,
+ * and the report says what the check found; the window is where those rows get
+ * fixed.
+ */
+async function runImportZip(options) {
+  const json = options.json === true;
+  const fail = (message) => {
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return 2;
+  };
+
+  if (options.target === null) {
+    return fail("unpack needs a zip file: node shell/main.mjs unpack <file.zip> [--dir DIR] [--name NAME] [--overwrite]");
+  }
+  const from = path.resolve(options.target);
+  if (!existsSync(from) || !statSync(from).isFile()) {
+    return fail(`not a file: ${from}`);
+  }
+  const dir = options.dir !== null ? path.resolve(options.dir) : null;
+  const modsRoot = options.modsRoot !== null ? options.modsRoot : (dir !== null ? dir : path.dirname(from));
+
+  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  if (!mods) return fail("the mod layer did not load");
+
+  let report;
+  try {
+    report = mods.importZip({
+      from,
+      dir: dir !== null ? dir : undefined,
+      name: options.pkgName !== null ? options.pkgName : undefined,
+      overwrite: options.overwrite === true,
+    });
+  } catch (err) {
+    const message = err && err.message ? String(err.message) : String(err);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: false, error: message }, null, 2) + "\n");
+    }
+    process.stderr.write(`OsanaKami IDE Studio: ${message}\n`);
+    return 2;
+  }
+
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...report }, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(
+    `imported ${report.root} (${report.files} files, ${report.bytes} bytes)\n` +
+    `${plural(report.errors, "error")}, ${plural(report.warnings, "warning")}, ${plural(report.infos, "info")} ` +
+    "from the check that ran after unpacking" +
+    (report.knowledge === "missing" ? " (no knowledge base: only file structure was checked)" : "") + "\n",
+  );
+  if (report.errors > 0) {
+    process.stdout.write("the package is in place; open it in the window to see every row\n");
+  }
+  if (report.replaced) process.stdout.write(`replaced the previous ${report.folder}/\n`);
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* install                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1854,6 +1936,20 @@ usage: node shell/main.mjs <command> [options]
           Exit codes: 0 installed, 1 the validator stopped it, 2 usage or
           write failure.
 
+  unpack FILE.zip [--dir DIR] [--name NAME] [--overwrite] [--json]
+          Unpack a zip an author sent into a package the window can open: the
+          reverse of export.  The archive's single top folder is stripped, so
+          the export shape lands as <modsRoot>/<Name>/; a zip whose root holds
+          mod.json directly is accepted too.  --dir is the parent directory
+          (default the mods root); --name overrides the folder name.  An
+          existing folder is refused unless --overwrite, and the package is
+          unpacked into a temporary sibling and swapped in.  The archive is
+          checked before anything is written (bounds, CRC, no absolute or \`..\`
+          names).  Validation runs after unpacking and its findings are
+          reported, but do not stop the import -- this is transport, and the
+          window is where errors get fixed.  Exit codes: 0 imported, 2 usage or
+          write failure.
+
   log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
           Read the game's Player.log and print the lines worth showing: errors
           and exceptions, ModLoader/mod lines, and anything that mentions NAME.
@@ -1917,6 +2013,8 @@ function parseArgs(argv) {
     json: false,
     overwrite: false,
     gameDir: null,
+    dir: null,
+    pkgName: null,
     logPath: null,
     logMod: null,
     durationMs: 0,
@@ -1927,7 +2025,7 @@ function parseArgs(argv) {
 
   const takesValue = new Set([
     "--workspace", "--read-root", "--mods-root", "--user-dir", "--kernel", "--port",
-    "--timeout-ms", "--out", "--game-dir", "--path", "--mod", "--duration-ms",
+    "--timeout-ms", "--out", "--game-dir", "--path", "--mod", "--duration-ms", "--dir", "--name",
   ]);
   const rest = [];
 
@@ -1965,13 +2063,14 @@ function parseArgs(argv) {
 
   options.command = rest[0] ?? (options.help ? "help" : null);
   /*
-   * Only `validate` and `export` take a positional argument.  Keeping the check
+   * Only `validate`, `export`, `install` and `unpack` take a positional argument.
+   * Keeping the check
    * here means `rpc extra` still fails the same way it always did, instead of
    * the extra word being silently dropped.
    */
   options.target = rest[1] ?? null;
   if (options.target !== null && options.command !== "validate" && options.command !== "export" &&
-    options.command !== "install") {
+    options.command !== "install" && options.command !== "unpack") {
     throw new Error(`unexpected argument: ${options.target}`);
   }
   if (rest.length > 2) {
@@ -1998,6 +2097,8 @@ function applyOption(options, name, value) {
   else if (name === "--kernel") options.kernel = value;
   else if (name === "--out") options.out = value;
   else if (name === "--game-dir") options.gameDir = value;
+  else if (name === "--dir") options.dir = value;
+  else if (name === "--name") options.pkgName = value;
   else if (name === "--path") options.logPath = value;
   else if (name === "--mod") options.logMod = value;
   else if (name === "--duration-ms") {
@@ -2041,6 +2142,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.command === "serve") return await runServe(options);
     if (options.command === "validate") return await runValidate(options);
     if (options.command === "export") return await runExport(options);
+    if (options.command === "unpack") return await runImportZip(options);
     if (options.command === "install") return await runInstall(options);
     if (options.command === "log") return await runLog(options);
     if (options.command === "sources") return await runSources(options);

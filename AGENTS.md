@@ -102,6 +102,7 @@ The game layer runs without a window, which is how most of it is verified:
 node shell/main.mjs validate DIR --json              # errors/warnings/infos, exit 0/1/2
 node shell/main.mjs export DIR [--out FILE.zip]      # deterministic zip
 node shell/main.mjs install DIR [--game-dir DIR] [--overwrite]
+node shell/main.mjs unpack FILE.zip [--dir DIR] [--name NAME] [--overwrite]
 node shell/main.mjs log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
 node shell/main.mjs sources [--json]                 # where the game folder and the knowledge base came from
 ```

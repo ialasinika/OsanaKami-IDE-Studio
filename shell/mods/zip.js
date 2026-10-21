@@ -271,11 +271,197 @@ function zipEntries(entries) {
   return Buffer.concat([...parts, ...central, end]);
 }
 
+/* ------------------------------------------------------------------ */
+/* 读回一个 zip（导入用）                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 导入是导出的反方向，但敌人完全不同：导出面对的是本机目录树，导入面对的是
+ * 别人发来的字节。于是读侧把能查的都查了——EOCD 定位、中央目录边界、本地头与
+ * 中央目录一致、CRC、解压后长度、名字越界（`..`、绝对路径、盘符、反斜杠、
+ * NUL）——错一处就整包拒绝，而不是把半包写进 Mods/。
+ *
+ * 只支持「单盘、无加密、无 data descriptor、store/deflate」这个交集：这些是
+ * Mod 群里互相传的 zip 的常态。中文名按 UTF-8 优先、GBK 兜底（Windows 自带
+ * 压缩工具历史上就是这么写的）。
+ */
+
+/** 一个 Mod 包不可能有这么多文件；超过就是拿错了 zip 或者恶意的。 */
+const READ_MAX_ENTRIES = 20000;
+/** 单个文件解压后上限：Mod 里的音频/字体也远不到这个量。 */
+const READ_MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+/** 整包解压后上限。 */
+const READ_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+/** 名字上限：Windows 的长路径也在这个量级以内。 */
+const READ_MAX_NAME = 1024;
+
+function broken(message) {
+  return new Error('zip: ' + message);
+}
+
+function decodeName(bytes, utf8Flag) {
+  if (utf8Flag) return bytes.toString('utf8');
+  // 没有 UTF-8 标志位时，先按严格 UTF-8 试；不是再按 GBK（中文 Windows 的
+  // 压缩工具会把 GBK 字节原样写进来）；还不行就 latin1 兜底，至少不抛。
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    /* fall through */
+  }
+  try {
+    return new TextDecoder('gbk').decode(bytes);
+  } catch {
+    return bytes.toString('latin1');
+  }
+}
+
+/**
+ * 把一个条目的名字归一成安全的相对路径；不安全就抛。
+ * 反斜杠归成 `/`（少数 Windows 工具这么写），拒绝绝对路径、盘符、NUL 和 `..`。
+ */
+function safeEntryName(raw) {
+  const name = String(raw).replace(/\\/g, '/');
+  if (name === '') throw broken('an entry has an empty name');
+  if (name.length > READ_MAX_NAME) throw broken('an entry name is longer than ' + READ_MAX_NAME + ' characters');
+  if (name.indexOf('\u0000') !== -1) throw broken('an entry name contains a NUL byte');
+  if (name.startsWith('/')) throw broken('an entry is an absolute path: ' + name);
+  if (/^[A-Za-z]:/.test(name)) throw broken('an entry names a drive: ' + name);
+  const parts = name.split('/').filter((part) => part !== '');
+  for (const part of parts) {
+    if (part === '.' || part === '..') throw broken('an entry points outside the archive: ' + name);
+  }
+  return parts.join('/');
+}
+
+/**
+ * 读回一个 zip：`Buffer -> { entries: [{ name, data }], bytes }`。
+ *
+ * 目录条目、空目录不返回（Mod 包不靠空目录表达任何东西）；压缩方式只认
+ * store(0) 和 deflate(8)；加密条目、data descriptor、多盘、zip64 一律拒绝，
+ * 并说清楚是哪一条。
+ */
+function readZip(buffer) {
+  if (!Buffer.isBuffer(buffer)) throw broken('expected a Buffer');
+  if (buffer.length < 22) throw broken('too short to be a zip archive');
+
+  // EOCD 在文件尾，注释最多 64 KiB；从后往前找，并核对注释长度正好到文件尾。
+  let eocd = -1;
+  const stop = Math.max(0, buffer.length - 22 - 0xffff);
+  for (let at = buffer.length - 22; at >= stop; at--) {
+    if (buffer.readUInt32LE(at) !== 0x06054b50) continue;
+    const commentLen = buffer.readUInt16LE(at + 20);
+    if (at + 22 + commentLen === buffer.length) {
+      eocd = at;
+      break;
+    }
+  }
+  if (eocd === -1) throw broken('no end-of-central-directory record (not a zip, or truncated)');
+
+  const disk = buffer.readUInt16LE(eocd + 4);
+  const centralDisk = buffer.readUInt16LE(eocd + 6);
+  const countOnDisk = buffer.readUInt16LE(eocd + 8);
+  const count = buffer.readUInt16LE(eocd + 10);
+  const centralSize = buffer.readUInt32LE(eocd + 12);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  if (disk !== 0 || centralDisk !== 0 || countOnDisk !== count) {
+    throw broken('multi-disk archives are not supported');
+  }
+  if (count === 0xffff || centralOffset === 0xffffffff || centralSize === 0xffffffff) {
+    throw broken('zip64 archives are not supported');
+  }
+  if (count > READ_MAX_ENTRIES) {
+    throw broken('the archive holds ' + count + ' entries; the import limit is ' + READ_MAX_ENTRIES);
+  }
+  if (centralOffset + centralSize > eocd) throw broken('the central directory runs past the archive');
+
+  const entries = [];
+  const seen = new Set();
+  let total = 0;
+  let at = centralOffset;
+  for (let index = 0; index < count; index++) {
+    if (at + 46 > eocd) throw broken('central directory entry ' + index + ' is cut off');
+    if (buffer.readUInt32LE(at) !== 0x02014b50) throw broken('bad central directory signature at entry ' + index);
+    const flags = buffer.readUInt16LE(at + 8);
+    const method = buffer.readUInt16LE(at + 10);
+    const crc = buffer.readUInt32LE(at + 16);
+    const compressedSize = buffer.readUInt32LE(at + 20);
+    const size = buffer.readUInt32LE(at + 24);
+    const nameLen = buffer.readUInt16LE(at + 28);
+    const extraLen = buffer.readUInt16LE(at + 30);
+    const commentLen = buffer.readUInt16LE(at + 32);
+    const localOffset = buffer.readUInt32LE(at + 42);
+    const next = at + 46 + nameLen + extraLen + commentLen;
+    if (next > eocd) throw broken('central directory entry ' + index + ' runs past the directory');
+    const rawName = decodeName(buffer.subarray(at + 46, at + 46 + nameLen), (flags & FLAG_UTF8) !== 0);
+    at = next;
+
+    if ((flags & 0x0001) !== 0) throw broken('encrypted archives are not supported');
+    if ((flags & 0x0008) !== 0) throw broken('streamed entries (with a data descriptor) are not supported');
+    if (method !== 0 && method !== 8) throw broken('unsupported compression method ' + method + ' on ' + rawName);
+    if (size > READ_MAX_ENTRY_BYTES) {
+      throw broken(rawName + ' is ' + size + ' bytes; the import limit per file is ' + READ_MAX_ENTRY_BYTES);
+    }
+
+    let name;
+    try {
+      name = safeEntryName(rawName);
+    } catch (err) {
+      throw broken(err.message.replace(/^zip: /, ''));
+    }
+    // 目录条目：名字以 / 结尾、长度为 0；Mod 包不需要它们。
+    if (/\/$/.test(name) || (size === 0 && method === 0 && /\/$/.test(rawName))) continue;
+    if (name === '') continue;
+    if (seen.has(name)) throw broken('two entries are named ' + name);
+    seen.add(name);
+
+    if (localOffset + 30 > buffer.length) throw broken(name + ' points past the archive');
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw broken(name + ' has no local header');
+    const localFlags = buffer.readUInt16LE(localOffset + 6);
+    const localMethod = buffer.readUInt16LE(localOffset + 8);
+    if ((localFlags & 0x0008) !== 0) throw broken('streamed entries (with a data descriptor) are not supported');
+    if (localMethod !== method) throw broken(name + ' disagrees with its central directory entry');
+    const localNameLen = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLen = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > buffer.length) throw broken(name + ' runs past the archive');
+
+    const raw = buffer.subarray(dataStart, dataEnd);
+    let data;
+    if (method === 0) {
+      data = Buffer.from(raw);
+    } else {
+      try {
+        data = zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, size + 1) });
+      } catch (err) {
+        throw broken(name + ' does not inflate: ' + (err && err.message ? err.message : String(err)));
+      }
+    }
+    if (data.length !== size) throw broken(name + ' inflates to ' + data.length + ' bytes, the directory says ' + size);
+    if ((zlib.crc32(data) >>> 0) !== crc) throw broken(name + ' fails its CRC check (the download is damaged)');
+
+    total += data.length;
+    if (total > READ_MAX_TOTAL_BYTES) {
+      throw broken('the archive unpacks to more than ' + READ_MAX_TOTAL_BYTES + ' bytes');
+    }
+    entries.push({ name, data });
+  }
+
+  if (entries.length === 0) throw broken('the archive holds no files');
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { entries, bytes: total };
+}
+
 module.exports = {
   planExport,
   zipEntries,
+  readZip,
+  safeEntryName,
   EXCLUDE,
   DOS_TIME,
   DOS_DATE,
   FLAG_UTF8,
+  READ_MAX_ENTRIES,
+  READ_MAX_ENTRY_BYTES,
+  READ_MAX_TOTAL_BYTES,
 };

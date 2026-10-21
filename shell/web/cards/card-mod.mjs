@@ -239,6 +239,29 @@ export function renderMod(card, ctx) {
   });
 
   /*
+   * Importing a zip (G59) is the other direction of export: a package someone
+   * sent arrives as one file, and the mod layer unpacks it under the mods root
+   * where every other row can reach it.  The archive is checked before anything
+   * is written, and the package is swapped in beside its target, so a bad zip
+   * cannot leave half a package behind.
+   */
+  const importZipFrom = h("input", "mod-import-zip", {
+    attrs: {
+      type: "text",
+      spellcheck: "false",
+      title: "the .zip to unpack -- absolute, or relative to the workspace",
+    },
+  });
+  tr.placeholder(importZipFrom, "mod.placeholder.importZip");
+  const importZipButton = button("", "unpack a zip someone sent into the mods folder, then open it", () => {
+    importZip();
+  });
+  tr.text(importZipButton, "mod.importZip");
+  const importZipControls = h("div", "mod-controls mod-import-zip", {
+    children: [importZipFrom, importZipButton],
+  });
+
+  /*
    * Exporting (G45) writes the container the community actually passes around:
    * a zip whose single top layer is the folder name, so unpacking it into the
    * game's `Mods/` lands as `Mods/<Name>/`.  The game does not read zips -- this
@@ -338,7 +361,7 @@ export function renderMod(card, ctx) {
   newSection.rows.append(newControls);
   const importSection = section("mod-import", "", undefined, undefined, sectionOptions("import"));
   tr.text(importSection.name, "mod.section.import");
-  importSection.rows.append(importControls);
+  importSection.rows.append(importControls, importZipControls);
   const exportSection = section("mod-export", "", undefined, undefined, sectionOptions("export"));
   tr.text(exportSection.name, "mod.section.export");
   exportSection.rows.append(exportControls);
@@ -566,6 +589,45 @@ export function renderMod(card, ctx) {
       app.openPixelCard(file);
     } else {
       app.openFile(file);
+    }
+  }
+
+  /**
+   * Unpack a zip someone sent into the mods folder, then open it (G59).
+   *
+   * The mod layer reads the archive defensively and swaps the package in beside
+   * its target; this row only asks for the file.  The answer carries the check
+   * that ran after unpacking, so the status says what the package's first
+   * validation found before the file lists are drawn.
+   */
+  async function importZip() {
+    const from = importZipFrom.value.trim();
+    if (from === "") {
+      status.textContent = t("mod.needZip");
+      return;
+    }
+    status.textContent = t("mod.importingZip");
+    let answer;
+    try {
+      answer = await client.call("mod.importZip", { from });
+    } catch (err) {
+      status.textContent = t("mod.importFailed", { message: err.message });
+      app.log("warn", `import zip failed: ${err.message}`);
+      return;
+    }
+    importZipFrom.value = "";
+    status.textContent = t("mod.importedZip", {
+      name: String(answer.name || answer.folder || ""),
+      files: String(answer.files),
+      errors: String(answer.errors),
+      warnings: String(answer.warnings),
+    });
+    app.log("info",
+      `imported ${answer.root} (${answer.files} files) — ${answer.errors} error(s), ${answer.warnings} warning(s)`);
+    const landed = typeof answer.dir === "string" && answer.dir !== "" ? answer.dir : answer.root;
+    if (typeof landed === "string" && landed !== "") {
+      dirInput.value = landed;
+      openMod();
     }
   }
 

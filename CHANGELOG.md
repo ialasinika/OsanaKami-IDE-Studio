@@ -16,6 +16,37 @@ stands in this tree.
 
 ## Unreleased
 
+### A package can leave as a zip and come back as one
+
+Export has written deterministic archives since the `export` verb landed; import
+did not exist, so a zip from a collaborator had to be unpacked by hand and put
+in the right folder. The transport is now two-way: `mod.importZip` in the shell,
+`node shell/main.mjs unpack FILE.zip [--dir DIR] [--name NAME] [--overwrite]`,
+and an "unpack a zip" row beside "one file" in the mod card's import section.
+
+Two shapes are accepted: the export's single top folder (`ShipIt/mod.json`),
+which is stripped, and an archive whose root holds `mod.json`, which lands in a
+folder named by its manifest. Nothing is written until the whole archive has been
+read and checked. Every name is normalized and bounded -- backslashes, empty
+names, NULs, absolute paths, drive letters, `.`/`..` segments and two names that
+normalize to the same file are refused by name, and so are encrypted entries,
+data descriptors, zip64, multi-disk archives and compression methods other than
+store/deflate. Every entry is checked against itself: the uncompressed size must
+match the header, the bytes must inflate, and the CRC-32 must match, so a
+truncated download fails as `does not inflate` or `fails its CRC check` rather
+than as a corrupt package that validates later. Limits are 20,000 entries, 64 MiB
+per file and 512 MiB in total.
+
+The tree is built beside its target and swapped in, the same way `install` swaps
+a package: an interrupted import leaves no half package behind, and an existing
+folder needs `--overwrite` (or `overwrite: true`) and is replaced wholesale, so a
+file from the previous copy does not survive. Unlike export, a package with
+validation errors **is** imported -- a zip is transport, and the answer carries
+the report the card shows, so the window is where they get fixed. Names are
+decoded the way the archivers that produce these files write them: the UTF-8 flag
+wins, then strict UTF-8, then GBK (Chinese Windows tools), then latin1, so a name
+is never silently lost.
+
 ### Opening a package is a choice, not a path
 
 The mod card used to start with an empty text box and a button, and the only way

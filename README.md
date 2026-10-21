@@ -36,8 +36,9 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, creating one file from a schema (`mod.newFile`), importing
-  an existing file into a package (`mod.importFile`), exporting the package as a
-  deterministic zip (`mod.export`, `zip.js`), installing it into the game's own
+  an existing file into a package (`mod.importFile`), unpacking a zip an author
+  sent (`mod.importZip`, the same `zip.js` reader), exporting the package as a
+  deterministic zip (`mod.export`), installing it into the game's own
   `Mods` folder (`mod.installGame`, `gamepath.js`), reading and following the
   game's `Player.log` (`mod.gameLog`, `mod.followGameLog`), search and
   completion. Pure Node, zero npm.
@@ -300,7 +301,7 @@ python tools/demo.py                                 # install the starter board
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 329/329 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 684/684 checks passed
+node shell/mods/selftest.mjs                   # 706/706 checks passed
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
@@ -510,7 +511,7 @@ shell/                  the front end and the endpoints
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 684 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 706 checks, no kernel
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs

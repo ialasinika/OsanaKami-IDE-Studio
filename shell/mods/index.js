@@ -1729,6 +1729,194 @@ function createMods(options) {
     };
   }
 
+  /* ---------------- 导入 zip（G59） ---------------- */
+
+  /**
+   * 把一个别人发来的 zip 解开成一个可打开的 Mod 包（`mod.importZip`）。
+   *
+   * 导出把包写成 `<Name>/…` 的 zip，导入是它的反方向：zip 里带那层 `<Name>/`
+   * 就剥掉，直接把包写在 `<modsRoot>/<Name>/`；zip 顶层直接是 `mod.json`（有的
+   * 人手工压的）也接受，目标目录名取 `name` 参数、否则 mod.json 的 `name`、
+   * 否则 zip 文件名。
+   *
+   * 写盘和 installGame 同一个纪律：先写同目录的临时兄弟目录，全部写完再换名，
+   * 已有目录在 `overwrite: true` 时先改名备份、失败换回；从不递归删用户的目录。
+   * 导入完成后**照常跑一遍 validatePackage**，warnings/errors 作为报告返回：
+   * 导入是传输，不替包作者做「先修好再导入」的决定（export 才拦 error）。
+   *
+   * params `{ from, dir?, name?, overwrite? }`：
+   *   - `from` 是 zip 路径，绝对路径可用（来源通常在包外）；
+   *   - `dir` 是目标父目录，相对 modsRoot 或绝对且在 modsRoot 内，默认 modsRoot；
+   *   - `name` 覆盖目标文件夹名；不给时按上面的规则推。
+   *
+   * @returns {{root:string, dir:string|null, folder:string, name:string, files:number,
+   *            bytes:number, replaced:boolean, errors:number, warnings:number, infos:number,
+   *            knowledge:string, diagnostics:Array}}
+   * @throws {Error} 消息以 `import zip: ` 开头（dispatch 直接转成错误帧）
+   */
+  function importZipPackage(params) {
+    const p = params && typeof params === 'object' ? params : {};
+    const fail = (message) => new Error('import zip: ' + message);
+    if (p.from == null || String(p.from).trim() === '') throw fail('from is required');
+
+    const rawFrom = String(p.from);
+    let fromAbs;
+    if (path.isAbsolute(rawFrom)) {
+      // 来源通常在包外（下载目录、桌面）；绝对路径不受 modsRoot 限制，同 importFile。
+      fromAbs = path.resolve(rawFrom);
+    } else {
+      try {
+        fromAbs = resolveArg(rawFrom, 'from');
+      } catch (e) {
+        if (e && e.code === 'EOUTSIDE') throw fail(e.message);
+        throw e;
+      }
+    }
+    let st;
+    try {
+      st = fs.statSync(fromAbs);
+    } catch {
+      throw fail(fromAbs + ' does not exist');
+    }
+    if (!st.isFile()) throw fail(fromAbs + ' is not a file');
+    if (st.size > zipCore.READ_MAX_TOTAL_BYTES * 2) {
+      throw fail(fromAbs + ' is larger than this import accepts');
+    }
+
+    let archive;
+    try {
+      archive = zipCore.readZip(fs.readFileSync(fromAbs));
+    } catch (e) {
+      throw fail(String(e && e.message ? e.message : e).replace(/^zip: /, ''));
+    }
+
+    // 布局：所有条目共用一个顶层目录（导出的形状）就剥掉它，顶层直接是
+    // mod.json 的也接受。混两种的包拒绝，因为剥与不剥都只能猜一半。
+    const names = archive.entries.map((e) => e.name);
+    const firstSegment = (name) => name.split('/')[0];
+    const top = firstSegment(names[0]);
+    const wrapped = names.every((name) => name.indexOf('/') !== -1 && firstSegment(name) === top);
+    const relOf = wrapped ? (name) => name.slice(top.length + 1) : (name) => name;
+    const manifestEntry = archive.entries.find((e) => relOf(e.name) === 'mod.json');
+    if (!manifestEntry) {
+      throw fail('no mod.json at the archive root' +
+        (wrapped ? ' or in its only top-level folder "' + top + '"' : '') +
+        ' -- this zip is not a Mod package (export one with mod.export)');
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(stripBom(manifestEntry.data.toString('utf8')));
+    } catch (e) {
+      throw fail('mod.json is not JSON: ' + (e && e.message ? e.message : String(e)));
+    }
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+      throw fail('mod.json is not a JSON object');
+    }
+    const manifestName = typeof manifest.name === 'string' && manifest.name.trim() !== '' ? manifest.name.trim() : '';
+
+    const requested = p.name != null && String(p.name).trim() !== '' ? String(p.name).trim() : '';
+    const folder = sanitizeFolderName(requested || (wrapped ? top : '') || manifestName ||
+      path.basename(fromAbs, path.extname(fromAbs)));
+    if (folder === '') throw fail('could not work out a folder name for the package; pass name');
+
+    const parent = p.dir != null && String(p.dir).trim() !== '' ? (() => {
+      try {
+        return resolveArg(String(p.dir), 'dir');
+      } catch (e) {
+        if (e && e.code === 'EOUTSIDE') throw fail(e.message);
+        throw e;
+      }
+    })() : (modsRoot ? path.resolve(modsRoot) : path.dirname(fromAbs));
+    if (!fs.existsSync(parent)) throw fail(parent + ' does not exist');
+    if (!fs.statSync(parent).isDirectory()) throw fail(parent + ' is not a directory');
+
+    const target = path.join(parent, folder);
+    const existing = fs.existsSync(target);
+    if (existing && p.overwrite !== true) {
+      throw fail(target + ' already exists -- pass --overwrite (overwrite: true) to replace it');
+    }
+
+    const stamp = process.pid + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    const stage = path.join(parent, '.' + folder + '.importing-' + stamp);
+    const backup = path.join(parent, '.' + folder + '.previous-' + stamp);
+    let backedUp = false;
+    try {
+      fs.mkdirSync(stage, { recursive: true });
+      for (const entry of archive.entries) {
+        const rel = relOf(entry.name);
+        if (rel === '') continue;
+        const dest = path.join(stage, ...rel.split('/'));
+        const inside = path.relative(stage, dest);
+        if (inside === '..' || inside.startsWith('..' + path.sep) || path.isAbsolute(inside)) {
+          // readZip 已经归一过名字，这条守住「以后有人改 readZip」时也不会写出 stage。
+          throw new Error('entry points outside the package: ' + entry.name);
+        }
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, entry.data);
+      }
+
+      if (existing) {
+        fs.renameSync(target, backup);
+        backedUp = true;
+      }
+      try {
+        fs.renameSync(stage, target);
+      } catch (e) {
+        if (backedUp) {
+          try {
+            fs.renameSync(backup, target);
+            backedUp = false;
+          } catch {
+            throw new Error('could not restore ' + target + ' from ' + backup + ': ' +
+              String(e && e.message ? e.message : e));
+          }
+        }
+        throw e;
+      }
+      if (backedUp) {
+        fs.rmSync(backup, { recursive: true, force: true });
+        backedUp = false;
+      }
+    } catch (e) {
+      try {
+        fs.rmSync(stage, { recursive: true, force: true });
+      } catch {
+        /* 暂存目录清不掉不致命：目标要么没动、要么已经换好 */
+      }
+      throw fail('could not import ' + fromAbs + ' into ' + target + ': ' +
+        String(e && e.message ? e.message : e));
+    }
+
+    invalidateForRoot();
+    const report = validatePackage({ root: target });
+    const summary = report.summary || {};
+    const diags = Array.isArray(report.diagnostics) ? report.diagnostics : [];
+    const relDir = modsRoot ? toPosix(path.relative(path.resolve(modsRoot), target)) : null;
+    return {
+      root: target,
+      dir: relDir,
+      folder: folder,
+      name: report.manifest && typeof report.manifest.name === 'string' ? report.manifest.name : folder,
+      files: archive.entries.length,
+      bytes: archive.bytes,
+      replaced: existing,
+      errors: summary.errors || 0,
+      warnings: summary.warnings || 0,
+      infos: summary.infos || 0,
+      knowledge: report.knowledge || 'present',
+      diagnostics: diags
+    };
+  }
+
+  /** 目标文件夹名只留文件名安全的字符；空结果由调用方报错。 */
+  function sanitizeFolderName(raw) {
+    return String(raw)
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+      .replace(/^\.+/, '')
+      .replace(/[. ]+$/, '')
+      .trim();
+  }
+
   /* ---------------- 装进游戏（G11） ---------------- */
 
   /** 目录树里的普通文件（相对路径统一 `/`），安装后复核用。 */
@@ -2306,6 +2494,7 @@ function createMods(options) {
     scaffold: scaffold,
     newFile: newFile,
     importFile: importFileInto,
+    importZip: importZipPackage,
     exportPackage: exportPackage,
     installGame: installPackage,
     gameLog: gameLog,
