@@ -133,6 +133,7 @@ change, then the full suite:
 & $make -f Makefile path-check     # no hard-coded absolute path (strict, allow-listed fixtures only)
 & $make -f Makefile installer-check # the installer's ownership manifest, real NSIS
 & $make -f Makefile sign-check     # the signing wiring, against a stand-in signtool
+& $make -f Makefile iaqs-check     # the version store: build it, then run its own suite
 & $make -f Makefile smoke          # real browser, headless: browser + input smoke
 & $make -f Makefile test           # all of the above except smoke, plus the unit/self-tests
 & $make -f Makefile ci             # what the GitHub test job runs: test, fixture installer, workflow audit
@@ -140,7 +141,8 @@ change, then the full suite:
 
 `make test` runs, in order: `check`, `fullcheck`, `probe`, `cli-check`,
 `version-check`, `path-check`, `installer-check`, `sign-check`,
-`build/obj/test_json.exe`, `build/obj/test_blob.exe`, then
+`iaqs-check` (build-iaqs/iaqs.exe, then its 233-test suite), `build/obj/test_json.exe`,
+`build/obj/test_blob.exe`, then
 `node langs/selftest.mjs`, `node shell/web/selftest.mjs`,
 `node shell/mods/selftest.mjs`, `node shell/ai/selftest.mjs`.
 
@@ -164,8 +166,10 @@ Rules of thumb:
   suite process (or a concurrent `make test`) can see the fixture half-written
   and report a generator failure that is not real. One suite per machine at a
   time, exactly like `smoke`.
-- `installer-check` and `sign-check` compile against the real Windows binaries;
-  they **skip with exit 0** when `makensis`, `gcc` or the sign stand-in's
+- `iaqs-check`, `installer-check` and `sign-check` compile against real binaries;
+  `iaqs-check` needs `cmake` and a C++ compiler, the other two need `makensis`,
+  and all three **skip with exit 0** when their tools are missing. `installer-check`
+  and `sign-check` **skip with exit 0** when `makensis`, `gcc` or the sign stand-in's
   prerequisites are missing, and `sign-check` never needs a certificate. Do not
   read a skip as proof that signing works — a real Authenticode signature has
   never been produced in this repository.
@@ -190,7 +194,7 @@ Rules of thumb:
 | `shell/ai/` | the AI layer (config, provider, tools); `selftest.mjs` is the entry over `selftest/` and runs in `make test` |
 | `langs/` | language descriptors (`json.lang`, `yarn.lang`) + tokenizer |
 | `tools/` | build/protocol/smoke drivers, scaffolders, the installer builder and its checks: `make-installer.mjs`, `installer_smoke.py`, `sign_smoke.py`, and `ci_installer.py`/`ci_audit.py` for the workflow's test job |
-| `iaqs/` | the version store (C++20, 0BSD, zero third-party code): history for one machine and one person, without a password. Started as the same author's `iaqs` project and forked in-tree, so it is edited here like the rest -- `iaqs/README.md` lists the deltas; `tools/build-iaqs.ps1` builds it into the ignored `build-iaqs/` |
+| `iaqs/` | the version store (C++20, 0BSD, zero third-party code): history for one machine and one person, without a password. Started as the same author's `iaqs` project and forked in-tree, so it is edited here like the rest -- `iaqs/README.md` lists the deltas; `make iaqs-bin` builds it into the ignored `build-iaqs/`, and `make iaqs-check` runs its suite as part of `make test` |
 | `electron/` | the Windows wrapper: `main.js`, `newmod.js`, menus |
 | `.github/workflows/ci.yml` | the `test` job as a file: four jobs, every action pinned, signing gated on repository secrets; `make ci` runs the test job locally |
 | `docs/` | the argument: protocol, architecture, paradigm, mods, trim map, bugs, the open gap list (now round three) |

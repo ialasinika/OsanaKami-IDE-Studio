@@ -69,7 +69,7 @@ endif
 # build
 # ---------------------------------------------------------------------------
 
-.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check installer-check sign-check ci ci-installer icon window package
+.PHONY: all check fullcheck probe smoke test run clean modules version-check path-check installer-check sign-check iaqs-bin iaqs-check ci ci-installer icon window package
 
 all: $(BIN)
 
@@ -174,6 +174,17 @@ installer-check:
 sign-check:
 	$(PYTHON) tools/sign_smoke.py
 
+# The version store: build-iaqs/iaqs.exe is what the installer payload ships and
+# what the history adapter runs.  `iaqs-check` builds it and runs the fork's own
+# suite; without cmake and a C++ compiler both print a skip and exit 0, the same
+# contract as installer-check and sign-check.  The build tree and the binary are
+# ignored, never committed.
+iaqs-bin:
+	$(PYTHON) tools/iaqs.py build
+
+iaqs-check: iaqs-bin
+	$(PYTHON) tools/iaqs.py test
+
 # A fixture installer for CI: the same make-installer.mjs a release runs, on a
 # two-file payload instead of dist/win-unpacked.  Skipped without makensis.
 ci-installer:
@@ -190,13 +201,14 @@ smoke: $(BIN)
 	$(PYTHON) tools/input_smoke.py --timeout 90
 
 # Everything the project can prove about itself without a window: the C JSON
-# codec, the language layer, the browser modules, the mod layer, the AI layer,
-# the fixed bugs, the version copies, the second client, and both protocol modes.
+# codec, the version store's C++ suite, the language layer, the browser modules,
+# the mod layer, the AI layer, the fixed bugs, the version copies, the second
+# client, and both protocol modes.
 #
 # Note the explicit --workspace for the mod suite: the mod layer refuses any
 # path outside its root, and that containment rule is itself under test, so the
 # suite must not be run from whatever directory happens to be current.
-test: check fullcheck probe cli-check version-check path-check installer-check sign-check $(JSONTEST) $(BLOBTEST)
+test: check fullcheck probe cli-check version-check path-check installer-check sign-check iaqs-check $(JSONTEST) $(BLOBTEST)
 	$(JSONTEST)
 	$(BLOBTEST)
 	$(NODE) langs/selftest.mjs
@@ -227,7 +239,7 @@ window: $(BIN)
 	npm start
 
 # An unpacked Electron tree in dist/win-unpacked, and an NSIS installer.
-package: $(BIN)
+package: iaqs-bin $(BIN)
 	npm run dist
 
 # The window: a static server plus the system browser in app mode.  No

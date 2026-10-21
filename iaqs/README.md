@@ -4,14 +4,14 @@
 server, no account, one plaintext store per package. It began as a separate
 project of the same author (C++20, 0BSD, no third-party code) and this directory
 is now the project's own fork — it lives in the tree, is edited like the rest of
-the tree, and is built by `tools/build-iaqs.ps1` into `build-iaqs/iaqs.exe`.
+the tree, and `make iaqs-bin` builds it into `build-iaqs/iaqs.exe`.
 
 Upstream is the same author's `iaqs` checkout elsewhere on this machine, with no
 git history of its own; the copy was taken on 2026-10-21, after upstream's M7
 audit pass (upstream README sha256 `965E0D89...`). Upstream's own README and
 helper scripts are not carried here: they describe a password flow this fork
 removed, and its build scripts hardcode a machine path and a build directory
-inside the source tree. Our build is `tools/build-iaqs.ps1`.
+inside the source tree. Our build is `make iaqs-bin` / `make iaqs-check`,
 
 ## What this fork changes
 
@@ -40,7 +40,7 @@ be able to press "save a version" and get a version.
   install folder while the package stays where the author put it.
 - **Tests run with `TEMP` inside the workspace.** This machine's file sandbox
   lets a child process write under the workspace only, so
-  `tools/build-iaqs.ps1 -Tests` points `TEMP`/`TMP` at
+  `make iaqs-check` points `TEMP`/`TMP` at
   `build-iaqs/test-temp` for the run. Without that, every temp-directory test
   fails with "cannot create directories: Permission denied".
 
@@ -59,13 +59,16 @@ encryption or passwords they describe upstream, not this tree.
 
 ```powershell
 # with MinGW-w64's bin first on PATH, and a compiler that can find its own cc1:
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-iaqs.ps1 -Strip -Tests
+make iaqs-check          # build, then run the fork's suite
 ```
 
-`cmake`, `g++` and `mingw32-make` must be on PATH. The build lands at
-`build-iaqs/iaqs.exe`; `build-iaqs/` is ignored. The suite is 233 tests: the
-upstream 254 minus the crypto, key and rekey tests, plus the plaintext and
-manifest-version checks `test_plain_store` pins.
+`cmake` and a C++ compiler must be on PATH; the generator is `MinGW Makefiles`
+when `mingw32-make` is there and `Unix Makefiles` otherwise (MSYS2, CI). The
+build lands at `build-iaqs/iaqs.exe`; `build-iaqs/` is ignored. `make test`
+runs `iaqs-check` too, and both commands print a skip and exit 0 where the
+toolchain is absent. The suite is 233 tests: the upstream 254 minus the crypto,
+key and rekey tests, plus the plaintext and manifest-version checks
+`test_plain_store` pins.
 
 ## Synchronising with upstream
 

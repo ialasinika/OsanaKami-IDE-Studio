@@ -14,6 +14,37 @@ retargeted to Yarn, so `examples/hello.yarn` is the fixture the suite reads.  Th
 `v0.1.0-alpha` section below is inherited in that sense — upstream's work, as it
 stands in this tree.
 
+## Unreleased
+
+### The version store is built and tested by the same command as everything else
+
+The fork of `iaqs` had a build script of its own — a PowerShell file that ran
+cmake, stripped the binary and then started the suite — and nothing in the gate
+called it. `make test` was green on a machine where the store had never compiled
+for months' worth of edits, and the CI job would have been green the same way,
+because `make test` did not know the C++ half existed. A dependency that no gate
+exercises is a dependency that rots silently.
+
+It is now two Makefile targets over a single Python driver: `make iaqs-bin`
+builds `build-iaqs/iaqs.exe` and `make iaqs-check` builds it and runs the fork's
+233 tests, and `make test` runs `iaqs-check`. `make package` builds the binary
+before it packs, so the installer payload cannot ship the previous beta's copy by
+accident. `tools/iaqs.py` takes over what the PowerShell script did and adds the
+parts a gate needs: it picks the CMake generator from `PATH` (`MinGW Makefiles`
+where `mingw32-make` is the compiler's make, `Unix Makefiles` on MSYS2 and the
+runner), rebuilds when the cache points at another source tree or generator
+instead of failing with CMake's stale-cache error, and points `TEMP`/`TMP` at
+`build-iaqs/test-temp` because this machine's file sandbox lets a child process
+write only inside the workspace.
+
+CI's `test` job now installs `mingw-w64-x86_64-cmake` next to the compiler, so
+`make ci` compiles and tests the store on the runner as well. On a machine
+without `cmake` or a C++ compiler both commands print a skip and exit 0 — the
+same contract as `installer-check` and `sign-check`, so a clone with only a C89
+toolchain still runs the rest of the suite. The old script is gone; the docs
+name the Makefile targets, and `AGENTS.md` lists `iaqs-check` among the checks
+that can skip for want of a toolchain.
+
 ## v0.1.4-beta — 2026-10-21
 
 ### A package's history sits beside the app, not inside the package

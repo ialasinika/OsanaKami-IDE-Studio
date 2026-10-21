@@ -53,11 +53,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      # A real C89 compiler and GNU make.  MSYS2 is the dependable source on a
-      # Windows runner; CC=gcc overrides the maintainer's hard-coded MinGW path.
+      # A real C89 compiler, GNU make, and cmake for the version store's build.
+      # MSYS2 is the dependable source on a Windows runner; CC=gcc overrides the
+      # maintainer's hard-coded MinGW path, and `iaqs-check` picks its CMake
+      # generator from what is on PATH (Unix Makefiles here, MinGW Makefiles on
+      # the maintainer's machine).
       - uses: msys2/setup-msys2@v2
         with:
-          install: mingw-w64-x86_64-gcc make
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
           path-type: inherit
           cache: true
 

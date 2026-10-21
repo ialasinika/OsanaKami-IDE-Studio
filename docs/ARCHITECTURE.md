@@ -12,7 +12,7 @@ why the kernel deliberately knows nothing about programming languages.
 | --- | --- | --- | --- |
 | kernel | `core/` | C89 | files, view persistence, child processes, the JSON-RPC method table |
 | shell | `shell/`, `langs/` | JavaScript ESM | the endpoints, the board UI, language colouring |
-| tools | `tools/` | Python 3.12 | build driver, protocol driver, language-descriptor generator |
+| tools | `tools/` | Python 3.12 | build driver, protocol driver, language-descriptor generator, and `iaqs.py`, which builds the version store and runs its suite |
 
 The languages are not an accident and not a fashion statement:
 
@@ -474,7 +474,7 @@ a byte is written, path names normalized and bounded, duplicate names refused,
 the staged swap-in and the post-import report), the row
 wording kept as pure data, with the shipped corpus pinned at zero false
 positives the package history adapter (store path, the `--worktree` split, `status`/`save`/`log`/`restore` parsing, and a real round trip against the built fork when `build-iaqs/iaqs.exe` exists), and the `ai.*` frames the agent card asks (729 checks) |
-| — | `powershell -File tools/build-iaqs.ps1 -Strip -Tests` | the version store itself: the plaintext MANIFEST and its version refusal, page and slot CRCs, WAL replay and truncated tails, segment merging, pager generations, and the worktree/database split (233 checks; builds only with `cmake` and MinGW on `PATH`) |
+| — | `make iaqs-check` | the version store itself: the plaintext MANIFEST and its version refusal, page and slot CRCs, WAL replay and truncated tails, segment merging, pager generations, and the worktree/database split (233 checks; part of `make test` when `cmake` and a C++ compiler are on `PATH`, skipped with exit 0 otherwise) |
 | — | `node shell/ai/selftest.mjs` | the AI groundwork, offline: the fake OpenAI-compatible server this suite starts on `127.0.0.1:0`, the exact request bytes, SSE frames split across reads, tool calls accumulated by index, the five error classes, the key that never reaches a log, atomic config writes, the tool registry and its path containment, the settings store and its two verbs, and the card-tool bridge into the tool registry (93 checks, 1 skipped on win32 where `0o600` is not a thing) |
 
 `smoke` runs the last two and needs a browser.

@@ -1,4 +1,4 @@
-# 缺口清单（2026-10-21 第十一轮：G61/G62 已关；第五~十轮并入）
+# 缺口清单（2026-10-21 第十二轮：G61/G62/G63 已关；第五~十轮并入）
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
@@ -81,6 +81,8 @@
 | G59 只能导入单个文件，收到 zip 只能手工解开 | 第十轮：`zip.js` 读侧（EOCD/单盘/zip64/加密/数据描述符/压缩方法/entry size/inflate/CRC 全查，名称 UTF-8→GBK→latin1 解码，`safeEntryName` 拒绝空名/NUL/绝对路径/盘符/`..`/归一重名，上限 20000×64 MiB×512 MiB）；`importZipPackage` 两种包形、目标旁建树后暂存换入、已有目录需 overwrite 且整替换、导入后回传 `validatePackage` 报告；CLI `unpack`；mod 卡 import 区一行；`selftest/importzip.mjs` 21 条（mods 706/706） |
 | G61 包没有版本历史，改坏了只能重来 | 第十一轮：fork 的 `iaqs/`（明文存储、`--repo`/`--worktree` 两路径）+ `shell/mods/versioning.js`（库在 `<安装目录>/history/<包名>-<路径哈希>`，`mod.open`/`mod.scaffold` 自动建库，状态/保存/日志/恢复四个操作，缺二进制回 `unavailable`）+ `vcs.*` 四个转发动词 + mod 卡折叠的“Its versions”分区（保存可带消息、恢复前先保存当前状态）；`selftest/history.mjs` 单测（含 `--worktree` 参数与库路径规则）与真二进制往返（建库/改文件/status/commit/log/restore，未构建时 skip）、`selftest/dispatch.mjs` 转发帧（mods 729/729） |
 | G62 版本库带着本项目不需要的密码与加密 | 第十一轮：`iaqs/` 删除加密层（`chacha20poly1305`/`hmac`/`keys` 与对应测试删除，`crypto/` 只留 SHA-256/SHA-1/CRC-32C/RNG），MANIFEST 改为 44 字节明文头（格式版本 2），旧密码格式按名字拒绝，密码面（`passwd`/`rekey`/`--password-stdin`/`IAQS_PASSWORD`/默认口令/交互提示/退出码 4）全部移除；存储检查保留（页/槽 CRC、WAL 重放与截断、段合并、MANIFEST 往返与损坏、pager 代际、超页拒绝），套件 233/233；`grep` 无加密符号残留 |
+| G63 版本库的构建与测试不在 `make test` 门禁里 | 第十二轮：`tools/iaqs.py` 取代 `tools/build-iaqs.ps1`（两个子命令、按 PATH 选 CMake 生成器、缓存与源码/生成器不符就重建、strip、测试用 `build-iaqs/test-temp` 当 `TEMP`）；Makefile 加 `iaqs-bin`/`iaqs-check` 并把 `iaqs-check` 放进 `test`，`package` 依赖 `iaqs-bin`；CI 的 `test` job 装 `mingw-w64-x86_64-cmake`，`make ci` 真编译并跑 233 条；缺 `cmake`/C++ 编译器时打印 skip 并 exit 0 |
+第十二轮（2026-10-21）：用户要求"同时 iaqs 的构建编入 Makefile"、"接入测试，进 beta.2"。构建与测试从一次性的 PowerShell 脚本变成门禁的一部分：`tools/iaqs.py build|test` 是唯一入口（`cmake -S iaqs -B build-iaqs`，生成器按 PATH 在 MinGW Makefiles / Unix Makefiles 间选，缓存指向旧源码路径或旧生成器时直接重建；strip 用编译器旁边的 `strip`；测试把 `TEMP`/`TMP` 指到 `build-iaqs/test-temp`，因为本机沙箱只允许子进程在仓库内写），Makefile 的 `iaqs-bin`/`iaqs-check` 分别对应两个子命令，`make test` 现在包含 `iaqs-check`，`make package` 先建二进制；CI 的 `test` job 在 MSYS2 里多装 `mingw-w64-x86_64-cmake`，`make ci` 因此在 runner 上也会编译并运行分叉的 233 条测试；没有 `cmake` 或 C++ 编译器的机器上两条命令打印 skip 并 exit 0，与 installer-check/sign-check 的约定一致。
 
 ## 仍然成立（本轮逐条核实）
 

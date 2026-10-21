@@ -830,7 +830,7 @@ a local, linear, content-addressed history with a small command surface.
   is folded by default; saving takes an optional message, and restoring a
   version saves the current state first, so the restore is reversible. All four
   answer `{ok: false, reason: "unavailable"}` when the binary is not built
-  (`tools/build-iaqs.ps1`), which the card shows as a state, not an error.
+  (`make iaqs-bin`), which the card shows as a state, not an error.
 - **No password, no encryption.** The fork deleted the encryption layer: the
   ChaCha20-Poly1305 page cipher, the HMAC/PBKDF2 key derivation, the keyring and
   the wrapped-key MANIFEST are gone with their tests, pages and WAL records are
