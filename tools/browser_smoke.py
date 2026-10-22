@@ -2453,10 +2453,14 @@ def card_round_trip(edge, args) -> dict:
     """
     sandbox = Path(tempfile.mkdtemp(prefix="infantgod-smoke-cardws-"))
     profile = Path(tempfile.mkdtemp(prefix="infantgod-smoke-card-"))
+    # The mod card's new-file row reads the game's types; a clean clone has no
+    # knowledge base and no game, so this host gets a game of our own making.
+    fixture = Path(tempfile.mkdtemp(prefix="infantgod-smoke-cardgame-"))
     host = None
     written = False
     try:
         _cards_workspace(sandbox)
+        game = _sandbox_game(fixture)
         CARD_WRAPPER.write_text(_card_page(), encoding="utf-8")
         written = True
         port = free_port()
@@ -2475,6 +2479,9 @@ def card_round_trip(edge, args) -> dict:
                 "--port", str(port),
                 "--no-open",
             ],
+            # The fixture game is this host's only knowledge source on a clean
+            # clone; a development tree's derived file still wins over it.
+            env={"INFANTGOD_MODS_DIR": str(game)},
         )
         host.start()
         show("cards host", f"{host.url} (workspace {sandbox})")
@@ -2494,6 +2501,7 @@ def card_round_trip(edge, args) -> dict:
             CARD_WRAPPER.unlink(missing_ok=True)
         shutil.rmtree(profile, ignore_errors=True)
         shutil.rmtree(sandbox, ignore_errors=True)
+        shutil.rmtree(fixture, ignore_errors=True)
 
 
 def _split_fact_line(line: str) -> dict:

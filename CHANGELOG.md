@@ -46,8 +46,8 @@ has the file it derived; the counts the docs quote belong to that tree.
 The browser smoke's mod-card round trip used to lean on that same tracked file:
 its new-file picker offered `Goods` only because the rich knowledge base happened
 to be there, so on a clean clone it would have had nothing to pick and the check
-would have failed. It now gives its throwaway host a self-authored mini game tree
-(`SODefines/Schema/Goods.schema.json`, one required field) through
+would have failed. Each of its throwaway hosts now gets a self-authored mini game
+tree (`SODefines/Schema/Goods.schema.json`, one required field) through
 `INFANTGOD_MODS_DIR`; `mod.types` derives a facts-only base in the host's own user
 directory, and the picker and new-file assertions stay knowledge-driven without
 the game's data ever entering the tree.
