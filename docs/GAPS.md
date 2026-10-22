@@ -2,11 +2,11 @@
 
 本文取代 `docs/EDITOR_GAPS.md` 的**待办职能**——旧档三轮追加后已超过 1200 行，作为审计档案保留（证据价值仍在），不再追加。本文只收录**当前工作树里核实仍然成立的缺口**，每条给出核实方式；"已关闭"只认代码证据，不认旧文档的说法。
 
-快照：第三轮 HEAD = `89759b9`（第三轮改动提交后即以该提交为准；第四轮见下一段）。第一轮（`df08eea` 落文，`f7b6c84` 快照）关了 G3/G21/G46/G4/G39/G22/G13/G45/G40/G36 十条，但留下 13 条"未复核"；第二轮（`89759b9` 快照）把那 13 条逐条重跑，**未复核区清空**：G31/G5/G8/G14/G19/G37/G33 全部有了定论（多为关闭或大幅收窄），G2/G10/G16/G17/G18/G20/G38 核实仍然成立并重新钉了行号。第三轮关掉 G7/G6/G9（校验器可信度）与 G11/G12（闭环）：校验器现在读 schema 声明了却没人读的关键字、核对 Yarn `#line:` 与本地化表的双向一致、并对 Addressables 地址的写法提出警告；包能装进游戏自己的 Mods 目录，也能读/跟随 `Player.log`。**第二轮钉的行号因本轮 `shell/mods/validate.js`（+431）、`shell/mods/index.js`（+323）、`shell/main.mjs`（+212）、`shell/web/cards/card-mod.mjs`（+138）的增行而漂移，本轮已按当天树重钉；已关闭行保留原提交编号，不追行号。**
+快照：第三轮 HEAD = `ae2927d`（第三轮改动提交后即以该提交为准；第四轮见下一段）。第一轮（`f5a9d2f` 落文，`7ce59ba` 快照）关了 G3/G21/G46/G4/G39/G22/G13/G45/G40/G36 十条，但留下 13 条"未复核"；第二轮（`ae2927d` 快照）把那 13 条逐条重跑，**未复核区清空**：G31/G5/G8/G14/G19/G37/G33 全部有了定论（多为关闭或大幅收窄），G2/G10/G16/G17/G18/G20/G38 核实仍然成立并重新钉了行号。第三轮关掉 G7/G6/G9（校验器可信度）与 G11/G12（闭环）：校验器现在读 schema 声明了却没人读的关键字、核对 Yarn `#line:` 与本地化表的双向一致、并对 Addressables 地址的写法提出警告；包能装进游戏自己的 Mods 目录，也能读/跟随 `Player.log`。**第二轮钉的行号因本轮 `shell/mods/validate.js`（+431）、`shell/mods/index.js`（+323）、`shell/main.mjs`（+212）、`shell/web/cards/card-mod.mjs`（+138）的增行而漂移，本轮已按当天树重钉；已关闭行保留原提交编号，不追行号。**
 
-第四轮（2026-10-20，起点快照 `0c74d9b`，代码提交 `c416b01`）：`docs/gaps2.md` 是浏览器会话实测出来的三条（问题卡路径、像素卡后台打开、缩放锚点），复核全部成立；同一轮把 C 区排队的 G16/G17 一起关掉，并补了用户在整理文档时现场报的 G54（窄窗口 mod 卡分区收不起来）。问题卡改用 `mod.validate` 回传的解析后包根打开真实文件、编辑器新增可存活重渲染的 `reveal` 位置；像素卡在标签前移到可见时按测量到的画布重新取景，平移保留人的手势、缩放锚在光标下的像素；mod 卡分区可折叠且折叠状态记在卡文档上。**G51 的另一半（mods 根在 workspace 之外时内核拒绝读）不是 bug 而是内核 containment 的产品决策，单列为 G51-b 留在 B 区；G19 的 watch 残余在同一轮末尾关掉。**
+第四轮（2026-10-20，起点快照 `687ef06`，代码提交 `a05979a`）：`docs/gaps2.md` 是浏览器会话实测出来的三条（问题卡路径、像素卡后台打开、缩放锚点），复核全部成立；同一轮把 C 区排队的 G16/G17 一起关掉，并补了用户在整理文档时现场报的 G54（窄窗口 mod 卡分区收不起来）。问题卡改用 `mod.validate` 回传的解析后包根打开真实文件、编辑器新增可存活重渲染的 `reveal` 位置；像素卡在标签前移到可见时按测量到的画布重新取景，平移保留人的手势、缩放锚在光标下的像素；mod 卡分区可折叠且折叠状态记在卡文档上。**G51 的另一半（mods 根在 workspace 之外时内核拒绝读）不是 bug 而是内核 containment 的产品决策，单列为 G51-b 留在 B 区；G19 的 watch 残余在同一轮末尾关掉。**
 
-第五轮（2026-10-20，起点快照 `66d3fb0`/`b37a47c`）：用户要求"解决 A 和 B"，A 区是校验与知识库的可信度、B 区是文件/文本/像素。B 区全清：录音能在窗口里试听（新的 `audio` 卡，`file.read_bytes` 的字节交给播放器，一张录音一张卡）；mod 层的文本读语义与内核同一套规则（`shell/mods/readtext.js`，套件从 `core/include/wksp.h` 解析上限防漂移）；已提交 KB 的乱码清零（文档 evidence 区按 ICU 码点逐条核对，生成器重跑，守卫测试）；`examples/Mods/Lantern` 的 `file` 列改为包相对路径，`lock` 由 `storycsv` 写入时重算；像素读写接受知识库声明的全部 PNG 色型/位深/隔行并在能证明时按原格式写回（`pixelpng.mjs`）；帮助卡把 wiki 链接、51 类型支持矩阵和命令列表渲染进窗口（`help` 卡，第十五种）。G51-b 内核侧关闭：`--read-root` 让 workspace 之外的 Mods 目录成为显式只读根。A 区见下表：G8 的脚手架×校验交叉测试、G10 的 FMOD 引用/`GetTopic` 陷阱 lint、G37 的两条生成器自伤路径各补一条守卫。
+第五轮（2026-10-20，起点快照 `ff3fe8d`/`87a07a8`）：用户要求"解决 A 和 B"，A 区是校验与知识库的可信度、B 区是文件/文本/像素。B 区全清：录音能在窗口里试听（新的 `audio` 卡，`file.read_bytes` 的字节交给播放器，一张录音一张卡）；mod 层的文本读语义与内核同一套规则（`shell/mods/readtext.js`，套件从 `core/include/wksp.h` 解析上限防漂移）；已提交 KB 的乱码清零（文档 evidence 区按 ICU 码点逐条核对，生成器重跑，守卫测试）；`examples/Mods/Lantern` 的 `file` 列改为包相对路径，`lock` 由 `storycsv` 写入时重算；像素读写接受知识库声明的全部 PNG 色型/位深/隔行并在能证明时按原格式写回（`pixelpng.mjs`）；帮助卡把 wiki 链接、51 类型支持矩阵和命令列表渲染进窗口（`help` 卡，第十五种）。G51-b 内核侧关闭：`--read-root` 让 workspace 之外的 Mods 目录成为显式只读根。A 区见下表：G8 的脚手架×校验交叉测试、G10 的 FMOD 引用/`GetTopic` 陷阱 lint、G37 的两条生成器自伤路径各补一条守卫。
 
 冒烟轮（2026-10-20 晚，第五轮之后）：把两个浏览器冒烟真正跑起来——此前"Edge 155 headless 坏"是误判，死因是 harness 拼 wrapper 时的页内脚本语法错误（Python 非 raw 字符串里的换行），修好后 `browser_smoke.py` 65/65、`input_smoke.py` 44/44 在本机真实 headless Edge 上全绿。冒烟抓到五处真实缺陷并已修：相对路径 `open README.md` 因把相对名当绝对路径与 workspace 根比较而被拒（新纯模块 `shell/web/openpath.mjs`，套件 1 条）；像素卡在 G52 改为居中取景后，冒烟仍按"画布左上即图像左上"点击，卡现在发布 `data-pan-x`/`data-pan-y`/`data-zoom`、冒烟按像素中心点击而不是在 Python 里重抄取景规则；示例包 `Audio_Lantern_Hum.json` 手写 `EventReference` 触发自己的 D019 两条（示例改为只写能诚实写的字段，`EditorNote` 说明引用必须来自游戏导出）；`D011` 行状态以路径开头、RGB 精灵按 G20 存回 RGB 两条断言过期；`audio`/`help` 已注册却不在 board 卡种表与冒烟清单里（面板点不开、冒烟点不到）。文档同轮更正：卡种数按实际注册数（十五种）与冒烟检查数（65 + 44）改齐。
 
@@ -24,16 +24,16 @@
 
 | 条目 | 关闭证据 |
 | --- | --- |
-| G3 撞名不查 | `59be772`：`validate.js` D103 跨包/同包重名、D102 提级、M012 兄弟目录不可读 |
-| G21 音频引用零校验 | `e0b0886`：D006 音频分支、`#vo` 的 Y122、`#vo:` 补全 |
-| G46 格式体检 | `9648c02`：D007/D008/D009/D010（PNG/WAV/Spine/CSV 头） |
-| G4 类型支持矩阵 | `deda198`：`shell/mods/support.json`（51 类型四档 + manager）、M013/M014、模板不再生成 `Attr` |
-| G39 编辑器/`.yarn` 仍整文件读 | `97f96e2`：`cards/blob.mjs` 的 `readTextFile`/`writeTextFile` 把 4 MiB 拒读接到会话；编辑器与故事卡都改走它 |
-| G22 立绘路径零校验 | `4393125`：`validate.js` 的 `D011` 解析 `Character.spineAssetPath`（包根 + `Spine/` 前缀容错）、空串放行、`.json` 骨架要求同名图集 |
-| G13 无 headless 校验 CLI | `e90b16d`：`main.mjs` 加 `validate DIR [--json]`，只用 `shell/mods/`、不 spawn 内核，退出码 0/1/2；第三轮复核仍在：`main.mjs:1805` |
-| G45 无 zip 导出 | `bd4c01e`：`shell/mods/zip.js` + `mod.export`（可复现 zip）；CLI `export` 动词第三轮复核仍在：`main.mjs:1806` |
-| G40 翻译写回 | `f7b6c84`：`card-story.mjs:270-271` 点单元格成 input，Enter/blur 走 `setColumn`，`lock` 重算为源行哈希 |
-| G36 卸载盲删 | `89759b9`：安装清单进卸载宏，卸载只删清单内文件；`tools/installer_smoke.py` 进 `make test` |
+| G3 撞名不查 | `b41ea31`：`validate.js` D103 跨包/同包重名、D102 提级、M012 兄弟目录不可读 |
+| G21 音频引用零校验 | `5e18d79`：D006 音频分支、`#vo` 的 Y122、`#vo:` 补全 |
+| G46 格式体检 | `fa63784`：D007/D008/D009/D010（PNG/WAV/Spine/CSV 头） |
+| G4 类型支持矩阵 | `43ce2b2`：`shell/mods/support.json`（51 类型四档 + manager）、M013/M014、模板不再生成 `Attr` |
+| G39 编辑器/`.yarn` 仍整文件读 | `b51349b`：`cards/blob.mjs` 的 `readTextFile`/`writeTextFile` 把 4 MiB 拒读接到会话；编辑器与故事卡都改走它 |
+| G22 立绘路径零校验 | `822fede`：`validate.js` 的 `D011` 解析 `Character.spineAssetPath`（包根 + `Spine/` 前缀容错）、空串放行、`.json` 骨架要求同名图集 |
+| G13 无 headless 校验 CLI | `96435c8`：`main.mjs` 加 `validate DIR [--json]`，只用 `shell/mods/`、不 spawn 内核，退出码 0/1/2；第三轮复核仍在：`main.mjs:1805` |
+| G45 无 zip 导出 | `6afd4be`：`shell/mods/zip.js` + `mod.export`（可复现 zip）；CLI `export` 动词第三轮复核仍在：`main.mjs:1806` |
+| G40 翻译写回 | `7ce59ba`：`card-story.mjs:270-271` 点单元格成 input，Enter/blur 走 `setColumn`，`lock` 重算为源行哈希 |
+| G36 卸载盲删 | `ae2927d`：安装清单进卸载宏，卸载只删清单内文件；`tools/installer_smoke.py` 进 `make test` |
 | G31 本机派生 KB 缺接线 | `resolveKnowledge()`（`shell/mods/index.js:408-427`）：四个候选位置都没有 KB 时，自动从 `gameModsDir` 调 `knowledge-build.buildKnowledge` 派生并写进 userDir；读不了的 KB 报 `loadError`，绝不静默当空 |
 | G5 知识库不可再生/无版本 | **主体关闭**：生成器重写为 `shell/mods/knowledge-build.js` + 薄 CLI `tools/gen_knowledge.mjs`；KB 带 `version:1` 与 `generatedAt`（`knowledge.json` 头部）；首启自动派生见 G31。**乱码残余第五轮关闭**：`docs/*.md` 的 evidence 区按 ICU 码点逐条核对（21 段 `闊抽…`/U+FFFD 清零），KB 重生成，`selftest` 的文档守卫断言已提交 KB 的文本与文档一致且无替换字符 |
 | G8 脚手架模板自伤 | **主体关闭**：`yarn.js:402` 把 `when` 收进节点元数据，`autoSubtitle`（`yarn.js:700-702`）用它造确定性 subtitle——`when:` 不再被丢掉。**残余第五轮关闭**：`selftest/scaffold-cross.mjs` 把四种模板各生成一个包再跑 `validatePackage`，模板改动过不了自己产物的校验就红 |
@@ -44,24 +44,24 @@
 | G1 语言表打不开 | story 卡走 blob 分块：`cards/card-story.mjs` 的 `readTextInChunks` |
 | G25/G29 卡片可达性 | 13 种卡分模块落 `cards/`，两个视图都有标签页 |
 | G41 再生 KB 关掉 sprite 检查 | `gen_knowledge.mjs:16-22` 注释明确保留两类事实型 description |
-| G42 CSV 往返丢 BOM | `cef2056` |
+| G42 CSV 往返丢 BOM | `ff4693a` |
 | G43 locale 文档空白 | `search.js` 有 `case 'locale'` |
-| G47 spine 命名 | `58a38ab` 改名 rig，`cards/card-rig.mjs` |
+| G47 spine 命名 | `a2d8a3e` 改名 rig，`cards/card-rig.mjs` |
 | G48 设置 UI | `cards/card-settings.mjs`：表单编辑 AI provider / 启动视图 / 轮询间隔 |
 | G50 "+"新建文件 | `mod.newFile` / `mod.importFile` 已进 `MOD_METHODS` |
 | G30/G35 分发物 | `package.json` 的 filter 排掉 `knowledge.json`、`hello.yarn`、`board.json`、`sample.json`；2026-10-22 起仓库本身也不再跟踪 `knowledge.json`（`git rm --cached` + `.gitignore`），见第十三轮 |
-| spine 编辑 | `9f8d4d7`：rig 卡可读可写回 |
+| spine 编辑 | `c4e7247`：rig 卡可读可写回 |
 | G6 校验关键字面 | 第三轮：`validate.js` 的 `checkConstraints` 真读 `const`/`pattern`/`minLength`/`maxLength`/`minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf`/`minItems`/`maxItems`/`uniqueItems`/`oneOf`/`anyOf`/`allOf`/`not`（D012 error），`type` 接受数组，`additionalProperties: false` 把未声明字段提为 D012；知识库当前没用这些关键字，所以 `selftest/spec.mjs` 用合成 schema 钉住 3 条 D012；解析不到的 `$ref` 报 D013 |
 | G7 `#line:` 双向核对 | 第三轮：`validate.js` 用 `yarn.js` 解析每个 `.yarn` 的 `#line:` id，再读本地化表的 `id` 列做双向核对——D014（yarn 有、表无）、D015（表有、yarn 无）、D016（同一 id 跨文件重复）、D017（非 7 位 hex 的演示 id 汇总成一条 info，不假装核对过）。真语料 `MyMod` 上 D014=0、D016=0、D015=1（真实孤儿 `line:094007b`）、D017=1（57 个非 hex id） |
 | G9 prefab/地址不查 | **主体关闭**：description 恰为 `Addressable asset address` 的字段（知识库 9 处）若值是 `Assets/...`、盘符路径、含反斜杠、或 `.prefab`/`.asset`/`.unity` 结尾，报 D018 warning——游戏按 Addressables 窗口登记的 address 查，不按资源路径；`Backgrounds/Office` 这类正常 address 静默，真语料 0 误报。残余：无法知道 Addressables 窗口里到底登记了哪些 address，只能查"写法像不像路径" |
 | G11 无"装进游戏" | 第三轮：`shell/mods/index.js` 的 `installPackage`/`installGame`（CLI `install DIR [--game-dir DIR] [--overwrite]`、`mod.installGame` RPC、mod 卡一行）复用 `gamepath.js` 的发现；预检与 `export` 同一校验（errors 拦、`E000` 不拦），已有目录不加 `--overwrite` 拒绝；复制经 `.<Name>.installing-<stamp>` 暂存、按数量与大小复核后 rename 换入，旧目录先改名备份、失败回滚，从不会递归删自己没改过名的目录；`selftest/game.mjs` 18 条 |
 | G12 无游戏内验证回路 | 第三轮：`gamepath.js` 的 `discoverPlayerLog`/`readLogTail`/`scanLogText`/`followPlayerLog`（LocalLow、`~/Library/Logs`、`.config/unity3d`，取深度 1–2 里最新的 `Player.log`），`mod.gameLog`/`mod.followGameLog`（CLI `log`、卡上一行）；只发新增字节、文件消失报 `gone` 不抛、轮转从零重读；注入时钟与 sleep，`selftest/game.mjs` 19 条 |
-| G16 诊断点不到位置 | `c416b01`：`mod.validate` 的回复新增 `root`（解析后的绝对包根，诊断的 `path` 相对它），problems 卡用 `report.root` 拼出能读的绝对路径；点行调 `app.openFile(path, {line, pointer})`，编辑器落到该行/JSON Pointer 指向的位置。诊断外侧的 `pointer` 分支仍保留（无 `root` 的旧回复照旧打印），不再让指针只出现在行尾 |
-| G17 校验结果不回流 | `c416b01`：`card-mod.mjs` 的 `validate()` 把 `report.diagnostics` 交给 problems 面板（`app.openProblemsCard(report, {root})`，各严重度分节、可点行），模块状态仍压一行；已有面板按 root 复用，不重跑校验 |
-| G51 G51-a 问题卡行打不开 | `c416b01`：`card-problems.mjs` 用 `mod.validate` 回传的 `root` 拼绝对路径（原来拼的是用户输入的 `--mods-root` 字符串），`root` 缺失时才退回旧拼法；`tools/input_smoke.py` 改用真实存在的 D011 行（不再只点故意缺精灵的 D006），`shell/web/selftest/mods.mjs` 钉住根与行参数 |
-| G52 像素卡后台打开不重绘 | `c416b01`：tile 在卡第一次可见时调 `handle.shown?.()`；`card-pixel.mjs` 的 `shown()` 按新测的画布尺寸重取景（未平移→居中），后台创建不再停 0×0；`shell/web/selftest/pixel.mjs` 5 条 |
-| G53 缩放锚点错 | `c416b01`：`shell/web/pixelview.mjs` 纯几何 `place`/`zoomAt`：未平移时按测量面居中，平移后保留人的位置，wheel 以光标下像素为锚且 clamp 到图内，缩放范围 `0.25×–32×`（`selftest/pixel.mjs` 钉住） |
-| G54 窄窗口分区收不起 | `c416b01`：`dom.mjs` 的 `section()` 支持可折叠标题；`card-mod.mjs` 分区折叠状态记在卡文档（`card.collapsed`，重渲染不丢），窄窗口下卡体滚动；`shell/web/selftest/cards.mjs` +1 条 |
+| G16 诊断点不到位置 | `a05979a`：`mod.validate` 的回复新增 `root`（解析后的绝对包根，诊断的 `path` 相对它），problems 卡用 `report.root` 拼出能读的绝对路径；点行调 `app.openFile(path, {line, pointer})`，编辑器落到该行/JSON Pointer 指向的位置。诊断外侧的 `pointer` 分支仍保留（无 `root` 的旧回复照旧打印），不再让指针只出现在行尾 |
+| G17 校验结果不回流 | `a05979a`：`card-mod.mjs` 的 `validate()` 把 `report.diagnostics` 交给 problems 面板（`app.openProblemsCard(report, {root})`，各严重度分节、可点行），模块状态仍压一行；已有面板按 root 复用，不重跑校验 |
+| G51 G51-a 问题卡行打不开 | `a05979a`：`card-problems.mjs` 用 `mod.validate` 回传的 `root` 拼绝对路径（原来拼的是用户输入的 `--mods-root` 字符串），`root` 缺失时才退回旧拼法；`tools/input_smoke.py` 改用真实存在的 D011 行（不再只点故意缺精灵的 D006），`shell/web/selftest/mods.mjs` 钉住根与行参数 |
+| G52 像素卡后台打开不重绘 | `a05979a`：tile 在卡第一次可见时调 `handle.shown?.()`；`card-pixel.mjs` 的 `shown()` 按新测的画布尺寸重取景（未平移→居中），后台创建不再停 0×0；`shell/web/selftest/pixel.mjs` 5 条 |
+| G53 缩放锚点错 | `a05979a`：`shell/web/pixelview.mjs` 纯几何 `place`/`zoomAt`：未平移时按测量面居中，平移后保留人的位置，wheel 以光标下像素为锚且 clamp 到图内，缩放范围 `0.25×–32×`（`selftest/pixel.mjs` 钉住） |
+| G54 窄窗口分区收不起 | `a05979a`：`dom.mjs` 的 `section()` 支持可折叠标题；`card-mod.mjs` 分区折叠状态记在卡文档（`card.collapsed`，重渲染不丢），窄窗口下卡体滚动；`shell/web/selftest/cards.mjs` +1 条 |
 | G2 音频不能试听 | 第五轮：`shell/web/audioinfo.mjs`（纯：扩展名→media type、大小与时长的人读写法、data URL、`Audio` 构造函数即用）；`cards/card-audio.mjs` 用 `file.read_bytes` 取字节（同一内核上限与 containment），同一路径复用同一张卡；`openFile` 把九种音频扩展名路由过去；`selftest/cards.mjs` 钉住 helper 与卡注册 |
 | G20 像素格式窄、保存改写格式 | 第五轮：`shell/web/pixelpng.mjs` 读 PNG 全部合法色型/位深（1/2/4/8-bit 灰、RGB、调色板、灰+alpha、RGBA、16-bit）与 Adam7，逐块 CRC 校验；`planFormat` 能证明可逆时按源格式写回（RGB 精灵存回去仍是 RGB），不能证明时退回 RGBA8 并在注释里说明理由；`selftest/pixel.mjs` 11 条 |
 | G15 编辑器内零帮助入口 | 第五轮：新 `help` 卡渲染 wiki 链接、`mod.stats` 新增的 `support` 字段（51 类型 × 4 档矩阵）与 `COMMAND_HELP`；命令 `help` 打开它，`selftest` 钉住卡注册与矩阵形状 |
@@ -84,7 +84,9 @@
 | G63 版本库的构建与测试不在 `make test` 门禁里 | 第十二轮：`tools/iaqs.py` 取代 `tools/build-iaqs.ps1`（两个子命令、按 PATH 选 CMake 生成器、缓存与源码/生成器不符就重建、strip、测试用 `build-iaqs/test-temp` 当 `TEMP`）；Makefile 加 `iaqs-bin`/`iaqs-check` 并把 `iaqs-check` 放进 `test`，`package` 依赖 `iaqs-bin`；CI 的 `test` job 装 `mingw-w64-x86_64-cmake`，`make ci` 真编译并跑 233 条；缺 `cmake`/C++ 编译器时打印 skip 并 exit 0 |
 第十二轮（2026-10-21）：用户要求"同时 iaqs 的构建编入 Makefile"、"接入测试，进 beta.2"。构建与测试从一次性的 PowerShell 脚本变成门禁的一部分：`tools/iaqs.py build|test` 是唯一入口（`cmake -S iaqs -B build-iaqs`，生成器按 PATH 在 MinGW Makefiles / Unix Makefiles 间选，缓存指向旧源码路径或旧生成器时直接重建；strip 用编译器旁边的 `strip`；测试把 `TEMP`/`TMP` 指到 `build-iaqs/test-temp`，因为本机沙箱只允许子进程在仓库内写），Makefile 的 `iaqs-bin`/`iaqs-check` 分别对应两个子命令，`make test` 现在包含 `iaqs-check`，`make package` 先建二进制；CI 的 `test` job 在 MSYS2 里多装 `mingw-w64-x86_64-cmake`，`make ci` 因此在 runner 上也会编译并运行分叉的 233 条测试；没有 `cmake` 或 C++ 编译器的机器上两条命令打印 skip 并 exit 0，与 installer-check/sign-check 的约定一致。
 
-第十三轮（2026-10-22，仓库面）：用户说“ok，我说一下，移除仓库”，把 `shell/mods/knowledge.json` 移出 git。前置早已就位（安装包侧 `package.json` 的 `extraResources` filter 与 `tools/make-installer.mjs` 的 payload audit 不再带它；运行时 `resolveKnowledge()` 的五级解析与首启派生已在 G31/G44 完成），本轮只补仓库面与套件：`git rm --cached shell/mods/knowledge.json`、`.gitignore` 带理由的条目；`selftest/foundation.mjs` 新增 `SHIPPED_KNOWLEDGE` 与 `checkShippedKnowledge()`（文件不在时整段一条命名 skip，不再 `readFileSync` 崩 `ENOENT`），`selftest.mjs` 用同一开关跳过 foundation 之后的 17 个组。验证（`%TEMP%` 副本删掉 KB）：`node shell/mods/selftest.mjs` = `7/7 checks passed (18 skipped)`、`mods: ok`、exit 0；有 KB 的副本里 rich 组逐条照旧（本机沙箱使知识库生成器与 CLI 组因 `spawnSync … EPERM` 与 `build/` 写受限无法全绿，属既有环境限制，不是本轮引入）。**历史面**：旧提交里仍有这个文件，所以公开仓库前仍需按 §14.1 改写历史，或按用户决定处理远端；本轮只保证 tip 与后续提交不再含它。文档同轮同步 `README.md`、`docs/MODS.md`、`docs/ARCHITECTURE.md`、`docs/EDITOR_GAPS.md` §14.1、`AGENTS.md`；`729 checks` 仍是开发树（带 KB）的数。
+第十三轮（2026-10-22，仓库面）：用户说“ok，我说一下，移除仓库”，把 `shell/mods/knowledge.json` 移出 git。前置早已就位（安装包侧 `package.json` 的 `extraResources` filter 与 `tools/make-installer.mjs` 的 payload audit 不再带它；运行时 `resolveKnowledge()` 的五级解析与首启派生已在 G31/G44 完成），本轮只补仓库面与套件：`git rm --cached shell/mods/knowledge.json`、`.gitignore` 带理由的条目；`selftest/foundation.mjs` 新增 `SHIPPED_KNOWLEDGE` 与 `checkShippedKnowledge()`（文件不在时整段一条命名 skip，不再 `readFileSync` 崩 `ENOENT`），`selftest.mjs` 用同一开关跳过 foundation 之后的 17 个组。验证（`%TEMP%` 副本删掉 KB）：`node shell/mods/selftest.mjs` = `7/7 checks passed (18 skipped)`、`mods: ok`、exit 0；有 KB 的副本里 rich 组逐条照旧（本机沙箱使知识库生成器与 CLI 组因 `spawnSync … EPERM` 与 `build/` 写受限无法全绿，属既有环境限制，不是本轮引入）。**历史面**：旧提交里仍有这个文件；用户当日回复“改写历史。”后已在第十四轮处理。文档同轮同步 `README.md`、`docs/MODS.md`、`docs/ARCHITECTURE.md`、`docs/EDITOR_GAPS.md` §14.1、`AGENTS.md`；`729 checks` 仍是开发树（带 KB）的数。
+
+第十四轮（2026-10-22，历史面）：用户说“改写历史。”，把 `shell/mods/knowledge.json` 从全部历史里去掉。`git filter-branch --index-filter 'git rm --cached --ignore-unmatch shell/mods/knowledge.json' -- --branches --tags` 重写 145 个提交（旧→新映射留在 `build/_map.txt`，判据是作者/提交时间戳 + 标题）；改写后 tip 树与改写前逐字节一致，`git rev-list --objects --branches --tags` 不再含该文件，`main` 上 107 个提交与 8 个 tag 都在改写范围内且 tag 对象未变。文档里 68 处旧提交号按映射重钉到新 SHA（`CHANGELOG.md`、`docs/EDITOR_GAPS.md`、`docs/GAPS.md`、`docs/gaps2.md`），`docs/EDITOR_GAPS.md` §14.1 与本文的“历史面仍欠/仍需改写”改成已处理。强推 `main` 后远端旧提交不可达；本地 `git gc --prune=now` 清未引用对象，唯一保留的副本是改写前的 bundle。**注意**：GitHub 可能仍按 SHA 缓存旧对象，旧 clone 与缓存页在 GitHub 侧清理前仍看得到——彻底清除需要向 GitHub 支持申请。
 
 ## 仍然成立（本轮逐条核实）
 
@@ -112,7 +114,7 @@
 
 ## 建议队列（第九轮后，按"作者被卡住的频率 × 修复成本"排序）
 
-第五轮（起点 `66d3fb0`/`b37a47c`）把 A 区（G5/G8/G10/G37）与 B 区（G2/G14/G15/G20/G38/G51-b）清空：录音可试听、mod 层读语义与内核同规则、帮助卡渲染 wiki 与类型矩阵、像素按原格式读写、示例包 `file` 列改包相对且 `D023` 按真实 lock 校验（脚手架也改写真实 lock）、内核显式只读根；校验器补上手写 `EventReference`/`GetTopic`/GUID/脚手架画布的陷阱 lint，生成器不再能用 `--out` 静默覆盖富 KB，脚手架模板有了"自己生成的包自己过校验"的交叉测试，已提交 KB 的乱码清零。第六轮关掉 G18（docs 卡按包根读本包定义）、G44（KB/游戏目录来源成为 `mod.sources` 动词）、G34（新建模组五条失败路径）；第七轮关掉 G49（卡声明自由 `agent` 工具 + `ai.*` 动词 + agent 卡）；第八轮关掉内核 port 硬化（junction 逃逸、`revision 0` 二义、原子写；`test_blob` 184 条）。
+第五轮（起点 `ff3fe8d`/`87a07a8`）把 A 区（G5/G8/G10/G37）与 B 区（G2/G14/G15/G20/G38/G51-b）清空：录音可试听、mod 层读语义与内核同规则、帮助卡渲染 wiki 与类型矩阵、像素按原格式读写、示例包 `file` 列改包相对且 `D023` 按真实 lock 校验（脚手架也改写真实 lock）、内核显式只读根；校验器补上手写 `EventReference`/`GetTopic`/GUID/脚手架画布的陷阱 lint，生成器不再能用 `--out` 静默覆盖富 KB，脚手架模板有了"自己生成的包自己过校验"的交叉测试，已提交 KB 的乱码清零。第六轮关掉 G18（docs 卡按包根读本包定义）、G44（KB/游戏目录来源成为 `mod.sources` 动词）、G34（新建模组五条失败路径）；第七轮关掉 G49（卡声明自由 `agent` 工具 + `ai.*` 动词 + agent 卡）；第八轮关掉内核 port 硬化（junction 逃逸、`revision 0` 二义、原子写；`test_blob` 184 条）。
 
 第七轮关掉 G49（卡声明自由 `agent` 工具 + `ai.*` 动词 + agent 卡）；第八轮关掉内核 port 硬化；第九轮关掉用户体验五件（G55 打开包、G56 中文化、G57 诊断提示、G58 新手引导；同一轮还改掉了mod 卡控制行的堆叠与 `open`/`check` 的默认展开）；第十轮关掉 zip 导入（G59：作者之间的最后一段路，export 的反向）。
 

@@ -44,7 +44,7 @@
 | G29 | **画布退场后 6 种卡片在两种视图里都画不出来**：`classic`/`mod` 的标签页只收 `editor`，`story`/`pixel`/`docs`/`sheet`/`note`/`runner` 全部 `is-hidden`；空状态还提示 `note hello`，D006 行点开是建一张永远隐藏的像素卡 | P0 | 最近两个提交的主角在 UI 上不可达（第 15.1 节）——不是"没做"，是"点不到" |
 | G30 | **"分发物零游戏数据"是承诺不是状态**：payload 审计把 `knowledge.json` 列进 allow-list 并写着 "must be empty before public distribution"，`--no-audit` 只警告照编，而发布候选正是这么编的；审计只扫文本标记，扫不到二进制素材 | P0 | 白名单清零才等于 G26 落地（第 15.2 节） |
 | G31 | **本机派生 KB 缺接线**：目录发现（`shell/mods/gamepath.js`）与生成器（`tools/gen_knowledge.mjs`）都有，但没有调用点；缺 KB 时校验仍会静默退化 | P1 | 从"可再生"到"真再生"只差首启派生 + 缺失提示（第 15.3 节） |
-| G32 | **改名只动了标识层**：`c814260` 改到 OsanaKami IDE Studio 且免责声明已落地，但 OsanaKami 仍是《幼神》的日文读音；`appId` 变更后旧 `%APPDATA%` 设置需兼容读取 | P1 | 混淆降低但未消除；升级会"丢设置"（第 15.4 节） |
+| G32 | **改名只动了标识层**：`6673a89` 改到 OsanaKami IDE Studio 且免责声明已落地，但 OsanaKami 仍是《幼神》的日文读音；`appId` 变更后旧 `%APPDATA%` 设置需兼容读取 | P1 | 混淆降低但未消除；升级会"丢设置"（第 15.4 节） |
 | G33 | **旧账盘点**：已关 G1 / G6 前半 / G7 部分 / G14 大幅 / G20 部分；仍开 G2·G21 / G3 / G16 / G17 / G18 / G20 残余 / G22 / G11–G13 | P1 | 每项都有复测行号（第 15.5–15.6 节） |
 | G34 | **新建模组的失败路径**：越界（补救分支默认走不到）、重名（帧不带 overwrite）、设置写失败被判成整体失败、POST 无超时、`?mod=` 打开失败被误诊为内核断线 | P1 | 首次运行动作，失败看起来像"没反应"（第 16.1 节 F1–F5） |
 | G35 | **`examples/` 原样进安装包**：带真实游戏台词（`hello.yarn:10`）和一张只能本机跑的开发卡（`board.json:40`），而全仓没有任何代码引用 `examples/` | P0 | G30 的具体实例；同时"示例"用户点不到（第 16.2 节 F8） |
@@ -87,7 +87,7 @@ $root = '<workspace>'
 
 ## 2. P0：会让作者白干的问题
 
-### G1 游戏自带的语言表，编辑器全都打不开（**已被并发提交 `0ff7da7` 修复**，见 §13.4）
+### G1 游戏自带的语言表，编辑器全都打不开（**已被并发提交 `5076afa` 修复**，见 §13.4）
 
 内核单次读取上限 4 MiB，常量在 `core/include/wksp.h:24`（`SDE_WKSP_MAX_READ = 4u * 1024u * 1024u`），判定在 `core/src/wksp.c:487`：
 
@@ -146,7 +146,7 @@ if (sde_port_file_size(abs) > (long) SDE_WKSP_MAX_READ) {
 
 1. `git remote -v` **为空**，`.git/config` 里根本没有 `[remote]` 段（只有 `[core]`/`[user]`），存在的只有一个本地 ref `refs/remotes/upstream/main`（`89d012d`，tag `v0.3.0-alpha.1`）——**现在 fetch 不到上游**。跟上游今天是一句意愿，落地要先加回 remote，并需要一个能出网/带凭证的环境。
 2. 手上能看到的这个上游 ref 里，上限**仍然是 4 MiB**：`git show upstream/main:core/include/wksp.h` → `#define SDE_WKSP_MAX_READ (4u * 1024u * 1024u)`，`core/src/wksp.c` 里还是 `file is too large to open` / `file is too large to overwrite`。也就是说"上游在改"这件事**在当前 ref 里不可见**——这正是不能把本轮交付押在它上面的直接理由。
-3. 分叉已经不小，而且两边都改了内核主体：**38 behind / 18 ahead**；历史被重写（本地 `ab8b769` 与上游 `c0cfd48` 同一句提交信息、不同 hash）；`core/` 双向合计 27 个文件 `+1228/−985`（其中上游单侧 17 个文件 `+618/−846`），`core/src/rpc.c`、`core/src/wksp.c`、`core/src/main.c` 与文档模型（`board`/`view`）都在里面。本地 `core/` 已有 5 个提交（含 `0d8bb0f` "kernel reads/writes bytes"）。→ **跟上游的真实形态是 rebase + 消解，不是 merge。**
+3. 分叉已经不小，而且两边都改了内核主体：**38 behind / 18 ahead**；历史被重写（本地 `bbe5099` 与上游 `c0cfd48` 同一句提交信息、不同 hash）；`core/` 双向合计 27 个文件 `+1228/−985`（其中上游单侧 17 个文件 `+618/−846`），`core/src/rpc.c`、`core/src/wksp.c`、`core/src/main.c` 与文档模型（`board`/`view`）都在里面。本地 `core/` 已有 5 个提交（含 `cca9f73` "kernel reads/writes bytes"）。→ **跟上游的真实形态是 rebase + 消解，不是 merge。**
 
 **因此本轮建议的落地顺序**：
 
@@ -364,7 +364,7 @@ wiki 已经把坑写出来了，编辑器里没有任何一处（无 per-type �
 | 11 | 诊断点击跳到行 / JSON Pointer：`openFile` 支持 `at` 之外的 `line`/`pointer`，`problems` 行传目标 | `shell/web/main.mjs:1252`、`shell/web/cards.mjs:5445` | 改动面极小，直接消灭"点开还要自己搜" |
 | 12 | `problems` 卡：过滤 + 按文件分组 + 抑制基线 + 导出 + 从 `mod` 卡"交给 problems 卡" | `shell/web/cards.mjs:5413-5470`、`:5360-5406` | 校验结果目前用不了第二次 |
 | 13 | `mod` 卡列 CSV/精灵/音频（可点开），`docs` 卡接受 root 看本包定义 | `shell/web/cards.mjs:5276-5354`、`:5551-5608` | 让"包里有什么"在一张卡里闭合 |
-| 14 | **槽位扩展**：让 classic/mod 两个瓦片接纳 `story`/`pixel`（mod 视图的面板或标签页补一种角色；classic 的标签页目前只认 `editor`） | `shell/web/modview.mjs:26-29`、`shell/web/classic.mjs:23/69`、`shell/web/main.mjs:1985` | 自家两张主卡（`da90535` 故事卡、`2369075` 像素卡）在默认与可切换视图里凭空消失（G25/§13.2） |
+| 14 | **槽位扩展**：让 classic/mod 两个瓦片接纳 `story`/`pixel`（mod 视图的面板或标签页补一种角色；classic 的标签页目前只认 `editor`） | `shell/web/modview.mjs:26-29`、`shell/web/classic.mjs:23/69`、`shell/web/main.mjs:1985` | 自家两张主卡（`3906458` 故事卡、`dd5f1cd` 像素卡）在默认与可切换视图里凭空消失（G25/§13.2） |
 | 15 | PNG 保存保持源格式（或至少显式警告会被改写）；支持灰度/调色板 8-bit | `shell/web/pixelpng.mjs:280-286`、`:692-696` | 精灵素材进版本库会被整文件重写 |
 | 16 | **立绘接线体检**：`spineAssetPath` 存在性 + 画布/命名规范 + `#state:`/`CharacterState` 注册表核对；随后再做纯 PNG 的 Eyes×Mouth 预览（Spine 绑定不做；**出图见第 17 项**） | `shell/mods/validate.js`、`shell/mods/index.js`、新 card kind | 新角色 Mod 最重的一步今天全靠人眼对 wiki，且 `spineAssetPath` 写错是**静默**失效（G22） |
 | 17 | **出图卡**（引擎无关，三种路线共用一套动词与门禁）：**默认 R1 = 语料素材重组/程序化**（`art.parts`/`art.compose`，纯 JS、天然分层、不需模型）；可选后端 R2 = 直调推理（diffusers/sd.cpp，需权重+GPU，见 11.3）或 ComfyUI（§10.6 冻结图）；后处理 + 规格检查通过后才允许写入 Mod | 新 card kind `art`、`shell/art/*`、`shell/main.mjs` 的 `art.*`、`shell/mods` 的 fs 路径 | 用户决定不用 ComfyUI（11 节）；R1 零依赖、本机可完整验收，且直接绕开"整图 vs 分层"（10.4）；引擎只决定"像素怎么来"，下游复用 |
@@ -415,7 +415,7 @@ wiki 自身也有几处硬伤，顺手记下（都是抓取时验证过的）：
 - 本轮全程只读：没有修改任何代码文件；唯一写入是本文件 `docs/EDITOR_GAPS.md`。
 - 浏览器层的行号钉在 `shell/web/cards.mjs` 的 **5764 行**版本（SHA256 `96068F0049126ECC12F34F452CE9CD5C47E711C42A47585C6E20ED2F4E4BD798`）——审计过程中该文件在 19:40:32 被另一个写入者改动过，所以 `shell/web/*` 的任何行号都只在那一刻成立；`modview.mjs`、`main.mjs`、`pixelpng.mjs`、`storycsv.mjs` 的行号同理按当时快照理解。
 - 审计期间工作区**另有写入者活动**（同一时刻的 `git status`）：已改 `CHANGELOG.md`、`shell/web/board.mjs`、`cards.mjs`、`main.mjs`、`selftest.mjs`、`style.css`、`tools/input_smoke.py`；未跟踪 `shell/web/pixelpng.mjs`、`shell/web/pixelreview-zz.mjs`（194 536 B，19:40:44 出现，内容与 `cards.mjs` 同行号）。因此本文所有行号对应**该时刻的快照**；同时提醒一句：`pixelreview-zz.mjs` 是 `cards.mjs` 的一份 194 KB 副本，工作区里出现了同一份代码的两个拷贝，容易被后续编辑/审计误读（是否保留由该会话决定）。
-- **快照已推进（同日 21:06）**：那位写入者的 WIP 已经落地为两个提交——`2369075 A pixel card draws a sprite, and the file is the image`（其中含本文件的首版，所以 `docs/EDITOR_GAPS.md` 现在是被跟踪文件，工作区改动是它的后续修订）与 `0ff7da7 Read a file the kernel will not read whole`（上游 blob 层整套移植，见 §13.4）；`shell/web/pixelreview-zz.mjs` 已消失，`git status` 现在只剩本文件的修改。**§13 引用的行号（`views.mjs`/`classic.mjs`/`modview.mjs`/`main.mjs`）均已按 `0ff7da7` 之后的版本重核**；更早章节里对 `cards.mjs` 的行号仍按 19:40 的旧快照理解。
+- **快照已推进（同日 21:06）**：那位写入者的 WIP 已经落地为两个提交——`dd5f1cd A pixel card draws a sprite, and the file is the image`（其中含本文件的首版，所以 `docs/EDITOR_GAPS.md` 现在是被跟踪文件，工作区改动是它的后续修订）与 `5076afa Read a file the kernel will not read whole`（上游 blob 层整套移植，见 §13.4）；`shell/web/pixelreview-zz.mjs` 已消失，`git status` 现在只剩本文件的修改。**§13 引用的行号（`views.mjs`/`classic.mjs`/`modview.mjs`/`main.mjs`）均已按 `5076afa` 之后的版本重核**；更早章节里对 `cards.mjs` 的行号仍按 19:40 的旧快照理解。
 - 两个**删不掉的临时文件**：`docs/.tmp-b12.txt`（44 960 B）与 `docs/.tmp-b13.txt`（154 821 B）是 `decompress … toFile` 的产物。`Remove-Item`/`cmd del`/`[IO.File]::Delete`/`SetAttributes` 全部返回 NTFS"对路径的访问被拒绝"；`icacls` 显示它们只带沙箱 SID（`S-1-4-*`），而 `docs/` 带有继承的 `Everyone:(I)(CI)(DENY)(DC)`。按 DSH 沙箱的既定行为，这是**预期内的限制、不是 ACL 故障**，因此不做 ACL 修复，只在此披露（留给人工删除）。
 - 未验证项（明确标出，避免当成结论）：wiki 的 47 个 SO 详情页与 82 个命令详情页未逐页渲染；`docs/BUGS.md` 的探针、`node tools/e2e.py` 级别的测试未在本轮重跑；`M003`/`M004` 是否对应真实 `ModLoader` 字段未与游戏工程对照（G/第 7 节已标注为待确认）。
 - G21（音频）的来源与口径：基线计数（`AudioEvent` 117、`Song` 52、`VoiceOverDefinition` 4、`Attachment` 21）与 `#vo:` 16 次来自对 `ModsFull/Mods` 的只读扫描，并且**做过一次交叉复核**：`ModsFull/Mods/SODefines/Defines/Attachment/` 下确有 **21 个** json、其中 **21 个**都写了对象型 `audioEvent`（与本次一路取证的"1 个附件"说法不一致，本文采用可复现的 21）；`#vo:TestProgrammerVO` 在任何 `.yarn` 里出现 **0 次**（211 个文件全扫）；4 MiB 上限、base64 比值、`offset`/`limit` 被忽略这三个读数来自对 `build\infantgod.exe rpc` 的只读实测；`Mods/Audio` 是**游戏自带的演示包**（`mod.json` 自称 "Audio Programmer Sound Demo"），不代表社区 Mod 的平均形态——它的价值在于"唯一一个走外部音频文件的可运行范例"。其中"6 个 wav 全丢也是 `ok: true`"是**推论**：实测部分是该包确实报 `ok: true` 且无音频相关诊断，推论部分是字段分类（`referenceMap`/`schemaSummary`）显示没有任何代码路径检查这三个字段；本轮**没有**真的删除过任何文件。
@@ -423,7 +423,7 @@ wiki 自身也有几处硬伤，顺手记下（都是抓取时验证过的）：
 
 ---
 
-- 2026-10-17 16:57 复审（§15）：HEAD `c814260`；工作树只有 ` M docs/EDITOR_GAPS.md` 与两个删不掉的临时文件；§15 的每条结论由 Lead 本机重跑（当时 `list_agents` 只剩 lead）。**更正（21:2x / 21:3x）**：两名子代理的只读审计其实都交付了，只是都晚于 §15 —— 一份是 §16 的 F1–F20，一份是 §17 的逐条判定 + N1–N6。教训：子代理"没回传"要等到会话结束通知再判，不要中途断言丢失。
+- 2026-10-17 16:57 复审（§15）：HEAD `6673a89`；工作树只有 ` M docs/EDITOR_GAPS.md` 与两个删不掉的临时文件；§15 的每条结论由 Lead 本机重跑（当时 `list_agents` 只剩 lead）。**更正（21:2x / 21:3x）**：两名子代理的只读审计其实都交付了，只是都晚于 §15 —— 一份是 §16 的 F1–F20，一份是 §17 的逐条判定 + N1–N6。教训：子代理"没回传"要等到会话结束通知再判，不要中途断言丢失。
 
 ## 9. 提案评估：**自动立绘**该不该进 IDE（G22）
 
@@ -436,7 +436,7 @@ wiki 自身也有几处硬伤，顺手记下（都是抓取时验证过的）：
 | A3 内置推理运行时 | 把扩散模型跑进编辑器进程 | **不做** | 要 GPU + 数 GB 权重 + 运行时依赖；A1 已用本机 ComfyUI 覆盖同一件事，没必要重造 |
 | B 体检 | 立绘资产/规格/命名/引用是否正确 | **做**（最高性价比） | 和 G6/G9/G10 同一条线：今天 `spineAssetPath` 写错也报 `ok: true` |
 | C 接线 | 从美术资产生成 Character/CharacterState/调色板 | **半自动** | 能让 `添加一个新角色` 从"1 分钟的 SpinePro 链接 stub"变成可用模板；顺手修 `FALLBACK_CHARACTERS`（G8 的邻居） |
-| D 预览 | 在卡里拼 Eyes×Mouth 预览情绪 | **可选** | 像素卡已经能画图（`2369075`），但**前置是先修 G20**（格式被改写）；Spine 骨骼面做不了 |
+| D 预览 | 在卡里拼 Eyes×Mouth 预览情绪 | **可选** | 像素卡已经能画图（`dd5f1cd`），但**前置是先修 G20**（格式被改写）；Spine 骨骼面做不了 |
 
 **证据一：wiki 把"立绘"定义成一条必须机器可读的命名链，而这条链今天没人校验。**
 
@@ -674,7 +674,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ## 13. 卡片层正在退场：本文哪些结论绑在卡片上（G25）
 
-> **2026-10-17 状态更新（§15.1）**：画布已经删掉（`ce6b81d`）。这一节当时按 P1 处理，理由是"board 视图还能兜底"；现在没有兜底了 —— 6 种卡在两种视图里都不可见，已升级为 P0 的 G29。
+> **2026-10-17 状态更新（§15.1）**：画布已经删掉（`745cd83`）。这一节当时按 P1 处理，理由是"board 视图还能兜底"；现在没有兜底了 —— 6 种卡在两种视图里都不可见，已升级为 P0 的 G29。
 
 方向来自使用者本人：**"我们正在逐渐去掉卡片版本的 IDE"**（user said, m00701）。这不是本文档里的既有教条（`docs/` 里没有"卡片将被移除"的声明），但它**已经写在代码里**：三次提交、两个常量。所以本节先把"已经发生的"和"将要发生的"分开，再给出其余章节的落点重挂。
 
@@ -686,7 +686,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 | HUD 的视图开关**只有** classic / mod，board 被刻意排除 | `shell/web/views.mjs:46` `SWITCH_VIEWS = ["classic","mod"]`；理由在同一处注释："It is a *mode*, not a destination"、"the paradigm this product stopped asking anyone to learn" |
 | 视图是纯投影：只算矩形，不写文档，因此**可以整个删掉** | `shell/web/classic.mjs:1-20`（"keeping it a projection is why it can be deleted"）、`docs/VIEWS.md:106-113`（两个瓦片"create nothing, move nothing and save nothing"） |
 | 两个瓦片读的是同一份 card 文档（card 仍是渲染单元） | `shell/web/classic.mjs:55-89`、`shell/web/modview.mjs:63-100`；`docs/VIEWS.md:84-89` 的词汇表仍把 card 定义为"the shell's unit inside that board" |
-| 提交史：先是代码区/标签/侧栏，再是 classic 瓦片，再是 mod 瓦片 | `c1d38c7 The same board, drawn as a code area, tabs and a sidebar`、`76685c9 A window opens on the classic tile…`、`24aefbf The board drawn for mod work: mode mod` |
+| 提交史：先是代码区/标签/侧栏，再是 classic 瓦片，再是 mod 瓦片 | `e4b7b60 The same board, drawn as a code area, tabs and a sidebar`、`56febc2 A window opens on the classic tile…`、`7a990f6 The board drawn for mod work: mode mod` |
 
 `docs/VIEWS.md:117-122` 把当前状态写得最清楚：窗口默认开在 `classic`，HUD 只提供两个瓦片，board "is still a mode … and none of it was removed — but it is not a button"。
 
@@ -696,7 +696,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 - **mod** 只放 `mod`/`project`/`files`（侧栏，`modview.mjs:26`）、`editor`（标签/代码区，`modview.mjs:80`）与 `problems`（底部面板，`modview.mjs:29`）。
 - 其余 6 种 —— `note`、`runner`、`sheet`、`story`、`pixel`、`docs` —— **在两个可切换视图里都没有槽位**：`roles.hidden` 吞掉它们，只加一个 `is-hidden`（`shell/web/main.mjs:806-812`；DOM 不卸载，所以未保存的文本、滚动位置和监听器都不丢）。
 - **没有任何自动切视图**：只有 `mode` 命令与 HUD 按钮调用 `setView`（`main.mjs:1985`、`main.mjs:2090`）。而 `sheet`/`story`/`docs` 命令直接 `addCard(...)`（`main.mjs:1714`、`:1761`、`:1870`），`pixel` 命令走同一个 `addCard` 辅助函数（`main.mjs:1414`）——日志打印"card added"，屏幕上什么都没有。编辑器自己承认这条规则：`main.mjs:1662` "the ${viewMode} view does not drop notes — \`note <text>\`, or \`mode board\`"。
-- 所以**本文最近两轮讨论的主角正落在这 6 种里**：故事卡（`da90535`）、像素卡（`2369075`）、`docs` 卡，在默认视图与 mod 视图里都不可见；`problems` 卡只在 mod 视图有位置（这让 G16/G17 更急：那张卡你不一定看得见）。
+- 所以**本文最近两轮讨论的主角正落在这 6 种里**：故事卡（`3906458`）、像素卡（`dd5f1cd`）、`docs` 卡，在默认视图与 mod 视图里都不可见；`problems` 卡只在 mod 视图有位置（这让 G16/G17 更急：那张卡你不一定看得见）。
 
 这不是 bug（`main.mjs:806-810` 的注释把"隐藏而不移除"写成了设计），而是"卡片版在退场、槽位还没跟上"的直接后果。
 
@@ -719,7 +719,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ### 13.4 顺带更新：G1 已被并发提交修掉，G1b 的决策被执行
 
-- `0ff7da7 Read a file the kernel will not read whole`（21:06）把**上游的 blob 层整套移植**进来：`file.blobOpen` / `file.blobRead` / `file.blobAppend` / `file.blobCommit` / `file.blobAbort`（`core/src/rpc.c:1000-1004`），1 MiB/帧、八个会话、只读已解析路径、seek-and-read、`.tmp` 邻居原子替换、流式 FNV-1a 版本号、提交时发 `file.changed`。
+- `5076afa Read a file the kernel will not read whole`（21:06）把**上游的 blob 层整套移植**进来：`file.blobOpen` / `file.blobRead` / `file.blobAppend` / `file.blobCommit` / `file.blobAbort`（`core/src/rpc.c:1000-1004`），1 MiB/帧、八个会话、只读已解析路径、seek-and-read、`.tmp` 邻居原子替换、流式 FNV-1a 版本号、提交时发 `file.changed`。
 - 故事卡的翻译表随之改走会话分帧读取与写回（`shell/web/cards.mjs` 里 10 处引用；`shell/web/README.md` 已描述该路径），提交信息记录的真实浏览器验证是：**读完整 5 751 617 B 的 `NewProject_RU.csv`，逐行比对 18 609 行**，并用会话写回后与源文件 sha256 相同。
 - **"4 MiB 拒绝"原样保留**（`file.read`/`file.read_bytes` 的语义一个字没动）——这正是 G1b 建议的走法：**加法、不动既有动词、语义面跟上游**。因此：
   - G1 的标题（"编辑器全都打不开"）**已过期**，正文保留作为决策记录；
@@ -760,7 +760,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 **中间路线**（想保留"没装游戏也能开着用"的体验时）：只留事实的 KB——命令/函数名、参数名与类型、`required`/`enum`、类型名；去掉 `documentation`、`#region` 乱码、property description、53 个角色名与配色。它仍是派生数据，属于有意为之的决定。
 
-**仓库面（2026-10-22 已处理，历史面仍欠）**：`knowledge.json` 原先是被跟踪文件（`git log -- shell/mods/knowledge.json` 只有初始 fork 提交 `908018c`），没有被 `.gitignore` 忽略。现在 `git rm --cached shell/mods/knowledge.json` 并加进 `.gitignore`：开发树从本机游戏派生一份留在本地，tip 与后续提交、安装包都不再携带它；套件在缺这份文件时按组名 skip（`selftest/foundation.mjs` 的 `SHIPPED_KNOWLEDGE`、`selftest.mjs` 的组循环），干净 clone 上 `mods: ok`。**注意**：`908018c` 仍在历史里，公开仓库前仍要改写历史，或按用户决定处理远端；本轮只把“被跟踪”变成“不跟踪”。
+**仓库面与历史面（2026-10-22 处理完毕）**：`knowledge.json` 原先是被跟踪文件（`git log -- shell/mods/knowledge.json` 只有初始 fork 提交），没有被 `.gitignore` 忽略。现在 `git rm --cached shell/mods/knowledge.json` 并加进 `.gitignore`：开发树从本机游戏派生一份留在本地，tip 与后续提交、安装包都不再携带它；套件在缺这份文件时按组名 skip（`selftest/foundation.mjs` 的 `SHIPPED_KNOWLEDGE`、`selftest.mjs` 的组循环），干净 clone 上 `mods: ok`。用户当日回复“改写历史。”后，`git filter-branch --index-filter 'git rm --cached --ignore-unmatch shell/mods/knowledge.json' -- --branches --tags` 重写 145 个提交（旧→新映射留在 `build/_map.txt`，判据是作者/提交时间戳 + 标题）；改写后 tip 树与改写前逐字节相同，`git rev-list --objects --branches --tags` 不再含该文件，文档里的旧提交号已按映射重钉。强推后 `main` 与 8 个 tag 都不再可达旧对象；残留副本只在本地 bundle、改写前的 clone 与 GitHub 缓存里，彻底清除需要向 GitHub 支持申请。
 
 ### 14.2 G27 自带测试 Mod 案例（决定：要做）
 
@@ -789,7 +789,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ### 14.3 G28 名称与标识合规
 
-> **2026-10-17 状态更新（§15.4）**：已改名 OsanaKami IDE Studio（`c814260`）并落地免责声明（`README.md:597`）；剩余的是旧设置路径兼容与"问作者一次"。
+> **2026-10-17 状态更新（§15.4）**：已改名 OsanaKami IDE Studio（`6673a89`）并落地免责声明（`README.md:597`）；剩余的是旧设置路径兼容与"问作者一次"。
 
 风险从重到轻：**商标/混淆**（产品名 `InfantGod Studio` 含游戏名《幼神》）→ **代码签名主体**（`package.json:57` 的 `publisherName: "InfantGod Studio"`，签名是对外的身份声明）→ **暗示背书**（名字 + 图标 + 只发给该游戏的玩家）→ **标识占位**（将来要发布时名字已被占用）。
 
@@ -812,13 +812,13 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 - **`EULA.txt` 入库**（当前是未跟踪的 `?? EULA.txt`）；
 - **`LICENSE-DOCS` 范围表**补上漏列的 `docs/VIEWS.md`、`docs/EDITOR_GAPS.md`；
 
-## 15. 复审 2026-10-17（HEAD `c814260`）：画布退场之后，哪些结论坏了、哪些已经关掉
+## 15. 复审 2026-10-17（HEAD `6673a89`）：画布退场之后，哪些结论坏了、哪些已经关掉
 
-> 状态更新：本节写于 `c814260` 之后，替代第 9–14 节里"当前状态"的部分判断；判断过程保留在原节，不重写。
+> 状态更新：本节写于 `6673a89` 之后，替代第 9–14 节里"当前状态"的部分判断；判断过程保留在原节，不重写。
 
 ### 15.0 快照与方法
 
-- HEAD `c814260 Rename the product to OsanaKami IDE Studio`；其上 `787d2f6`（新建模组 + 安装器 + 示例包）、`ce6b81d`（删画布）。
+- HEAD `6673a89 Rename the product to OsanaKami IDE Studio`；其上 `8388a85`（新建模组 + 安装器 + 示例包）、`745cd83`（删画布）。
 - 工作树：只有 ` M docs/EDITOR_GAPS.md`（本文件）与两个删不掉的临时文件 `docs/.tmp-b12.txt`、`docs/.tmp-b13.txt`。
 - 本轮只用只读手段（读代码 + `git grep`）。§15 的每条结论由我自己重跑；两名子代理的独立审计都延迟到达：F1–F20 收进 §16，逐条判定 + N1–N6 收进 §17（Lead 对两份都抽查了关键行号）。教训见 §8。
 
@@ -862,7 +862,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ### 15.4 G32（P1）改名只动了标识层：§14.3 的执行进度
 
-- 已做：`c814260` 改 `package.json` 的 name/productName/author/publisherName、appId `com.osanakami.idestudio`、卸载键、窗口标题、关于框、HUD 品牌、`.lang` 头、新建 Mod 的 README 生成行、首启工作区 `Documents/OsanaKamiIDEStudio`、安装器产品名与输出文件名、EULA/README/LICENSE/docs、签名主体 `CN=OsanaKami IDE Studio`（`CHANGELOG.md:29-34`）。
+- 已做：`6673a89` 改 `package.json` 的 name/productName/author/publisherName、appId `com.osanakami.idestudio`、卸载键、窗口标题、关于框、HUD 品牌、`.lang` 头、新建 Mod 的 README 生成行、首启工作区 `Documents/OsanaKamiIDEStudio`、安装器产品名与输出文件名、EULA/README/LICENSE/docs、签名主体 `CN=OsanaKami IDE Studio`（`CHANGELOG.md:29-34`）。
 - 免责声明已存在：`README.md:597` "OsanaKami IDE Studio is not affiliated with, endorsed ..."；`CHANGELOG.md:40-41` "The game's own names are still used only descriptively"。
 - 也就是说 §14.3 的第 1 档（描述性使用 + 免责声明）已落地，第 2 档（产品名去游戏名）做了一半。
 - 仍未解：OsanaKami 是《幼神》的日文读音，混淆没有真正消除（改名日志自己把它列为未决）；`appId` 已变 → 旧安装与旧 `%APPDATA%\InfantGod Studio\settings.json` 需要一次兼容读取，否则升级 = "新程序 + 丢设置"；`infantgod.exe`/`.infantgod/`/协议名 `infantgod/2` 保持不变（作者说明是内部标识、且无 C 工具链不能重编内核，判断合理）。
@@ -909,7 +909,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ## 16. 复审补充：一轮独立只读审计的 20 项（F1–F20）
 
-> 来源：2026-10-17 21:2x 另一名子代理的独立只读审计（HEAD `c814260`，与 §15 同一棵树），报告到达晚于 §15。Lead 抽查了 F1/F2/F3/F6/F7/F8/F9/F10/F13/F19/F20 的关键行号，全部对上；其余按报告记录，未复跑 `npm run dist`（按设计会 exit 1）。它与 §15 不重叠的领域是：Electron 新建模组交互、NSIS 安装器、KB 生成器、headless CLI、示例包 CSV。
+> 来源：2026-10-17 21:2x 另一名子代理的独立只读审计（HEAD `6673a89`，与 §15 同一棵树），报告到达晚于 §15。Lead 抽查了 F1/F2/F3/F6/F7/F8/F9/F10/F13/F19/F20 的关键行号，全部对上；其余按报告记录，未复跑 `npm run dist`（按设计会 exit 1）。它与 §15 不重叠的领域是：Electron 新建模组交互、NSIS 安装器、KB 生成器、headless CLI、示例包 CSV。
 
 ### 16.1 新建模组（F1–F6）
 
@@ -974,7 +974,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ## 17. 复审补充（二）：逐条判定 G1–G25 + 六个新洞（N1–N6）
 
-> 来源：第二名子代理的独立只读复审（HEAD `c814260`，只读、未写任何文件；它把本文件当成"另一会话正在改"的证据而排除）。与 §15/§16 的差别是它**逐条判定**（FIXED / PARTIAL / STILL TRUE）并给出复测行号；Lead 抽查了 N1–N6 与 G17 的关键行号，全部对上。
+> 来源：第二名子代理的独立只读复审（HEAD `6673a89`，只读、未写任何文件；它把本文件当成"另一会话正在改"的证据而排除）。与 §15/§16 的差别是它**逐条判定**（FIXED / PARTIAL / STILL TRUE）并给出复测行号；Lead 抽查了 N1–N6 与 G17 的关键行号，全部对上。
 
 ### 17.1 逐条判定（G1–G25）
 
@@ -1025,10 +1025,10 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 | --- | --- | --- | --- | --- |
 | `mod.json`、`Defines/**.json` | UTF-8；`validate.js:462/809/930/1087` 解析前剥 BOM 兜底；`scaffold.js:1345` 只在新建时统一成无 BOM + `\n` | 当文本编辑，JSON 解析/校验 | 保真 | 兼容 |
 | `*.yarn` | 无 BOM、LF（`MyMod/Yarn/Logic/0.Initial.yarn`，1 544 B，CRLF 对 = 0） | 故事卡保留 BOM 与行尾：`story.mjs:592` 先探 `\r\n`、`:835` 报告行尾、`selftest.mjs:3058` "a BOM is kept" | 保真 | 兼容（全仓样板） |
-| `NewProject*.csv` | **UTF-8 带 BOM**（`ef bb bf` 后紧接表头；`NewProject_EN.csv` 4 677 787 B） | 表卡流式 `TextDecoder`（`cards.mjs:1492`）**已改为** `{ stream: true, ignoreBOM: true, fatal: true }`（`cef2056`）：BOM 留在正文里 → `storycsv.mjs:161` 读到 `bom:true` → `:183` 原样写回；非 UTF-8 字节直接拒绝 | 保真 | ✅ 已修 = G42 |
+| `NewProject*.csv` | **UTF-8 带 BOM**（`ef bb bf` 后紧接表头；`NewProject_EN.csv` 4 677 787 B） | 表卡流式 `TextDecoder`（`cards.mjs:1492`）**已改为** `{ stream: true, ignoreBOM: true, fatal: true }`（`ff4693a`）：BOM 留在正文里 → `storycsv.mjs:161` 读到 `bom:true` → `:183` 原样写回；非 UTF-8 字节直接拒绝 | 保真 | ✅ 已修 = G42 |
 | `*.png` | 374 张：365 RGBA / 9 RGB | `pixelpng.mjs` 只吃 8-bit RGB/RGBA 非隔行；保存固定写 RGBA（`:651-655`） | RGB → RGBA | 兼容但非保真 = G20 残余 |
 | `*.wav` | 6 个：`Tech_Monologue.wav` 5.31 MB 立体声 31.6 s；`test_vo_1..5` 各 265 KB 单声道 3 s；PCM 44.1 kHz | 只按文件名识别；不能打开、不能试听、不校验头 | 不可检 | 不校验 = G2 |
-| Spine 三件套 `<Name>.skel.bytes` + `<Name>.atlas.txt` + `<Name>.png` | 40+ 组；`.atlas.txt` 是既有命名；`.spine` 工程文件实测首字节 `ec 7d 07 58 …`（32 627 B），不是 JSON 文本 | **spine 卡已落地**（`cards.mjs:6065` `renderSpine`，加 `spine.mjs` 字节→模型、`spinepose.mjs` 模型→姿态、`spineframe.mjs` 姿态→绘制矩形，`18b87d9`）：能读 `.skel.bytes` 与 `.atlas.txt`；但"三件套齐不齐、命名、4.2.43 版本"仍不校验 | 可看不可校 | 部分支持；校验仍缺 = G46 |
+| Spine 三件套 `<Name>.skel.bytes` + `<Name>.atlas.txt` + `<Name>.png` | 40+ 组；`.atlas.txt` 是既有命名；`.spine` 工程文件实测首字节 `ec 7d 07 58 …`（32 627 B），不是 JSON 文本 | **spine 卡已落地**（`cards.mjs:6065` `renderSpine`，加 `spine.mjs` 字节→模型、`spinepose.mjs` 模型→姿态、`spineframe.mjs` 姿态→绘制矩形，`7e4e3d2`）：能读 `.skel.bytes` 与 `.atlas.txt`；但"三件套齐不齐、命名、4.2.43 版本"仍不校验 | 可看不可校 | 部分支持；校验仍缺 = G46 |
 | `*.psd` / `*.aseprite` | 36 / 38 个 | 不读 | — | 作者源资产，不是运行格式 |
 
 ### 18.2 一条该写进架构的原则
@@ -1074,13 +1074,13 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 - G20 的剩余部分（PNG 色型）降为"保存时提示即可"；
 - G45（导出 zip）、G46（格式体检）按 P2 排在 §6 的第 38–39 项。
 
-### 18.6 状态更新（2026-10-17 晚，HEAD 已到 `18b87d9`）
+### 18.6 状态更新（2026-10-17 晚，HEAD 已到 `7e4e3d2`）
 
 §18 写完的几小时内，工作树正好修掉了本文主张的三件事，逐条记在这里，免得 §18 的旧描述被当成现状：
 
-- `cef2056`「A translation table comes back byte for byte, and bytes that are not text are refused」→ **G42 已修**：`cards.mjs:1492` 的 `TextDecoder` 改成 `ignoreBOM: true, fatal: true`，BOM 留在正文里，写回时原样带上；非 UTF-8 字节不再变 U+FFFD。
-- `d282c7f`「The build ships no game data, and finds the game to rebuild what it needs」→ **G30/G31 方向已修**：构建不再把游戏数据打进安装包，并会去找游戏目录以重建 KB。§18.4 里 zip 的前提（包里不带游戏数据）因此在安装器侧成立。
-- `18b87d9`「Spine's transforms are arithmetic before they are a card」→ 立绘/动画这条线开始按"数据 → 算术 → 布局 → 卡"分层：`spine.mjs` / `spinepose.mjs` / `spineframe.mjs` 三层纯模块，`cards.mjs` 只留 `spine` 卡。这正是 §19 要推广到其余大文件上的范式。
+- `ff4693a`「A translation table comes back byte for byte, and bytes that are not text are refused」→ **G42 已修**：`cards.mjs:1492` 的 `TextDecoder` 改成 `ignoreBOM: true, fatal: true`，BOM 留在正文里，写回时原样带上；非 UTF-8 字节不再变 U+FFFD。
+- `6cf9522`「The build ships no game data, and finds the game to rebuild what it needs」→ **G30/G31 方向已修**：构建不再把游戏数据打进安装包，并会去找游戏目录以重建 KB。§18.4 里 zip 的前提（包里不带游戏数据）因此在安装器侧成立。
+- `7e4e3d2`「Spine's transforms are arithmetic before they are a card」→ 立绘/动画这条线开始按"数据 → 算术 → 布局 → 卡"分层：`spine.mjs` / `spinepose.mjs` / `spineframe.mjs` 三层纯模块，`cards.mjs` 只留 `spine` 卡。这正是 §19 要推广到其余大文件上的范式。
 - 仍未解决：G46（Spine 三件套/版本、WAV 头、PNG 色型、CSV 列的校验）、G45（zip）、G39/G40/G41，以及 P0 的可达性。
 
 ## 19. 文件体积与拆分预案（2026-10-17 实测，工作树状态）
@@ -1108,7 +1108,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 | `core/tests/test_blob.c` | 1 318 | 46 459 B | C89 测试 | 暂不拆（改 Makefile 目标） |
 | `docs/EDITOR_GAPS.md` | 1 071 | 163 825 B | 本文 | 可选分卷（锚点会失效） |
 
-### 19.2 拆分范式（把 `18b87d9` 的做法推广）
+### 19.2 拆分范式（把 `7e4e3d2` 的做法推广）
 
 1. **按"数据 → 算术 → 布局 → 卡"分层**：字节/文件格式解析一层（纯、可在 Node 跑）；几何/变换一层（纯）；像素/矩形计算一层（纯）；卡只做 DOM/画布绑定。纯层是 `selftest.mjs` 真正能测的东西，卡层只测绑定。
 2. **入口文件保留为桶（barrel）**：`shell/web/cards.mjs` 继续 `export` 全部 84 个公开名，并**按原顺序**调用 12 次 `registerCardKind(...)`。这样 237 个测试、`shell/web/README.md`、`AGENTS.md` 的"加一种卡"配方、`Makefile` 的 `node shell/web/selftest.mjs` 全都不用动。
@@ -1186,7 +1186,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 ### 20.1 问题
 
-新落地的骨架卡片（§18.6、`18b87d9`/`d4c1cda`）把用户可见的卡片 kind、命令与文档概念名都定成了 `spine`。两个理由说明这个名字应该在发布前重新考虑：
+新落地的骨架卡片（§18.6、`7e4e3d2`/`ce93e0b`）把用户可见的卡片 kind、命令与文档概念名都定成了 `spine`。两个理由说明这个名字应该在发布前重新考虑：
 
 1. **商标与许可**。Spine 是 Esoteric Software 的注册商标。这个仓库对第三方名称一向谨慎：README 专门声明对游戏名不主张商标、不暗示官方关系，G28/G32 两轮改名就是为了把游戏名从产品标识里拿掉。而 `spine.mjs` 的文件头明确写着布局参考 `SkeletonBinary.java`（Spine Runtimes License，见 CHANGELOG Unreleased 段）——解析器是独立重写、没有 vendored 代码，合法上是干净的；但把功能**命名**为别人的商标，是在品牌层面替这个格式背书，与仓库自己的谨慎不一致。
 2. **语义过度承诺**。这张卡片不是通用 Spine 编辑器：只读 4.2 二进制的一个子集（`spine.mjs` 头注），不认识的 timeline 类型是故意忽略的（`spinepose.mjs`），正在做的 `spineedit.mjs` 编辑的是游戏的 rig 文件而不是 Spine 工程。叫 `spine`，作者会期待"一个 Spine"。对照组是同仓库的 `pixel` 卡——README 明说 "Not a paint program"，按名字拒绝其它 PNG 形状；`spine` 这个名字恰恰在相反方向暗示。

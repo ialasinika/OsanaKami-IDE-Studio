@@ -31,9 +31,11 @@ installed -- `node tools/gen_knowledge.mjs --game-dir <Mods> --out
 shell/mods/knowledge.json` writes the facts-only base, and the richer file the
 docs count (documentation prose, command signatures, 53 characters) came from an
 earlier extractor and stays local the same way. The repository carries neither,
-and the tip of the branch never will again; the commits before this one still
-contain the file, so a public history needs the rewrite `docs/EDITOR_GAPS.md`
-already lists as the alternative to keeping the repository private.
+now or in its history: the history was rewritten on 2026-10-22, so no commit
+reachable from `main` or from any tag contains the file any more, and the commit
+ids quoted in these docs name the rewritten commits. A rewrite cannot recall a
+copy already taken -- old objects survive in local bundles, in pre-rewrite
+clones, and in GitHub's own caches until those are purged.
 
 A clean clone therefore has no knowledge base, which used to be a crash: the
 suite's foundation read the file directly and every group after it assumed the
