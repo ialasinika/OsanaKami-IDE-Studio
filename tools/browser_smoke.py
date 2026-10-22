@@ -270,7 +270,7 @@ def terminate(proc, grace: float = 5.0) -> bool:
 class Host:
     """The ``node shell/main.mjs serve`` child, started and killed by pid."""
 
-    def __init__(self, port: int, argv=None):
+    def __init__(self, port: int, argv=None, env=None):
         self.port = int(port)
         self.argv = list(argv) if argv is not None else [
             "node",
@@ -282,6 +282,8 @@ class Host:
             str(self.port),
             "--no-open",
         ]
+        # Environment for this host only; None means "inherit the driver's".
+        self.env = None if env is None else {str(k): str(v) for k, v in env.items()}
         self.proc = None
         self.url = f"http://127.0.0.1:{self.port}/"
         self._lines = []
@@ -291,6 +293,11 @@ class Host:
     def start(self) -> "Host":
         """Spawn the host and begin draining its output."""
         try:
+            # A host with an ``env`` of its own gets this process's environment
+            # plus those names; without one it inherits the environment whole.
+            env = None
+            if self.env is not None:
+                env = {**os.environ, **self.env}
             self.proc = subprocess.Popen(
                 self.argv,
                 cwd=str(REPO_ROOT),
@@ -298,6 +305,7 @@ class Host:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 close_fds=_close_fds(),
+                env=env,
             )
         except OSError as exc:
             raise DriverError(f"cannot start {self.argv[0]!r}: {exc}") from exc
@@ -1108,6 +1116,37 @@ def _sandbox_workspace(sandbox: Path) -> None:
     target.write_text(json.dumps(board, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _sandbox_game(root: Path) -> Path:
+    """Write a one-schema game tree the mod layer can derive a knowledge base from.
+
+    A development tree keeps a rich ``shell/mods/knowledge.json`` (derived from
+    the player's own game, never tracked); a clean clone has none, so ``mod.types``
+    would answer nothing and the mod card's new-file picker would not offer
+    ``Goods``.  The round trip therefore hands its host a game of its own: one
+    schema whose only required key is ``techName`` is enough to keep the picker
+    and the new-file row knowledge-driven without touching the game's data.
+    """
+    game = root / "game"
+    schema_dir = game / "SODefines" / "Schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+    (schema_dir / "Goods.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "required": ["techName"],
+                "properties": {
+                    "techName": {"type": "string"},
+                    "price": {"type": "number"},
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return game
+
+
 def _drive_wrapper(edge, args, profile: Path, url: str, label: str) -> dict:
     """Dump one wrapper page and return the facts it reported."""
     flags = tuple(item for item in EDGE_FLAGS if not item.startswith("--virtual-time-budget")) + (
@@ -1145,10 +1184,16 @@ def newmod_round_trip(edge, args) -> dict:
     """
     sandbox = Path(tempfile.mkdtemp(prefix="infantgod-smoke-modws-"))
     profile = Path(tempfile.mkdtemp(prefix="infantgod-smoke-e2e-"))
+    # The mod layer's knowledge comes from the game the player has installed, or
+    # from a development tree's derived file; a clean clone has neither, and the
+    # mod card's picker below needs the game's types.  Give this host a game of
+    # our own making, outside the mods root so it is never read as a package.
+    fixture = Path(tempfile.mkdtemp(prefix="infantgod-smoke-game-"))
     host = None
     written = False
     try:
         _sandbox_workspace(sandbox)
+        game = _sandbox_game(fixture)
         MOD_WRAPPER.write_text(MOD_PAGE, encoding="utf-8")
         written = True
         port = free_port()
@@ -1167,6 +1212,9 @@ def newmod_round_trip(edge, args) -> dict:
                 "--port", str(port),
                 "--no-open",
             ],
+            # The fixture game is this host's only knowledge source on a clean
+            # clone; a development tree's derived file still wins over it.
+            env={"INFANTGOD_MODS_DIR": str(game)},
         )
         host.start()
         show("e2e host", f"{host.url} (workspace {sandbox})")
@@ -1207,6 +1255,7 @@ def newmod_round_trip(edge, args) -> dict:
             MOD_WRAPPER.unlink(missing_ok=True)
         shutil.rmtree(profile, ignore_errors=True)
         shutil.rmtree(sandbox, ignore_errors=True)
+        shutil.rmtree(fixture, ignore_errors=True)
 
 
 def define_newmod_checks(facts: dict) -> list:

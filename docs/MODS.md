@@ -24,10 +24,12 @@ The kernel knows nothing about 幼神, and that is the point: it is a
 language-agnostic, game-agnostic file/board/exec server. The game's 136
 commands, 51 definition schemas and 1305 baseline defines are *data*, they
 change when the game updates, and they must be editable without recompiling C.
-So they sit in `shell/mods/knowledge.json` (296 KB) behind a small facade. The
-file is not required at runtime: on a machine that has the game but not the file,
-the mod layer derives an equivalent, facts-only base and writes it to the user's
-own directory (see "Where the knowledge base comes from").
+So they sit in a `shell/mods/knowledge.json` (296 KB) behind a small facade --
+derived from the player's own game, kept by a development tree on that machine,
+and gitignored: the repository does not carry it. The file is not required at
+runtime either: on a machine that has the game but not the file, the mod layer
+derives an equivalent, facts-only base and writes it to the user's own directory
+(see "Where the knowledge base comes from").
 
 The same reasoning applies to `langs/`: `.yarn` highlighting is a descriptor
 file, not a keyword list compiled into the binary.
@@ -202,8 +204,8 @@ command line is `new <type> <dir> <name>`, and it opens what it wrote.
 
 The knowledge base is the baseline the checker compares against (type names, the
 game's commands and functions, its character states). It is optional: the mod layer
-finds one from the shipped `shell/mods/knowledge.json` or from a game installation,
-and it says which it got.
+finds one beside the mod layer (a development tree derives one there) or from a
+game installation, and it says which it got.
 
 - Discovery order: an explicit `--mods-root`/setting, then `INFANTGOD_MODS_DIR` or
   `INFANTGOD_GAME_DIR`, then relative guesses (the checkout's parent,
@@ -219,14 +221,15 @@ and it says which it got.
 - `mod.suggest`'s tag suggestions say where they came from: `knowledge-base` when
   the baseline answered, `neutral` (a short generic list) when it did not. Which
   source answered is part of the reply.
-- The shipped knowledge base is the richer copy, deliberately: it knows 136 commands,
-  63 functions and 678 variables where `tools/gen_knowledge.mjs` can regenerate 87,
-  38 and 810. Regenerating it is a checkable operation rather than a silent one —
-  `node tools/gen_knowledge.mjs --check shell/mods/knowledge.json` exits 1 and
-  `--diff` lists, per section, the names only one side knows. A release therefore
-  does not need to carry the file: with no knowledge file at all, the first launch
-  derives one from the discovered game install (see "Where the knowledge base comes
-  from" below), which is the G26 payload plan.
+- A development tree's knowledge base is the richer copy, deliberately: it knows
+  136 commands, 63 functions and 678 variables where `tools/gen_knowledge.mjs` can
+  regenerate 87, 38 and 810. Regenerating it is a checkable operation rather than a
+  silent one — `node tools/gen_knowledge.mjs --check shell/mods/knowledge.json`
+  exits 1 and `--diff` lists, per section, the names only one side knows. A release
+  therefore does not need to carry the file, and the repository does not either
+  (`.gitignore`; `docs/EDITOR_GAPS.md` §14.1 G26): with no knowledge file at all,
+  the first launch derives one from the discovered game install (see "Where the
+  knowledge base comes from" below), which is the G26 payload plan.
 - A regenerated knowledge base keeps the two facts the game's schema *text* carries.
   A schema marks a TechName reference with the sentence `TechName reference to
   XDefinition` and a sprite path with `Relative path to sprite image file`; the
@@ -274,7 +277,9 @@ The base is optional, and the layer now procures it in a fixed order:
 1. an explicit path — `--knowledge`/`options.knowledgePath` (authoritative: a path
    the caller named is never silently replaced by a different file);
 2. `INFANTGOD_KNOWLEDGE`;
-3. the shipped `shell/mods/knowledge.json` next to the mod layer;
+3. a `shell/mods/knowledge.json` next to the mod layer (a development tree derives
+   one there; it is gitignored, so a checkout has it only where the developer built
+   it);
 4. `<user dir>/knowledge.json`, where the user dir is `--user-dir`, else
    `INFANTGOD_USER_DIR`, else the platform default — `%APPDATA%\OsanaKami IDE
    Studio` on Windows, `~/Library/Application Support/OsanaKami IDE Studio` on
@@ -284,14 +289,15 @@ The base is optional, and the layer now procures it in a fixed order:
    same `buildKnowledge` code `tools/gen_knowledge.mjs` uses, write it atomically
    into the user dir and report it as `source: "derived"`.
 
-The shipped base's `documentation` strings are the wiki's prose quoted as-is, with
-the URL they came from beside them; they are what the docs card shows for a field,
-so a wrong one is worse than a missing one. The wiki keeps its own editing markers
-in the text, and a decode that treated them as Chinese left 21 strings starting
-with `闊抽`-style fragments — those are gone from the shipped file. A check in
-`shell/mods/selftest.mjs` reads the shipped `knowledge.json` on every run and fails
-if a region marker or a private-use character appears in a `documentation` string,
-so regenerating the base cannot quietly bring one back.
+A development tree's base carries `documentation` strings that are the wiki's prose
+quoted as-is, with the URL they came from beside them; they are what the docs card
+shows for a field, so a wrong one is worse than a missing one. The wiki keeps its
+own editing markers in the text, and a decode that treated them as Chinese left 21
+strings starting with `闊抽`-style fragments — those are gone from the file. A check
+in `shell/mods/selftest/foundation.mjs` reads that `knowledge.json` when the
+checkout has one and fails if a region marker or a private-use character appears
+in a `documentation` string; a clean clone has no file and skips the group by
+name, so regenerating the base cannot quietly bring one back.
 
 Why this order: while the repository *is* the installed shell the module directory
 wins, so tests never write the user's profile; while a release can ship without the
@@ -302,12 +308,13 @@ knowledge-build.js` holds the derivation; the CLI is a thin wrapper over it, and
 `deriveError`, and the layer falls back to the missing-knowledge state (one `E000`,
 `ok: false`). `knowledgeState()` answers `{state, path, source, userDir, schemas,
 loadError, deriveError}`, and `serve`/`rpc` log `mod layer: knowledge base found
-<path> (<source>)` once, so an operator can tell shipped from derived.
+<path> (<source>)` once, so an operator can tell `bundled` from `user` from
+`derived` -- and a checkout that has no derived file, from one that has.
 
 Two smaller decisions: freshness is judged by mtime and size, not by the base's own
 `generatedAt` (a copied file must be noticed), and derivation is bounded to facts —
 it never invents descriptions, which is why the derived base is smaller than the
-shipped one and why the two `x-` keys exist at all.
+development tree's one and why the two `x-` keys exist at all.
 
 ## Containment
 
@@ -1003,12 +1010,21 @@ python tools/input_smoke.py                  # a real browser, against examples/
 make test                                    # the whole project
 ```
 
+The 729 is a development tree's count: it includes the knowledge-base groups, which
+read the `shell/mods/knowledge.json` that tree derived from its own game
+(`.gitignore`; `docs/EDITOR_GAPS.md` §14.1 G26). A clean clone has no such file, so
+those groups are skipped by name and the run is green with a lower count — the file
+was never meant to travel with the project.
+
 The entry point is `shell/mods/selftest.mjs`; the checks live one group of
 sections per module under `shell/mods/selftest/`, which the entry awaits in
 order — the groups share one `mods` facade and one of them spawns a real
-`serve`, so load order is the order the checks were written in.
+`serve`, so load order is the order the checks were written in. On a checkout
+with no derived knowledge base the entry skips every group after the foundation,
+one named skip each.
 
-The suite covers the knowledge-base counts, the game's own `MyMod` and
+On a checkout that has the derived `shell/mods/knowledge.json`, the suite covers
+the knowledge-base counts, the game's own `MyMod` and
 `SODefines` packages, a freshly scaffolded mod validating clean, the locale
 mapping, the protocol seam with a kernel that throws if it is ever consulted,
 and the containment refusal. The validation group also drives the codes that

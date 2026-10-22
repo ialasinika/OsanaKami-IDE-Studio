@@ -31,8 +31,9 @@ Three card kinds and one knowledge layer, none of which touches the kernel:
 - **`docs`** — the game's own knowledge base: 136 commands, 63 functions, 678
   variables, 1221 nodes, 51 definition schemas, 1305 baseline defines. A fresh
   install derives a smaller, facts-only base from the installed game on first run
-  (see `docs/MODS.md`); this repository's `shell/mods/knowledge.json` is the rich
-  baseline a development tree keeps.
+  (see `docs/MODS.md`); a development tree keeps the rich baseline in a
+  `shell/mods/knowledge.json` derived on that machine and gitignored -- the
+  repository does not carry it.
 - **`.yarn` colouring** — a language descriptor in `langs/`, alongside JSON.
 - **`shell/mods/`** — the game intelligence: schema validation, Yarn diagnosis,
   package scaffolding, creating one file from a schema (`mod.newFile`), importing
@@ -302,12 +303,16 @@ python tools/demo.py                                 # install the starter board
 build/obj/test_json.exe                        # the C JSON codec: "all good"
 node langs/selftest.mjs                        # 91/91 checks passed
 node shell/web/selftest.mjs                    # ok 329/329 (pure JS: no DOM)
-node shell/mods/selftest.mjs                   # 729/729 checks passed
+node shell/mods/selftest.mjs                   # 729/729 checks passed (needs the derived knowledge base; a clean clone skips 18)
 ```
 
 The mod suite reads the game's extracted `Mods` folder for its corpus checks and
-skips them (rather than failing) when it is not there; point it at your own copy
-with `node shell/mods/selftest.mjs --mods <dir>`.
+`shell/mods/knowledge.json` for the groups that describe the rich knowledge base;
+both are derived from the player's own game and neither is tracked, so a clean
+clone skips those groups (18 checks) rather than failing. Point the corpus at
+your own copy with `node shell/mods/selftest.mjs --mods <dir>`, and write the
+knowledge base with `node tools/gen_knowledge.mjs --game-dir <Mods>`; the count
+above is a development tree's, with the derived file in place.
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
 `version-check`, then `installer-check`, then `sign-check`, then the JSON test and
@@ -502,17 +507,20 @@ shell/                  the front end and the endpoints
                         scaffold, search, docFor, suggest, localization,
                         installGame, gameLog, followGameLog
     gamepath.js         where the game is: the Mods folder and Player.log
-    knowledge.json      the development tree's rich baseline: 136 commands,
-                        63 functions, 678 variables, 1221 nodes, 51 schemas,
-                        1305 baseline defines, 11 locales.  Not shipped: an
-                        install derives its own facts-only base
+    knowledge.json      a development tree's rich baseline, derived from the
+                        player's own game and gitignored (not in the
+                        repository): 136 commands, 63 functions, 678 variables,
+                        1221 nodes, 51 schemas, 1305 baseline defines, 11
+                        locales.  Not shipped: an install derives its own
+                        facts-only base; a clean clone starts without one
     knowledge-build.js  that derivation, as a pure function: buildKnowledge(
                         gameModsDir); tools/gen_knowledge.mjs is its CLI
     yarn.js             Yarn lexing, tag extraction, arity and jump checks
     validate.js         JSON-Schema + baseline validation of a mod package
     scaffold.js         template-driven package generation (writes real PNGs)
     search.js           the index behind search/docFor/suggest (no `require`)
-    selftest.mjs        node shell/mods/selftest.mjs -- 729 checks, no kernel
+    selftest.mjs        node shell/mods/selftest.mjs -- 729 checks, no kernel;
+                        a clean clone skips the knowledge groups by name
     selftest/           one module per group of sections (knowledge, corpus,
                         validation, dispatch, language, files, demos, game)
   web/                  the front end: index.html, style.css, board.mjs, cards.mjs
@@ -702,8 +710,11 @@ the packed files before compiling — it fails on the game's names, its cast, or
 developer's absolute path, and it fails while the audit's allow-list is non-empty.
 `node tools/make-installer.mjs --audit-only` runs just that check;
 `build/make-installer.json` records whether the build that ran was a `--dev` build
-and whether it was `releaseReady`. The knowledge baseline is not shipped because
-the app derives it from the player's own game; `docs/MODS.md` says how.
+and whether it was `releaseReady`. The knowledge baseline is neither tracked nor
+shipped -- `shell/mods/knowledge.json` is derived from the player's own game on
+the machine that keeps it (`.gitignore`; `docs/EDITOR_GAPS.md` §14.1 G26), the
+installer's payload filter drops it, and a clean clone runs the mod suite with
+the knowledge groups skipped by name. `docs/MODS.md` says how it is derived.
 
 The installer knows what it laid down: `tools/make-installer.mjs` walks the
 payload once and compiles both an `install-manifest.txt` (written beside the app)

@@ -27,6 +27,24 @@ history/
 .infantgod/
 
 # ---------------------------------------------------------------------------
+# the game's knowledge base (docs/EDITOR_GAPS.md §14.1 G26)
+#
+# knowledge.json is derived from the player's own game installation: the
+# schemas, the baseline define names, the Yarn nodes, the localisation table.
+# A development tree keeps one beside the mod layer so the facade can serve it,
+# but the file is derived data, not project source, and it is not distributed:
+# the installer's `extraResources` filter excludes it as well
+# (`package.json`, `tools/make-installer.mjs` payload audit).
+#
+# Ignored rather than deleted on purpose: `node tools/gen_knowledge.mjs` keeps
+# refreshing the local copy in place, while a clean clone has none and the mod
+# suite skips the checks that describe the rich copy instead of failing them
+# (`shell/mods/selftest.mjs`).  A clone that wants the rich checks derives the
+# file from its own game.
+# ---------------------------------------------------------------------------
+shell/mods/knowledge.json
+
+# ---------------------------------------------------------------------------
 # C objects and binaries
 # ---------------------------------------------------------------------------
 *.o

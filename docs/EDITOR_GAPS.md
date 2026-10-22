@@ -760,7 +760,7 @@ Eyes/Mouth/Body 是 Spine 的独立槽位/skin，情绪靠开关图层组实现�
 
 **中间路线**（想保留"没装游戏也能开着用"的体验时）：只留事实的 KB——命令/函数名、参数名与类型、`required`/`enum`、类型名；去掉 `documentation`、`#region` 乱码、property description、53 个角色名与配色。它仍是派生数据，属于有意为之的决定。
 
-**仓库面**：`knowledge.json` 是**被跟踪文件**（`git log -- shell/mods/knowledge.json` 只有初始 fork 提交 `908018c`），且没有被 `.gitignore` 忽略。保持仓库私有（`package.json` 已是 `"private": true`、无 remote）或公开前改写历史，二选一。
+**仓库面（2026-10-22 已处理，历史面仍欠）**：`knowledge.json` 原先是被跟踪文件（`git log -- shell/mods/knowledge.json` 只有初始 fork 提交 `908018c`），没有被 `.gitignore` 忽略。现在 `git rm --cached shell/mods/knowledge.json` 并加进 `.gitignore`：开发树从本机游戏派生一份留在本地，tip 与后续提交、安装包都不再携带它；套件在缺这份文件时按组名 skip（`selftest/foundation.mjs` 的 `SHIPPED_KNOWLEDGE`、`selftest.mjs` 的组循环），干净 clone 上 `mods: ok`。**注意**：`908018c` 仍在历史里，公开仓库前仍要改写历史，或按用户决定处理远端；本轮只把“被跟踪”变成“不跟踪”。
 
 ### 14.2 G27 自带测试 Mod 案例（决定：要做）
 

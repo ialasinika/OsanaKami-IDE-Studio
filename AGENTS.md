@@ -151,7 +151,7 @@ Run a single JavaScript suite directly:
 ```powershell
 node langs/selftest.mjs
 node shell/web/selftest.mjs        # pure JS: no DOM, no browser
-node shell/mods/selftest.mjs       # corpus checks skip when the game's Mods folder is absent
+node shell/mods/selftest.mjs       # corpus and knowledge groups skip when absent
 node shell/mods/selftest.mjs --mods <dir>
 node shell/ai/selftest.mjs
 ```
@@ -165,7 +165,10 @@ Rules of thumb:
   `build/knowledge-fixture` and its own scratch trees under `build/`; a second
   suite process (or a concurrent `make test`) can see the fixture half-written
   and report a generator failure that is not real. One suite per machine at a
-  time, exactly like `smoke`.
+  time, exactly like `smoke`. The suite also skips the knowledge-base groups when
+  the checkout has no `shell/mods/knowledge.json`: that file is derived from the
+  player's own game, gitignored, and never tracked (`docs/EDITOR_GAPS.md` §14.1
+  G26), so a clean clone is green with those groups named as skips.
 - `iaqs-check`, `installer-check` and `sign-check` compile against real binaries;
   `iaqs-check` needs `cmake` and a C++ compiler, the other two need `makensis`,
   and all three **skip with exit 0** when their tools are missing. `installer-check`

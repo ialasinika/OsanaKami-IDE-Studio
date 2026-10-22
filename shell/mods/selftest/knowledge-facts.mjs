@@ -100,15 +100,15 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
     JSON.stringify({ status: greenCheck.status, out: (greenCheck.stdout || "").trim().slice(-200) }));
 
   /*
-   * --diff only describes the gap between the committed file and a facts-only
-   * generation (the committed file came from an older, richer extractor), so it
-   * always exits 0 -- unlike --check.  The fixture is used here because it is
-   * the one committed file we can regenerate exactly.
+   * --diff only describes the gap between the file on disk and a facts-only
+   * generation (a development tree's rich file came from an older, richer
+   * extractor), so it always exits 0 -- unlike --check.  The fixture is used
+   * here because it is the one file we can regenerate exactly.
    */
   const diffGreen = spawnSync(process.execPath, [gen, "--game-dir", gameDir, "--diff", outPath], { encoding: "utf8" });
-  check("--diff describes an agreeing committed file and still exits 0",
+  check("--diff describes an agreeing file and still exits 0",
     diffGreen.status === 0 &&
-    /只在已提交 KB/.test(diffGreen.stdout || "") &&
+    /只在现有 KB/.test(diffGreen.stdout || "") &&
     /只在生成版/.test(diffGreen.stdout || "") &&
     ["commands", "functions", "variables", "nodes"].every((name) =>
       new RegExp(`^\\s+${name}\\s`, "m").test(diffGreen.stdout || "")),
@@ -120,9 +120,9 @@ section("the knowledge generator (tools/gen_knowledge.mjs)");
   const driftedPath = join(fixtureRoot, "drifted-committed.json");
   writeFileSync(driftedPath, JSON.stringify(drifted) + "\n");
   const diffDrift = spawnSync(process.execPath, [gen, "--game-dir", gameDir, "--diff", driftedPath], { encoding: "utf8" });
-  check("--diff names what only the committed KB has, and what only the generated copy has",
+  check("--diff names what only the file on disk has, and what only the generated copy has",
     diffDrift.status === 0 &&
-    /只在已提交 KB 里（1 个）：Ghost_Cmd/.test(diffDrift.stdout || "") &&
+    /只在现有 KB 里（1 个）：Ghost_Cmd/.test(diffDrift.stdout || "") &&
     /只在生成版里（1 个）：Demo_Start/.test(diffDrift.stdout || ""),
     JSON.stringify({ status: diffDrift.status, out: (diffDrift.stdout || "").trim().slice(-280) }));
 

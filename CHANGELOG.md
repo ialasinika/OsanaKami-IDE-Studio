@@ -16,6 +16,42 @@ stands in this tree.
 
 ## v0.1.4-beta.2 — 2026-10-21
 
+### The knowledge base leaves the repository
+
+`shell/mods/knowledge.json` is 294,612 bytes of the game's data: 1305 baseline
+define names, 53 character names with their colours, the wiki's prose, `#region`
+markers and the extracting machine's game folder. The installer already refused
+to carry it (`build.extraResources` filters it and the payload audit fails a
+release build that ships it), but the repository still tracked it, so a clone
+republished the same copy. The game's own ATTRIBUTIONS declare the work
+CC BY-NC-SA 4.0 and make exporting or distributing these materials acceptance of
+that licence; a public repository is a distribution. The file is now untracked
+and gitignored. A development tree derives its own copy from the game it has
+installed -- `node tools/gen_knowledge.mjs --game-dir <Mods> --out
+shell/mods/knowledge.json` writes the facts-only base, and the richer file the
+docs count (documentation prose, command signatures, 53 characters) came from an
+earlier extractor and stays local the same way. The repository carries neither,
+and the tip of the branch never will again; the commits before this one still
+contain the file, so a public history needs the rewrite `docs/EDITOR_GAPS.md`
+already lists as the alternative to keeping the repository private.
+
+A clean clone therefore has no knowledge base, which used to be a crash: the
+suite's foundation read the file directly and every group after it assumed the
+schemas. The knowledge section now skips by name when the file is absent, and the
+entry point skips every group after the foundation, one named skip each, so
+`make test` on a fresh clone is green with 7 checks and 18 skips instead of an
+`ENOENT`. A development tree's run is unchanged at 729 checks, because it still
+has the file it derived; the counts the docs quote belong to that tree.
+
+The browser smoke's mod-card round trip used to lean on that same tracked file:
+its new-file picker offered `Goods` only because the rich knowledge base happened
+to be there, so on a clean clone it would have had nothing to pick and the check
+would have failed. It now gives its throwaway host a self-authored mini game tree
+(`SODefines/Schema/Goods.schema.json`, one required field) through
+`INFANTGOD_MODS_DIR`; `mod.types` derives a facts-only base in the host's own user
+directory, and the picker and new-file assertions stay knowledge-driven without
+the game's data ever entering the tree.
+
 ### The command line's --game-dir reaches the mod layer
 
 `--game-dir` was documented on `install` and accepted by `sources`, but the

@@ -39,7 +39,7 @@
 | G8 脚手架模板自伤 | **主体关闭**：`yarn.js:402` 把 `when` 收进节点元数据，`autoSubtitle`（`yarn.js:700-702`）用它造确定性 subtitle——`when:` 不再被丢掉。**残余第五轮关闭**：`selftest/scaffold-cross.mjs` 把四种模板各生成一个包再跑 `validatePackage`，模板改动过不了自己产物的校验就红 |
 | G14 1.5 s 轮询不可调 | **主体关闭**：`WATCH_POLL_MS = 1500` 仍是默认（`watch.mjs:23`），但设置卡可在 250 ms–60 s 间调（`watch.mjs:33-34`，G48 的界面）；卡片层读路径已由 G39 统一走 blob。**mod 层读语义残余第五轮关闭**：`shell/mods/readtext.js` 统一目录/4 MiB/NUL/BOM 规则，`selftest/foundation.mjs` 从 `core/include/wksp.h` 解析上限并断言与内核一致 |
 | G19 前半：mod 视图排不了非 editor 卡 | `modview.mjs:57-70`：`tabs` 收**每一种**卡，hidden 卡经标签条一键可达（G29 修复的另一半）。残余（watch 只盯 editor）见下文 B 区 |
-| G37 KB 生成器会自伤 | **主体关闭**：生成器重写后 `--diff` 是只读报告（退出码恒 0，逐条摊开"已提交 KB 更富"），`--check` 对富 KB 报漂移已写明为预期行为（`gen_knowledge.mjs:35-41`）。两条残余见下文 A 区 |
+| G37 KB 生成器会自伤 | **主体关闭**：生成器重写后 `--diff` 是只读报告（退出码恒 0，逐条摊开"现有 KB 更富"），`--check` 对富 KB 报漂移已写明为预期行为（`gen_knowledge.mjs:35-41`）。两条残余见下文 A 区 |
 | G33 旧账盘点 | 盘点项全部已被本轮两张表吸收，条目退役 |
 | G1 语言表打不开 | story 卡走 blob 分块：`cards/card-story.mjs` 的 `readTextInChunks` |
 | G25/G29 卡片可达性 | 13 种卡分模块落 `cards/`，两个视图都有标签页 |
@@ -49,7 +49,7 @@
 | G47 spine 命名 | `58a38ab` 改名 rig，`cards/card-rig.mjs` |
 | G48 设置 UI | `cards/card-settings.mjs`：表单编辑 AI provider / 启动视图 / 轮询间隔 |
 | G50 "+"新建文件 | `mod.newFile` / `mod.importFile` 已进 `MOD_METHODS` |
-| G30/G35 分发物 | `package.json` 的 filter 排掉 `knowledge.json`、`hello.yarn`、`board.json`、`sample.json` |
+| G30/G35 分发物 | `package.json` 的 filter 排掉 `knowledge.json`、`hello.yarn`、`board.json`、`sample.json`；2026-10-22 起仓库本身也不再跟踪 `knowledge.json`（`git rm --cached` + `.gitignore`），见第十三轮 |
 | spine 编辑 | `9f8d4d7`：rig 卡可读可写回 |
 | G6 校验关键字面 | 第三轮：`validate.js` 的 `checkConstraints` 真读 `const`/`pattern`/`minLength`/`maxLength`/`minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf`/`minItems`/`maxItems`/`uniqueItems`/`oneOf`/`anyOf`/`allOf`/`not`（D012 error），`type` 接受数组，`additionalProperties: false` 把未声明字段提为 D012；知识库当前没用这些关键字，所以 `selftest/spec.mjs` 用合成 schema 钉住 3 条 D012；解析不到的 `$ref` 报 D013 |
 | G7 `#line:` 双向核对 | 第三轮：`validate.js` 用 `yarn.js` 解析每个 `.yarn` 的 `#line:` id，再读本地化表的 `id` 列做双向核对——D014（yarn 有、表无）、D015（表有、yarn 无）、D016（同一 id 跨文件重复）、D017（非 7 位 hex 的演示 id 汇总成一条 info，不假装核对过）。真语料 `MyMod` 上 D014=0、D016=0、D015=1（真实孤儿 `line:094007b`）、D017=1（57 个非 hex id） |
@@ -83,6 +83,8 @@
 | G62 版本库带着本项目不需要的密码与加密 | 第十一轮：`iaqs/` 删除加密层（`chacha20poly1305`/`hmac`/`keys` 与对应测试删除，`crypto/` 只留 SHA-256/SHA-1/CRC-32C/RNG），MANIFEST 改为 44 字节明文头（格式版本 2），旧密码格式按名字拒绝，密码面（`passwd`/`rekey`/`--password-stdin`/`IAQS_PASSWORD`/默认口令/交互提示/退出码 4）全部移除；存储检查保留（页/槽 CRC、WAL 重放与截断、段合并、MANIFEST 往返与损坏、pager 代际、超页拒绝），套件 233/233；`grep` 无加密符号残留 |
 | G63 版本库的构建与测试不在 `make test` 门禁里 | 第十二轮：`tools/iaqs.py` 取代 `tools/build-iaqs.ps1`（两个子命令、按 PATH 选 CMake 生成器、缓存与源码/生成器不符就重建、strip、测试用 `build-iaqs/test-temp` 当 `TEMP`）；Makefile 加 `iaqs-bin`/`iaqs-check` 并把 `iaqs-check` 放进 `test`，`package` 依赖 `iaqs-bin`；CI 的 `test` job 装 `mingw-w64-x86_64-cmake`，`make ci` 真编译并跑 233 条；缺 `cmake`/C++ 编译器时打印 skip 并 exit 0 |
 第十二轮（2026-10-21）：用户要求"同时 iaqs 的构建编入 Makefile"、"接入测试，进 beta.2"。构建与测试从一次性的 PowerShell 脚本变成门禁的一部分：`tools/iaqs.py build|test` 是唯一入口（`cmake -S iaqs -B build-iaqs`，生成器按 PATH 在 MinGW Makefiles / Unix Makefiles 间选，缓存指向旧源码路径或旧生成器时直接重建；strip 用编译器旁边的 `strip`；测试把 `TEMP`/`TMP` 指到 `build-iaqs/test-temp`，因为本机沙箱只允许子进程在仓库内写），Makefile 的 `iaqs-bin`/`iaqs-check` 分别对应两个子命令，`make test` 现在包含 `iaqs-check`，`make package` 先建二进制；CI 的 `test` job 在 MSYS2 里多装 `mingw-w64-x86_64-cmake`，`make ci` 因此在 runner 上也会编译并运行分叉的 233 条测试；没有 `cmake` 或 C++ 编译器的机器上两条命令打印 skip 并 exit 0，与 installer-check/sign-check 的约定一致。
+
+第十三轮（2026-10-22，仓库面）：用户说“ok，我说一下，移除仓库”，把 `shell/mods/knowledge.json` 移出 git。前置早已就位（安装包侧 `package.json` 的 `extraResources` filter 与 `tools/make-installer.mjs` 的 payload audit 不再带它；运行时 `resolveKnowledge()` 的五级解析与首启派生已在 G31/G44 完成），本轮只补仓库面与套件：`git rm --cached shell/mods/knowledge.json`、`.gitignore` 带理由的条目；`selftest/foundation.mjs` 新增 `SHIPPED_KNOWLEDGE` 与 `checkShippedKnowledge()`（文件不在时整段一条命名 skip，不再 `readFileSync` 崩 `ENOENT`），`selftest.mjs` 用同一开关跳过 foundation 之后的 17 个组。验证（`%TEMP%` 副本删掉 KB）：`node shell/mods/selftest.mjs` = `7/7 checks passed (18 skipped)`、`mods: ok`、exit 0；有 KB 的副本里 rich 组逐条照旧（本机沙箱使知识库生成器与 CLI 组因 `spawnSync … EPERM` 与 `build/` 写受限无法全绿，属既有环境限制，不是本轮引入）。**历史面**：旧提交里仍有这个文件，所以公开仓库前仍需按 §14.1 改写历史，或按用户决定处理远端；本轮只保证 tip 与后续提交不再含它。文档同轮同步 `README.md`、`docs/MODS.md`、`docs/ARCHITECTURE.md`、`docs/EDITOR_GAPS.md` §14.1、`AGENTS.md`；`729 checks` 仍是开发树（带 KB）的数。
 
 ## 仍然成立（本轮逐条核实）
 

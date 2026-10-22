@@ -33,12 +33,13 @@
  * 退出码：0 成功/无漂移/--diff 报告；1 --check 发现漂移；2 用法错误或找不到游戏。
  *
  * --diff 是只读报告（永远退出 0，不影响 --check 的退出码语义）：按区段列出
- * 「只在已提交 KB 里」与「只在生成版里」的名字（commands / functions / variables /
- * nodes 等）。**已提交的 shell/mods/knowledge.json 比 facts-only 生成版更富，这是
+ * 「只在开发树 KB 里」与「只在生成版里」的名字（commands / functions / variables /
+ * nodes 等）。**开发树里的 shell/mods/knowledge.json 比 facts-only 生成版更富，这是
  * 已知且故意的**：它来自更早的客户端抽取器，带文档文本、命令的参数签名（136 条
  * command / 63 条 function）、53 个角色名与配色、undocumentedCommands 与
- * undeclaredVariables；本生成器只保留事实（见上面的「丢弃」清单）。因此 --check
- * 对已提交 KB 报漂移是预期的，--diff 就是用来把这份「更富」逐条摊开看的。
+ * undeclaredVariables；本生成器只保留事实（见上面的「丢弃」清单）。这份文件从本机
+ * 游戏派生、被 .gitignore 忽略，不进仓库也不进安装包。因此 --check 对这份富 KB
+ * 报漂移是预期的，--diff 就是用来把这份「更富」逐条摊开看的。
  *
  * 测试：shell/mods/selftest.mjs 用 build/ 下自造的 fixture 跑本文件的
  * buildKnowledge() 与 --check / --diff（fixture 里故意放了 description 与角色表，
@@ -87,9 +88,9 @@ function usage() {
     "覆盖守卫（G37）：--out 指向的已有文件如果带文档/命令签名（facts-only 生成版没有的数据），",
     "  默认拒绝覆盖并以退出码 2 结束，避免把富 KB 静默换成事实版；确认要换请显式加 --force。",
     "",
-    "--diff 是只读报告（退出 0）：按区段打印「只在已提交 KB 里 / 只在生成版里」的名字。",
-    "  已提交的 shell/mods/knowledge.json 比 facts-only 生成版更富，原因见 --help 顶部说明；",
-    "  所以 --check 对已提交 KB 报漂移是预期的，--diff 用来逐条看那份「更富」。",
+    "--diff 是只读报告（退出 0）：按区段打印「只在开发树 KB 里 / 只在生成版里」的名字。",
+    "  开发树里的 shell/mods/knowledge.json（gitignored，不进仓库/安装包）比 facts-only 生成版更富，原因见 --help 顶部说明；",
+    "  所以 --check 对这份富 KB 报漂移是预期的，--diff 用来逐条看那份「更富」。",
   ].join("\n");
 }
 
@@ -190,20 +191,20 @@ const DIFF_DETAIL_SECTIONS = [
 ];
 
 /**
- * --diff 的报告正文：按区段给出「只在已提交 KB 里」与「只在生成版里」的名字，
- * 并把「已提交 KB 更富」的原因写明。只读，不参与退出码。
+ * --diff 的报告正文：按区段给出「只在现有 KB 里」与「只在生成版里」的名字，
+ * 并把「现有 KB 更富」的原因写明。只读，不参与退出码。
  */
 function formatDiff(report, kbPath, generated, resolvedDir) {
   const lines = [];
   lines.push(`游戏目录：${resolvedDir}`);
-  lines.push(`已提交知识库：${kbPath}（${fs.statSync(kbPath).size} B）`);
+  lines.push(`现有知识库：${kbPath}（${fs.statSync(kbPath).size} B）`);
   lines.push(
     `生成版：facts-only，内存中未写盘 ` +
       `(${generated.stats.commands} commands / ${generated.stats.functions} functions / ` +
       `${generated.stats.variables} variables / ${generated.stats.nodes} nodes)`
   );
   lines.push("");
-  lines.push("区段                     只在已提交 KB   只在生成版");
+  lines.push("区段                     只在现有 KB   只在生成版");
   const details = [];
   for (const s of report.sections) {
     const onlyCommitted = s.added || [];
@@ -224,7 +225,7 @@ function formatDiff(report, kbPath, generated, resolvedDir) {
           (names.length > head.length ? ` …还有 ${names.length - head.length} 个` : "")
       );
     };
-    fmt("只在已提交 KB 里", onlyCommitted);
+    fmt("只在现有 KB 里", onlyCommitted);
     fmt("只在生成版里", onlyGenerated);
   }
   if (details.length) {
@@ -233,17 +234,17 @@ function formatDiff(report, kbPath, generated, resolvedDir) {
     lines.push(...details);
   }
   lines.push("");
-  lines.push("已提交 KB 比 facts-only 生成版更富，这是已知且故意的：");
+  lines.push("现有 KB 比 facts-only 生成版更富，这是已知且故意的：");
   lines.push("  * 它来自更早的客户端抽取器：带命令的参数签名、文档文本、53 个角色名与配色，");
   lines.push("    以及 undocumentedCommands / undeclaredVariables 统计；");
   lines.push("  * 本生成器是 facts-only（见 --help 顶部）：故意丢弃上述内容，只留事实；");
-  lines.push("  * 所以 --check 对已提交 KB 报漂移是预期的；--diff 只描述差距，退出码始终 0。");
+  lines.push("  * 所以 --check 对现有 KB 报漂移是预期的；--diff 只描述差距，退出码始终 0。");
   return `${lines.join("\n")}\n`;
 }
 
 /**
  * 知识库里「文档/命令签名」的密度。facts-only 生成版恒为 0（命令只有 name/usage/
- * arity，没有 documentation、参数名或 returnType）；已提交的富 KB 有一百多条。
+ * arity，没有 documentation、参数名或 returnType）；现有的富 KB 有一百多条。
  * 守卫只用它判断「写下去会不会静默丢数据」，不参与 --check/--diff。
  */
 export function documentationDensity(kb) {

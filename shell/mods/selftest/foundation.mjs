@@ -58,66 +58,93 @@ section("knowledge base");
 
 export const mods = createMods({ modsRoot: existsSync(MODS_DIR) ? MODS_DIR : ROOT });
 
-check("knowledge.json sits beside the facade", existsSync(KNOWLEDGE_PATH), KNOWLEDGE_PATH);
+/*
+ * knowledge.json is derived from the player's game and is not tracked
+ * (`.gitignore`, docs/EDITOR_GAPS.md §14.1 G26).  A development tree keeps a
+ * copy beside the facade and the checks below describe it; a clean clone has
+ * none, and then they are skipped instead of failed -- the file was never
+ * meant to travel with the project (the installer's payload filter excludes it
+ * too).  Every group after the foundation needs the same schemas, so the entry
+ * (`selftest.mjs`) skips those for the same reason.
+ */
+export const SHIPPED_KNOWLEDGE = existsSync(KNOWLEDGE_PATH);
 
-export const stats = mods.stats();
-check("211 Yarn files", stats.yarnFiles === 211, String(stats.yarnFiles));
-check("1221 nodes", stats.nodes === 1221, String(stats.nodes));
-check("136 commands", stats.commands === 136, String(stats.commands));
-check("63 functions", stats.functions === 63, String(stats.functions));
-check("678 variables", stats.variables === 678, String(stats.variables));
-check("51 schemas", stats.schemas === 51, String(stats.schemas));
-check("1305 baseline defines", stats.baselineDefines === 1305, String(stats.baselineDefines));
-check("11 locales", stats.locales === 11, String(stats.locales));
-// G15：帮助卡直接引用这份矩阵和 wiki 出处，所以它必须随 stats 一起到达卡片层，
-// 且与 types()/M013 判据同源（support.json 只有一份）。
-check("the support matrix rides with the stats",
-  stats.support && typeof stats.support.types === "object" && Object.keys(stats.support.types).length === 51,
-  String(stats.support && Object.keys(stats.support.types).length));
-check("the help card gets the wiki URL",
-  typeof stats.support.wiki === "string" && /^https?:\/\//.test(stats.support.wiki),
-  String(stats.support.wiki));
-check("four support levels", Array.isArray(stats.support.levels) && stats.support.levels.length === 4,
-  JSON.stringify(stats.support.levels));
+export let stats = null;
+export let types = null;
+export let characters = null;
 
-// G5：随仓库发的 documentation 是 wiki 的正文，不是它的解码残渣。那一轮清掉了
-// 21 条把 "#region …" 变成乱码的串（U+E000 私用区、闊 之类的错码）；这类串
-// 一条就是 docs 卡里的一条错答案，wiki 再生成一次就可能回来，所以直接查数据。
-{
-  const base = JSON.parse(readFileSync(KNOWLEDGE_PATH, "utf8"));
-  const corrupt = [];
-  let documentation = 0;
-  const walk = (node, trail) => {
-    if (node === null || typeof node !== "object") return;
-    for (const key of Object.keys(node)) {
-      const value = node[key];
-      if (key === "documentation" && typeof value === "string") {
-        documentation += 1;
-        // #region 本身是 wiki 的编辑标记；私用区字符和"闊"是它被当作 GBK
-        // 或 UTF-8 混读后的残渣。正文里出现任何一个都说明旧数据回来了。
-        if (/#region|[\uE000-\uF8FF]|闊/.test(value)) corrupt.push(`${trail}/${key}`);
-      } else if (value !== null && typeof value === "object") {
-        walk(value, `${trail}/${key}`);
+function checkShippedKnowledge() {
+  check("knowledge.json sits beside the facade", existsSync(KNOWLEDGE_PATH), KNOWLEDGE_PATH);
+
+  stats = mods.stats();
+  check("211 Yarn files", stats.yarnFiles === 211, String(stats.yarnFiles));
+  check("1221 nodes", stats.nodes === 1221, String(stats.nodes));
+  check("136 commands", stats.commands === 136, String(stats.commands));
+  check("63 functions", stats.functions === 63, String(stats.functions));
+  check("678 variables", stats.variables === 678, String(stats.variables));
+  check("51 schemas", stats.schemas === 51, String(stats.schemas));
+  check("1305 baseline defines", stats.baselineDefines === 1305, String(stats.baselineDefines));
+  check("11 locales", stats.locales === 11, String(stats.locales));
+  // G15：帮助卡直接引用这份矩阵和 wiki 出处，所以它必须随 stats 一起到达卡片层，
+  // 且与 types()/M013 判据同源（support.json 只有一份）。
+  check("the support matrix rides with the stats",
+    stats.support && typeof stats.support.types === "object" && Object.keys(stats.support.types).length === 51,
+    String(stats.support && Object.keys(stats.support.types).length));
+  check("the help card gets the wiki URL",
+    typeof stats.support.wiki === "string" && /^https?:\/\//.test(stats.support.wiki),
+    String(stats.support.wiki));
+  check("four support levels", Array.isArray(stats.support.levels) && stats.support.levels.length === 4,
+    JSON.stringify(stats.support.levels));
+
+  // G5：开发树里的 documentation 是 wiki 的正文，不是它的解码残渣。那一轮清掉了
+  // 21 条把 "#region …" 变成乱码的串（U+E000 私用区、闊 之类的错码）；这类串
+  // 一条就是 docs 卡里的一条错答案，wiki 再生成一次就可能回来，所以直接查数据。
+  {
+    const base = JSON.parse(readFileSync(KNOWLEDGE_PATH, "utf8"));
+    const corrupt = [];
+    let documentation = 0;
+    const walk = (node, trail) => {
+      if (node === null || typeof node !== "object") return;
+      for (const key of Object.keys(node)) {
+        const value = node[key];
+        if (key === "documentation" && typeof value === "string") {
+          documentation += 1;
+          // #region 本身是 wiki 的编辑标记；私用区字符和"闊"是它被当作 GBK
+          // 或 UTF-8 混读后的残渣。正文里出现任何一个都说明旧数据回来了。
+          if (/#region|[\uE000-\uF8FF]|闊/.test(value)) corrupt.push(`${trail}/${key}`);
+        } else if (value !== null && typeof value === "object") {
+          walk(value, `${trail}/${key}`);
+        }
       }
-    }
-  };
-  walk(base, "");
-  check("the shipped documentation carries no region mojibake", corrupt.length === 0,
-    `${corrupt.length} string(s): ${corrupt.slice(0, 3).join(", ")}`);
-  check("the documentation prose survives the cleanup", documentation >= 150, String(documentation));
+    };
+    walk(base, "");
+    check("the shipped documentation carries no region mojibake", corrupt.length === 0,
+      `${corrupt.length} string(s): ${corrupt.slice(0, 3).join(", ")}`);
+    check("the documentation prose survives the cleanup", documentation >= 150, String(documentation));
+  }
+
+  types = mods.types();
+  check("51 definition types", types.length === 51, String(types.length));
+  check("every type is sorted-unique", new Set(types.map((t) => t.type)).size === types.length);
+  check("every type carries a required list",
+    types.every((t) => Array.isArray(t.required)),
+    JSON.stringify(types.filter((t) => !Array.isArray(t.required)).map((t) => t.type)));
+  check("techName casing is per-type, not assumed",
+    types.some((t) => t.required.includes("techName")) && types.some((t) => t.required.includes("TechName")));
+  {
+    const total = types.reduce((sum, t) => sum + t.count, 0);
+    check("per-type counts sum to the baseline", total === 1305, String(total));
+  }
+
+  characters = mods.characters();
+  check("characters have a colour for the editor", characters.length > 0 && characters.every((c) => /^#[0-9a-fA-F]{6}$/.test(c.colour || "")),
+    JSON.stringify(characters.slice(0, 2)));
 }
 
-export const types = mods.types();
-check("51 definition types", types.length === 51, String(types.length));
-check("every type is sorted-unique", new Set(types.map((t) => t.type)).size === types.length);
-check("every type carries a required list",
-  types.every((t) => Array.isArray(t.required)),
-  JSON.stringify(types.filter((t) => !Array.isArray(t.required)).map((t) => t.type)));
-check("techName casing is per-type, not assumed",
-  types.some((t) => t.required.includes("techName")) && types.some((t) => t.required.includes("TechName")));
-{
-  const total = types.reduce((sum, t) => sum + t.count, 0);
-  check("per-type counts sum to the baseline", total === 1305, String(total));
+if (SHIPPED_KNOWLEDGE) {
+  checkShippedKnowledge();
+} else {
+  skip(`the shipped knowledge base (${KNOWLEDGE_PATH} is not in this checkout)`);
 }
 
 export const templates = mods.templates();
@@ -125,10 +152,6 @@ check("four mod templates", templates.length === 4, String(templates.length));
 check("template ids are the documented ones",
   JSON.stringify(templates.map((t) => t.id).sort()) === JSON.stringify(["define-pack", "full", "minimal", "yarn-story"]),
   JSON.stringify(templates.map((t) => t.id)));
-
-export const characters = mods.characters();
-check("characters have a colour for the editor", characters.length > 0 && characters.every((c) => /^#[0-9a-fA-F]{6}$/.test(c.colour || "")),
-  JSON.stringify(characters.slice(0, 2)));
 
 // G14：mod 层与内核对"这个文件能不能当文本读"给同一个答案。两边是两段代码
 // （shell 进程里用 node:fs，内核是独立可执行文件），所以数字从内核头文件里

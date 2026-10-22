@@ -304,7 +304,8 @@ function createMods(options) {
    * 知识库解析顺序（G30）：
    *   1. options.knowledgePath —— 显式给了就只认它（缺文件 = 没有知识库，这是既有契约）
    *   2. env INFANTGOD_KNOWLEDGE
-   *   3. 本模块旁的 knowledge.json（仓库/开发时就是这份）
+   *   3. 本模块旁的 knowledge.json（开发树从本机游戏派生在本地的那份；已被
+   *      .gitignore 忽略，不随仓库分发）
    *   4. <userDir>/knowledge.json（上次派生的结果；mtime/size 变了会重读）
    *   5. 都没有：用 gamepath 找到的游戏目录自己派生一份，原子写进 userDir 后再用
    */

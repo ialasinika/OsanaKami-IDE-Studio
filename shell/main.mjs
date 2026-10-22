@@ -1881,8 +1881,8 @@ async function runLog(options) {
 /*
  * `sources` is G44: the answer to "where do the mod layer's answers come from?"
  * -- the game folder the discovery settled on (and where it looked when there
- * was none), and which knowledge.json is in effect: shipped, derived into the
- * user directory, or missing.  A missing game or a missing knowledge base is
+ * was none), and which knowledge.json is in effect: beside the mod layer,
+ * derived into the user directory, or missing.  A missing game or a missing knowledge base is
  * an answer, not an error; only a mod layer that cannot load is code 2.
  */
 async function runSources(options) {
@@ -2029,8 +2029,8 @@ is picked up; writes to it are refused as "read-only root".
 refused.  Defaults to --workspace.
 
 --user-dir DIR is the directory the mod layer may write derived state into.  The
-only thing it derives today is the knowledge base: when neither a shipped nor an
-explicit knowledge.json exists, the command list is derived from the game's own
+only thing it derives today is the knowledge base: when neither a knowledge.json
+beside the mod layer nor an explicit one exists, the command list is derived from the game's own
 Mods folder and cached here as knowledge.json.  Defaults to
 %APPDATA%/OsanaKami IDE Studio on Windows, ~/Library/Application Support/
 OsanaKami IDE Studio on macOS, and $XDG_DATA_HOME/OsanaKami IDE Studio elsewhere.
