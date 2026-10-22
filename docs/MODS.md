@@ -1059,3 +1059,8 @@ should and nothing else -- before being trusted.  `tools/browser_smoke.py` is 57
 checks over the same example (the views' tabs and tiles, a tab that closes after
 asking, the completion menu and the hover line, and a rig card that saves the
 pose it is showing).
+
+Five of the 44 checks pin the example against the game's own knowledge base -- the
+two `D006` rows, the `D011` row, the story's state names and the example's
+findings -- so a checkout that has not derived `shell/mods/knowledge.json` skips
+them by name instead of failing.

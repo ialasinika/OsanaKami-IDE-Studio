@@ -52,6 +52,13 @@ tree (`SODefines/Schema/Goods.schema.json`, one required field) through
 directory, and the picker and new-file assertions stay knowledge-driven without
 the game's data ever entering the tree.
 
+The input smoke had the same dependency from the other side: five of its 44 checks
+read the example package and the story against the game's own types (the `D006`
+rows, the `D011` row, the state names the tags are judged against and the example's
+expected findings). They now skip by name when the checkout has no derived
+knowledge base, so a clean clone's run is 39 checks and 5 skips rather than five
+failures; a development tree still runs all 44.
+
 ### The command line's --game-dir reaches the mod layer
 
 `--game-dir` was documented on `install` and accepted by `sources`, but the

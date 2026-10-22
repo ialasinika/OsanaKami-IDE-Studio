@@ -278,7 +278,7 @@ Run the checks:
 mingw32-make -f Makefile check       # kernel alone: 13 passed, 0 failed, 3 skipped
 mingw32-make -f Makefile fullcheck   # whole endpoint: 16 passed, 0 failed, 0 skipped
 mingw32-make -f Makefile probe       # every bug in docs/BUGS.md: all ok
-mingw32-make -f Makefile smoke       # the window, headless: 70 + 44 checks, 0 failed
+mingw32-make -f Makefile smoke       # the window, headless: 71 + 44 checks, 0 failed (5 of the 44 skip on a clean clone)
 mingw32-make -f Makefile version-check  # every copy agrees, and the changelog has a home for it
 mingw32-make -f Makefile sign-check   # the installer-signing wiring, against a stand-in for signtool
 mingw32-make -f Makefile ci           # what the GitHub test job runs: test, a fixture installer, a workflow audit
@@ -297,7 +297,7 @@ python tools/e2e.py --kernel build/infantgod.exe --keep-going
 python tools/kernel_probe.py                         # the fixed bugs: summary: all ok
 python tools/seide_cli.py selfcheck                  # the second client, against a scratch workspace: summary: all ok
 python tools/browser_smoke.py                        # renders the real window; 71 checks; SKIP (exit 0) with no browser
-python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks
+python tools/input_smoke.py                          # real clicks, keys, wheels, editor keys, the line numbers and the mod view a window opens in: 44 checks (five need the game's derived knowledge base; a clean clone skips them)
 python tools/version.py check                        # every copy of the version, and the changelog section
 python tools/demo.py                                 # install the starter board: five cards, three links
 build/obj/test_json.exe                        # the C JSON codec: "all good"
@@ -312,7 +312,10 @@ both are derived from the player's own game and neither is tracked, so a clean
 clone skips those groups (18 checks) rather than failing. Point the corpus at
 your own copy with `node shell/mods/selftest.mjs --mods <dir>`, and write the
 knowledge base with `node tools/gen_knowledge.mjs --game-dir <Mods>`; the count
-above is a development tree's, with the derived file in place.
+above is a development tree's, with the derived file in place. The smoke suites
+follow the same rule: `tools/browser_smoke.py` gives its throwaway hosts a mini
+game tree of their own, and `tools/input_smoke.py` skips the five checks that read
+the example through the game's knowledge base when a checkout has none.
 
 `make test` runs `check`, then `fullcheck`, then `probe`, then `cli-check`, then
 `version-check`, then `installer-check`, then `sign-check`, then the JSON test and

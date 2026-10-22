@@ -160,6 +160,13 @@ MOD_NAME = "Lantern"
 #: on whether the developer had installed the game.
 GAME_MODS_FIXTURE = REPO_ROOT / "build" / "__input_smoke_game_mods"
 
+#: The game's derived knowledge base, but only when this tree has made one
+#: (``node tools/gen_knowledge.mjs --game-dir <Mods>``); the repository tracks
+#: neither copy of it.  A clean clone has none, so the five checks that can only
+#: be judged against the game's own types and state names skip by name instead
+#: of failing on a machine that has no game.
+SHIPPED_KNOWLEDGE = REPO_ROOT / "shell" / "mods" / "knowledge.json"
+
 #: The example mod ships one 8-bit RGB sprite (colour type 2) beside its RGBA
 #: ones: the pixel card reads both shapes but writes colour type 6 back, so the
 #: copy this run plants under ``build/`` is what gets saved, and comparing the
@@ -1568,20 +1575,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 class Results:
-    """The PASS/FAIL lines and the summary."""
+    """The PASS/FAIL/SKIP lines and the summary."""
 
     def __init__(self) -> None:
         self.checks = []
+        self.skipped = []
 
     def check(self, name: str, ok: bool, detail: str = "") -> None:
         self.checks.append((name, bool(ok), detail))
         mark = "PASS" if ok else "FAIL"
         print(f"[{mark}] {name}" + (f": {detail}" if detail else ""))
 
+    def skip(self, name: str, reason: str = "") -> None:
+        self.skipped.append((name, reason))
+        print(f"[SKIP] {name}" + (f": {reason}" if reason else ""))
+
     def report(self, attempts: int) -> int:
         passed = sum(1 for _, ok, _ in self.checks if ok)
         failed = len(self.checks) - passed
-        print(f"summary: {passed} passed, {failed} failed ({len(self.checks)} checks, "
+        total = len(self.checks) + len(self.skipped)
+        skipped = f", {len(self.skipped)} skipped" if self.skipped else ""
+        print(f"summary: {passed} passed, {failed} failed{skipped} ({total} checks, "
               f"{attempts} browser launch(es))")
         return 0 if failed == 0 else 1
 
@@ -2004,6 +2018,19 @@ def main(argv=None) -> int:
                      "--port", str(port), "--no-open"]
     host = Host(port, host_argv)
     results = Results()
+
+    # The game's own facts decide a handful of the checks below: the D006 and
+    # D011 rows, the state names the story's tags are judged against and the
+    # findings the example package is expected to carry.  A clean clone has no
+    # knowledge base (the repository tracks neither copy), so those checks say
+    # they were skipped instead of failing for the absence of the game.
+    def knowledge_check(name: str, ok: bool, detail: str = "") -> None:
+        if SHIPPED_KNOWLEDGE.is_file():
+            results.check(name, ok, detail)
+        else:
+            results.skip(name, "the game's knowledge base is not in this checkout "
+                              "(node tools/gen_knowledge.mjs writes one)")
+
     attempts = 0
     body = ""
     #: True when the page wrote lines but never reached its own RESULT line: the
@@ -2387,17 +2414,17 @@ def main(argv=None) -> int:
                  and (d006[4].startswith("/") or d006[4][1:2] == ":")
                  and d006[4] != d006[5] and d006[4].lower().endswith(".png")
                  and d006[5].lower().endswith(".json"))
-    results.check("a D006 row opens the pixel card for the sprite it named, not the define JSON",
-                  sprite_ok,
-                  f"rows={d006[0]} d006={d006[1]} declared={d006[2]} named={d006[3]!r} "
-                  f"sprite={d006[4]!r} json={d006[5]!r}"
-                  if d006 else pixel_detail("d006"))
+    knowledge_check("a D006 row opens the pixel card for the sprite it named, not the define JSON",
+                    sprite_ok,
+                    f"rows={d006[0]} d006={d006[1]} declared={d006[2]} named={d006[3]!r} "
+                    f"sprite={d006[4]!r} json={d006[5]!r}"
+                    if d006 else pixel_detail("d006"))
     size_ok = (bool(d006) and d006[6] == "96x96" and ink_of(d006[7]) is not None
                and ink_of(d006[7]) == ink_of(d006[8]) and ink_of(d006[9]) == (0, 0, 0, 0))
-    results.check("a pixel card on a missing sprite is usable at its declared size",
-                  size_ok,
-                  f"size={d006[6]} drew={d006[7]} press={d006[8]} far={d006[9]}"
-                  if d006 else pixel_detail("d006"))
+    knowledge_check("a pixel card on a missing sprite is usable at its declared size",
+                    size_ok,
+                    f"size={d006[6]} drew={d006[7]} press={d006[8]} far={d006[9]}"
+                    if d006 else pixel_detail("d006"))
 
     # The D011 row: its file is on disk and its path names a JSON pointer, so
     # the row has to open the resolved package's file and stand on that key.
@@ -2413,22 +2440,22 @@ def main(argv=None) -> int:
             d011_report = json.loads(d011[0])
         except ValueError:
             d011_report = {}
-    results.check("a D011 row opens the editor on the JSON that declares it, at the pointer",
-                  bool(d011_report) and d011_report.get("opened") is True
-                  and d011_report.get("resolved") is True
-                  and d011_report.get("contains") is True
-                  and d011_report.get("pointer") is True
-                  and d011_report.get("line") == 7
-                  # The editor now leads its status line with the file's path, so
-                  # "loaded" is a word in the line rather than its first word.
-                  and "loaded" in str(d011_report.get("status", ""))
-                  and str(d011_report.get("label", "")).endswith(
-                      f"{MOD_NAME}/Defines/Character/Warden.json"),
-                  f"rows={d011_report.get('rows')} d011={d011_report.get('d011')} "
-                  f"label={d011_report.get('label')!r} resolved={d011_report.get('resolved')} "
-                  f"contains={d011_report.get('contains')} pointer={d011_report.get('pointer')} "
-                  f"line={d011_report.get('line')} status={d011_report.get('status')!r}"
-                  if d011_report else pixel_detail("d011"))
+    knowledge_check("a D011 row opens the editor on the JSON that declares it, at the pointer",
+                    bool(d011_report) and d011_report.get("opened") is True
+                    and d011_report.get("resolved") is True
+                    and d011_report.get("contains") is True
+                    and d011_report.get("pointer") is True
+                    and d011_report.get("line") == 7
+                    # The editor now leads its status line with the file's path, so
+                    # "loaded" is a word in the line rather than its first word.
+                    and "loaded" in str(d011_report.get("status", ""))
+                    and str(d011_report.get("label", "")).endswith(
+                        f"{MOD_NAME}/Defines/Character/Warden.json"),
+                    f"rows={d011_report.get('rows')} d011={d011_report.get('d011')} "
+                    f"label={d011_report.get('label')!r} resolved={d011_report.get('resolved')} "
+                    f"contains={d011_report.get('contains')} pointer={d011_report.get('pointer')} "
+                    f"line={d011_report.get('line')} status={d011_report.get('status')!r}"
+                    if d011_report else pixel_detail("d011"))
 
     # And the cards this half opened are gone again; the sprite card was never
     # saved, so no file was created for it either.
@@ -2583,8 +2610,8 @@ def main(argv=None) -> int:
                    f"en={len(en_rows)} rows missing={missing_id not in en_locks} "
                    f"stale-lock={en_locks.get(stale_id)!r} KNOWN_META_KEYS={known_keys!r} "
                    f"diagnostics={yarn_codes!r}")
-    results.check("the example story carries the whole tag surface, and the tools judge one of the four extra tags",
-                  tags_ok, tags_detail)
+    knowledge_check("the example story carries the whole tag surface, and the tools judge one of the four extra tags",
+                    tags_ok, tags_detail)
 
     # What the package's own PROBLEMS card says: the findings the example carries
     # on purpose, and no D005 -- every cross-reference in the package resolves.
@@ -2612,8 +2639,8 @@ def main(argv=None) -> int:
     refs_detail = (f"counts={counts!r} codes={ref_codes} wav-mentioned={'.wav' in ref_text.lower()} "
                    f"defines={sum(1 for path in defines if path.is_file())}/{len(defines)} "
                    f"audio={[path.name + ':' + str(path.stat().st_size) for path in audio if path.is_file()]}")
-    results.check("the example package's only findings are its two deliberate ones, and its audio is named by nobody",
-                  refs_ok, refs_detail)
+    knowledge_check("the example package's only findings are its two deliberate ones, and its audio is named by nobody",
+                    refs_ok, refs_detail)
 
     results.check("the board is back as it was found", restored,
                   "byte-identical" if backup.existed else "absent again")
