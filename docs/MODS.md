@@ -253,9 +253,14 @@ renders both under the paths it already lists, read-only, and the command line
 has the same answer:
 
 ```sh
-node shell/main.mjs sources              # the game folder and the knowledge base in effect
-node shell/main.mjs sources --json       # the same answer as a document
+node shell/main.mjs sources                              # the game folder and the knowledge base in effect
+node shell/main.mjs sources --json                       # the same answer as a document
+node shell/main.mjs sources --game-dir "<game install>"  # point discovery at a game by hand
 ```
+
+`--game-dir` is the same flag `install` reads: it names the game's installation
+folder, and the search reads the `Mods/`, `StreamingAssets/Mods` and
+`ModsFull/Mods` under it before reporting where it looked.
 
 Neither a missing game nor a missing knowledge base is an error: `found: false`
 and `state: "missing"` are the answer, with the places discovery tried, and

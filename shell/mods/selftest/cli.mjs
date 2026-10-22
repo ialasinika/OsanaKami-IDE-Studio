@@ -144,6 +144,11 @@ check("the old commands still refuse a stray positional argument",
  * the answer does not depend on what this machine happens to have installed.
  */
 const game = specTemp("infantgod-cli-game-");
+/* A real game tree needs one structural marker (gamepath.js MARKERS), or the
+ * fixture is not a game folder on any machine; the point of this test is the
+ * answer, not what this machine happens to have installed. */
+specWrite(join(game, "Mods", "SODefines", "Schema", "Demo.schema.json"),
+  JSON.stringify({ title: "Demo", type: "object" }, null, 2) + "\n");
 specWrite(join(game, "Mods", "Placeholder.txt"), "not a package\n");
 
 const sources = runCli(["sources", "--json", "--mods-root", root, "--game-dir", game, "--user-dir", userDir]);

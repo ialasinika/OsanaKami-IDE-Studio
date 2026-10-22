@@ -462,7 +462,7 @@ function resolveInstallDir(options = {}) {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 }
 
-async function loadMods(options, log = () => {}) {
+async function loadMods(options, log = () => {}, discovery = null) {
   try {
     const mod = await import(pathToFileURL(path.join(MODS_DIR, "index.js")).href);
     const factory = mod.createMods ?? (mod.default && mod.default.createMods);
@@ -478,6 +478,12 @@ async function loadMods(options, log = () => {}) {
     const mods = factory({
       modsRoot: options.modsRoot ?? options.workspace,
       userDir: options.userDir,
+      // `sources` is the one verb whose answer is the discovery itself, so it
+      // may hand the layer the game folder it was told about.  Every other verb
+      // keeps the discovery it had: `install` reads --game-dir itself, and its
+      // precheck must not validate the package against the folder it is about
+      // to install into.
+      gameDir: discovery && discovery.gameDir != null ? discovery.gameDir : undefined,
       history,
     });
     // Say which knowledge base is in use: the bundled one, a previously derived
@@ -1882,7 +1888,8 @@ async function runLog(options) {
 async function runSources(options) {
   const json = options.json === true;
   const modsRoot = options.modsRoot !== null ? options.modsRoot : options.workspace;
-  const mods = await loadMods({ ...options, modsRoot }, (line) => process.stderr.write(line + "\n"));
+  const mods = await loadMods({ ...options, modsRoot },
+    (line) => process.stderr.write(line + "\n"), { gameDir: options.gameDir });
   if (!mods) {
     if (json) {
       process.stdout.write(JSON.stringify({ ok: false, error: "the mod layer did not load" }, null, 2) + "\n");
@@ -1995,12 +2002,15 @@ usage: node shell/main.mjs <command> [options]
           0 the log was read (even with zero matches), 1 the read failed, 2 no
           log was found -- the message lists where it looked.
 
-  sources [--json]
+  sources [--json] [--game-dir DIR]
           Say where the mod layer's answers come from without opening the
           window: the game Mods folder discovery settled on (and where it
           looked when there was none), and which knowledge.json is in effect
-          -- shipped, derived into --user-dir, or missing.  A missing game or a
-          missing knowledge base is an answer, not an error.  Exit codes: 0
+          -- shipped, derived into --user-dir, or missing.  --game-dir points
+          at the game the way install reads it (its Mods/, StreamingAssets/Mods
+          and ModsFull/Mods are tried in turn); without it the folder is
+          discovered the way every other verb discovers it.  A missing game or
+          a missing knowledge base is an answer, not an error.  Exit codes: 0
           answered, 2 the mod layer did not load.
 
   help    This text.

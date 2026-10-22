@@ -293,7 +293,8 @@ function firstLineOf(abs) {
  * @param {object} [options.env]          环境变量表（测试注入用；缺省 process.env）
  * @param {object} [options.history]      包历史的执行者（shell/mods/versioning.js）；给了它，打开/新建包时自动建库
  * @param {string} [options.modsRoot]      可选白名单根：所有 dir/root 参数必须落在里面
- * @param {string} [options.gameModsDir]   游戏 Mods 目录（基线 schema/定义来源）
+ * @param {string} [options.gameModsDir]   游戏 Mods 目录（基线 schema/定义来源；精确目录）
+ * @param {string} [options.gameDir]       游戏安装目录；其下的 Mods 等会被探出来
  */
 function createMods(options) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -314,7 +315,8 @@ function createMods(options) {
   ));
   const modsRoot = opts.modsRoot ? path.resolve(String(opts.modsRoot)) : null;
   const gameMods = gamepath.discoverGameModsDir({
-    gameModsDir: opts.gameModsDir != null ? opts.gameModsDir : opts.gameDir,
+    gameModsDir: opts.gameModsDir,
+    gameDir: opts.gameDir,
     env: env
   });
   /** 最终实际用的是哪份知识库（路径 + 来源），knowledgeState() 会报出去。 */

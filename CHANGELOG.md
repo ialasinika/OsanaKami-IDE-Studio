@@ -16,6 +16,19 @@ stands in this tree.
 
 ## v0.1.4-beta.2 — 2026-10-21
 
+### The command line's --game-dir reaches the mod layer
+
+`--game-dir` was documented on `install` and accepted by `sources`, but the
+loader that builds the mod layer dropped it on the way to `createMods`, so only
+`install` -- which reads the flag itself -- ever honoured it. `sources` fell
+back to the machine's Steam and home discovery, so its test passed on a machine
+where an extracted game tree happened to be reachable and failed on the runner
+with `found: false`. The flag now travels through the loader; discovery reads it
+as the game's installation folder and tries its `Mods/`, `StreamingAssets/Mods`
+and `ModsFull/Mods` in turn, exactly as `install` does, and the CLI fixture in
+`shell/mods/selftest/cli.mjs` carries the `SODefines/Schema` marker that makes
+it a game folder on every machine.
+
 ### The version store is built and tested by the same command as everything else
 
 The fork of `iaqs` had a build script of its own — a PowerShell file that ran

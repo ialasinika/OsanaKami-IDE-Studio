@@ -7,7 +7,9 @@
  * 能生成、编辑器找不到」这种半死状态。
  *
  * 顺序（只认结构标记，绝不猜一个看起来像的目录）：
- *   1. 显式设置   createMods({ gameModsDir }) / --game-dir / --mods-root 的调用方
+ *   1. 显式设置   createMods({ gameModsDir }) 是精确目录；createMods({ gameDir })
+ *                 与 CLI --game-dir 是游戏安装目录，其下的 Mods、StreamingAssets/Mods、
+ *                 ModsFull/Mods 会被依次试一遍
  *   2. 环境变量   INFANTGOD_MODS_DIR；或 INFANTGOD_GAME_DIR 下的 Mods、
  *                 ModsFull/Mods（提取出来的游戏树放在哪一层由用户决定）
  *   3. 自动探测   Steam 库目录（各 steamapps/libraryfolders.vdf 的 path）
@@ -160,7 +162,8 @@ function describeDiscovery(result) {
  * 找游戏 Mods 目录。
  *
  * @param {object} [options]
- * @param {string} [options.gameModsDir] 显式目录（最高优先级）
+ * @param {string} [options.gameModsDir] 显式目录（最高优先级；必须是游戏 Mods 目录本身）
+ * @param {string} [options.gameDir]     游戏安装目录（--game-dir）；其下的 Mods 等会被试出来
  * @param {string} [options.dir]         gameModsDir 的别名
  * @param {object} [options.env]         环境变量表（默认 process.env）
  * @param {string[]} [options.searchRoots] 自定义探测根（默认 Steam 库 + 主目录）
@@ -184,7 +187,24 @@ function discoverGameModsDir(options) {
     return { dir: null, source: 'not found', tried: tried, found: false };
   }
 
-  /* 2. 环境变量 */
+  /* 2. 显式「游戏安装目录」：--game-dir 的契约是「指向游戏」，不是
+   *    「指向 Mods」；先试它下面的几层，最后才试目录本身。 */
+  if (o.gameDir != null && String(o.gameDir).trim() !== '') {
+    const base = path.resolve(String(o.gameDir));
+    const candidates = [
+      path.join(base, 'Mods'),
+      path.join(base, 'StreamingAssets', 'Mods'),
+      path.join(base, 'ModsFull', 'Mods'),
+      base,
+    ];
+    for (const candidate of candidates) {
+      note(candidate, 'gameDir');
+      if (looksLikeGameModsDir(candidate)) return hit(candidate, 'gameDir');
+    }
+    return { dir: null, source: 'not found', tried: tried, found: false };
+  }
+
+  /* 3. 环境变量 */
   const fromEnv = [
     [env[ENV_DIR], ENV_DIR],
     [env[ENV_GAME] ? path.join(String(env[ENV_GAME]), 'Mods') : null, ENV_GAME + '/Mods'],
@@ -197,7 +217,7 @@ function discoverGameModsDir(options) {
     if (looksLikeGameModsDir(abs)) return hit(abs, pair[1]);
   }
 
-  /* 3. 自动探测 */
+  /* 4. 自动探测 */
   const roots =
     Array.isArray(o.searchRoots) && o.searchRoots.length
       ? o.searchRoots
@@ -211,7 +231,7 @@ function discoverGameModsDir(options) {
     }
   }
 
-  /* 4. 未找到：显式状态 */
+  /* 5. 未找到：显式状态 */
   return { dir: null, source: 'not found', tried: tried, found: false };
 }
 

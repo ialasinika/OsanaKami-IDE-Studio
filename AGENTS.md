@@ -104,7 +104,7 @@ node shell/main.mjs export DIR [--out FILE.zip]      # deterministic zip
 node shell/main.mjs install DIR [--game-dir DIR] [--overwrite]
 node shell/main.mjs unpack FILE.zip [--dir DIR] [--name NAME] [--overwrite]
 node shell/main.mjs log [--path FILE] [--mod NAME] [--duration-ms N] [--json]
-node shell/main.mjs sources [--json]                 # where the game folder and the knowledge base came from
+node shell/main.mjs sources [--json] [--game-dir DIR] # where the game folder and the knowledge base came from
 ```
 
 `install` copies into the game's own `Mods/` folder (the last mile `export` does
